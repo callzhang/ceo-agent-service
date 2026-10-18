@@ -536,7 +536,7 @@ def _validate_actions(db, *, delivery):
     kinds = storage.ALL_ACTION_TYPES_WITH_DELIVERY if delivery else storage.ALL_ACTION_TYPES_WITH_POSTFIX
     observed = 0
     for kind in kinds:
-        for row in db.execute(storage.ACTION_PROJECTIONS[kind]):
+        for row in db.execute(storage._projection(kind)):
             values = dict(zip(storage.SOURCE_COLUMNS[kind], tuple(row), strict=True))
             _validate_values(kind, values)
             observed += 1
@@ -574,7 +574,7 @@ def _delivery_rows(db, *, target):
             if [row[0] for row in db.execute(f'pragma integrity_check({kind})')] != ['ok']:
                 raise ValueError(f'invalid delivery source values: {kind}')
         fields = storage.SOURCE_COLUMNS[kind]
-        table = f'({storage.ACTION_PROJECTIONS[kind]})' if target else kind
+        table = f'({storage._projection(kind)})' if target else kind
         order = 'id' if kind == 'sent_replies' else 'sent_reply_id,agent_run_id'
         rows = [dict(zip(fields, tuple(row), strict=True)) for row in db.execute(
             f"select {','.join(fields)} from {table} order by {order}")]

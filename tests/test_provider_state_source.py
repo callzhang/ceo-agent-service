@@ -374,11 +374,11 @@ def test_application_signals_shape_and_transaction_rollback(tmp_path):
         subject="Synthetic", preview="Synthetic", model_text="Synthetic"
     )
     with store._connect() as db:
-        db.execute("update provider_state set payload_json=json_set(payload_json,'$.important_signals_json','42') where record_type='observation'")
+        db.execute("update provider_state set important_signals_json='42' where record_type='observation'")
     with pytest.raises(EmailPersistenceCorruption, match="invalid shape"):
         store.get_provider_classification_state(101)
     with store._connect() as db:
-        db.execute("update provider_state set payload_json=json_set(payload_json,'$.important_signals_json','[]') where record_type='observation'")
+        db.execute("update provider_state set important_signals_json='[]' where record_type='observation'")
         before = tuple(db.execute("select * from provider_state where record_type='observation'").fetchone())
         generation_before = db.execute("select observed_at from provider_state "
                                        "where record_type='folder_generation' and provider_folder_id='inbox'").fetchone()[0]
@@ -409,7 +409,7 @@ def test_nonavailable_projection_returns_before_signal_shape_validation(tmp_path
     )
     with store._connect() as db:
         db.execute(
-            "update provider_state set state=?, payload_json=json_set(payload_json,'$.important_signals_json','42') where record_type='observation'",
+            "update provider_state set state=?, important_signals_json='42' where record_type='observation'",
             (state,),
         )
     expected = {

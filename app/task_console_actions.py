@@ -29,6 +29,15 @@ class CandidateActionNotApplicable(Exception):
     """The Task is not in a state where this action means anything."""
 
 
+def candidate_action_reference(task_id: int, action: str, updated_at: str) -> str:
+    return f"console:task:{task_id}:{action}:{updated_at}"
+
+
+def candidate_action_body(operator_name: str, action: str, title: str) -> str:
+    verb = "忽略" if action == "ignore" else "恢复"
+    return f"{operator_name}在控制台{verb}了候选任务「{title}」"
+
+
 def decide_candidate(store: AutoReplyStore, task_id: int, action: str, *, operator_name: str) -> BusinessTaskStatus:
     if action not in ACTIONS:
         raise ValueError(f"unknown candidate action: {action}")
@@ -45,7 +54,7 @@ def decide_candidate(store: AutoReplyStore, task_id: int, action: str, *, operat
     target = BusinessTaskStatus.CANCELLED if ignoring else BusinessTaskStatus.OPEN
     verb = "忽略" if ignoring else "恢复"
     # The prior update time makes a repeated click on the same state a replay, and a click after any other change a new fact.
-    reference = f"console:task:{task_id}:{action}:{task.updated_at}"
+    reference = candidate_action_reference(task_id, action, task.updated_at)
     TaskSemanticService(store).update_task(UpdateBusinessTask(
         task_id=task_id,
         status=target,
@@ -54,7 +63,7 @@ def decide_candidate(store: AutoReplyStore, task_id: int, action: str, *, operat
             source_type="console",
             source_ref=reference,
             dedupe_key=reference,
-            evidence_text=f"{operator_name}在控制台{verb}了候选任务「{task.title}」",
+            evidence_text=candidate_action_body(operator_name, action, task.title),
             source_time=datetime.now(timezone.utc).isoformat(),
             author_name=operator_name,
             author_kind=BusinessActorKind.HUMAN,

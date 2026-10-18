@@ -17,6 +17,10 @@ from app.business_storage import (
 
 CAPTURE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-15-database-redesign-business-core-native-source.json").read_text())
 KINDS = ("task", "project", "anchor", "project_context_revision")
+# The archived source oracle below intentionally remains the exact four-kind
+# Business foundation. The fifth source family has its own live DDL regression.
+BUSINESS_SOURCE_TABLES = {kind: table for kind, table in BUSINESS_SOURCE_TABLES.items()
+                          if kind in KINDS}
 BASE = {
     "task": {"title": "synthetic", "stage": "candidate"},
     "project": {"canonical_anchor_id": -16, "title": "synthetic", "registry_source": "synthetic"},
@@ -464,3 +468,35 @@ def test_id_update_affinity_null_rejection_and_ignored_not_null(pair, kind):
     both_update(pair, kind, 8, {field: None}, ignore=True)
     assert rows(pair, False, kind) == rows(pair, True, kind)
     assert waters(pair, False) == waters(pair, True)
+
+
+def test_service_bugfix_candidate_uses_exact_business_fields_and_unique_feedback_key():
+    db = sqlite3.connect(":memory:")
+    db.execute("pragma foreign_keys=on")
+    create_business_schema(db)
+    db.execute("begin")
+    values = {
+        "id": 3,
+        "feedback_event_key": "feedback:3",
+        "feedback_token": "token-3",
+        "attempt_id": 17,
+        "status": "pending",
+        "title": "candidate title",
+        "reason": "source reason",
+        "feedback_comment": "source feedback",
+        "conversation_title": "conversation",
+        "trigger_text": "trigger",
+        "created_at": "2026-10-16 12:00:00",
+        "updated_at": "2026-10-16 12:00:01",
+    }
+    assert insert_business(db, "service_bugfix_candidate", values).rowcount == 1
+    projection = BUSINESS_PROJECTIONS["service_bugfix_candidate"]
+    row = db.execute(projection + " and public_id=?", (3,)).fetchone()
+    assert row == tuple(values[field] for field in BUSINESS_FIELDS["service_bugfix_candidate"])
+    duplicate = values | {"id": 4, "title": "duplicate feedback event"}
+    assert insert_business(db, "service_bugfix_candidate", duplicate, ignore=True).rowcount == 0
+    assert db.execute(
+        "select count(*) from business where record_type='service_bugfix_candidate'"
+    ).fetchone() == (1,)
+    db.rollback()
+    db.close()

@@ -56,7 +56,7 @@ def test_provider_image_preserves_values_types_and_current_facts(variant):
         )
         db.execute(
             "insert into provider_state(record_type,account_id,provider_folder_id,"
-            "observed_at,payload_json) values('folder_generation','account-c','INBOX',?,'{}')",
+            "observed_at) values('folder_generation','account-c','INBOX',?)",
             (T2,),
         )
         db.commit()
@@ -93,7 +93,7 @@ def test_provider_image_rejects_changed_original_field(field):
         db.commit()
         updates = {
             "state": "state='excluded'",
-            "provider_folder_name": "payload_json=json_set(payload_json,'$.provider_folder_name','changed')",
+            "provider_folder_name": "provider_folder_name='changed'",
             "observed_at": "observed_at='changed'",
         }
         db.execute(

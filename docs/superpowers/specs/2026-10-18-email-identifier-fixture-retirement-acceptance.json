@@ -1,0 +1,38 @@
+{
+  "status": "accepted_local_test_only",
+  "files": {
+    "tests/test_email_store.py": "5ea7cc9dc7c743f32bcc0a7757259387434b4016c08b6dad8abe89017d5ee5da",
+    "docs/database-redesign-email-identifier-fixture-retirement-validation-20261018.md": "1772ca4ace0ef73208b86488b1b133bc32a8482aae9ab28a05f4b31f339d7bfe"
+  },
+  "baseline_test_sha256": "7723fbbc6745d9074af13ab35227e67ff938a29e5547f58bf5f27cb94af02a22",
+  "removed_definitions": [
+    "_rewrite_required_identifier_case",
+    "test_current_schema_accepts_case_insensitive_required_bare_identifiers",
+    "test_current_schema_accepts_quoted_required_identifiers"
+  ],
+  "remaining_top_level_ast_count": 277,
+  "remaining_definitions_unchanged": true,
+  "spec": {
+    "reviewer": "email_identifier_retirement_spec",
+    "verdict": "APPROVE",
+    "exact_preedit_reconstruction": true
+  },
+  "quality": {
+    "reviewer": "email_identifier_retirement_quality",
+    "verdict": "APPROVE",
+    "exact_preedit_reconstruction": true,
+    "independent_test": "tests/test_email_store.py::test_schema_tokenizer_canonicalizes_quoted_identifiers_not_string_literals",
+    "passed": 1,
+    "pytest_seconds": 2.02,
+    "command_seconds": 2.511,
+    "exit_code": 0,
+    "managed_temp_removed": true
+  },
+  "prior_actual_copy_receipt_sha256": "1d9d2edb43e9d8470bbbdbd37177678c2f72e01a403cfd228223092825493b09",
+  "r3_frozen_runtime_373_and_requirements_43_unchanged": true,
+  "r3_delivery_only_changed_file": "tests/test_email_store.py",
+  "runtime_edits": false,
+  "whole_file_or_suite_accepted": false,
+  "capacity_accepted": false,
+  "production_accepted": false
+}

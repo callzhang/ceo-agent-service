@@ -1,4 +1,4 @@
-"""Unselected source-bound row transfer for the config/schedule release.
+"""Source-bound row transfer for the config/schedule release.
 
 The release coordinator installs schemas and owns transactions/rollback. This
 module never drops tables, changes markers, commits or persists a row snapshot.
@@ -11,8 +11,8 @@ import sqlite3
 
 from app.action_email_storage import _quote, _sequence, _set_sequence
 from app.action_reply_storage import _fingerprint, _source_declaration
-from app.action_storage import _current_objects, _objects
-from app.action_skill_config_storage import insert_skill_receipt, loaded_body
+from app.action_storage import _current_objects, _objects, _native_payload
+from app.action_skill_config_storage import loaded_body
 from app.configs_definitions import (
     AUTOINCREMENT_KINDS, CONFIG_FIELDS, CONFIG_REFS, ROWID_KINDS, SCALAR_KEY,
     config_projection,
@@ -209,6 +209,14 @@ def _preflight_bodies(facts):
             raise ValueError('config receipt body is not exactly reconstructable')
 
 
+
+def _copy_skill_receipt_row(db, kind, row, *, parent_id):
+    """Serialize the declared migration-stage object format, before final conversion."""
+    reference = 'skill_revision_ref' if kind == 'managed_skill_export_receipts' else 'runtime_config_ref'
+    payload = {key: value for key, value in row.items() if key not in ('id', 'loaded_json')}
+    db.execute('insert into main.actions(record_type,legacy_key,payload_json,' + reference +
+               ') values(?,?,?,?)', (kind, str(row['id']), _native_payload(payload), parent_id))
+
 def copy_config_rows(source, target, metadata):
     """Copy eighteen families into installed empty target kinds; caller rolls back."""
     _transaction(source)
@@ -263,8 +271,10 @@ def copy_config_rows(source, target, metadata):
                            tuple(data.values()))
     for kind in RECEIPT_FIELDS:
         for row in facts[kind]:
-            insert_skill_receipt(target, kind, {key: value for key, value in row.items() if key != 'id'},
-                                 source_id=row['id'])
+            exported = kind == 'managed_skill_export_receipts'
+            _copy_skill_receipt_row(target, kind, row, parent_id=parent(
+                'managed_skill_revisions' if exported else 'runtime_skill_configs',
+                row['revision_id' if exported else 'config_id']))
     _write_waters(target, waters, target=True)
     _verify_rows(rows, _target_rows(target, metadata))
     _target_foreign_keys(target)

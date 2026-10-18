@@ -10,7 +10,7 @@ import pytest
 import app.store as store_module
 from app.run_storage import TASK_AGENT_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, task_id_expression
+from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL, task_id_expression
 from app.task_models import WorkItem
 
 
@@ -189,9 +189,9 @@ def test_ensure_reply_tasks_rolls_back_group_on_identity_conflict(tmp_path: Path
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         assert (
             db.execute(
-                """
-                select count(*) from tasks
-                where record_type='reply_tasks'
+                f"""
+                select count(*) from ({REPLY_TASK_SQL})
+                where 1=1
                   and channel='email'
                   and conversation_id='email-thread:atomic'
                   and trigger_message_id='email-action:first'
@@ -665,7 +665,6 @@ def test_create_follow_up_draft_dedupes_skipped_terminal_draft(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        memory_context_json='{"query":"existing"}',
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
@@ -1188,59 +1187,6 @@ def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
     assert records[1].project_title == "客户交付"
     assert records[1].todo_description == "确认交付验收时间和阻塞。"
     assert records[1].original_text == "给客户同步验收 ETA：来源于客户群红灯风险"
-
-
-def test_list_and_update_project_memory_context_backfill_targets(tmp_path: Path):
-    store = _store(tmp_path)
-    missing_id = store.create_work_project(
-        title="缺少记忆背景项目",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    filled_id = store.create_work_project(
-        title="已有记忆背景项目",
-        category="sales",
-        status="active",
-        priority="P2",
-        risk_level="low",
-        memory_context_json='{"query":"已有","summary":"已有背景","memories":[]}',
-    )
-    with store._connect() as db:
-        db.execute(
-            """
-            update work_projects
-            set last_activity_at='2026-06-01 10:00:00',
-                updated_at='2026-06-01 10:00:00'
-            where id=?
-            """,
-            (missing_id,),
-        )
-
-    targets = store.list_work_projects_missing_memory_context(limit=10)
-
-    assert [project.id for project in targets] == [missing_id]
-
-    store.update_work_project_memory_context(
-        missing_id,
-        json.dumps(
-            {
-                "query": "缺少记忆背景项目",
-                "summary": "已通过 memory_recall 回填。",
-                "memories": [],
-            },
-            ensure_ascii=False,
-        ),
-    )
-
-    updated = store.get_work_project(missing_id)
-    filled = store.get_work_project(filled_id)
-    assert updated is not None
-    assert filled is not None
-    assert json.loads(updated.memory_context_json)["summary"] == "已通过 memory_recall 回填。"
-    assert updated.last_activity_at == "2026-06-01 10:00:00"
-    assert filled.memory_context_json == '{"query":"已有","summary":"已有背景","memories":[]}'
 
 
 def test_scan_state_round_trip(tmp_path: Path):

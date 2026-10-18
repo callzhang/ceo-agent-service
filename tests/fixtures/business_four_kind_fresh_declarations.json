@@ -3532,6 +3532,524 @@
       ],
       "sql": "CREATE TABLE business_tasks (\n                    id integer primary key autoincrement,\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    description text not null default '',\n                    stage text not null check(stage in ('candidate', 'formal')),\n                    origin text not null default 'source' check(origin in ('source', 'agent_suggestion')),\n                    suggestion_json text not null default '{}'\n                        check(json_valid(suggestion_json) and json_type(suggestion_json) = 'object'),\n                    status text not null default 'open' check(status in (\n                        'open', 'waiting', 'done', 'cancelled', 'merged'\n                    )),\n                    commitment_status text not null default 'none' check(commitment_status in (\n                        'none', 'assigned_unaccepted', 'accepted', 'disputed', 'completed', 'cancelled'\n                    )),\n                    formal_basis text check(formal_basis in (\n                        'explicit_assignment', 'explicit_commitment', 'external_todo', 'meeting_action_item'\n                    )),\n                    business_relevance text not null default 'unknown' check(business_relevance in (\n                        'unknown', 'not_relevant', 'relevant'\n                    )),\n                    merged_into_task_id integer,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    owner_evidence_json text not null default '{}'\n                        check(json_valid(owner_evidence_json) and json_type(owner_evidence_json) = 'object'),\n                    deadline_at text not null default '',\n                    missing_evidence_json text not null default '[]'\n                        check(json_valid(missing_evidence_json) and json_type(missing_evidence_json) = 'array'),\n                    last_activity_at text not null default current_timestamp,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    check(\n                        (stage = 'formal' and formal_basis is not null)\n                        or (stage = 'candidate' and formal_basis is null)\n                    ),\n                    check(\n                        (status = 'merged' and merged_into_task_id is not null)\n                        or (status <> 'merged' and merged_into_task_id is null)\n                    ),\n                    check(merged_into_task_id is null or merged_into_task_id <> id),\n                    foreign key(merged_into_task_id) references business_tasks(id)\n                )",
       "triggers": []
+    },
+    "business_work_clusters": {
+      "sql": "CREATE TABLE business_work_clusters (\n                    id integer primary key autoincrement,\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    created_at text not null default current_timestamp\n                )",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "title",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "triggers": []
+    },
+    "service_bugfix_candidates": {
+      "sql": "CREATE TABLE service_bugfix_candidates (\n                    id integer primary key autoincrement,\n                    feedback_event_key text not null unique,\n                    feedback_token text not null default '',\n                    attempt_id integer not null default 0,\n                    status text not null default 'pending',\n                    title text not null,\n                    reason text not null,\n                    feedback_comment text not null,\n                    conversation_title text not null default '',\n                    trigger_text text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                )",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "feedback_event_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "feedback_token",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "attempt_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'pending'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "title",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "reason",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "feedback_comment",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "conversation_title",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "trigger_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "idx_service_bugfix_candidates_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 4,
+              "name": "status",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 10,
+              "name": "created_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_service_bugfix_candidates_status\n                    on service_bugfix_candidates(status, created_at)"
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_service_bugfix_candidates_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "feedback_event_key",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": null
+        }
+      ],
+      "triggers": []
+    },
+    "todo_evidence_candidates": {
+      "sql": "CREATE TABLE todo_evidence_candidates (\n                    id integer primary key autoincrement,\n                    project_id integer not null,\n                    todo_id integer not null,\n                    source_type text not null,\n                    source_ref text not null,\n                    source_created_at text not null default '',\n                    evidence_text text not null default '',\n                    reason text not null default '',\n                    confidence real not null default 0,\n                    status text not null default 'candidate'\n                        check(status in (\n                            'candidate',\n                            'enqueued',\n                            'accepted',\n                            'rejected',\n                            'error'\n                        )),\n                    work_summary_input_id integer not null default 0,\n                    decision_json text not null default '{}',\n                    dedupe_key text not null unique,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                )",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "project_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "todo_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "source_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "source_ref",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "source_created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "evidence_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "reason",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "confidence",
+          "type": "REAL",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'candidate'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "work_summary_input_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "decision_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'{}'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "dedupe_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 13,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 14,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "idx_todo_evidence_candidates_project",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "project_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 0,
+              "name": "id",
+              "desc": 1,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_todo_evidence_candidates_project\n                    on todo_evidence_candidates(project_id, id desc)"
+        },
+        {
+          "seq": 1,
+          "name": "idx_todo_evidence_candidates_work_input",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 10,
+              "name": "work_summary_input_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_todo_evidence_candidates_work_input\n                    on todo_evidence_candidates(work_summary_input_id)"
+        },
+        {
+          "seq": 2,
+          "name": "idx_todo_evidence_candidates_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 9,
+              "name": "status",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_todo_evidence_candidates_status\n                    on todo_evidence_candidates(status, id)"
+        },
+        {
+          "seq": 3,
+          "name": "idx_todo_evidence_candidates_todo",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 2,
+              "name": "todo_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 9,
+              "name": "status",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_todo_evidence_candidates_todo\n                    on todo_evidence_candidates(todo_id, status, id)"
+        },
+        {
+          "seq": 4,
+          "name": "sqlite_autoindex_todo_evidence_candidates_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 12,
+              "name": "dedupe_key",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": null
+        }
+      ],
+      "triggers": []
     }
   },
   "variant": "fresh"

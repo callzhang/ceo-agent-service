@@ -1,4 +1,4 @@
-"""Offline combined Provider/Business4/Email13 proof and Email-only boundary cases."""
+"""Offline combined Provider/Business9/Email13 proof and Email-only boundary cases."""
 
 import argparse
 from collections import Counter
@@ -29,11 +29,17 @@ from app.business_schema_release import (
     _child_facts, _child_waters, _parent_facts, _parent_waters,
     _target_parent_facts, business_schema_is_current, capture_business_source,
 )
+from app.business_definitions import BUSINESS_FIELDS, BUSINESS_FRESH_FIELDS
 from app.provider_state_definitions import GENERATION_FIELDS, OBSERVATION_FIELDS
 from app.provider_state_schema_release import (
     SOURCE_TABLES as PROVIDER_SOURCE_TABLES,
     capture_provider_state_source, provider_state_schema_is_current,
 )
+from app.configs_schema_transfer import SOURCE_TABLES as CONFIG_SOURCE_TABLES
+from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES
+from app.task20_schema_release import SOURCE_TABLES as TASK20_SOURCE_TABLES
+from app.runs11_schema_release import RUN11_SOURCE_PROFILES, _fts_objects
+from app.confirmation_schema_release import TABLE as CONFIRMATION_SOURCE_TABLE
 
 PUBLISHED_SCHEMA_REF = "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
 PRODUCTION_ROOT = Path.home() / "Services/ceo-agent-service"
@@ -49,7 +55,19 @@ def _quote(name):
 
 
 def _marker(db):
-    return db.execute("select value,updated_at from main.service_state where key='store_schema_version'").fetchone()
+    from app.state_definitions import state_projection
+
+    tables = {row[0] for row in db.execute(
+        "select name from main.sqlite_schema where type='table'"
+    )}
+    if "state" in tables:
+        return db.execute(
+            f"select value,updated_at from ({state_projection('service_state')}) "
+            "where key='store_schema_version'"
+        ).fetchone()
+    return db.execute(
+        "select value,updated_at from main.service_state where key='store_schema_version'"
+    ).fetchone()
 
 
 def _email_ledger(db):
@@ -105,23 +123,46 @@ def _paired_unrelated(db, fixture_ids):
     """Keep all other facts; the two changing markers are checked separately."""
     facts = _unrelated(db, fixture_ids)
     # Moved families have independent source-shaped image comparisons.
-    for name in (*SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, "business",
-                 *PROVIDER_SOURCE_TABLES, "provider_state"):
+    migrated_sources = {
+        *SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, *PROVIDER_SOURCE_TABLES,
+        *STATE_SOURCE_TABLES, *CONFIG_SOURCE_TABLES, *TASK20_SOURCE_TABLES,
+        *(name for profile in RUN11_SOURCE_PROFILES.values() for name in profile),
+        *(row[1] for row in _fts_objects()), CONFIRMATION_SOURCE_TABLE,
+        "email_training_snapshot_observations",
+    }
+    migrated_targets = {
+        "actions", "business", "configs", "provider_state", "runs", "schedules",
+        "state", "tasks",
+    }
+    for name in (*migrated_sources, *migrated_targets):
         facts.pop(name, None)
-    del facts["service_state"]
+    facts.pop("service_state", None)
+    facts.pop("state", None)
     del facts["email_schema_migrations"]
-    columns = _columns(db, "service_state")
-    selected = ",".join(map(_quote, columns))
-    storage = ",".join(f"typeof({_quote(column)})" for column in columns)
-    rows = tuple(db.execute(
-        f"select {selected},{storage} from main.service_state "
-        "where key<>'store_schema_version' order by rowid"
-    ))
+    tables = {row[0] for row in db.execute(
+        "select name from main.sqlite_schema where type='table'"
+    )}
+    if "state" in tables:
+        from app.state_definitions import state_projection
+
+        rows = tuple(db.execute(
+            f"select key,value,updated_at,typeof(key),typeof(value),typeof(updated_at) "
+            f"from ({state_projection('service_state')}) "
+            "where key<>'store_schema_version' order by key"
+        ))
+    else:
+        columns = _columns(db, "service_state")
+        selected = ",".join(map(_quote, columns))
+        storage = ",".join(f"typeof({_quote(column)})" for column in columns)
+        rows = tuple(db.execute(
+            f"select {selected},{storage} from main.service_state "
+            "where key<>'store_schema_version' order by key"
+        ))
     facts["service_state_other_rows"] = (len(rows), hashlib.sha256(pickle.dumps(rows, protocol=4)).digest())
     return facts
 
 
-def _fixture_rows(db, fixture_ids):
+def _fixture_rows(db, fixture_ids, *, config_variant=None):
     predicates = {
         "email_accounts": ("account_id=?", ("copy-only-account",)),
         "email_classifications": ("id in (" + ",".join("?" for _ in fixture_ids) + ")",
@@ -133,12 +174,29 @@ def _fixture_rows(db, fixture_ids):
     }
     result = {}
     for name, (predicate, args) in predicates.items():
-        columns = _columns(db, name)
-        selected = ",".join(map(_quote, columns))
-        storage = ",".join(f"typeof({_quote(column)})" for column in columns)
-        result[name] = tuple(db.execute(
-            f"select {selected},{storage} from main.{_quote(name)} where {predicate} order by rowid",
-            args))
+        if name == "email_accounts" and db.execute(
+            "select 1 from main.sqlite_schema where type='table' and name=?", (name,)
+        ).fetchone() is None:
+            from app.configs_definitions import (
+                CONFIG_FIELDS, CONFIG_FRESH_FIELDS, config_projection,
+            )
+
+            fresh = bool(config_variant and config_variant.startswith("fresh"))
+            columns = (CONFIG_FRESH_FIELDS if fresh else CONFIG_FIELDS)["email_accounts"]
+            selected = ",".join(map(_quote, columns))
+            storage = ",".join(f"typeof({_quote(column)})" for column in columns)
+            result[name] = tuple(db.execute(
+                f"select {selected},{storage} from "
+                f"({config_projection('email_accounts', fresh=fresh)}) "
+                f"where {predicate}", args
+            ))
+        else:
+            columns = _columns(db, name)
+            selected = ",".join(map(_quote, columns))
+            storage = ",".join(f"typeof({_quote(column)})" for column in columns)
+            result[name] = tuple(db.execute(
+                f"select {selected},{storage} from main.{_quote(name)} "
+                f"where {predicate} order by rowid", args))
     return result
 
 
@@ -586,11 +644,28 @@ elif mode == 'business_read_write':
         assert store.get_business_project_in_transaction(project_id=project_id, _db=db).id == project_id
         assert store.list_business_project_context_revisions_in_transaction(
             project_id=project_id, _db=db)[0].id == context_id
+        work_cluster_id = store.create_business_work_cluster_in_transaction(
+            title='old-code work cluster', _db=db)
         db.commit()
+    bugfix = store.create_service_bugfix_candidate(
+        feedback_event_key='copy-only-old-bugfix', title='old-code bugfix',
+        reason='copy-only reason', feedback_comment='copy-only feedback')
+    assert bugfix is not None
+    work_project_id = store.create_work_project(title='old-code work project')
+    work_todo_id = store.create_work_todo(
+        project_id=work_project_id, title='old-code work todo')
+    evidence = store.upsert_todo_evidence_candidate(
+        project_id=work_project_id, todo_id=work_todo_id,
+        source_type='copy-only', source_ref='old-code-evidence')
+    assert evidence is not None
     assert email.get_classification(int(sys.argv[3])) is not None
     print(json.dumps({
         'task_id':task_id, 'anchor_id':anchor_id,
         'project_id':project_id, 'context_id':context_id,
+        'service_bugfix_candidate_id':bugfix.id,
+        'work_cluster_id':work_cluster_id,
+        'todo_evidence_candidate_id':evidence.id,
+        'work_project_id':work_project_id, 'work_todo_id':work_todo_id,
         'email_cold_read':True, 'preexisting_tasks':existing,
     }))
 elif mode == 'provider_write':
@@ -1087,20 +1162,36 @@ def _continue_case(db, path, oldroot, state, classification_id, receipt_id, rece
 
 
 def _paired_other_sequences(db):
-    # The 13 public Business waters are compared by _business_*_image.
-    # Physical business.id has no source counterpart.
-    excluded = (
+    # Each migrated family owns its own source/target water proof. Keep this
+    # helper limited to allocators unrelated to the paired schema cutover.
+    migrated_sources = {
+        *SOURCE_PARENTS.values(), *RETAINED_CHILD_FKS, *PROVIDER_SOURCE_TABLES,
+        *STATE_SOURCE_TABLES, *CONFIG_SOURCE_TABLES, *TASK20_SOURCE_TABLES,
+        *(name for profile in RUN11_SOURCE_PROFILES.values() for name in profile),
+        *(row[1] for row in _fts_objects()), CONFIRMATION_SOURCE_TABLE,
+        "email_training_snapshot_observations",
+    }
+    migrated_targets = {
+        "actions", "business", "configs", "provider_state", "runs", "schedules",
+        "state", "tasks",
+    }
+    excluded = {
         *EMAIL_AUTOINCREMENT_TYPES,
         *(f"actions:{name}" for name in EMAIL_AUTOINCREMENT_TYPES),
-        *SOURCE_PARENTS.values(),
+        *migrated_sources, *migrated_targets,
         *(f"business:{kind}" for kind in SOURCE_PARENTS),
         *AUTOINCREMENT_CHILDREN,
-        "business",
-    )
+        *(f"configs:{name}" for name in CONFIG_SOURCE_TABLES),
+        *(f"runs:{name}" for profile in RUN11_SOURCE_PROFILES.values()
+          for name in profile),
+        *(f"state:{name}" for name in STATE_SOURCE_TABLES),
+        *(f"tasks:{name}" for name in TASK20_SOURCE_TABLES),
+        "tasks:published",
+    }
     marks = ",".join("?" for _ in excluded)
     return tuple(db.execute(
         f"select name,seq from main.sqlite_sequence "
-        f"where name not in ({marks}) order by name", excluded
+        f"where name not in ({marks}) order by name", tuple(sorted(excluded))
     ))
 
 
@@ -1269,10 +1360,30 @@ def _current_provider_public_writes(path, seeded):
 
 def _business_source_image(db):
     captured = capture_business_source(db)
+    source_parents = _parent_facts(db)
+    mapped_parents = {}
+    mapped_fields = (
+        BUSINESS_FIELDS if captured["variant"] == "actual" else BUSINESS_FRESH_FIELDS
+    )
+    for kind, snapshot in source_parents.items():
+        fields = mapped_fields[kind]
+        positions = tuple(snapshot["columns"].index(field) for field in fields)
+        mapped_parents[kind] = {
+            **snapshot,
+            "columns": fields,
+            "rows": tuple(
+                tuple(row[position] for position in positions)
+                for row in snapshot["rows"]
+            ),
+            "types": tuple(
+                tuple(row[position] for position in positions)
+                for row in snapshot["types"]
+            ),
+        }
     return {
         "variant": captured["variant"],
         "declarations": {key: captured[key] for key in ("parents", "children")},
-        "parents": _parent_facts(db),
+        "parents": mapped_parents,
         "children": _child_facts(db),
         "parent_waters": _parent_waters(db, target=False),
         "child_waters": _child_waters(db),
@@ -1328,8 +1439,8 @@ def _business_image_summary(image):
 
 
 def _current_business_public_writes(path):
-    from app.project_context_service import ProjectContextService
     from app.store import AutoReplyStore
+    from app.project_context_service import ProjectContextService
     from app.task_semantic_models import ProjectContext
     store = AutoReplyStore(path)
     with store._connect() as db:
@@ -1354,10 +1465,32 @@ def _current_business_public_writes(path):
             signal_ids=(), db=db,
         )
         assert context_id is not None
+        work_cluster_id = store.create_business_work_cluster_in_transaction(
+            title="copy-only current work cluster", _db=db
+        )
+        work_project_id = store.create_work_project(
+            _db=db, title="copy-only current work project"
+        )
+        work_todo_id = store.create_work_todo(
+            _db=db, project_id=work_project_id, title="copy-only current work todo"
+        )
+        todo_evidence = store.upsert_todo_evidence_candidate(
+            project_id=work_project_id, todo_id=work_todo_id,
+            source_type="copy-only", source_ref="current-copy-only-evidence", _db=db,
+        )
         db.commit()
+    bugfix = store.create_service_bugfix_candidate(
+        feedback_event_key="copy-only-current-bugfix", title="copy-only bugfix",
+        reason="copy-only reason", feedback_comment="copy-only feedback",
+    )
+    assert bugfix is not None
     return {
         "task": task_id, "anchor": anchor_id, "project": project_id,
         "project_context_revision": context_id,
+        "service_bugfix_candidate": bugfix.id,
+        "work_cluster": work_cluster_id,
+        "todo_evidence_candidate": todo_evidence.id,
+        "work_project": work_project_id, "work_todo": work_todo_id,
     }
 
 def _paired_case(path, oldroot, repo):
@@ -1396,7 +1529,13 @@ def _paired_case(path, oldroot, repo):
         seeded_fixture = _fixture_rows(db, fixture_ids)
         other_sequences = _paired_other_sequences(db)
         seeded_waters = _source_waters(db)
-        assert _paired_unrelated(db, fixture_ids) == original_unrelated
+        current_unrelated = _paired_unrelated(db, fixture_ids)
+        assert current_unrelated == original_unrelated, {
+            name: (name in original_unrelated, name in current_unrelated,
+                   original_unrelated.get(name), current_unrelated.get(name))
+            for name in sorted(set(original_unrelated) | set(current_unrelated))
+            if original_unrelated.get(name) != current_unrelated.get(name)
+        }
         assert _actions(db, action_columns) == original_actions
         _original_source_rows_unchanged({"declarations":capture_email_action_source(db)["source_tables"],
                                          "facts":baseline}, seeded_source, fixture_ids)
@@ -1428,12 +1567,25 @@ def _paired_case(path, oldroot, repo):
                 *seeded_source[name],
             )
         assert _target_waters(db) == seeded_waters
-        assert _paired_unrelated(db, fixture_ids) == original_unrelated
-        assert _fixture_rows(db, fixture_ids) == seeded_fixture
+        current_unrelated = _paired_unrelated(db, fixture_ids)
+        assert current_unrelated == original_unrelated, {
+            name: (name in original_unrelated, name in current_unrelated,
+                   original_unrelated.get(name), current_unrelated.get(name))
+            for name in sorted(set(original_unrelated) | set(current_unrelated))
+            if original_unrelated.get(name) != current_unrelated.get(name)
+        }
+        current_fixture = _fixture_rows(
+            db, fixture_ids, config_variant=state["configs"]["configs"]["variant"]
+        )
+        assert current_fixture == seeded_fixture, {
+            name: (seeded_fixture.get(name), current_fixture.get(name))
+            for name in sorted(set(seeded_fixture) | set(current_fixture))
+            if seeded_fixture.get(name) != current_fixture.get(name)
+        }
         assert _actions(db, action_columns) == original_actions
-        assert db.execute(
+        target_tables = db.execute(
             "select count(*) from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
-        ).fetchone() == (initial_tables - 17,)
+        ).fetchone()[0]
         assert not set((*SOURCE_TABLES, *PROVIDER_SOURCE_TABLES)).intersection(
             name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
         )
@@ -1473,9 +1625,20 @@ def _paired_case(path, oldroot, repo):
         assert current_waters["email_action_attempts"] > (seeded_waters["email_action_attempts"] or 0)
         assert current_waters["email_unsubscribe_steps"] > (seeded_waters["email_unsubscribe_steps"] or 0)
         assert _marker(db) == target_marker and _email_ledger(db) == target_ledger
-        assert _paired_other_sequences(db) == other_sequences
+        current_other_sequences = _paired_other_sequences(db)
+        assert current_other_sequences == other_sequences, {
+            "before_only": sorted(set(other_sequences) - set(current_other_sequences)),
+            "after_only": sorted(set(current_other_sequences) - set(other_sequences)),
+            "changed": [
+                (before, after)
+                for before in other_sequences for after in current_other_sequences
+                if before[0] == after[0] and before != after
+            ],
+        }
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
-        assert _fixture_rows(db, fixture_ids) == seeded_fixture
+        assert _fixture_rows(
+            db, fixture_ids, config_variant=state["configs"]["configs"]["variant"]
+        ) == seeded_fixture
         assert _actions(db, action_columns) == original_actions
         _consistency(db, original_fk)
     current_counters = _current_counters(path)
@@ -1541,7 +1704,12 @@ def _paired_case(path, oldroot, repo):
         _assert_original_provider_rows_preserved(baseline_provider, after_old_provider)
         for kind, key in (("task", "task_id"), ("anchor", "anchor_id"),
                           ("project", "project_id"),
-                          ("project_context_revision", "context_id")):
+                          ("project_context_revision", "context_id"),
+                          ("service_bugfix_candidate", "service_bugfix_candidate_id"),
+                          ("work_cluster", "work_cluster_id"),
+                          ("todo_evidence_candidate", "todo_evidence_candidate_id"),
+                          ("work_project", "work_project_id"),
+                          ("work_todo", "work_todo_id")):
             assert any(row[0] == old_business_write[key]
                        for row in after_old_business["parents"][kind]["rows"])
         after_old_waters = _source_waters(db)
@@ -1589,7 +1757,9 @@ def _paired_case(path, oldroot, repo):
         assert _paired_other_sequences(db) == other_sequences
         assert _paired_unrelated(db, fixture_ids) == original_unrelated
         assert _actions(db, action_columns) == original_actions
-        assert _fixture_rows(db, fixture_ids) == after_old_fixture
+        assert _fixture_rows(
+            db, fixture_ids, config_variant=state["configs"]["configs"]["variant"]
+        ) == after_old_fixture
         assert not set((*SOURCE_TABLES, *PROVIDER_SOURCE_TABLES)).intersection(
             name for (name,) in db.execute("select name from main.sqlite_schema where type='table'")
         )
@@ -1598,7 +1768,7 @@ def _paired_case(path, oldroot, repo):
     return {"paired_default_constructors":True, "target_public_writes":True,
             "old_public_cold_writes":True, "current_fact_inverse":True,
             "reforward_current_facts":True, "source_tables":initial_tables,
-            "target_tables":initial_tables - 17, "preserved_fk_findings":len(original_fk),
+            "target_tables":target_tables, "preserved_fk_findings":len(original_fk),
             "business_current_public_ids":business_writes,
             "business_old_public_ids":old_business_write,
             "business_source_summary":_business_image_summary(baseline_business),
@@ -1710,7 +1880,7 @@ def run(source, source_ref, repo):
         fresh_application_case = _case(fresh_application, oldroot, fresh=True, null_plans=False)
     production_after = subprocess.check_output(["git", "-C", str(PRODUCTION_ROOT), "rev-parse", "HEAD"], text=True).strip()
     return {"status":"passed" if production_after == production_before else "production_changed",
-            "scope":"combined Provider2/Business4/Email13 paired copy and three Email-only SQL-boundary cases",
+            "scope":"combined Provider2/Business9/Email13 paired copy and three Email-only SQL-boundary cases",
             "observed_at_utc":datetime.now(timezone.utc).isoformat(),
             "published_source_ref":source_ref,"schema_binding_ref":PUBLISHED_SCHEMA_REF,
             "executed_candidate_commit":candidate_commit,"candidate_module_sha256":candidate_hashes,

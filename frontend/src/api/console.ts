@@ -205,7 +205,9 @@ export interface BusinessTaskSignal extends Record<string, unknown> {
   source_type: string;
   source_ref: string;
   source_time: string;
-  evidence_text: string;
+  evidence_text: string | null;
+  source_available: boolean;
+  source_unavailable_reason: string | null;
   context_json: string;
 }
 export interface ProjectContextRevision {
@@ -258,7 +260,7 @@ export interface BusinessProjectDetail {
 }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
+export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
@@ -869,7 +871,6 @@ function mapTaskDetail(value: unknown): TaskDetail {
     todos,
     updates: Array.isArray(payload.updates) ? payload.updates.map(asRecord) : [],
     evidence_candidates: Array.isArray(payload.evidence_candidates) ? payload.evidence_candidates.map(asRecord) : [],
-    memory: project.memory_context && isRecord(project.memory_context) ? [project.memory_context] : [],
     unlinked_follow_ups: Array.isArray(payload.unlinked_follow_ups) ? payload.unlinked_follow_ups.map(asRecord) : [],
   };
 }
@@ -917,6 +918,12 @@ const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
 const isCitation = (value: unknown) => isRecord(value)
   && (value.signal_id === null || typeof value.signal_id === "number")
   && isString(value.source_ref) && isString(value.source_excerpt);
+const isBusinessTaskSignal = (value: unknown): value is BusinessTaskSignal => isRecord(value)
+  && typeof value.id === "number"
+  && ["source_type", "source_ref", "source_time", "context_json"].every((field) => isString(value[field]))
+  && (value.source_available === true
+    ? isString(value.evidence_text) && value.evidence_text.length > 0 && value.source_unavailable_reason === null
+    : value.source_available === false && value.evidence_text === null && isString(value.source_unavailable_reason) && value.source_unavailable_reason.length > 0);
 const isResponsibility = (value: unknown) => isRecord(value)
   && ["person_user_id", "person_name", "responsibility"].every((field) => isString(value[field]))
   && Array.isArray(value.evidence) && value.evidence.every(isCitation);
@@ -975,7 +982,7 @@ export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Prom
     && (item.context === null || isProjectContext(item.context))
     && Array.isArray(item.responsibilities) && item.responsibilities.every(isResponsibility)
     && [item.confirmed_tasks, item.suggestions].every((rows) => Array.isArray(rows) && rows.every((row) => isRecord(row) && isTaskSummary(row)))
-    && Array.isArray(item.evidence_signals) && item.evidence_signals.every((row) => isRecord(row) && typeof row.id === "number" && ["source_type", "source_ref", "source_time", "evidence_text", "context_json"].every((field) => isString(row[field])))
+    && Array.isArray(item.evidence_signals) && item.evidence_signals.every(isBusinessTaskSignal)
     && Array.isArray(item.context_revisions) && item.context_revisions.every((row) => isRecord(row) && typeof row.id === "number" && typeof row.project_id === "number" && isProjectContext(row.context) && Array.isArray(row.evidence_signal_ids) && row.evidence_signal_ids.every((id) => typeof id === "number") && isString(row.created_at))
     && isListMeta(item.evidence_meta) && isListMeta(item.context_revision_meta)));
 }

@@ -2,6 +2,8 @@
 
 from contextlib import closing
 from datetime import datetime
+import json
+from pathlib import Path
 import sqlite3
 import time
 
@@ -12,6 +14,9 @@ from app.action_storage import (
     create_action_schema, delete_sync_action, insert_sync_action, update_sync_action,
 )
 from test_followup_sync_source import NAMES, snapshot, values
+
+EVENT_SOURCE = json.loads((Path(__file__).parents[1] /
+                           "docs/superpowers/specs/2026-10-17-action-task-events-source-extension.json").read_text())
 
 
 def _pair(variant):
@@ -30,12 +35,45 @@ def _pair(variant):
         for index in source_schema["tables"][name]["indexes"]:
             if index["sql"]:
                 source.execute(index["sql"])
+    event = EVENT_SOURCE["actual"]
+    source.execute(event["sql"])
+    for index in event["indexes"]:
+        if index["sql"]:
+            source.execute(index["sql"])
     create_action_schema(target, include_reply=True,
                          reply_variant="actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk",
                          include_email=True, include_followup_sync=True)
     source.commit()
     target.commit()
     return source, target
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_task_events_insert_update_delete_and_source_constraints(variant):
+    source, target = _pair(variant)
+    with closing(source), closing(target):
+        row = {"task_id": 11, "event_type": "status_changed", "signal_id": 12,
+               "before_json": "{}", "after_json": '{"status":"open"}', "reason": "source event"}
+        expected = _insert_source(source, "business_task_events", row)
+        actual = insert_sync_action(target, "business_task_events", row)
+        assert (actual.lastrowid, actual.rowcount) == (expected.lastrowid, expected.rowcount)
+        _rows(source, target, "business_task_events", variant)
+        changed = {"before_json": '{"status":"open"}', "after_json": '{"status":"done"}',
+                   "reason": "updated source event"}
+        source.execute("update business_task_events set before_json=?,after_json=?,reason=? where id=?",
+                       (*changed.values(), expected.lastrowid))
+        assert update_sync_action(target, "business_task_events", actual.lastrowid, changed).rowcount == 1
+        _rows(source, target, "business_task_events", variant)
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_source(source, "business_task_events", row | {"event_type": "invented"})
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_sync_action(target, "business_task_events", row | {"event_type": "invented"})
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_source(source, "business_task_events", row | {"before_json": "[]"})
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_sync_action(target, "business_task_events", row | {"before_json": "[]"})
+        assert delete_sync_action(target, "business_task_events", actual.lastrowid).rowcount == \
+            source.execute("delete from business_task_events where id=?", (expected.lastrowid,)).rowcount == 1
 
 
 def _insert_source(db, kind, row, *, ignore=False):

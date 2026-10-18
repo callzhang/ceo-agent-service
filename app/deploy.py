@@ -289,7 +289,7 @@ def deploy(
         verification=lambda: verify_imports(root),
         health=wait_for_health,
         publication=publication,
-        database_publication=lambda: prepare_database_schema_release(root, database_path),
+        database_publication=lambda backup: prepare_database_schema_release(root, database_path, recovery_source_path=backup),
         pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
     )
     # Unlocked for exactly the checkout + build + verify window; the source

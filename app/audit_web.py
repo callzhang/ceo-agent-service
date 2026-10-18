@@ -2,6 +2,7 @@ from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
 from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.task12_storage import task12_projection
 
 from app.store import REPLY_TASK_CURRENT_SQL
@@ -139,6 +140,7 @@ from app.feedback_events import (
 )
 from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
+from app.email_canonical_storage import email_classification_projection
 from app.email_publication_sources import current_email_actions_available
 from app.action_storage import email_action_projection
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
@@ -163,6 +165,7 @@ from app.store import (
     ReplyTask,
     SentReply,
 )
+from app.action_error_definitions import error_projection
 from app.setup_wizard import (
     build_wizard_status,
     check_setup_step,
@@ -194,13 +197,17 @@ from app.action_storage import (
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     reply_action_projection,
-    validated_reply_variant,
+    task_delivery_projection,
+    _reply_variant_for,
 )
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
 REPLY_TASK_SQL = task20_projection('reply_tasks')
 WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+WECHAT_DELIVERY_SQL = task_delivery_projection('wechat_deliveries')
+MEETING_MEMORY_WRITE_SQL = task_delivery_projection('meeting_memory_write_events')
+TASK_MEMORY_WRITE_SQL = task_delivery_projection('task_memory_write_events')
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -2609,7 +2616,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
             physical_table = ("tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
-                              else "actions" if table in ("reply_attempts", "memory_write_events") else table)
+                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "work_todo_dingtalk_links", "meeting_memory_write_events", "wechat_deliveries") else table)
             if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
@@ -2807,7 +2814,7 @@ def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
     current_plan = f"""
         from ({email_action_projection('email_actions')}) as a
-         cross join email_classifications as c on c.id=a.classification_id
+         cross join ({email_classification_projection()}) as c on c.id=a.classification_id
         where a.action_plan_id=c.current_action_plan_id
           and c.status='processed'
     """
@@ -3087,14 +3094,14 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
                     when a.channel='wechat' and lower(a.send_status)='failed'
                      and exists (
-                        select 1 from wechat_deliveries d
+                        select 1 from ({WECHAT_DELIVERY_SQL}) d
                         join ({REPLY_TASK_SQL}) t on t.id=d.reply_task_id
                         where t.channel=a.channel and t.conversation_id=a.conversation_id
                           and d.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
                           and d.execution_generation=t.execution_generation
                           and d.status in ('failed', 'send_unknown')
-                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery
+                          and d.id=(select max(current_delivery.id) from ({WECHAT_DELIVERY_SQL}) current_delivery
                                     where current_delivery.reply_task_id=t.id
                                       and current_delivery.execution_generation=t.execution_generation)
                      ) then 'failed'
@@ -3230,7 +3237,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    source = reply_action_projection("memory_write_events", validated_reply_variant(db, include_email=True, include_skill_config_receipts=True))
+    source = reply_action_projection("memory_write_events", _reply_variant_for(db))
     rows = db.execute(
         f"select lower(coalesce(status,'')) as status,count(*) as count "
         f"from ({source}) group by lower(coalesce(status,'')) order by status"
@@ -3277,7 +3284,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
                          || wechat_deliveries.error
                 else ''
             end) as latest_error
-        from wechat_deliveries
+        from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
         join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
         where wechat_deliveries.execution_generation=
               reply_tasks.execution_generation
@@ -3297,7 +3304,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     _, _, latest_error = latest_error.partition(chr(31))
     latest_row = db.execute(
         f"""select max(wechat_deliveries.updated_at) as value
-           from wechat_deliveries
+           from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
            join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
            where wechat_deliveries.execution_generation=
                  reply_tasks.execution_generation"""
@@ -3423,6 +3430,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
+    failed_unsubscribe_triggers: set[tuple[str, str, str]] = set()
     pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
         state = db.execute(
@@ -3444,7 +3452,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     "summary": str(task["trigger_text"]),
                     "updated_at": str(task["updated_at"]),
                     "error": str(task["error"] or
-                        "OA process remains unresolved; no final approval or return receipt is recorded."),
+                        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."),
                 })
             else:
                 pending_oa_rows.append({
@@ -3452,7 +3460,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     "context": "OA approval", "summary": key,
                     "updated_at": str(state["last_success_at"]),
                     "error": str(state["last_error"] or
-                        "OA process remains unresolved; no final approval or return receipt is recorded."),
+                        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."),
                 })
         db.create_function(
             "decode_work_summary_payload",
@@ -3461,6 +3469,44 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             deterministic=True,
         )
         if _sqlite_table_exists(db, "tasks"):
+            failed_unsubscribe_triggers.update(
+                (
+                    str(row["channel"] or "dingtalk"),
+                    str(row["conversation_id"] or ""),
+                    str(row["trigger_message_id"] or ""),
+                )
+                for row in db.execute(
+                    f"""
+                    select reply_tasks.channel, reply_tasks.conversation_id,
+                           reply_tasks.trigger_message_id
+                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                    where reply_tasks.id in (
+                        select cast(legacy_key as integer) from tasks indexed by idx_task20_published_1
+                        where record_type='reply_tasks' and lower({task20_column('reply_tasks', 'status')})='failed'
+                    )
+                      and reply_tasks.channel='email'
+                      and json_valid(reply_tasks.trigger_message_json)
+                      and json_extract(reply_tasks.trigger_message_json, '$.action_type')='unsubscribe'
+                    """
+                ).fetchall()
+            )
+            failed_unsubscribe_triggers.update(
+                (
+                    str(row["channel"] or ""),
+                    str(row["conversation_id"] or ""),
+                    str(row["trigger_message_id"] or ""),
+                )
+                for row in db.execute(
+                    f"""
+                    select attempts.channel, attempts.conversation_id,
+                           attempts.trigger_message_id
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                    where attempts.channel='email'
+                      and attempts.action='direct_unsubscribe'
+                      and lower(attempts.send_status)='failed'
+                    """
+                ).fetchall()
+            )
             reply_task_sql = f"""
                 select reply_tasks.id, reply_tasks.channel,
                        reply_tasks.conversation_id, reply_tasks.trigger_message_id,
@@ -3487,6 +3533,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   -- Failed for a reason outside this service: History keeps it,
                   -- Attention does not (Derek 2026-09-25).
                   and not """ + external_task_error_sql() + f"""
+                  -- Email unsubscribe failures stay visible in History and
+                  -- follow their own retry/reconciliation path, never manager
+                  -- Attention, including unresolved execution-fence errors.
+                  and not (
+                    reply_tasks.channel='email'
+                    and json_valid(reply_tasks.trigger_message_json)
+                    and json_extract(reply_tasks.trigger_message_json, '$.action_type')='unsubscribe'
+                  )
                   -- A later successful run of the same scheduled task is the
                   -- authoritative recovery for an older scheduled reply task.
                   and not exists (
@@ -3516,13 +3570,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 reply_task_params = (limit,)
             reply_task_rows = db.execute(reply_task_sql, reply_task_params).fetchall()
             for row in reply_task_rows:
-                active_reply_task_triggers.add(
-                    (
-                        str(row["channel"] or "dingtalk"),
-                        str(row["conversation_id"] or ""),
-                        str(row["trigger_message_id"] or ""),
-                    )
+                trigger_key = (
+                    str(row["channel"] or "dingtalk"),
+                    str(row["conversation_id"] or ""),
+                    str(row["trigger_message_id"] or ""),
                 )
+                if trigger_key in failed_unsubscribe_triggers:
+                    continue
+                active_reply_task_triggers.add(trigger_key)
                 rows.append(
                     {
                         "category": "Reply task",
@@ -3536,11 +3591,20 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
-            if not _sqlite_table_exists(db, "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests") else table):
+            physical_table = (
+                "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
+                else "actions" if table in ("follow_up_drafts", "wechat_deliveries")
+                else table
+            )
+            if not _sqlite_table_exists(db, physical_table):
                 continue
             source_table = (f"({WORK_SUMMARY_INPUT_SQL})" if table == "work_summary_inputs"
                             else f"({MEETING_JOB_SQL})" if table == "meeting_alignment_jobs"
-                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests" else table)
+                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests"
+                            else f"({SYNC_ACTION_PROJECTIONS[table]})" if table in SYNC_ACTION_PROJECTIONS
+                            else f"({WECHAT_DELIVERY_SQL})" if table == "wechat_deliveries"
+                            else table)
+            source_alias = " as wechat_deliveries" if table == "wechat_deliveries" else ""
             status_placeholders = ",".join("?" for _ in statuses)
             current_generation_filter = (
                 f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
@@ -3567,7 +3631,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
-                from {source_table}
+                from {source_table}{source_alias}
                 where id in (
                     {candidate_sql}
                 )
@@ -3653,7 +3717,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        ) as summary,
                        a.updated_at, a.error
                 from ({email_action_projection('email_actions', include_rowid=True)}) as a
-                cross join email_classifications as c on c.id=a.classification_id
+                cross join ({email_classification_projection()}) as c on c.id=a.classification_id
                 where a.action_plan_id=c.current_action_plan_id
                   and c.status='processed'
                   and a.rowid in (
@@ -3684,7 +3748,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "meeting_memory_write_events")
+            _sqlite_table_exists(db, "actions")
             and _sqlite_table_exists(db, "tasks")
         ):
             meeting_memory_sql = f"""
@@ -3692,7 +3756,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as context,
                        coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as summary,
                        events.updated_at, events.error
-                from meeting_memory_write_events as events
+                from ({MEETING_MEMORY_WRITE_SQL}) as events
                 join tasks as jobs on jobs.id=events.meeting_job_id
                     and jobs.record_type='meeting_alignment_jobs'
                 where lower(events.status)='failed'
@@ -3719,14 +3783,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "task_memory_write_events")
+            _sqlite_table_exists(db, "actions")
             and _sqlite_table_exists(db, "tasks")
         ):
             task_memory_sql = f"""
                 select events.id, events.status, events.reply_task_id,
                        tasks.channel, tasks.conversation_title,
                        events.updated_at, events.error
-                from task_memory_write_events as events
+                from ({TASK_MEMORY_WRITE_SQL}) as events
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id
                 where lower(events.status)='failed'
                 order by events.updated_at desc, events.id desc
@@ -3753,7 +3817,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "error": str(row["error"] or ""),
                     }
                 )
-        if _sqlite_table_exists(db, "errors"):
+        if _sqlite_table_exists(db, "actions"):
             recovered_statuses = tuple(RECOVERED_REPLY_ATTEMPT_STATUSES)
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)
             for row in db.execute(
@@ -3761,12 +3825,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 select error_event.id, error_event.conversation_id,
                        error_event.message_id, error_event.kind,
                        error_event.detail, error_event.created_at
-                from errors error_event
+                from ({error_projection(unresolved=True)}) error_event
                 where coalesce(error_event.resolved_at, '') = ''
                   and error_event.kind <> 'codex_capacity_pause'
                   and not exists (
                     select 1
-                    from errors newer_error
+                    from ({error_projection(unresolved=True)}) newer_error
                     where newer_error.conversation_id=error_event.conversation_id
                       and coalesce(newer_error.message_id, '')=
                           coalesce(error_event.message_id, '')
@@ -3850,11 +3914,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
         # the error count or appear beside technical failures.
         if send_status != "failed":
             continue
+        if (
+            str(attempt["channel"] or "").casefold() == "email"
+            and str(attempt["action"] or "").casefold() == "direct_unsubscribe"
+        ):
+            continue
         trigger_key = (
             attempt["channel"],
             attempt["conversation_id"],
             attempt["trigger_message_id"],
         )
+        # Failed direct unsubscribe tasks have their own History and
+        # retry/reconciliation surfaces; their linked Attempt must not re-add
+        # the same business action to manager Attention.
+        if trigger_key in failed_unsubscribe_triggers:
+            continue
         if send_status == "failed" and trigger_key in active_reply_task_triggers:
             continue
         rows.append(
@@ -3945,8 +4019,7 @@ def _queue_status_counts(
     table: str,
     status_column: str,
 ) -> dict[str, int]:
-    table = (f"({task12_projection(table, include_rowid=True)})"
-             if table == "email_agent_classification_tasks" else table)
+    table = _queue_relation(table)
     rows = db.execute(
         f"""
         select lower(coalesce({status_column}, '')) as status, count(*) as count
@@ -3978,7 +4051,7 @@ def _queue_retryable_count(
         row = db.execute(
             f"""
             select count(*) as count
-            from {table}
+            from {_queue_relation(table)}
             where lower({status_column})='failed'
               and ({code_predicate})
             """,
@@ -3989,8 +4062,7 @@ def _queue_retryable_count(
 
 
 def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:
-    table = (f"({task12_projection(table, include_rowid=True)})"
-             if table == "email_agent_classification_tasks" else table)
+    table = _queue_relation(table)
     row = db.execute(
         f"select {column} as value from {table} order by {column} desc limit 1"
     ).fetchone()
@@ -4003,24 +4075,31 @@ def _queue_latest_error(
     status_column: str,
     error_column: str,
 ) -> str:
-    columns = _sqlite_table_columns(db, table)
-    table = (f"({task12_projection(table, include_rowid=True)})"
-             if table == "email_agent_classification_tasks" else table)
+    tie_column = "task_id" if table == "email_agent_classification_tasks" else "id"
+    table = _queue_relation(table)
     order_sql = "updated_at desc"
-    if "id" in columns:
-        order_sql += ", id desc"
+    order_sql += f", {tie_column} desc"
     row = db.execute(
         f"""
         select {error_column} as value
         from {table}
-        where rowid in (
-            select rowid from {table} where lower({status_column})='failed'
-        ) and trim(coalesce({error_column}, ''))<>''
+        where lower({status_column})='failed'
+          and trim(coalesce({error_column}, ''))<>''
         order by {order_sql}
         limit 1
         """
     ).fetchone()
     return "" if row is None else str(row["value"] or "")
+
+
+def _queue_relation(table: str) -> str:
+    if table == "email_agent_classification_tasks":
+        return f"({task12_projection(table, include_rowid=True)})"
+    if table in SYNC_ACTION_PROJECTIONS:
+        return f"({SYNC_ACTION_PROJECTIONS[table]})"
+    if table in ("meeting_memory_write_events", "task_memory_write_events", "wechat_deliveries"):
+        return f"({task_delivery_projection(table)})"
+    return table
 
 
 def _sqlite_table_columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -7665,7 +7744,6 @@ def _task_project_search_values(project, todos) -> list[str]:
         project.blocker,
         project.next_step,
         project.source_conversations_json,
-        project.memory_context_json,
     ]
     for todo in todos:
         values.extend(
@@ -7768,7 +7846,6 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
             if draft_rows
             else ""
         )
-        + f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
     )
     return (
         200,
@@ -10295,6 +10372,21 @@ def create_audit_app(
                 audit_email_store = EmailStore(db_path, validate_rows=False)
             return audit_email_store
 
+    audit_email_source_reader = None
+
+    def get_audit_email_source_reader():
+        nonlocal audit_email_source_reader
+        from app.email_source_reader import build_email_source_reader
+        from app.config import effective_env_values
+
+        store = get_audit_email_store()
+        with audit_email_store_lock:
+            if audit_email_source_reader is None:
+                audit_email_source_reader = build_email_source_reader(
+                    store, environment_factory=effective_env_values,
+                )
+            return audit_email_source_reader
+
     from app.workbench.api import register_workbench_routes
     from app.workbench.executor import WorkbenchExecutor
     from app.workbench.runtime import RuntimeRegistry
@@ -10544,6 +10636,7 @@ def create_audit_app(
 
     if email_learning_factory is None:
         from app.email_classifier_learning import EmailClassifierLearningService
+        from app.email_selected_training_reader import EmailSelectedTrainingReader
         from app.email_model_registry import EmailModelRegistry
 
         email_model_root = db_path.parent / "email-models"
@@ -10556,6 +10649,9 @@ def create_audit_app(
                     get_audit_email_store(),
                     registry=EmailModelRegistry(email_model_root),
                     retrain_state_path=email_model_root / "retrain-state.json",
+                    selected_training_reader=EmailSelectedTrainingReader(
+                        get_audit_email_store(), source_reader=get_audit_email_source_reader(),
+                    ),
                 )
             return email_learning_service
 
@@ -10578,6 +10674,7 @@ def create_audit_app(
         history_chart_factory=render_history_chart,
         email_store_factory=get_audit_email_store,
         email_learning_factory=email_learning_factory,
+        email_source_reader_factory=get_audit_email_source_reader,
         dws_factory=lambda: DwsClient(
             ding_robot_code=ding_robot_code,
             ding_robot_name=ding_robot_name,

@@ -2,13 +2,17 @@
 
 Unproven, small, or unrelated legacy rows remain in the existing history store;
 they are not converted into candidates or default-attention signals. Existing
-links make retries idempotent. Imported semantic truth is never inferred from
+owner mappings make retries idempotent. Imported semantic truth is never inferred from
 an old Project title or an Agent-created DingTalk TODO mirror.
 """
 
 from __future__ import annotations
+from app.provenance_storage import signal_projection
 from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_legacy_owner_storage import read_import_task, assign_import_task
 from app.task20_definitions import task20_projection
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS, sync_action_projection
+from app.action_business_definitions import business_action_projection
 
 import hashlib
 import json
@@ -31,10 +35,10 @@ from app.task_semantic_service import (
 WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 LEGACY_TABLES = ("work_projects", "work_todos", "work_updates")
 LegacyKind = Literal["work_projects", "work_todos", "work_updates"]
-Disposition = Literal["formal_task", "official_project_match", "history_only"]
+Disposition = Literal["formal_task", "history_only"]
 
 
 @dataclass(frozen=True)
@@ -47,7 +51,6 @@ class LegacyImportItem:
     source_digest: str
     evidence_refs: tuple[str, ...]
     semantic_task: dict[str, object] | None
-    official_project_registry_key: str
     reason: str
 
 
@@ -65,7 +68,6 @@ class ImportApplyResult:
     created: int
     skipped: int
     formal_tasks: int
-    official_project_matches: int
     history_only: int
 
 
@@ -104,9 +106,37 @@ def _rows(db: sqlite3.Connection, table: str) -> list[dict[str, object]]:
     if table in registry:
         sql = BUSINESS_PROJECTIONS[registry[table]]
         return [dict(row) for row in db.execute(f"select * from ({sql}) order by id")]
+    if table in ("work_projects", "work_todos"):
+        kind = "work_project" if table == "work_projects" else "work_todo"
+        return [dict(row) for row in db.execute(
+            f"select * from ({BUSINESS_PROJECTIONS[kind]}) order by id"
+        )]
+    if table == "work_updates":
+        return [dict(row) for row in db.execute(
+            f"select * from ({SYNC_ACTION_PROJECTIONS['work_updates']}) order by id"
+        )]
     if table not in LEGACY_TABLES:
         raise ValueError("unsupported import source table")
     return [dict(row) for row in db.execute(f"select * from {table} order by id")]
+
+
+def _source_row(db: sqlite3.Connection, table: LegacyKind, row_id: int) -> dict[str, object] | None:
+    projections = {
+        "work_projects": BUSINESS_PROJECTIONS["work_project"],
+        "work_todos": BUSINESS_PROJECTIONS["work_todo"],
+        "work_updates": sync_action_projection("work_updates", indexed_public_id=True),
+    }
+    if table not in projections:
+        raise ValueError("unsupported import source table")
+    # The source WorkUpdate projection's ordered scan materializes generated
+    # REAL values with their JSON storage class. Keep that exact digest shape
+    # after the indexed point predicate by using the same SQLite sort path.
+    ordering = "(select 1)" if table == "work_updates" else "id"
+    row = db.execute(
+        f"select * from ({projections[table]}) where id=? order by {ordering}",
+        (row_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def _table_exists(db: sqlite3.Connection, table: str) -> bool:
@@ -259,28 +289,17 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
     todos_by_project: dict[int, list[int]] = {}
     for todo in todos:
         todos_by_project.setdefault(int(todo["project_id"]), []).append(int(todo["id"]))
-    official = {
-        str(row["anchor_ref"]): int(row["project_id"])
-        for row in db.execute(
-            "select anchor.anchor_ref, project.id as project_id "
-            f'from ({BUSINESS_PROJECTIONS["project"]}) as project '
-            f'join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=project.canonical_anchor_id '
-            "where anchor.anchor_type='project' and anchor.active=1"
-        )
-    } if _table_exists(db, "business") else {}
     items: list[LegacyImportItem] = []
     for project in projects:
         project_id = int(project["id"])
-        key = str(_json_object(project["memory_context_json"]).get("official_project_registry_key") or "")
-        matched = bool(key and key in official)
         items.append(LegacyImportItem(
             legacy_kind="work_projects", legacy_row_id=project_id,
             legacy_project_id=project_id,
             legacy_todo_ids=tuple(todos_by_project.get(project_id, ())),
-            disposition="official_project_match" if matched else "history_only",
+            disposition="history_only",
             source_digest=_digest(project), evidence_refs=(f"work_projects:{project_id}",),
-            semantic_task=None, official_project_registry_key=key if matched else "",
-            reason="exact registered Project key" if matched else "legacy Project has no confirmed registry key",
+            semantic_task=None,
+            reason="legacy Project has no retained registry key",
         ))
     for todo in todos:
         todo_id = int(todo["id"])
@@ -296,7 +315,7 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
             legacy_project_id=int(todo["project_id"]), legacy_todo_ids=(todo_id,),
             disposition="formal_task" if formal else "history_only",
             source_digest=_digest(todo), evidence_refs=refs,
-            semantic_task=task, official_project_registry_key="",
+            semantic_task=task,
             reason=("source-backed formal Task basis" if formal else
                     "source input unavailable after compaction" if source_unavailable
                     else "no confirmed formal Task; retain only in legacy history"),
@@ -308,7 +327,7 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
             legacy_project_id=int(update["project_id"]), legacy_todo_ids=(),
             disposition="history_only", source_digest=_digest(update),
             evidence_refs=(f"{update['source_type']}:{update['source_ref']}",),
-            semantic_task=None, official_project_registry_key="",
+            semantic_task=None,
             reason="legacy update retained only in history",
         ))
     recency = {
@@ -374,6 +393,8 @@ def read_task_semantic_import_manifest(path: str | Path) -> TaskSemanticImportMa
         "version", "manifest_id", "database_fingerprint", "created_at", "items"
     } or not isinstance(payload["items"], list):
         raise ValueError("invalid task semantic import manifest")
+    if payload["version"] != MANIFEST_VERSION:
+        raise ValueError("unsupported task semantic import manifest version")
     items = tuple(LegacyImportItem(
         **{**item, "legacy_todo_ids": tuple(item["legacy_todo_ids"]),
            "evidence_refs": tuple(item["evidence_refs"])}
@@ -399,13 +420,6 @@ def _check_manifest(db_path: str | Path, manifest: TaskSemanticImportManifest) -
         expected = _plan_items(db)
     if expected[:len(manifest.items)] != manifest.items:
         raise ValueError("task semantic import manifest source digest or classification mismatch")
-
-
-def _link_column(kind: LegacyKind) -> str:
-    if kind not in LEGACY_TABLES:
-        raise ValueError("unsupported legacy kind")
-    return {"work_projects": "work_project_id", "work_todos": "work_todo_id",
-            "work_updates": "work_update_id"}[kind]
 
 
 def _signal_for_item(item: LegacyImportItem, row: sqlite3.Row) -> SourceSignal:
@@ -436,9 +450,7 @@ def _check_supporting_source(
     details = item.semantic_task
     if item.disposition != "formal_task" or details is None:
         return
-    update = db.execute(
-        "select * from work_updates where id=?", (details["source_update_id"],)
-    ).fetchone()
+    update = _source_row(db, "work_updates", details["source_update_id"])
     source_input = db.execute(
         f"select * from ({WORK_SUMMARY_INPUT_SQL}) "
         "where source_type=? and source_ref=?",
@@ -457,24 +469,16 @@ def _check_supporting_source(
 
 
 def _existing_link_matches(
-    db: sqlite3.Connection, item: LegacyImportItem, existing: sqlite3.Row
+    db: sqlite3.Connection, item: LegacyImportItem, task_id: int
 ) -> bool:
-    if item.disposition == "official_project_match":
-        match = db.execute(
-            f'select project.id from ({BUSINESS_PROJECTIONS["project"]}) as project '
-            f'join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=project.canonical_anchor_id '
-            "where anchor.anchor_type='project' and anchor.active=1 and anchor.anchor_ref=?",
-            (item.official_project_registry_key,),
-        ).fetchone()
-        return match is not None and existing["project_id"] == match["id"]
     if item.disposition == "history_only":
         return False
     details = item.semantic_task
-    if details is None or existing["task_id"] is None:
+    if details is None:
         return False
     task = db.execute(
         f'select stage, formal_basis, title from ({BUSINESS_PROJECTIONS["task"]}) where id=?',
-        (existing["task_id"],),
+        (task_id,),
     ).fetchone()
     if task is None or task["title"] != details["title"]:
         return False
@@ -482,10 +486,10 @@ def _existing_link_matches(
     if task["stage"] != expected_stage or task["formal_basis"] != details["formal_basis"]:
         return False
     evidence = db.execute(
-        "select 1 from business_task_evidence as evidence "
-        "join business_task_signals as signal on signal.id=evidence.signal_id "
+        f"select 1 from ({business_action_projection('business_task_evidence')}) as evidence "
+        f"join ({signal_projection()}) as signal on signal.id=evidence.signal_id "
         "where evidence.task_id=? and signal.dedupe_key=? limit 1",
-        (existing["task_id"],
+        (task_id,
          f"legacy:{item.legacy_kind}:{item.legacy_row_id}:{item.source_digest}"),
     ).fetchone()
     return evidence is not None
@@ -500,44 +504,25 @@ def apply_task_semantic_import_manifest(
     _check_manifest(db_path, manifest)  # All source/manifest checks precede any write.
     store = AutoReplyStore(db_path)
     service = TaskSemanticService(store)
-    created = skipped = formal = matches = history_only = 0
+    created = skipped = formal = history_only = 0
     for item in manifest.items[:limit]:
-        column = _link_column(item.legacy_kind)
         with store.business_task_transaction() as db:
-            current = db.execute(
-                f"select * from {item.legacy_kind} where id=?", (item.legacy_row_id,)
-            ).fetchone()
-            if current is None or _digest(dict(current)) != item.source_digest:
+            current = _source_row(db, item.legacy_kind, item.legacy_row_id)
+            if current is None or _digest(current) != item.source_digest:
                 raise ValueError("task semantic import source digest mismatch")
             _check_supporting_source(db, item)
-            existing = db.execute(
-                f"select * from business_legacy_links where {column}=?",
-                (item.legacy_row_id,),
-            ).fetchone()
-            if existing is not None:
-                if not _existing_link_matches(db, item, existing):
-                    raise ValueError("task semantic import conflicting legacy link")
-                skipped += 1
-                continue
             if item.disposition == "history_only":
                 # Legacy history is already served by the explicit history
                 # route. Do not create a semantic signal/task for it.
                 history_only += 1
                 continue
-            endpoint: str
-            endpoint_id: int
-            if item.disposition == "official_project_match":
-                row = db.execute(
-                    f'select project.id from ({BUSINESS_PROJECTIONS["project"]}) as project '
-                    f'join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=project.canonical_anchor_id '
-                    "where anchor.anchor_type='project' and anchor.active=1 and anchor.anchor_ref=?",
-                    (item.official_project_registry_key,),
-                ).fetchone()
-                if row is None:
-                    raise ValueError("official Project registry match disappeared")
-                endpoint, endpoint_id = "project_id", int(row["id"])
-                matches += 1
-            elif item.disposition == "formal_task":
+            if item.disposition == "formal_task":
+                task_id = read_import_task(db, item.legacy_row_id)
+                if task_id is not None:
+                    if not _existing_link_matches(db, item, task_id):
+                        raise ValueError("task semantic import conflicting legacy link")
+                    skipped += 1
+                    continue
                 details = item.semantic_task
                 if details is None:
                     raise ValueError("formal import requires Task evidence")
@@ -556,16 +541,12 @@ def apply_task_semantic_import_manifest(
                         "source_ref": signal.source_ref, "excerpt": details["owner_excerpt"]
                     }),
                 ), _db=db)
-                endpoint, endpoint_id = "task_id", result.task_id
+                assign_import_task(db, item.legacy_row_id, result.task_id)
                 formal += 1
             else:
                 raise ValueError("unsupported import disposition")
-            db.execute(
-                f"insert into business_legacy_links ({endpoint}, {column}) values (?, ?)",
-                (endpoint_id, item.legacy_row_id),
-            )
             created += 1
     return ImportApplyResult(
         created=created, skipped=skipped, formal_tasks=formal,
-        official_project_matches=matches, history_only=history_only,
+        history_only=history_only,
     )

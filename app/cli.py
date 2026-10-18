@@ -100,11 +100,6 @@ from app.task_agent import (
     TaskDecisionRepairExhausted,
     process_work_item,
 )
-from app.task_memory_backfill import (
-    ProjectMemoryContextCodexRunner,
-    validate_project_memory_context,
-)
-from app.task_models import ProjectMemoryContext
 from app.task_noise_backfill import (
     RoutineProcessBackfillResult,
     backfill_routine_process_todos,
@@ -366,7 +361,6 @@ def build_parser() -> argparse.ArgumentParser:
         "retry-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
-        "backfill-task-memory-context",
         "backfill-routine-process-todos",
         "backfill-todo-owner-ids",
         "backfill-todo-deadlines",
@@ -2082,54 +2076,6 @@ def _work_summary_retry_available_at(
     return (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
-
-
-def backfill_task_memory_context_command(settings: WorkerSettings) -> int:
-    store = AutoReplyStore(settings.db_path)
-    limit = 20 if settings.max_batches is None else settings.max_batches
-    runner = ProjectMemoryContextCodexRunner(
-        workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-        store=store,
-    )
-    updated = 0
-    failed = 0
-    for project in store.list_work_projects_missing_memory_context(limit=limit):
-        try:
-            context = ProjectMemoryContext.model_validate(
-                runner.build(
-                    project=project,
-                    todos=store.list_work_todos(project_id=project.id),
-                    updates=store.list_work_updates(project.id),
-                )
-            )
-            validate_project_memory_context(
-                context,
-                getattr(runner, "last_audit_tool_events", None),
-            )
-            store.update_work_project_memory_context(
-                project.id,
-                json.dumps(
-                    context.model_dump(mode="json"),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-            )
-            updated += 1
-        except Exception as exc:
-            failed += 1
-            store.record_error(
-                None,
-                None,
-                "task_memory_backfill",
-                f"project_id={project.id}: {exc}",
-            )
-    print(
-        f"backfill-task-memory-context updated={updated} failed={failed}",
-        flush=True,
-    )
-    return updated
 
 
 def _print_routine_process_backfill_result(
@@ -5145,9 +5091,6 @@ def main() -> None:
             reason=args.reason,
             max_retries=args.max_retries,
         )
-    elif args.command == "backfill-task-memory-context":
-        initialize_agent_runtime_routes(settings)
-        backfill_task_memory_context_command(settings)
     elif args.command == "backfill-routine-process-todos":
         backfill_routine_process_todos_command(
             settings,
@@ -5245,7 +5188,7 @@ def main() -> None:
             restart=_default_start,
             verification=lambda: verify_imports(_repo_root()),
             health=wait_for_health,
-            database_publication=lambda: prepare_database_schema_release(_repo_root(), settings.db_path),
+            database_publication=lambda backup: prepare_database_schema_release(_repo_root(), settings.db_path, recovery_source_path=backup),
         ).execute(operation)
         print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "repair-task-projects-plan":
@@ -5286,7 +5229,7 @@ def main() -> None:
         manifest = build_task_semantic_import_manifest(settings.db_path, limit=args.limit)
         write_task_semantic_import_manifest(manifest, _expand_path_arg(args.output))
         counts = {name: sum(item.disposition == name for item in manifest.items) for name in (
-            "formal_task", "official_project_match", "history_only"
+            "formal_task", "history_only"
         )}
         print(json.dumps({"manifest_id": manifest.manifest_id, "items": len(manifest.items),
                           **counts}, ensure_ascii=False, sort_keys=True))

@@ -1,0 +1,9 @@
+# Remaining Business-family source metadata, 2026-10-17
+
+Planning only while sole Feedback caller author executes focused tests. Originalproduction thirteen-family metadata in `superpowers/specs/2026-10-17-business-residual-source-metadata.json` was captured with mode=ro/query_only, one read transaction, schema/counts/counters only. No body values, source write, migration or new fields.
+
+All108actualfields exactly match original approved CSV field names: no extra/missing names. Three targetBusiness sourcefamilies are AttentionItems16fields/11rows, ProjectCandidates8/10, WechatMemoryCandidates22/0. Ten targetActions sourcefamilies are AttentionEvents8/20, AttentionProposalTasks3/22, AttentionTasks3/22, ProjectEvidence3/44, TaskAnchorLinks8/99, TaskDateEvidence10/0, TaskEvidence4/975, TaskRelations7/0, TaskSignals13/918, WorkClusterTasks3/16. Counts change as service operates.
+
+These are ORIGINAL production declarations. They must not be treated as post-paired-conversion source fingerprints: existing Business conversion rewrites native Business FK endpoints. Future Feedback fourteen-family copy draft now captures exact post-target declarations for all thirteen names, before managed temporary removal. That draft is syntax-checked but NOT executed and not an accepted source profile.
+
+TaskSignals source_document_id is an existing NOTNULL native source-document FK. Attention Items and Project Candidates reference signals; their incoming Actions also reference signals. Signals/source-body/provenance cannot be silently merged by dropping this constraint or inventing a generic relation. Later implementation must coordinate approved inline-versus-shared provenance ownership and exact source-version reader boundary; existing native55/current historical-proof130/remaining28 unproved-source bodies remain separate obligations. Metadata alone does not authorize source-body removal. No next runtime implementation started.

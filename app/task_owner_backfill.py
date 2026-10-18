@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 
 
 _OWNER_BACKFILL_SOURCE_TYPE = "todo_owner_backfill"
@@ -142,7 +144,7 @@ def backfill_todo_owner_ids_from_follow_ups(
 
 
 def _candidate_rows(store: AutoReplyStore, *, limit: int | None) -> list:
-    query = """
+    query = f"""
         select
           t.id as todo_id,
           t.project_id as project_id,
@@ -153,8 +155,8 @@ def _candidate_rows(store: AutoReplyStore, *, limit: int | None) -> list:
           max(nullif(trim(coalesce(f.owner_user_id, '')), '')) as owner_user_id,
           max(nullif(trim(coalesce(f.owner_name, '')), '')) as follow_up_owner_name,
           group_concat(f.id) as follow_up_ids
-        from work_todos t
-        join follow_up_drafts f on f.todo_id=t.id
+        from ({BUSINESS_PROJECTIONS['work_todo']}) t
+        join ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) f on f.todo_id=t.id
         where lower(t.status) not in ('done', 'cancelled')
           and trim(coalesce(t.owner_user_id, ''))=''
           and trim(coalesce(f.owner_user_id, ''))<>''

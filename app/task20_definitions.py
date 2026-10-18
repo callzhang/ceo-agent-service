@@ -5,6 +5,7 @@ Caller conversion, allocators and the paired release select these declarations.
 """
 
 from app.action_email_definitions import _encoded_value, _encoded_value_check
+from app.storage_payload import PayloadLayout, TASK_RECORD_TYPES
 
 # Source name, SQLite affinity, NOT NULL, default SQL, authoritative storage.
 TASK20_COLUMNS = {
@@ -532,6 +533,11 @@ TASK20_PAYLOAD_FIELDS = {
     kind: tuple(c[0] for c in columns if c[4] == "payload")
     for kind, columns in TASK20_COLUMNS.items()
 }
+TASK20_LAYOUTS = {
+    kind: PayloadLayout(fields) for kind, fields in TASK20_PAYLOAD_FIELDS.items()
+}
+
+
 TASK20_DEFAULTS = {
     kind: {c[0]: c[3] for c in columns if c[3] is not None}
     for kind, columns in TASK20_COLUMNS.items()
@@ -661,11 +667,9 @@ def _definitions():
     kinds = tuple(TASK20_COLUMNS)
     parts = [
         "id integer primary key autoincrement",
-        "record_type text not null check(record_type in ("
-        + ",".join(map(repr, kinds))
-        + "))",
+        *TASK_RECORD_TYPES.declarations(kinds),
         "legacy_key text",
-        "payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object')",
+        "payload_json blob not null",
         "parent_id integer references tasks(id)",
         "current_input_id integer references tasks(id)",
         "claimed_input_id integer references tasks(id)",
@@ -674,7 +678,7 @@ def _definitions():
     for kind, columns in TASK20_COLUMNS.items():
         for field, affinity, required, default, storage in columns:
             if storage == "payload":
-                value = _encoded_value("payload_json", "$." + field)
+                value = _encoded_value("payload_json", TASK20_LAYOUTS[kind].path(field))
             elif storage == "legacy_key":
                 value = (
                     "legacy_key"
@@ -696,19 +700,13 @@ def _definitions():
                 + " end) virtual"
             )
         payload = TASK20_PAYLOAD_FIELDS[kind]
-        terms = [
-            "json_type(payload_json,'$." + field + "') is not null" for field in payload
-        ]
+        layout = TASK20_LAYOUTS[kind]
+        terms = [layout.shape_sql()]
         terms.extend(
-            _encoded_value_check("payload_json", "$." + field) for field in payload
+            _encoded_value_check("payload_json", layout.path(field)) for field in payload
         )
         terms.extend(
             task20_column(kind, c[0]) + " is not null" for c in columns if c[2]
-        )
-        terms.append(
-            "json_remove(payload_json,"
-            + ",".join(repr("$." + field) for field in payload)
-            + ")='{}'"
         )
         terms.extend(_checks(kind))
         if kind in TASK20_NEW_KINDS:
@@ -921,7 +919,7 @@ def _definitions():
     return (
         "create table tasks(" + ",".join(parts + constraints) + ")",
         tuple(indexes),
-        tuple(triggers),
+        tuple(TASK_RECORD_TYPES.trigger_sql(sql) for sql in triggers),
     )
 
 
@@ -958,7 +956,11 @@ def task20_projection(kind):
     result = []
     for field in TASK20_FIELDS[kind]:
         value = task20_column(kind, field)
-        if kind == "reply_task_inputs" and field == "reply_task_id":
+        if kind == "reply_tasks" and field == "id":
+            # Match the existing numeric identity index directly. Keep the
+            # public key's NULL semantics instead of substituting physical ID.
+            value = "cast(legacy_key as integer)"
+        elif kind == "reply_task_inputs" and field == "reply_task_id":
             value = "(select cast(p.legacy_key as integer) from tasks p where p.id=tasks.parent_id)"
         elif kind == "workbench_turns" and field == "task_id":
             value = "(select p.legacy_key from tasks p where p.id=tasks.parent_id)"
@@ -972,7 +974,12 @@ def task20_projection(kind):
                 + ")"
             )
         result.append(value + " as " + _quote(field))
+    scope = "record_type=" + repr(kind)
+    if kind == "reply_tasks":
+        # SQLite does not infer this partial-index predicate from equality.
+        # The declared numeric identity index uses this same finite scope.
+        scope += " and record_type not in (" + ",".join(map(repr, TASK20_TEXT_PUBLIC_KINDS)) + ")"
     return task20_source_projection(
         kind,
-        "select " + ",".join(result) + " from tasks where record_type=" + repr(kind),
+        "select " + ",".join(result) + " from tasks where " + scope,
     )

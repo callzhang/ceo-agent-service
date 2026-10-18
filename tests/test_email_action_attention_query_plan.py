@@ -43,8 +43,11 @@ def test_attention_selects_failed_action_ids_before_loading_classifications(
             assert len(db.execute(query).fetchall()) == 2
         finally:
             db.set_progress_handler(None, 0)
-    assert any("idx_actions_email_public_key (record_type=?)" in step for step in plan), plan
-    assert not any(step.startswith("SCAN c") for step in plan), plan
+    assert any("SEARCH a USING INDEX " in step and "(record_type=?)" in step
+               for step in plan), plan
+    assert any("SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 "
+               "(classification_id=?)" in step for step in plan), plan
+    assert not any(step.startswith("SCAN main.emails") for step in plan), plan
     assert steps < 300_000
 
 

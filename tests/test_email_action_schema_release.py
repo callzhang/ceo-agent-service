@@ -4,6 +4,8 @@ from contextlib import closing
 from pathlib import Path
 import json
 import sqlite3
+import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +14,12 @@ from app import action_email_storage as email_storage
 from app import action_storage as storage
 from app import business_schema_release as business_module
 from app.business_schema_release import _recreate_source, capture_business_source
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_candidate_definitions import SOURCE_PROFILES as BUSINESS_CANDIDATE_SOURCE_PROFILES
+from app.action_error_storage import SOURCE_TABLE_SQL as ERROR_SOURCE_SQL, SOURCE_INDEX_SQL as ERROR_INDEX_SQL
+from app.action_feedback_storage import SOURCE_SQL as FEEDBACK_SOURCE_SQL, SOURCE_INDEX_SQL as FEEDBACK_INDEX_SQL, SOURCE_TRIGGER_SQL as FEEDBACK_TRIGGER_SQL
+from app.action_feedback_definitions import FEEDBACK_KINDS
+from app.confirmation_schema_release import capture_confirmation_source
 from app.business_storage import insert_business
 from app.email_current_schema import (
     create_current_email_migration_ledger,
@@ -27,6 +35,8 @@ from app.state_schema_release import (SOURCE_TABLES as STATE_SOURCE_TABLES,
     capture_state_source, state_schema_is_current)
 from app.state_definitions import state_projection
 from app.state_storage import insert_state, update_state_rows
+from app.task20_schema_release import capture_task20_source
+from app.runs11_schema_release import capture_run11_source
 from app.run_storage import create_run_schema
 from app.configs_schema_transfer import SOURCE_TABLES as CONFIG_SOURCE_TABLES
 from tests.configs_source_fixtures import capture as config_capture
@@ -42,13 +52,74 @@ ROOT = Path(__file__).resolve().parents[1]
 BUSINESS_FRESH_DECLARATIONS = (
     Path(__file__).parent / "fixtures/business_four_kind_fresh_declarations.json"
 )
+BUSINESS_WORK_PROJECTS_DECLARATIONS = (
+    Path(__file__).parent / "fixtures/business_work_projects_source_declarations.json"
+)
+TASK20_PAIRED_SOURCE = Path(__file__).parent / "fixtures/task20_missing_paired_source_declarations.json"
+FOLLOWUP_SYNC_SOURCE = Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-14-database-redesign-followup-sync-source.json"
+TASK_DELIVERY_SOURCE = ROOT / "docs/superpowers/specs/2026-10-17-task-delivery-source-metadata.json"
+
+
+def _install_later_action_sources(db, variant):
+    frozen = json.loads(TASK_DELIVERY_SOURCE.read_text())[variant]
+    objects = [item for profile in frozen.values() for item in profile["objects"]]
+    for kind in ("table", "index", "trigger"):
+        for object_type, _name, _table, sql in objects:
+            if object_type == kind and sql:
+                db.execute(sql)
+    db.execute(ERROR_SOURCE_SQL[0 if variant == "actual" else 1])
+    for sql in ERROR_INDEX_SQL:
+        db.execute(sql)
+    for name in FEEDBACK_KINDS:
+        if db.execute("select 1 from sqlite_schema where type='table' and name=?", (name,)).fetchone() is None:
+            db.execute(FEEDBACK_SOURCE_SQL[variant][name])
+        for sql in FEEDBACK_INDEX_SQL[name]:
+            index_name = sql.split(" INDEX ", 1)[1].split(" ", 1)[0].split("\n", 1)[0]
+            if db.execute("select 1 from sqlite_schema where type='index' and name=?", (index_name,)).fetchone() is None:
+                db.execute(sql)
+    for sql in FEEDBACK_TRIGGER_SQL:
+        trigger_name = sql.split(" TRIGGER ", 1)[1].split("\n", 1)[0]
+        if db.execute("select 1 from sqlite_schema where type='trigger' and name=?", (trigger_name,)).fetchone() is None:
+            db.execute(sql)
+
+
+def _install_followup_sync_sources(db, variant):
+    frozen = json.loads(FOLLOWUP_SYNC_SOURCE.read_text())
+    source = (frozen["actual"] if variant == "actual" else
+              frozen["fresh_production_constructor"]["snapshot"])
+    # These six sources are outside Business's retained child family. The
+    # other four typed children are installed by _recreate_source above.
+    for name in (
+        "work_updates", "follow_up_drafts", "follow_up_send_attempts",
+        "business_task_follow_up_send_attempts", "task_todo_sync_outbox",
+        "work_todo_dingtalk_links",
+    ):
+        definition = source["tables"][name]
+        db.execute(definition["sql"])
+        for index in reversed(definition["indexes"]):
+            if index["sql"] is not None:
+                db.execute(index["sql"])
+
+
+def _install_task20_paired_source(db):
+    objects = json.loads(TASK20_PAIRED_SOURCE.read_text())["objects"]
+    for object_type, _name, sql in objects:
+        if object_type == "table" and sql and "virtual table" not in sql.lower():
+            db.execute(sql)
+    for object_type, _name, sql in objects:
+        if object_type == "table" and sql and "virtual table" in sql.lower():
+            db.execute(sql)
+    for kind in ("index", "trigger"):
+        for object_type, _name, sql in objects:
+            if object_type == kind and sql:
+                db.execute(sql)
 
 
 @pytest.fixture(params=("actual", "fresh_candidate"))
 def source(tmp_path, request):
     path = tmp_path / "paired.sqlite3"
     with closing(sqlite3.connect(path)) as db:
-        db.execute("create table tasks(id integer primary key,record_type text)")
+        _install_task20_paired_source(db)
         create_run_schema(db, include_workbench=True)
         create_current_email_non_action_schema(db)
         config_variant = "actual" if request.param == "actual" else "fresh"
@@ -126,6 +197,13 @@ def source(tmp_path, request):
             classification_source
         ) values(11,'account','INBOX',1,1,'message',0.5,0.1,'{}','model',
                  'config','pending_feedback','model')""")
+        db.execute("""insert into email_messages(
+            account_id,stable_message_identity,folder,uidvalidity,uid,
+            rfc_message_id,in_reply_to,references_json,thread_identity,sender,
+            recipients_json,subject,normalized_text,preview,
+            attachment_metadata_json,received_at,created_at,updated_at
+        ) values('account','message','INBOX',1,1,'','','[]','','',
+                 '[]','','','','[]','','','')""")
         for kind, values in _cases().items():
             db.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
                        tuple(values.values()))
@@ -140,7 +218,24 @@ def source(tmp_path, request):
                     db.execute(index["sql"])
             for trigger in definition["triggers"]:
                 db.execute(trigger["sql"])
-        _recreate_source(db, json.loads(BUSINESS_FRESH_DECLARATIONS.read_text()))
+        business_source = json.loads(BUSINESS_FRESH_DECLARATIONS.read_text())
+        business_source["parents"].update(
+            json.loads(BUSINESS_WORK_PROJECTS_DECLARATIONS.read_text())[
+                "fresh"
+            ]["parents"]
+        )
+        _recreate_source(db, business_source)
+        attention_events = BUSINESS_CANDIDATE_SOURCE_PROFILES["fresh"]["business_attention_events"]
+        db.execute(attention_events["sql"])
+        for sql in (*attention_events["indexes"], *attention_events["triggers"]):
+            db.execute(sql)
+        # Business parents/children in this synthetic source use the frozen
+        # fresh declarations in both Email variants; keep this third native
+        # candidate in that same Business source variant.
+        wechat = BUSINESS_CANDIDATE_SOURCE_PROFILES["fresh"]["wechat_memory_candidates"]
+        db.execute(wechat["sql"])
+        for sql in (*wechat["indexes"], *wechat["triggers"]):
+            db.execute(sql)
         db.execute(
             "insert into business_tasks(id,title,stage) "
             "values(-11,'paired source task','candidate')"
@@ -157,6 +252,33 @@ def source(tmp_path, request):
             "insert into business_project_context_revisions("
             "id,project_id,context_json,evidence_json) values(-16,-15,'{}','[]')"
         )
+        db.execute(
+            "insert into service_bugfix_candidates("
+            "id,feedback_event_key,feedback_token,attempt_id,title,reason,feedback_comment) "
+            "values(-17,'paired-event','paired-token',7,'paired candidate','reason','comment')"
+        )
+        db.execute(
+            "insert into business_work_clusters(id,title) values(-18,'paired cluster')"
+        )
+        db.execute(
+            "insert into todo_evidence_candidates(id,project_id,todo_id,source_type,source_ref,"
+            "evidence_text,reason,confidence,status,work_summary_input_id,decision_json,"
+            "dedupe_key) values(-19,-15,-11,'minutes','paired-source','evidence','reason',"
+            "0.75,'accepted',12,'{}','paired-dedupe')"
+        )
+        db.execute(
+            "insert into work_projects(id,title,memory_context_json) "
+            "values(-20,'paired work project','{\"query\":\"cache\"}')"
+        )
+        db.execute(
+            "insert into work_todos(id,project_id,title,status,completed_at,"
+            "completion_evidence_json) values(-20,-20,'paired work todo','done',"
+            "'2026-10-01T00:00:00+00:00','{\"source\":\"receipt:20\"}')"
+        )
+        _install_followup_sync_sources(
+            db, "actual" if request.param == "actual" else "fresh"
+        )
+        _install_later_action_sources(db, "actual" if request.param == "actual" else "fresh")
         assert capture_business_source(db)["variant"] == "fresh"
         db.commit()
     return path
@@ -170,6 +292,150 @@ def source_with_business(source):
 def _prepare(path):
     return release_module.prepare_action_email_schema_release(
         ROOT, path, target_store_version=TARGET_STORE, target_email_version=TARGET_EMAIL)
+
+
+def test_paired_initializer_budget_covers_measured_child_and_transports_all_inverse_metadata(monkeypatch):
+    # Copy-only profile measured 412.570 seconds for the whole child. A clocked
+    # double tests the transport deadline without making this test sleep.
+    release = SimpleNamespace(
+        root=ROOT, database_path=ROOT / "synthetic-unused.sqlite",
+        original_version=("source", "stamp"), versions=((51, "stamp"),),
+        source_schema={}, source_fk=(), target_store_version="target",
+        target_email_version=52, source_bindings={}, recovery_source_path=None,
+    )
+    monkeypatch.setattr(release_module, "_inverse_metadata", lambda _source: {})
+    names = ("FOLLOWUP_SYNC", "TASK_DELIVERY", "ERROR", "FEEDBACK",
+             "BUSINESS_CANDIDATES", "BUSINESS_ACTIONS", "EMAIL_HISTORY",
+             "EMAIL_CANONICAL", "LEGACY_OWNER", "FINAL_ACTIONS")
+    keys = {"ERROR": "errors", "FEEDBACK": "feedback"}
+    values = {keys.get(name, name.lower()): {"source": name} for name in names}
+    seen = []
+
+    def measured_child(arguments, **options):
+        seen.append(options)
+        if options["timeout"] < 412.570:
+            raise subprocess.TimeoutExpired(arguments, options["timeout"])
+        return SimpleNamespace(stdout="".join(
+            f"{name}_INVERSE={json.dumps(values[keys.get(name, name.lower())])}\n" for name in names
+        ))
+
+    monkeypatch.setattr(release_module.subprocess, "run", measured_child)
+    release_module._migrate_pair(release)
+    assert seen[0]["timeout"] == 15 * 60
+    assert seen[0]["check"] and seen[0]["capture_output"]
+    assert {key: release.source_schema[key] for key in values} == values
+
+
+@pytest.mark.parametrize("failure", ("timeout", "child_error"))
+def test_paired_initializer_propagates_real_child_failures(monkeypatch, failure):
+    release = SimpleNamespace(
+        root=ROOT, database_path=ROOT / "synthetic-unused.sqlite",
+        original_version=("source", "stamp"), versions=((51, "stamp"),),
+        source_schema={}, source_fk=(), target_store_version="target",
+        target_email_version=52, source_bindings={}, recovery_source_path=None,
+    )
+    monkeypatch.setattr(release_module, "_inverse_metadata", lambda _source: {})
+
+    def failed_child(arguments, **options):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(arguments, options["timeout"])
+        raise subprocess.CalledProcessError(1, arguments, stderr="failed child")
+
+    monkeypatch.setattr(release_module.subprocess, "run", failed_child)
+    with pytest.raises(subprocess.TimeoutExpired if failure == "timeout"
+                       else subprocess.CalledProcessError):
+        release_module._migrate_pair(release)
+    assert release.source_schema == {}
+
+
+@pytest.mark.parametrize("failure", ("child_error", "timeout"))
+def test_committed_child_inverse_survives_postcommit_failure(monkeypatch, failure):
+    release = SimpleNamespace(
+        root=ROOT, database_path=ROOT / "synthetic-unused.sqlite",
+        original_version=("source", "stamp"), versions=((51, "stamp"),),
+        source_schema={}, source_fk=(), target_store_version="target", target_email_version=52, source_bindings={}, recovery_source_path=None)
+    monkeypatch.setattr(release_module, "_inverse_metadata", lambda _source: {})
+    values = {"followup_sync": {}, "task_delivery": {}, "errors": {}, "feedback": {},
+              "business_candidates": {}, "business_actions": {}, "email_history": {},
+              "email_canonical": {}, "legacy_owner": {"variant": "committed"}, "final_actions": {}}
+    names = {"errors": "ERROR", "feedback": "FEEDBACK"}
+    output = "".join(names.get(key, key.upper()) + "_INVERSE=" + json.dumps(value) + "\n"
+                     for key, value in values.items())
+    run = subprocess.run
+    def child(arguments, **options):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(arguments, options["timeout"], output=output.encode())
+        # A real child emits its committed inverse and then fails validation.
+        return run([arguments[0], "-c", "import sys; sys.stdout.write(" + repr(output)
+                    + "); sys.stdout.flush(); sys.stderr.write('cold-open failed'); sys.exit(7)"], **options)
+    monkeypatch.setattr(release_module.subprocess, "run", child)
+    with pytest.raises(subprocess.TimeoutExpired if failure == "timeout" else subprocess.CalledProcessError) as caught:
+        release_module._migrate_pair(release)
+    assert release.source_schema == values
+    if failure == "child_error":
+        assert caught.value.returncode == 7
+        assert caught.value.stderr == "cold-open failed"
+
+
+def test_child_emits_committed_inverse_before_loaded_validation(monkeypatch, capsys):
+    import io
+    payload = dict(root=str(ROOT), database_path=str(ROOT / "synthetic-unused.sqlite"),
+                   original_version=["source", "stamp"], versions=[[51, "stamp"]],
+                   source_schema={}, source_fk=[], target_store_version="target", target_email_version=52, source_bindings={}, recovery_source_path=None)
+    fields = ("followup_sync", "task_delivery", "errors", "feedback", "business_candidates",
+              "business_actions", "email_history", "email_canonical", "legacy_owner", "final_actions")
+    release = SimpleNamespace(source_schema={name: {"committed": True} for name in fields})
+    def apply(*, on_prepared=None):
+        if on_prepared is not None:
+            on_prepared()
+        raise ValueError("postcommit loaded verification failed")
+    release.apply = apply
+    monkeypatch.setattr(release_module, "ActionEmailSchemaRelease", lambda *args, **kwargs: release)
+    monkeypatch.setattr(release_module.sys, "stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(ValueError, match="postcommit loaded"):
+        release_module._paired_initializer()
+    output = capsys.readouterr().out
+    assert "LEGACY_OWNER_INVERSE=" in output
+    assert len(output.splitlines()) == len(fields)
+
+
+def test_timeout_during_uncommitted_metadata_write_keeps_original_error(monkeypatch):
+    release = SimpleNamespace(
+        root=ROOT, database_path=ROOT / "synthetic-unused.sqlite", original_version=("source", "stamp"),
+        versions=((51, "stamp"),), source_schema={}, source_fk=(), target_store_version="target", target_email_version=52, source_bindings={}, recovery_source_path=None)
+    monkeypatch.setattr(release_module, "_inverse_metadata", lambda _source: {})
+    partial = b'FOLLOWUP_SYNC_INVERSE={}\nTASK_DELIVERY_INVERSE={"source":"\xc3'
+    def timed_out(arguments, **options):
+        raise subprocess.TimeoutExpired(arguments, options["timeout"], output=partial)
+    monkeypatch.setattr(release_module.subprocess, "run", timed_out)
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        release_module._migrate_pair(release)
+    assert caught.value.output == partial
+    assert release.source_schema == {}
+
+
+def test_inverse_transport_precedes_real_commit_and_loaded_failure(source, monkeypatch):
+    # WAL lets an independent observer read the committed source while the
+    # migration owns its schema-write transaction (rollback journal locks it).
+    with closing(sqlite3.connect(source)) as setup:
+        assert setup.execute("pragma journal_mode=wal").fetchone() == ("wal",)
+    release = _prepare(source)
+    transported = []
+    def before_commit():
+        with closing(sqlite3.connect(source)) as observer:
+            assert _markers(observer) == (ORIGINAL_STORE, ORIGINAL_LEDGER)
+        transported.append({key: release.source_schema[key] for _label, key in release_module._PAIR_INVERSE})
+    def loaded_failure():
+        raise ValueError("postcommit verification failed")
+    monkeypatch.setattr(release, "verify_loaded", loaded_failure)
+    with pytest.raises(ValueError, match="postcommit verification failed"):
+        release.apply(on_prepared=before_commit)
+    assert len(transported) == 1
+    with closing(sqlite3.connect(source)) as observer:
+        assert _markers(observer)[0][0] == TARGET_STORE
+    release.rollback()
+    with closing(sqlite3.connect(source)) as observer:
+        assert _markers(observer) == (ORIGINAL_STORE, ORIGINAL_LEDGER)
 
 
 def _markers(db):
@@ -187,7 +453,50 @@ def _fingerprint(path):
                        for kind in email_storage.SOURCE_TABLES
                        if kind in storage.EMAIL_ROWID_TYPES
                        and db.execute("select 1 from sqlite_schema where name=?", (kind,)).fetchone())
-        return tuple(sorted(db.iterdump())), rowids
+        dump = tuple(sorted(
+            statement for statement in db.iterdump()
+            if not statement.startswith('INSERT INTO "codex_session_search_fts_data"')
+        ))
+        fts_content = (
+            tuple(db.execute(
+                "select rowid,title from codex_session_search_fts order by rowid"
+            ))
+            if db.execute(
+                "select 1 from sqlite_schema where name='codex_session_search_fts'"
+            ).fetchone()
+            else None
+        )
+        return dump, rowids, fts_content
+
+
+def _business_work_project_facts(path):
+    with closing(sqlite3.connect(path)) as db:
+        columns = tuple(row[1] for row in db.execute("pragma table_info(work_projects)"))
+        retained = tuple(column for column in columns if column != "memory_context_json")
+        selected = ",".join(f'"{column}"' for column in retained)
+        values = tuple(tuple(row) for row in db.execute(
+            f"select {selected} from work_projects order by rowid"
+        ))
+        types = tuple(tuple(row) for row in db.execute(
+            f"select {','.join(f'typeof(\"{column}\")' for column in retained)} "
+            "from work_projects order by rowid"
+        ))
+        cache = tuple(row[0] for row in db.execute(
+            "select memory_context_json from work_projects order by rowid"
+        )) if "memory_context_json" in columns else ()
+    return retained, values, types, cache
+
+
+def _assert_inverse_except_retired_work_project_cache(path, before, work_projects_before):
+    after = _fingerprint(path)
+    before_dump = tuple(item for item in before[0]
+                        if not item.startswith('INSERT INTO "work_projects"'))
+    after_dump = tuple(item for item in after[0]
+                       if not item.startswith('INSERT INTO "work_projects"'))
+    assert (after_dump, after[1], after[2]) == (before_dump, before[1], before[2])
+    retained, values, types, cache = _business_work_project_facts(path)
+    assert (retained, values, types) == work_projects_before[:3]
+    assert cache == tuple("{}" for _ in cache)
 
 
 def _database_image(path):
@@ -211,11 +520,32 @@ def test_paired_publication_contains_email_and_business(source_with_business):
         assert db.execute(
             "select 1 from sqlite_schema where type='table' and name='business'"
         ).fetchone()
+        assert db.execute("select 1 from sqlite_schema where name in "
+                          "('business_legacy_links','trg_sync_legacy_update_public_id')").fetchone() is None
+        assert "import_task_id" in {row[1] for row in db.execute("pragma table_xinfo(business)")}
         assert not db.execute(
             "select 1 from sqlite_schema where type='table' and name in "
             "('business_tasks','business_projects','business_anchors',"
-            "'business_project_context_revisions')"
+            "'business_project_context_revisions','service_bugfix_candidates',"
+            "'business_work_clusters','todo_evidence_candidates')"
         ).fetchone()
+        assert db.execute(
+            "select feedback_event_key,feedback_token,attempt_id,title,reason,feedback_comment "
+            "from (" + BUSINESS_PROJECTIONS["service_bugfix_candidate"] + ") where id=-17"
+        ).fetchone() == (
+            "paired-event", "paired-token", 7, "paired candidate", "reason", "comment"
+        )
+        assert db.execute(
+            "select id,title from (" + BUSINESS_PROJECTIONS["work_cluster"] + ") where id=-18"
+        ).fetchone() == (-18, "paired cluster")
+        assert db.execute(
+            "select id,project_id,todo_id,source_type,source_ref,evidence_text,reason,"
+            "confidence,status,work_summary_input_id,decision_json,dedupe_key "
+            "from (" + BUSINESS_PROJECTIONS["todo_evidence_candidate"] + ") where id=-19"
+        ).fetchone() == (
+            -19,-15,-11,"minutes","paired-source","evidence","reason",0.75,
+            "accepted",12,"{}","paired-dedupe",
+        )
         assert provider_state_schema_is_current(db)
 
 
@@ -286,10 +616,24 @@ def test_paired_inverse_preserves_new_business_facts_and_original_markers(source
         insert_business(db, "task", {
             "id": 324, "title": "new task", "stage": "candidate",
         })
+        insert_business(db, "service_bugfix_candidate", {
+            "id": 325, "feedback_event_key": "new-paired-event",
+            "title": "new candidate", "reason": "new reason",
+            "feedback_comment": "new comment",
+        })
+        insert_business(db, "todo_evidence_candidate", {
+            "id": 325, "project_id": 322, "todo_id": -11,
+            "source_type": "paired-current", "source_ref": "new-current-candidate",
+            "evidence_text": "new evidence", "reason": "new reason",
+            "confidence": 0.9, "status": "candidate",
+            "work_summary_input_id": 0, "decision_json": "{}",
+            "dedupe_key": "new-paired-dedupe",
+        })
         db.commit()
     release.rollback()
     with closing(sqlite3.connect(source_with_business)) as db:
         assert _markers(db) == (ORIGINAL_STORE, ORIGINAL_LEDGER)
+        assert db.execute("select 1 from sqlite_schema where name='business_legacy_links'").fetchone()
         assert db.execute(
             "select title from business_tasks where id=324"
         ).fetchone() == ("new task",)
@@ -303,6 +647,16 @@ def test_paired_inverse_preserves_new_business_facts_and_original_markers(source
         assert db.execute(
             "select anchor_ref from business_anchors where id=321"
         ).fetchone() == ("new",)
+        assert db.execute(
+            "select feedback_event_key,title from service_bugfix_candidates where id=325"
+        ).fetchone() == ("new-paired-event", "new candidate")
+        assert db.execute(
+            "select project_id,todo_id,source_type,source_ref,evidence_text,status,dedupe_key "
+            "from todo_evidence_candidates where id=325"
+        ).fetchone() == (
+            322,-11,"paired-current","new-current-candidate","new evidence","candidate",
+            "new-paired-dedupe",
+        )
         assert db.execute("pragma foreign_key_check").fetchall() == [
             ("unrelated_child", 1, "unrelated_parent", 0)
         ]
@@ -316,6 +670,12 @@ def test_paired_inverse_preserves_new_business_facts_and_original_markers(source
             ("anchor", 321), ("project", 322),
             ("project_context_revision", 323), ("task", 324),
         ]
+        assert set(db.execute(
+            "select record_type,public_id from business where public_id=325"
+        ).fetchall()) == {
+            ("service_bugfix_candidate", 325),
+            ("todo_evidence_candidate", 325),
+        }
 
 
 def test_email_then_business_failure_rolls_back_entire_pair(
@@ -484,6 +844,9 @@ def test_prepare_is_readonly_and_captures_exact_pair_schema_aliases_and_ledger(s
         expected["provider"] = capture_provider_state_source(db)
         expected["configs"] = release_module._project_config_source(db, expected["action_variant"])
         expected["state"] = capture_state_source(db)
+        expected["confirmation"] = capture_confirmation_source(db)
+        expected["tasks"] = capture_task20_source(db)
+        expected["runs11"] = capture_run11_source(db)
         assert release.source_schema == expected
     assert release.source_fk == (("unrelated_child", 1, "unrelated_parent", 0),)
     assert _fingerprint(source) == before
@@ -510,9 +873,25 @@ def test_prepare_refuses_external_native_config_view_without_mutation(source):
     assert _fingerprint(source) == before
 
 
+def test_paired_conversion_refuses_classification_without_message_without_mutation(source):
+    with sqlite3.connect(source) as db:
+        db.execute("""insert into email_classifications(
+            id,account_id,folder,uidvalidity,uid,stable_message_identity,
+            confidence,margin,probabilities_json,model_id,config_version,status,
+            classification_source
+        ) values(12,'account','INBOX',1,99,'class-only',0.5,0.1,'{}','model',
+                 'config','pending_feedback','model')""")
+    release = _prepare(source)
+    before = _fingerprint(source)
+    with pytest.raises(ValueError, match="classification has no canonical message"):
+        release.apply()
+    assert _fingerprint(source) == before
+
+
 def test_publish_commits_both_markers_with_complete_target_then_inverse_is_repeatable(source):
     release = _prepare(source)
     before = _fingerprint(source)
+    work_projects_before = _business_work_project_facts(source)
     release.rollback()  # Unpublished source is already a valid inverse result.
     assert _fingerprint(source) == before
     release.apply()
@@ -525,11 +904,15 @@ def test_publish_commits_both_markers_with_complete_target_then_inverse_is_repea
         assert ledger[-1] == (TARGET_EMAIL, store[1])
         assert storage.action_schema_is_current(db, include_reply=True,
             reply_variant=release.source_schema["action_variant"], include_email=True,
-            include_skill_config_receipts=True)
+            include_skill_config_receipts=True, include_followup_sync=True,
+            include_business_sync=True, include_task_delivery=True,
+            include_errors=True, include_feedback=True,
+            include_business_actions=True, include_email_history=True,
+            canonical_email=True)
         assert not set(email_storage.SOURCE_TABLES).intersection(
             row[0] for row in db.execute("select name from sqlite_schema where type='table'"))
     release.rollback()
-    assert _fingerprint(source) == before
+    _assert_inverse_except_retired_work_project_cache(source, before, work_projects_before)
     release.rollback()
     release.apply()
     release.finalize()
@@ -750,7 +1133,25 @@ def test_active_versions_constructors_select_coupled_target_and_noop_reprepare(t
     assert prepare_database_schema_release(ROOT, path) is None
     with closing(sqlite3.connect(path)) as db:
         assert db.execute("select 1 from sqlite_schema where name='email_action_plans'").fetchone() is None
-        assert storage.action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True, include_skill_config_receipts=True)
+        assert db.execute(
+            "select 1 from sqlite_schema where type='table' and name='business'"
+        ).fetchone() is not None
+        assert db.execute(
+            "select 1 from sqlite_schema where type='table' and name='service_bugfix_candidates'"
+        ).fetchone() is None
+        assert db.execute(
+            "select 1 from sqlite_schema where type='table' and name='business_work_clusters'"
+        ).fetchone() is None
+        assert db.execute(
+            "select count(*) from business where record_type='work_cluster'"
+        ).fetchone() == (0,)
+        assert storage.action_schema_is_current(
+            db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True,
+            include_skill_config_receipts=True, include_followup_sync=True,
+            include_business_sync=True, include_task_delivery=True,
+            include_errors=True, include_feedback=True,
+            include_business_actions=True,
+        )
 
 
 def test_fresh_email_seeds_disabled_categories_for_preexisting_enabled_typed_account(tmp_path):
@@ -789,7 +1190,7 @@ def test_fresh_email_seeds_disabled_categories_for_preexisting_enabled_typed_acc
     ("trigger", "trg_actions_runtime_skill_load_receipts_update"),
 ])
 def test_current_constructor_repairs_only_known_missing_store_objects(
-    tmp_path, object_type, name
+    tmp_path, monkeypatch, object_type, name
 ):
     from app.store import AutoReplyStore
     import app.store as store_module
@@ -797,7 +1198,27 @@ def test_current_constructor_repairs_only_known_missing_store_objects(
 
     path = tmp_path / "known-repair.sqlite3"
     EmailStore(path)
+    original_manifest = AutoReplyStore._schema_manifest_is_current_in_connection
+
+    def assert_retired_source_stays_absent(self, db, *, include_run_snapshots):
+        assert db.execute(
+            "select name from sqlite_schema where name in "
+            "('business_legacy_links','idx_business_legacy_links_task')"
+        ).fetchall() == [], "known-object repair recreated retired Legacy source"
+        return original_manifest(self, db, include_run_snapshots=include_run_snapshots)
+
+    monkeypatch.setattr(
+        AutoReplyStore, "_schema_manifest_is_current_in_connection",
+        assert_retired_source_stays_absent,
+    )
     with closing(sqlite3.connect(path)) as db:
+        if name == "trg_actions_runtime_skill_load_receipts_update":
+            db.execute("begin immediate")
+            insert_business(db, "work_project", {"id": 840001, "title": "retained project"})
+            insert_business(db, "work_todo", {
+                "id": 840002, "project_id": 840001, "title": "retained todo",
+            })
+            db.commit()
         expected = db.execute(
             "select sql from sqlite_schema where type=? and name=?", (object_type, name)
         ).fetchone()[0]
@@ -808,6 +1229,15 @@ def test_current_constructor_repairs_only_known_missing_store_objects(
         assert db.execute(
             "select sql from sqlite_schema where type=? and name=?", (object_type, name)
         ).fetchone() == (expected,)
+        if name == "trg_actions_runtime_skill_load_receipts_update":
+            assert db.execute(
+                "select public_id,import_task_id from business "
+                "where record_type='work_todo' and public_id=840002"
+            ).fetchone() == (840002, None)
+            assert db.execute(
+                "select name from sqlite_schema where name in "
+                "('business_legacy_links','idx_business_legacy_links_task')"
+            ).fetchall() == []
 
 
 @pytest.mark.parametrize("damage", [
@@ -867,25 +1297,25 @@ def test_current_constructor_refuses_occupied_repair_name_before_mutation(tmp_pa
             else:
                 name = ("IDX_SCHEDULES_ENABLED" if damage == "schedule_casefold_owner"
                         else "idx_schedules_enabled")
-                db.execute(f"create index {name} on conversations(conversation_id)")
+                db.execute(f"create index {name} on tasks(id)")
         elif damage == "config_index_wrong_owner":
             db.execute("drop index idx_configs_revision_number")
-            db.execute("create index idx_configs_revision_number on conversations(conversation_id)")
+            db.execute("create index idx_configs_revision_number on tasks(id)")
         elif damage == "config_trigger_wrong_owner":
             db.execute("drop trigger trg_configs_runtime_config_update")
-            db.execute("create trigger trg_configs_runtime_config_update after insert on conversations begin select 1; end")
+            db.execute("create trigger trg_configs_runtime_config_update after insert on tasks begin select 1; end")
         elif damage == "run_index_wrong_owner":
             db.execute("drop index idx_scheduled_task_runs_latest")
-            db.execute("create index idx_scheduled_task_runs_latest on conversations(conversation_id)")
+            db.execute("create index idx_scheduled_task_runs_latest on tasks(id)")
         elif damage == "run_trigger_wrong_owner":
             db.execute("drop trigger trg_runs_workbench_turn_insert")
-            db.execute("create trigger trg_runs_workbench_turn_insert after insert on conversations begin select 1; end")
+            db.execute("create trigger trg_runs_workbench_turn_insert after insert on tasks begin select 1; end")
         elif damage == "action_index_wrong_owner":
             db.execute("drop index idx_actions_skill_export_revision")
-            db.execute("create index idx_actions_skill_export_revision on conversations(conversation_id)")
+            db.execute("create index idx_actions_skill_export_revision on tasks(id)")
         else:
             db.execute("drop trigger trg_actions_runtime_skill_load_receipts_update")
-            db.execute("create trigger trg_actions_runtime_skill_load_receipts_update after insert on conversations begin select 1; end")
+            db.execute("create trigger trg_actions_runtime_skill_load_receipts_update after insert on tasks begin select 1; end")
     before = _database_image(path)
     with closing(sqlite3.connect(path)) as db:
         schema_version_before = db.execute("pragma schema_version").fetchone()[0]
@@ -899,9 +1329,9 @@ def test_current_constructor_refuses_occupied_repair_name_before_mutation(tmp_pa
 
 @pytest.mark.parametrize("kind,name,other_sql", (
     ("index", "idx_schedules_enabled",
-     "create trigger idx_schedules_enabled after insert on conversations begin select 1; end"),
+     "create trigger idx_schedules_enabled after insert on tasks begin select 1; end"),
     ("trigger", "trg_configs_runtime_config_update",
-     "create index trg_configs_runtime_config_update on conversations(conversation_id)"),
+     "create index trg_configs_runtime_config_update on tasks(id)"),
 ))
 def test_current_repair_name_checks_preserve_independent_sqlite_namespaces(
     tmp_path, kind, name, other_sql
@@ -935,9 +1365,12 @@ def test_business_facts_after_prepare_are_converted_instead_of_restoring_capture
         db.execute("update sqlite_sequence set seq=103 where name='email_action_attempts'")
         db.commit()
     before = _fingerprint(source)
+    work_projects_before = _business_work_project_facts(source)
     release.apply()
     release.rollback()
-    assert _fingerprint(source) == before
+    _assert_inverse_except_retired_work_project_cache(
+        source, before, work_projects_before
+    )
 
 
 @pytest.mark.parametrize("target_store,target_email", (
@@ -1052,11 +1485,25 @@ def test_state_marker_blob_timestamp_and_pipe_payload_round_trip(monkeypatch, so
 
     def capture(arguments, **options):
         payloads.append(json.loads(options["input"]))
+        return SimpleNamespace(stdout=(
+            "FOLLOWUP_SYNC_INVERSE={}\n"
+            "TASK_DELIVERY_INVERSE={}\n"
+            "ERROR_INVERSE={}\n"
+            "FEEDBACK_INVERSE={}\n"
+            "BUSINESS_CANDIDATES_INVERSE={}\n"
+            "BUSINESS_ACTIONS_INVERSE={}\n"
+            "EMAIL_HISTORY_INVERSE={}\n"
+            "EMAIL_CANONICAL_INVERSE={}\n"
+            "LEGACY_OWNER_INVERSE={}\n"
+            "FINAL_ACTIONS_INVERSE={}\n"
+        ))
 
     monkeypatch.setattr(release_module.subprocess, "run", capture)
     release_module._migrate_pair(release)
     assert payloads[0]["original_version"][1] == {"t": "blob", "v": stamp.hex()}
     assert payloads[0]["source_schema"]["state"] == release.source_schema["state"]
+    assert release.source_schema["email_canonical"] == {}
+    assert release.source_schema["legacy_owner"] == {}
     release.apply()
     release.rollback()
     with closing(sqlite3.connect(source)) as db:

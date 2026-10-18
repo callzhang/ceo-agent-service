@@ -1,0 +1,462 @@
+{
+  "caller_refs": [
+    "app/task_semantic_import.py:255",
+    "app/task_semantic_import.py:306",
+    "app/task_semantic_import.py:390",
+    "app/task_semantic_import.py:406",
+    "app/task_semantic_import.py:461",
+    "app/task_semantic_import.py:497",
+    "app/task_semantic_import.py:515",
+    "app/task_semantic_import.py:529",
+    "app/task_semantic_import.py:565",
+    "app/cli.py:5236",
+    "app/action_followup_sync_definitions.py:797",
+    "app/action_followup_sync_storage.py:388",
+    "app/business_candidate_definitions.py:209",
+    "app/store.py:2686"
+  ],
+  "fresh_selected12_observation": {
+    "constructor_order": "AutoReplyStore then EmailStore",
+    "inbound_foreign_keys": [],
+    "legacy_object_sql_sha256": {
+      "business_legacy_links": "6a7647d1c15db38c248a59f0f03ea2e59f45bf2981a6f1d39324c4cc216f590d",
+      "idx_business_legacy_links_task": "38e195664acf00fc3cca424f289883d4d2723d6028d2827ad23f2e3137a92def",
+      "trg_sync_legacy_link_parent_insert": "9600609b6d6f59859490b8c3f1fec417217e64a94b39fff9a7499d7beedba67f",
+      "trg_sync_legacy_link_parent_update": "40a78ee010db7b1bde76d50443271950f9e78b4e8830d2c43e1369200790b711"
+    },
+    "ordinary_tables": 12,
+    "owned_temp_removed": true,
+    "sqlite_sequence_row": null
+  },
+  "legacy_declaration": {
+    "columns": [
+      [
+        0,
+        "id",
+        "INTEGER",
+        0,
+        null,
+        1,
+        0
+      ],
+      [
+        1,
+        "signal_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        2,
+        "task_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        3,
+        "cluster_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        4,
+        "anchor_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        5,
+        "project_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        6,
+        "project_candidate_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        7,
+        "attention_item_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        8,
+        "work_project_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        9,
+        "work_todo_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        10,
+        "work_update_id",
+        "INTEGER",
+        0,
+        null,
+        0,
+        0
+      ],
+      [
+        11,
+        "created_at",
+        "TEXT",
+        1,
+        "current_timestamp",
+        0,
+        0
+      ]
+    ],
+    "foreign_keys": [
+      [
+        0,
+        0,
+        "actions",
+        "work_update_id",
+        "id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        1,
+        0,
+        "business",
+        "work_todo_id",
+        "work_todo_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        2,
+        0,
+        "business",
+        "work_project_id",
+        "work_project_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        3,
+        0,
+        "business",
+        "attention_item_id",
+        "attention_item_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        4,
+        0,
+        "business",
+        "project_candidate_id",
+        "project_candidate_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        5,
+        0,
+        "business",
+        "project_id",
+        "project_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        6,
+        0,
+        "business",
+        "anchor_id",
+        "anchor_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        7,
+        0,
+        "business",
+        "cluster_id",
+        "work_cluster_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        8,
+        0,
+        "business",
+        "task_id",
+        "task_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        9,
+        0,
+        "actions",
+        "signal_id",
+        "business_signal_public_id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ]
+    ],
+    "indexes": [
+      {
+        "list": [
+          0,
+          "idx_business_legacy_links_task",
+          0,
+          "c",
+          0
+        ],
+        "xinfo": [
+          [
+            0,
+            2,
+            "task_id",
+            0,
+            "BINARY",
+            1
+          ],
+          [
+            1,
+            0,
+            "id",
+            0,
+            "BINARY",
+            1
+          ],
+          [
+            2,
+            -1,
+            null,
+            0,
+            "BINARY",
+            0
+          ]
+        ]
+      },
+      {
+        "list": [
+          1,
+          "sqlite_autoindex_business_legacy_links_3",
+          1,
+          "u",
+          0
+        ],
+        "xinfo": [
+          [
+            0,
+            10,
+            "work_update_id",
+            0,
+            "BINARY",
+            1
+          ],
+          [
+            1,
+            -1,
+            null,
+            0,
+            "BINARY",
+            0
+          ]
+        ]
+      },
+      {
+        "list": [
+          2,
+          "sqlite_autoindex_business_legacy_links_2",
+          1,
+          "u",
+          0
+        ],
+        "xinfo": [
+          [
+            0,
+            9,
+            "work_todo_id",
+            0,
+            "BINARY",
+            1
+          ],
+          [
+            1,
+            -1,
+            null,
+            0,
+            "BINARY",
+            0
+          ]
+        ]
+      },
+      {
+        "list": [
+          3,
+          "sqlite_autoindex_business_legacy_links_1",
+          1,
+          "u",
+          0
+        ],
+        "xinfo": [
+          [
+            0,
+            8,
+            "work_project_id",
+            0,
+            "BINARY",
+            1
+          ],
+          [
+            1,
+            -1,
+            null,
+            0,
+            "BINARY",
+            0
+          ]
+        ]
+      }
+    ],
+    "objects": [
+      [
+        "index",
+        "idx_business_legacy_links_task",
+        "business_legacy_links",
+        "CREATE INDEX idx_business_legacy_links_task\n                    on business_legacy_links(task_id, id)"
+      ],
+      [
+        "index",
+        "sqlite_autoindex_business_legacy_links_1",
+        "business_legacy_links",
+        null
+      ],
+      [
+        "index",
+        "sqlite_autoindex_business_legacy_links_2",
+        "business_legacy_links",
+        null
+      ],
+      [
+        "index",
+        "sqlite_autoindex_business_legacy_links_3",
+        "business_legacy_links",
+        null
+      ],
+      [
+        "table",
+        "business_legacy_links",
+        "business_legacy_links",
+        "CREATE TABLE business_legacy_links (\n                    id integer primary key autoincrement,\n                    signal_id integer,\n                    task_id integer,\n                    cluster_id integer,\n                    anchor_id integer,\n                    project_id integer,\n                    project_candidate_id integer,\n                    attention_item_id integer,\n                    work_project_id integer unique,\n                    work_todo_id integer unique,\n                    work_update_id integer unique,\n                    created_at text not null default current_timestamp,\n                    check(\n                        (signal_id is not null) + (task_id is not null) + (cluster_id is not null)\n                        + (anchor_id is not null) + (project_id is not null)\n                        + (project_candidate_id is not null) + (attention_item_id is not null) = 1\n                    ),\n                    check(\n                        (work_project_id is not null) + (work_todo_id is not null)\n                        + (work_update_id is not null) = 1\n                    ),\n                    foreign key(signal_id) references actions(business_signal_public_id),\n                    foreign key(task_id) references business(task_public_id),\n                    foreign key(cluster_id) references business(work_cluster_public_id),\n                    foreign key(anchor_id) references business(anchor_public_id),\n                    foreign key(project_id) references business(project_public_id),\n                    foreign key(project_candidate_id) references business(project_candidate_public_id),\n                    foreign key(attention_item_id) references business(attention_item_public_id),\n                    foreign key(work_project_id) references business(work_project_public_id),\n                    foreign key(work_todo_id) references business(work_todo_public_id),\n                    foreign key(work_update_id) references actions(id)\n                )"
+      ],
+      [
+        "trigger",
+        "trg_sync_legacy_link_parent_insert",
+        "business_legacy_links",
+        "CREATE TRIGGER trg_sync_legacy_link_parent_insert after insert on business_legacy_links when new.work_update_id is not null and not exists(select 1 from actions a where a.id=new.work_update_id and a.record_type='work_updates') begin select raise(abort,'work update parent type mismatch'); end"
+      ],
+      [
+        "trigger",
+        "trg_sync_legacy_link_parent_update",
+        "business_legacy_links",
+        "CREATE TRIGGER trg_sync_legacy_link_parent_update after update of work_update_id on business_legacy_links when new.work_update_id is not null and not exists(select 1 from actions a where a.id=new.work_update_id and a.record_type='work_updates') begin select raise(abort,'work update parent type mismatch'); end"
+      ]
+    ]
+  },
+  "not_proved": [
+    "selected12 actual production-copy declaration and rows",
+    "native DML outcome/error code matrix on selected12 complete graph",
+    "post-forward import and inverse after proposed component",
+    "permanent absence of alternate target/source producers",
+    "destination schema or fields"
+  ],
+  "reusable_oracles": [
+    "tests/test_task_semantic_import.py:135",
+    "tests/test_task_semantic_import.py:338",
+    "tests/test_followup_sync_action_inverse.py:163",
+    "tests/test_followup_sync_action_migration.py:192",
+    "tests/test_action_business_storage.py:108",
+    "tests/test_business_candidate_storage.py:145"
+  ],
+  "scope": "Source-only preparation; accepted actual13 intermediate is not a raw production116 or accepted actual12 binding. Fresh selected12 constructor observation only.",
+  "selected12_freeze_pin_counts": {
+    "files": 20,
+    "requirement_pins": 32,
+    "runtime_pins": 373
+  },
+  "selected12_freeze_sha256": "9067d11e97e22b951b9cfb7bbbd11fae155c08c1edd5724ee4e2cf0db85b396f",
+  "source_actual13_intermediate_sha256": "79f04ccf0dcf7fcc7c6c1b903ce82df03f10f0f9bf19f299bc672d4988560eff",
+  "source_constraints": {
+    "autoincrement": "id INTEGER PRIMARY KEY AUTOINCREMENT; sqlite_sequence independent of MAX(id); fresh empty row absent",
+    "created_at": "TEXT NOT NULL DEFAULT current_timestamp",
+    "fk_actions": "NO ACTION on update/delete; immediate",
+    "fk_business": "NO ACTION on update/delete; immediate",
+    "index": "idx_business_legacy_links_task(task_id,id)",
+    "legacy_exactly_one": [
+      "work_project_id",
+      "work_todo_id",
+      "work_update_id"
+    ],
+    "source_unique": [
+      "work_project_id",
+      "work_todo_id",
+      "work_update_id"
+    ],
+    "target_exactly_one": [
+      "signal_id",
+      "task_id",
+      "cluster_id",
+      "anchor_id",
+      "project_id",
+      "project_candidate_id",
+      "attention_item_id"
+    ]
+  },
+  "work_update_public_guard": {
+    "name": "trg_sync_legacy_update_public_id",
+    "sha256": "33bf3777bb6461c9da2465fb8db16c39fdbf2ed2acbb43dbe21a88312b96bee6",
+    "sql": "CREATE TRIGGER trg_sync_legacy_update_public_id before update of legacy_key on actions when old.record_type='work_updates' and new.legacy_key<>old.legacy_key and exists(select 1 from business_legacy_links l where l.work_update_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
+    "table": "actions"
+  }
+}

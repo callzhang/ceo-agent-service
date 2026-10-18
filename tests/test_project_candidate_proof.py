@@ -1,5 +1,6 @@
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
+from app.action_storage import SYNC_ACTION_PROJECTIONS
 
 
 def test_candidate_confirmation_preserves_existing_link_proof_and_confirms_peers(tmp_path):
@@ -21,7 +22,11 @@ def test_candidate_confirmation_preserves_existing_link_proof_and_confirms_peers
     assert peer.status.value == "confirmed" and peer.active
     assert report_source in {link.signal_id for link in store.list_business_task_evidence(tasks[0])}
     with store._connect() as db:
-        before = [tuple(row) for row in db.execute("select * from business_task_events order by id")]
+        before = [tuple(row) for row in db.execute(
+            f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_events']}) order by id"
+        )]
     service.confirm_project_candidate(candidate_id=candidate, project_id=project, evidence_signal_id=report_source)
     with store._connect() as db:
-        assert before == [tuple(row) for row in db.execute("select * from business_task_events order by id")]
+        assert before == [tuple(row) for row in db.execute(
+            f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_events']}) order by id"
+        )]

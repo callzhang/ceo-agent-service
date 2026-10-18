@@ -1,4 +1,5 @@
 import json
+from app.business_source_reader import PreparedSources
 
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
@@ -35,8 +36,9 @@ def test_project_context_without_task_is_retrieved_from_its_own_sources(tmp_path
     signal = store.create_business_task_signal(source_type="meeting", source_ref="meeting:roles", evidence_text="张三总负责交付和验收；王五负责商务和回款。付款日期未确定。", dedupe_key="roles")
     proof = {"signal_id": signal, "source_ref": "meeting:roles", "source_excerpt": "张三总负责交付和验收"}
     current = ProjectContext(goal="完成一期交付", scope="一期", overall_owner={"person_name": "张三", "responsibility": "交付和验收", "evidence": [proof]}, responsibilities=[], facts=[{"key": "payment", "text": "付款日期未确定", "evidence": [{**proof, "source_excerpt": "付款日期未确定"}]}])
+    prepared = PreparedSources.load(store, (signal,))
     with store.business_task_transaction() as db:
-        ProjectContextService(store).apply(project_id=project, context=current, signal_ids=(signal,), db=db)
+        ProjectContextService(store).apply(project_id=project, context=current, signal_ids=(signal,), db=db, prepared_sources=prepared)
     # Context rather than title matches; another project must not displace it.
     noise_anchor = resolver.register_anchor(anchor_type="project", anchor_ref="project:noise", title="无关事项")
     resolver.register_official_project(anchor_id=noise_anchor, registry_source="meeting:noise")
@@ -123,6 +125,7 @@ def test_project_context_uses_bounded_recent_proof_but_keeps_old_role_citation(t
     resolver = BusinessResolutionService(store)
     projects = []
     first = store.create_business_task_signal(source_type="ai_minutes", source_ref="shared#old", evidence_text="一期张三负责总交付；二期李四负责总交付。", dedupe_key="shared")
+    prepared = PreparedSources.load(store, (first,))
     for i in range(2):
         anchor = resolver.register_anchor(anchor_type="project", anchor_ref=f"project:{i}", title=f"{i}期交付")
         project = resolver.register_official_project(anchor_id=anchor, registry_source="shared#old")
@@ -130,7 +133,7 @@ def test_project_context_uses_bounded_recent_proof_but_keeps_old_role_citation(t
         quote = "张三负责总交付" if i == 0 else "李四负责总交付"
         context = ProjectContext(goal="完成交付", scope="一期" if i == 0 else "二期", overall_owner={"person_name": "张三" if i == 0 else "李四", "responsibility": "总交付", "evidence": [{"signal_id": first, "source_ref": "shared#old", "source_excerpt": quote}]}, responsibilities=[], facts=[])
         with store.business_task_transaction() as db:
-            ProjectContextService(store).apply(project_id=project, context=context, signal_ids=(first,), db=db)
+            ProjectContextService(store).apply(project_id=project, context=context, signal_ids=(first,), db=db, prepared_sources=prepared)
             for j in range(5):
                 id = store.create_business_task_signal_in_transaction(source_type="message", source_ref=f"p:{i}:{j}", evidence_text=f"交付进展{i}-{j}", dedupe_key=f"p:{i}:{j}", _db=db)
                 ProjectContextService(store).apply(project_id=project, context=None, signal_ids=(id,), db=db)
@@ -753,13 +756,8 @@ def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path)
     assert candidates[0].project.id == authoritative_project_id
 
 
-def test_render_candidate_prompt_returns_project_context_json(tmp_path):
+def test_render_candidate_prompt_uses_persisted_project_facts_only(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    memory_context = {
-        "query": "售前知识库",
-        "summary": "已确认的售前知识库背景。",
-        "memories": [{"source": "memory_recall", "text": "稳定背景"}],
-    }
     store.create_work_project(
         title="售前知识库建设",
         category="sales",
@@ -774,7 +772,6 @@ def test_render_candidate_prompt_returns_project_context_json(tmp_path):
             [{"description": "材料放在 business/售前知识库", "source": "memory"}],
             ensure_ascii=False,
         ),
-        memory_context_json=json.dumps(memory_context, ensure_ascii=False),
         source_conversations_json=json.dumps(
             [{"id": "cid-1", "title": "售前项目群"}],
             ensure_ascii=False,
@@ -791,7 +788,7 @@ def test_render_candidate_prompt_returns_project_context_json(tmp_path):
     assert payload[0]["category"] == "sales"
     assert payload[0]["title"] == "售前知识库建设"
     assert payload[0]["facts"][0]["source"] == "memory"
-    assert payload[0]["memory_context"] == memory_context
+    assert "memory_context" not in payload[0]
     assert payload[0]["source_conversations"][0]["id"] == "cid-1"
 
 

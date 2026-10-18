@@ -134,7 +134,9 @@ def test_deploy_failure_inverses_schema_before_old_start_and_preserves_receipt(t
         if failure == stage:
             raise RuntimeError(stage + ' failure')
 
-    def prepare():
+    def prepare(recovery_source_path):
+        assert recovery_source_path.exists()
+        assert metadata(recovery_source_path) == initial
         events.append('prepare_schema')
         publication = release(root, path)
         original_publish = publication.publish
@@ -210,7 +212,7 @@ def test_inverse_failure_keeps_new_checkout_stopped_instead_of_old_start(tmp_pat
     events = []
     state = _State()
 
-    def prepare():
+    def prepare(_recovery_source_path):
         publication = release(root, path)
         def inverse():
             raise RuntimeError('inverse failed')
@@ -253,7 +255,7 @@ def test_partial_asset_failure_rolls_back_asset_then_schema_before_old_start(tmp
     initial = metadata(path)
     events = []
 
-    def prepare():
+    def prepare(_recovery_source_path):
         publication = release(root, path)
         inverse = publication.rollback
         def rollback():
@@ -313,7 +315,7 @@ def test_updater_module_entrypoint_uses_same_stopped_schema_release(monkeypatch,
     assert module.main() == 0
     assert captured['stop'] is module._default_stop
     assert captured['restart'] is module._default_start
-    assert captured['database_publication']() == (tmp_path, tmp_path/'db')
+    assert captured['database_publication'](tmp_path / 'verified-backup.sqlite3') == (tmp_path, tmp_path/'db')
 
 
 def test_deploy_partial_bootstrap_can_stop_replacement(monkeypatch, tmp_path):
@@ -368,7 +370,7 @@ def test_cli_updater_uses_existing_schema_state_and_release(monkeypatch, tmp_pat
     cli.main()
     assert captured['stop'] is updater._default_stop
     assert captured['restart'] is updater._default_start
-    assert captured['database_publication']() == (tmp_path, tmp_path/'db')
+    assert captured['database_publication'](tmp_path / 'verified-backup.sqlite3') == (tmp_path, tmp_path/'db')
 
 
 def action_plan_release(tmp_path):

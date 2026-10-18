@@ -4,6 +4,8 @@ from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
 from app.run_storage import insert_run
 from app.task_storage import task_physical_id
+from app.action_storage import _native_payload
+from app.action_error_definitions import error_projection
 
 
 def _attention_error_query(store, monkeypatch):
@@ -18,7 +20,8 @@ def _attention_error_query(store, monkeypatch):
     monkeypatch.setattr(store, "_open_connection", traced_connection)
     with store.read_snapshot():
         _queue_attention_rows(store)
-    return next(sql for sql in statements if "from errors error_event" in sql)
+    return next(sql for sql in statements if "record_type='errors'" in sql
+                and "newer_error" in sql)
 
 
 def test_attention_reads_only_the_unresolved_error_index(tmp_path, monkeypatch):
@@ -27,7 +30,7 @@ def test_attention_reads_only_the_unresolved_error_index(tmp_path, monkeypatch):
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert any(
-        "error_event USING INDEX idx_errors_unresolved" in step for step in plan
+        "USING INDEX idx_actions_errors_unresolved" in step for step in plan
     ), plan
 
 
@@ -37,9 +40,13 @@ def test_resolved_error_history_does_not_consume_attention_query_budget(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     with store._connect() as db:
         db.executemany(
-            "insert into errors (conversation_id,message_id,kind,detail,resolved_at) "
-            "values (?,?,'test','historical resolved incident','2026-10-08 00:00:00')",
-            [(f"cid-{i}", f"msg-{i}") for i in range(5000)],
+            "insert into actions(record_type,legacy_key,payload_json) values('errors',?,?)",
+            [(str(i + 1), _native_payload({
+                "conversation_id": f"cid-{i}", "message_id": f"msg-{i}",
+                "kind": "test", "detail": "historical resolved incident",
+                "created_at": "2026-10-08 00:00:00",
+                "resolved_at": "2026-10-08 00:00:00", "resolution": "",
+            })) for i in range(5000)],
         )
     query = _attention_error_query(store, monkeypatch)
     steps = [0]
@@ -54,7 +61,7 @@ def test_resolved_error_history_does_not_consume_attention_query_budget(
             assert db.execute(query).fetchall() == []
         finally:
             db.set_progress_handler(None, 0)
-        assert db.execute("select count(*) from errors").fetchone()[0] == 5000
+        assert db.execute(f"select count(*) from ({error_projection()})").fetchone()[0] == 5000
 
 
 def test_unresolved_error_index_tracks_new_and_resolved_incidents(tmp_path):

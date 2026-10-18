@@ -230,7 +230,80 @@ def claude_session_path(session_id: str, *, refresh: bool = False) -> Path | Non
     return path if path is not None and path.is_file() else None
 
 
-def read_native_source_body(native_provenance: Mapping[str, object]) -> str:
+class NativeSourceMissing(LookupError):
+    """The recorded native file or line is no longer available."""
+
+
+class NativeSourceVersionChanged(LookupError):
+    """The recorded native line or decoded body no longer matches its check."""
+
+
+def locate_native_source_body(
+    body: str, *, runtime_kind: str, session_uuid: str,
+    start_line: int, end_line: int,
+    literal_encoding_mode: str = "json_string_literal_utf8",
+) -> dict[str, object]:
+    """Locate the existing prompt's full source literal within one native turn.
+
+    The caller supplies actual runtime/session/turn bounds, never an archive
+    destination. source_bundle uses JSON-string serialization; directly injected
+    prompt text requires explicit plain_utf8 selection. Missing content is
+    explicit; no transcript or source copy is made.
+    """
+    if not isinstance(body, str):
+        raise ValueError("native source body must be text")
+    if literal_encoding_mode not in ("json_string_literal_utf8", "plain_utf8"):
+        raise ValueError("unsupported native source literal encoding")
+    if runtime_kind not in ("codex_cli", "claude_cli"):
+        raise ValueError("unsupported native source runtime")
+    if not isinstance(session_uuid, str) or not session_uuid:
+        raise ValueError("native source session UUID is required")
+    if type(start_line) is not int or type(end_line) is not int or start_line < 0 or end_line <= start_line:
+        raise ValueError("invalid native source turn bounds")
+    path = (find_codex_session_path(session_uuid) if runtime_kind == "codex_cli"
+            else claude_session_path(session_uuid))
+    if path is None:
+        raise NativeSourceMissing("native source file unavailable")
+    literal = (json.dumps(body, ensure_ascii=False)
+               if literal_encoding_mode == "json_string_literal_utf8" else body)
+    encoded = body.encode("utf-8")
+
+    def leaves(value, prefix):
+        if isinstance(value, str):
+            yield prefix, value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from leaves(item, [*prefix, key])
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from leaves(item, [*prefix, index])
+
+    with path.open("rb") as stream:
+        for index, raw in enumerate(islice(stream, start_line, end_line), start_line):
+            record = json.loads(raw)
+            for leaf_path, leaf in leaves(record, []):
+                start = leaf.find(literal)
+                if start < 0 or not leaf_path:
+                    continue
+                return {
+                    "runtime_kind": runtime_kind, "session_uuid": session_uuid,
+                    "path": str(path), "line_index_zero_based": index,
+                    "line_number_one_based": index + 1,
+                    "raw_line_sha256": hashlib.sha256(raw).hexdigest(),
+                    "raw_line_bytes": len(raw), "leaf_path": leaf_path,
+                    "substring_start_character_zero_based": start,
+                    "substring_end_character_exclusive": start + len(literal),
+                    "literal_encoding_mode": literal_encoding_mode,
+                    "decoded_utf8_sha256": hashlib.sha256(encoded).hexdigest(),
+                    "decoded_utf8_bytes": len(encoded),
+                }
+    raise NativeSourceMissing("full source literal unavailable in native turn")
+
+
+def read_native_source_body(
+    native_provenance: Mapping[str, object], *,
+    literal_encoding_mode: str = "json_string_literal_utf8",
+) -> str:
     """Read one exact source body from its recorded CLI-owned JSONL version."""
     if not isinstance(native_provenance, Mapping):
         raise ValueError("native source provenance must be a mapping")
@@ -240,7 +313,8 @@ def read_native_source_body(native_provenance: Mapping[str, object]) -> str:
         raise ValueError("unsupported native source runtime")
     if not isinstance(session_id, str) or not session_id:
         raise ValueError("native source session UUID is required")
-    if native_provenance.get("literal_encoding_mode") != "json_string_literal_utf8":
+    if (literal_encoding_mode not in ("json_string_literal_utf8", "plain_utf8")
+            or native_provenance.get("literal_encoding_mode") != literal_encoding_mode):
         raise ValueError("unsupported native source literal encoding")
     for field in (
         "line_index_zero_based",
@@ -267,17 +341,17 @@ def read_native_source_body(native_provenance: Mapping[str, object]) -> str:
     else:
         path = claude_session_path(session_id)
     if path is None:
-        raise LookupError("native source file unavailable")
+        raise NativeSourceMissing("native source file unavailable")
     line_index = native_provenance["line_index_zero_based"]
     try:
         with path.open("rb") as stream:
             raw_line = next(islice(stream, line_index, line_index + 1), b"")
     except FileNotFoundError as exc:
-        raise LookupError("native source file unavailable") from exc
+        raise NativeSourceMissing("native source file unavailable") from exc
     if not raw_line:
-        raise LookupError("native source line unavailable")
+        raise NativeSourceMissing("native source line unavailable")
     if hashlib.sha256(raw_line).hexdigest() != native_provenance["raw_line_sha256"]:
-        raise LookupError("native source line version changed")
+        raise NativeSourceVersionChanged("native source line version changed")
     leaf = json.loads(raw_line)
     for component in leaf_path:
         if isinstance(leaf, dict) and isinstance(component, str) and component in leaf:
@@ -294,7 +368,8 @@ def read_native_source_body(native_provenance: Mapping[str, object]) -> str:
         raise ValueError("native source leaf must be a string")
     if end > len(leaf) or start > len(leaf):
         raise ValueError("invalid native source character range")
-    body = json.loads(leaf[start:end])
+    body = (json.loads(leaf[start:end])
+            if literal_encoding_mode == "json_string_literal_utf8" else leaf[start:end])
     if not isinstance(body, str):
         raise ValueError("native source literal must decode to a string")
     encoded = body.encode("utf-8")
@@ -302,7 +377,7 @@ def read_native_source_body(native_provenance: Mapping[str, object]) -> str:
         len(encoded) != native_provenance["decoded_utf8_bytes"]
         or hashlib.sha256(encoded).hexdigest() != native_provenance["decoded_utf8_sha256"]
     ):
-        raise LookupError("native source body version changed")
+        raise NativeSourceVersionChanged("native source body version changed")
     return body
 
 

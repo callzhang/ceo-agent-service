@@ -104,6 +104,7 @@ class InMemoryProvider:
     def __init__(self, store, conversation):
         self.store, self.conversation, self.calls = store, conversation, []
         self.verifications = []
+        self.after_send = None
 
     def send_message(self, conversation_id, text, **target):
         assert conversation_id == self.conversation
@@ -111,6 +112,9 @@ class InMemoryProvider:
             decision = db.execute(f"select decision from ({CANDIDATE_REVIEW_SQL}) order by id desc limit 1").fetchone()[0]
         assert decision == "approve"
         self.calls.append({"conversation_id": conversation_id, "text": text, "target": target})
+        if self.after_send is not None:
+            callback, self.after_send = self.after_send, None
+            callback()
         return {"success": True, "result": {"openMessageId": "native-copy-provider-receipt", "openConversationId": conversation_id}}
 
     def verify_message_send_result(self, result):
@@ -121,6 +125,14 @@ class InMemoryProvider:
     def reconcile_message_send(self, *args, **kwargs):
         return None
 
+
+
+def _install_settlement_interrupt(store, task_id):
+    from app.task20_definitions import task20_column
+    with store._connect() as db:
+        db.execute(f"create trigger native_copy_interrupt before update of payload_json on tasks "
+                   f"when old.id={task_id} and new.{task20_column('reply_tasks', 'status')}='done' "
+                   "begin select raise(abort,'native copy settlement interrupted'); end")
 
 def original_rows_unchanged(source, candidate):
     # The target Email trigger names main explicitly, so SQLite cannot load a
@@ -183,46 +195,36 @@ def _file_sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _publish_email_pair(repo, candidate):
-    from app.business_schema_release import SOURCE_PARENTS, business_schema_is_current
-    from app.provider_state_schema_release import (
-        SOURCE_TABLES as PROVIDER_SOURCE_TABLES, provider_state_schema_is_current,
-    )
+def _publish_email_pair(repo, candidate, *, recovery_source_path=None):
     from app.action_email_schema_release import TARGET_EMAIL_VERSION, TARGET_STORE_VERSION
-    from app.action_email_storage import SOURCE_TABLES
-    from app.action_storage import ALL_ACTION_TYPES_WITH_REPLY, reply_schema_is_current
+    from app.final_action_schema import final_action_schema_is_current
+    from app.storage_payload import ACTION_RECORD_TYPES
+    from app.state_definitions import state_projection
     from app.email_store import EmailStore
     from app.store import AutoReplyStore
     from app.store_schema_release import prepare_database_schema_release
-    from app.action_email_definitions import EMAIL_TYPES_ORDER
 
-    release = prepare_database_schema_release(repo, candidate)
-    assert release is not None and release.original_version[0] == "2026-10-13.5"
-    assert release.versions[-1][0] == 51
-    release.publish()
+    release = prepare_database_schema_release(repo, candidate, recovery_source_path=recovery_source_path)
+    if release is not None:
+        release.publish()
     AutoReplyStore(candidate)
     EmailStore(candidate)
     with sqlite3.connect(candidate) as db:
         store_version = db.execute(
-            "select value from service_state where key='store_schema_version'"
+            f"select value from ({state_projection('service_state')}) where key='store_schema_version'"
         ).fetchone()
         email_version = db.execute("select max(version) from email_schema_migrations").fetchone()
         tables = {row[0] for row in db.execute(
-            "select name from sqlite_schema where type='table'"
+            "select name from sqlite_schema where type='table' and name not glob 'sqlite_*'"
         )}
         assert store_version == (TARGET_STORE_VERSION,)
         assert email_version == (TARGET_EMAIL_VERSION,)
-        assert len(ALL_ACTION_TYPES_WITH_REPLY) + len(EMAIL_TYPES_ORDER) == 29
-        assert not tables.intersection(SOURCE_TABLES)
-        assert not tables.intersection(SOURCE_PARENTS.values())
-        assert not tables.intersection(PROVIDER_SOURCE_TABLES)
-        assert business_schema_is_current(db)
-        assert provider_state_schema_is_current(db)
-        assert reply_schema_is_current(db, include_email=True)
+        assert final_action_schema_is_current(db)
+        assert tables == {"tasks", "runs", "actions", "business", "emails", "provenance",
+                          "configs", "provider_state", "schedules", "state", "email_schema_migrations"}
     return {"store": store_version[0], "email": email_version[0],
-            "action_types": 29, "retired_email_tables": len(SOURCE_TABLES),
-            "retired_business_parents": len(SOURCE_PARENTS),
-            "retired_provider_tables": len(PROVIDER_SOURCE_TABLES)}
+            "action_types": len(ACTION_RECORD_TYPES.names), "core_tables": 10,
+            "source_body_table_present": False}
 
 
 def _exercise_current_email(candidate):
@@ -333,7 +335,7 @@ def run(root, case="approve"):
     candidate_path = root / "candidate.sqlite3"
     assert not candidate_path.exists()
     shutil.copyfile(source, candidate_path)
-    published_pair = _publish_email_pair(ROOT, candidate_path)
+    published_pair = _publish_email_pair(ROOT, candidate_path, recovery_source_path=source)
     target_baseline = root / "pre-native-target.sqlite3"
     _backup_database(candidate_path, target_baseline)
     target_baseline_hash = _file_sha256(target_baseline)
@@ -425,8 +427,9 @@ def run(root, case="approve"):
     worker._notify_problem_attempt = lambda *a, **kw: None
     interrupted = False
     if case == "settlement_recovery":
-        with store._connect() as db:
-            db.execute(f"create trigger native_copy_interrupt before update of status on tasks when old.id={task.id} and new.status='done' begin select raise(abort,'native copy settlement interrupted'); end")
+        # Install only after native Consumer/Audit source reads have finished.
+        # Current cold constructors correctly reject an unknown test trigger.
+        provider.after_send = lambda: _install_settlement_interrupt(store, task.id)
         try:
             worker.process_claimed_reply_task(task)
         except sqlite3.IntegrityError as exc:

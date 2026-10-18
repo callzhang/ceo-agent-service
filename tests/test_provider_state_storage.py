@@ -1,6 +1,7 @@
 """Independent literal-source controls for the unselected provider-state unit."""
 
 from contextlib import closing, contextmanager
+import json
 import sqlite3
 
 import pytest
@@ -21,13 +22,53 @@ def test_target_declaration():
         assert_target_declaration(db)
 
 
+def test_source_shaped_rows_use_fewer_table_pages_without_payload_keys():
+    with closing(sqlite3.connect(":memory:")) as db:
+        create_provider_state_schema(db)
+        db.execute("""
+            CREATE TABLE old_provider_layout (
+                id INTEGER PRIMARY KEY, record_type TEXT, account_id TEXT,
+                stable_message_identity TEXT, state TEXT, provider_folder_id TEXT,
+                observed_at TEXT, payload_json TEXT)
+        """)
+        for name, columns, kind, unique in (
+            ("observation_identity", "account_id,stable_message_identity", "observation", "UNIQUE "),
+            ("generation_identity", "account_id,provider_folder_id", "folder_generation", "UNIQUE "),
+            ("observation_folder", "account_id,provider_folder_id", "observation", ""),
+        ):
+            db.execute(f"CREATE {unique}INDEX old_{name} ON old_provider_layout({columns}) "
+                       f"WHERE record_type='{kind}'")
+        rows = [observation(stable_message_identity=f"message-{n:06d}",
+                            provider_folder_name="Inbox", category_key="work",
+                            important_signals_json='["flagged"]') for n in range(4096)]
+        db.execute("BEGIN IMMEDIATE")
+        for row in rows:
+            insert_observation(db, row)
+            db.execute(
+                "INSERT INTO old_provider_layout(record_type,account_id,stable_message_identity,"
+                "state,provider_folder_id,observed_at,payload_json) VALUES('observation',?,?,?,?,?,?)",
+                (row["account_id"], row["stable_message_identity"], row["state"],
+                 row["provider_folder_id"], row["observed_at"], json.dumps({
+                    name: row[name] for name in (
+                        "provider_folder_name", "category_key", "important", "important_signals_json"
+                    )}, separators=(",", ":"))),
+            )
+        pages = dict(db.execute("SELECT name,sum(pgsize) FROM dbstat "
+                                "WHERE name IN ('provider_state','old_provider_layout') GROUP BY name"))
+        assert pages["provider_state"] < pages["old_provider_layout"]
+        assert db.execute("SELECT count(*) FROM provider_state").fetchone() == (len(rows),)
+        assert db.execute("SELECT count(*) FROM old_provider_layout").fetchone() == (len(rows),)
+
+
 def assert_target_declaration(db):
     create_provider_state_schema(db)
     columns = {row[1]: row for row in db.execute("pragma table_xinfo(provider_state)")}
     assert columns["id"][2:7] == ("INTEGER", 0, None, 1, 0)
-    assert {name for name, row in columns.items() if row[6] == 2} == {
+    assert {name for name, row in columns.items() if row[6] == 0} >= {
         "provider_folder_name", "category_key", "important", "important_signals_json"
     }
+    assert "payload_json" not in columns
+    assert all(row[6] == 0 for row in columns.values())
     assert {name: columns[name][2] for name in (
         "provider_folder_name", "category_key", "important", "important_signals_json"
     )} == {
@@ -66,15 +107,18 @@ def assert_target_declaration(db):
     db.execute("BEGIN IMMEDIATE")
     insert_folder_generation(db, {"account_id": "a", "provider_folder_id": "inbox", "observed_at": T1})
     assert db.execute(
-        "SELECT payload_json,provider_folder_name,category_key,important,important_signals_json "
+        "SELECT provider_folder_name,category_key,important,important_signals_json "
         "FROM provider_state WHERE record_type='folder_generation'"
-    ).fetchone() == ("{}", None, None, None, None)
-    for payload in ('[]', '{"unexpected":1}', '{"provider_folder_name":null}'):
+    ).fetchone() == (None, None, None, None)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO provider_state(record_type,account_id,provider_folder_id,"
+                   "observed_at,provider_folder_name) VALUES('folder_generation','a','other',?,'Other')", (T1,))
+    for field, value in (("important", 2), ("important_signals_json", "{bad")):
         with pytest.raises(sqlite3.IntegrityError):
             db.execute(
                 "INSERT INTO provider_state(record_type,account_id,stable_message_identity,state,"
-                "observed_at,payload_json) VALUES('observation','a','bad','available',?,?)",
-                (T1, payload),
+                f"observed_at,{field}) VALUES('observation','a','bad','available',?,?)",
+                (T1, value),
             )
 
 @contextmanager

@@ -117,7 +117,7 @@ def prepare_store_schema_release(
         )
 
 
-def prepare_database_schema_release(root: Path, path: Path):
+def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_path: Path | None = None):
     from app import email_schema_release
 
     from app.action_email_schema_release import (
@@ -132,7 +132,7 @@ def prepare_database_schema_release(root: Path, path: Path):
             marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
             email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
         if marker == ("2026-10-13.5",) and email == 51:
-            paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])
+            paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1], recovery_source_path=recovery_source_path)
             paired.migrate = _migrate_pair
             return paired
         require_current_email_pair(path, store_version=target[0], email_version=target[1])

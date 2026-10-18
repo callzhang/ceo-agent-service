@@ -1,0 +1,22 @@
+{
+  "status": "accepted_unselected_a4_component",
+  "freeze": "docs/superpowers/specs/2026-10-18-provenance-console-reader-freeze-r2.json",
+  "freeze_sha256": "0159e5ef6dd2b8b1f53fc737e718dfd005974f7182791f1ddfbc0c8a4e6e8ae7",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-console-reader-spec-review-r2.json",
+    "sha256": "5d72bddaebe42dcc022224c464d0e63f5b23c90cc7ffc36b4dcf1999430e78d8"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-console-reader-quality-review-r2.json",
+    "sha256": "2649738ebb67f608a13c881c53509080ed3b2b3b98710675a1a8921924b0556e"
+  },
+  "scope": "Actual Console ignore/restore source reconstruction from retained Signal/event original before facts via producer pure helpers; exact fullbody checks and explicitlocator precedence.",
+  "remaining": [
+    "B/C/D Store fact-model/replay/API/frontend and outside-writer read integration",
+    "physical provenance and body retirement",
+    "source availability and unproved20 decision",
+    "Email exactbody/training lifecycle",
+    "capacity/nativeCLI/UI/CI/integration/deploy"
+  ],
+  "evidence_boundary": "Synthetic unselected component only, no actual provider/DB/CLI or final bodyfree schema acceptance."
+}

@@ -133,7 +133,7 @@ def test_actions_publication_failure_restores_schema_before_old_start_and_keeps_
         checkout, state, database_path=path,
         stop=lambda: events.append('stop'), restart=start,
         health=lambda: failure != 'health' or starts > 1,
-        database_publication=lambda: release,
+        database_publication=lambda _backup: release,
         dependency_sync=lambda: fail_at('dependencies'),
         verification=lambda: fail_at('verification'),
     )

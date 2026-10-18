@@ -12,6 +12,7 @@ from app.state_definitions import state_projection
 from app.runs11_definitions import run11_projection
 from app.task20_definitions import task20_projection
 from app.task12_storage import task12_projection
+from app.action_feedback_definitions import feedback_projection
 
 
 import json
@@ -24,7 +25,7 @@ from urllib.parse import urlsplit
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL
+from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL, ERROR_SQL
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
@@ -34,8 +35,10 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL,
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     reply_action_projection,
+    task_delivery_projection,
     validated_reply_variant,
 )
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
@@ -143,7 +146,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs", "follow_up_drafts": "actions", "work_todo_dingtalk_links": "actions", "task_todo_sync_outbox": "actions", "wechat_deliveries": "actions", "errors": "actions", "feedback_events": "actions"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -872,19 +875,23 @@ def _check_external_delivery_queues(
             "and not (lower(status)='failed' and attempt_count < 3)",
         ),
     ):
-        source_sql = (
-            f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True, include_skill_config_receipts=True))})"
-            if source == "memory_write_events" else source
-        )
+        if source == "memory_write_events":
+            source_sql = f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True, include_followup_sync=True, include_business_sync=True, include_skill_config_receipts=True, include_task_delivery=True, include_errors=True, include_feedback=True))})"
+        elif source in SYNC_ACTION_PROJECTIONS:
+            source_sql = f"({SYNC_ACTION_PROJECTIONS[source]})"
+        elif source in ("wechat_deliveries", "meeting_memory_write_events"):
+            source_sql = f"({task_delivery_projection(source)})"
+        else:
+            source_sql = source
         if source == "work_todo_dingtalk_links":
             failed = _count(
                 db,
-                """select count(*)
-                   from work_todo_dingtalk_links failed_link
+                f"""select count(*)
+                   from {source_sql} failed_link
                    where lower(failed_link.status)='failed'
                      and not exists (
                         select 1
-                        from work_todo_dingtalk_links recovered_link
+                        from {source_sql} recovered_link
                         where recovered_link.work_todo_id=failed_link.work_todo_id
                           and recovered_link.id > failed_link.id
                           and lower(recovered_link.status) in ('creating','active','done')
@@ -960,7 +967,8 @@ def _check_feedback(
     violations: list[QualityIssue],
 ) -> None:
     _add(violations, source="feedback_events", code="unresolved", count=_count(
-        db, "select count(*) from feedback_events where resolved_at='' or resolved_at is null"
+        db, f"select count(*) from ({feedback_projection('feedback_events')}) "
+            "where resolved_at='' or resolved_at is null"
     ), severity="error", detail="user feedback has not reached a recorded resolution")
 
 
@@ -1010,7 +1018,7 @@ def _check_recent_errors(
     )
     scheduled_count = _count(
         db,
-        f"""select count(*) from errors error_event
+        f"""select count(*) from ({ERROR_SQL}) error_event
             where datetime(error_event.created_at) >= datetime(?)
               and coalesce(error_event.resolved_at, '') = ''
               and {scheduled_predicate}""",
@@ -1023,7 +1031,7 @@ def _check_recent_errors(
     _add(violations, source="errors", code="recent_error", count=_count(
         db,
         """select count(*)
-           from errors error_event
+           from ({ERROR_SQL}) error_event
            where datetime(error_event.created_at) >= datetime(?)
              and coalesce(error_event.resolved_at, '') = ''
              and error_event.kind <> 'codex_capacity_pause'
@@ -1039,6 +1047,7 @@ def _check_recent_errors(
             scheduled_predicate,
             ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES),
             REPLY_ATTEMPT_COMMON_SQL=REPLY_ATTEMPT_COMMON_SQL,
+            ERROR_SQL=ERROR_SQL,
         ),
         (
             _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),

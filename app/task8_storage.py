@@ -9,13 +9,14 @@ connections and select these parts with the paired Tasks20 release.
 from dataclasses import dataclass
 import json
 
-from app.action_storage import _encoded_native_sqlite_value, _native_payload
-from app.state_storage import _json_assignments
+from app.action_storage import _encoded_native_sqlite_value
+from app.storage_payload import TASK_RECORD_TYPES
 from app.task20_definitions import (
     TASK20_COLUMNS,
     TASK20_DEFAULTS,
     TASK20_NEW_KINDS,
     TASK20_PAYLOAD_FIELDS,
+    TASK20_LAYOUTS,
     task20_column,
 )
 
@@ -90,10 +91,10 @@ def task8_insert_parts(
         for field in TASK20_PAYLOAD_FIELDS[kind]
         if field not in payload and field not in expressions
     }
-    columns = ["record_type", *physical, *physical_sql, "payload_json"]
-    scalar_sql = [repr(kind), *("?" for _ in physical), *physical_sql.values()]
+    columns = ["_kind", *physical, *physical_sql, "payload_json"]
+    scalar_sql = [str(TASK_RECORD_TYPES.code(kind)), *("?" for _ in physical), *physical_sql.values()]
     scalar_sql.append(
-        _json_assignments(
+        TASK20_LAYOUTS[kind].assignments_sql(
             "?",
             defaults
             | {f: "ceo_native_json(" + expr + ")" for f, expr in expressions.items()},
@@ -105,7 +106,10 @@ def task8_insert_parts(
         (
             *physical.values(),
             *structural_parameters,
-            _native_payload(payload),
+            TASK20_LAYOUTS[kind].pack(
+                {field: payload.get(field) for field in TASK20_PAYLOAD_FIELDS[kind]},
+                scalar_codec=_encoded_native_sqlite_value,
+            ),
             *insert_parameters,
         ),
     )
@@ -131,7 +135,7 @@ def task8_set_parts(
     assignments = []
     if json_expressions:
         assignments.append(
-            "payload_json=" + _json_assignments(payload_source, json_expressions)
+            "payload_json=" + TASK20_LAYOUTS[kind].assignments_sql(payload_source, json_expressions)
         )
     assignments.extend(_quote(field) + "=?" for field in physical)
     assignments.extend(

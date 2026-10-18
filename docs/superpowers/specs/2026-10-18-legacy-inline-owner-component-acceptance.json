@@ -1,0 +1,33 @@
+{
+  "status": "accepted_unselected_local_component",
+  "freeze_sha256": "d03cf03b745bb47e1ad4c8463b946111e11bb6505dd2623c4d13b1b2778732bb",
+  "files": {
+    "app/business_legacy_owner_storage.py": "5fe14154f30af3bd3a857da3bcf84341d7aa10f094dee379c5bbc96cede4d5d2",
+    "tests/test_business_legacy_owner_storage.py": "824b10101e86f595f687fbd9ced51e20067d2405942f17833b779ad49235fd1d",
+    "docs/database-redesign-legacy-inline-owner-component-validation-20261017.md": "203cb9cf43253f8d22a97bba3c08d042264b704f5f794de79f38802ab516d194"
+  },
+  "spec": {
+    "reviewer": "legacy_inline_owner_component_spec",
+    "verdict": "APPROVE",
+    "source_only": true
+  },
+  "quality": {
+    "reviewer": "legacy_inline_owner_component_quality",
+    "verdict": "APPROVE",
+    "independent_passed": 17,
+    "pytest_seconds": 48.11,
+    "wrapper_seconds": 48.5,
+    "closed_session": 43317,
+    "exit_code": 0,
+    "fresh_temp_removed": true,
+    "all_pins_and_membership_stable": true,
+    "ruff_passed": true
+  },
+  "current_runtime_membership": 374,
+  "unchanged_runtime_pins": 373,
+  "requirement_pins": 4,
+  "caller_or_factory_selected": false,
+  "actual_copy_accepted": false,
+  "capacity_accepted": false,
+  "production_changed": false
+}

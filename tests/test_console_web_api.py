@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
+from tests.support.email_source import stored_email_source as _stored_email_source  # noqa: F401
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -125,10 +126,6 @@ def _project(store: AutoReplyStore, title: str) -> int:
                     "source": {"title": "Roadmap.md"},
                 }
             ],
-            ensure_ascii=False,
-        ),
-        memory_context_json=json.dumps(
-            {"summary": {"text": f"Memory for {title}"}},
             ensure_ascii=False,
         ),
     )
@@ -676,7 +673,7 @@ def test_console_tasks_endpoint_does_not_project_legacy_progress_as_semantic_tas
     assert response.json()["meta"]["total"] == 0
 
 
-def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
+def test_console_task_detail_contains_persisted_project_facts_todos_and_updates(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -713,7 +710,7 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     item = response.json()["item"]
     assert item["project"]["id"] == project_id
     assert item["project"]["facts"][0]["description"] == "Fact for Detailed project"
-    assert item["project"]["memory_context"]["summary"] == "Memory for Detailed project"
+    assert "memory_context" not in item["project"]
     assert item["todos"][0]["title"] == "Prepare release"
     assert isinstance(item["updates"], list)
     assert item["evidence_candidates"][0]["todo_id"] == todo_id
@@ -932,12 +929,13 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
     # generic Status page. It has a real home: that scheduled task's run
     # history, the same place a completed run's row already links to.
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    with store._connect() as db:
-        db.execute(
-            "insert into scheduled_tasks (id, name, prompt, command, cron_expression, "
-            "timezone, runtime_id, enabled) values (13, '准备 CEO 管理周报', 'p', '', "
-            "'0 12 * * 6', 'America/Los_Angeles', '', 1)"
-        )
+    scheduled_task = store.create_scheduled_task(
+        name="准备 CEO 管理周报",
+        prompt="p",
+        cron_expression="0 12 * * 6",
+        timezone_name="America/Los_Angeles",
+        runtime_id="codex_oauth",
+    )
     store.enqueue_reply_task(
         conversation_id="scheduled-conversation",
         conversation_title="准备 CEO 管理周报",
@@ -952,13 +950,13 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
         "scheduled-conversation", "scheduled-run-91606", channel="scheduled"
     )
     assert task is not None
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, '{}')
         insert_run(db, 'scheduled_task_runs', {
             'event_id': 'event-91606',
-            'scheduled_task_id': 13,
+            'scheduled_task_id': scheduled_task.id,
             'trigger_kind': 'scheduled',
             'scheduled_for': '2026-09-26T19:00:00Z',
             'first_scheduled_for': '2026-09-26T19:00:00Z',
@@ -973,7 +971,7 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
         rows = client.get("/api/console/history?object_type=queue").json()["items"]
 
     assert len(rows) == 1
-    assert rows[0]["detail_url"] == "/scheduled-tasks?id=13"
+    assert rows[0]["detail_url"] == f"/scheduled-tasks?id={scheduled_task.id}"
 
 
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
@@ -1650,25 +1648,21 @@ def _seed_email_queue_classification(
     current_action_plan_id: str,
     status: str = "processed",
 ) -> None:
+    from app.email_canonical_storage import upsert_email_message, insert_email_classification
+    from tests.test_email_canonical_storage import _message, _classification
+
+    identity = f"message-{classification_id}"
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_classifications (
-                id, account_id, folder, uidvalidity, uid,
-                stable_message_identity, category, confidence, margin,
-                probabilities_json, model_id, config_version, status,
-                classification_source, current_action_plan_id
-            ) values (?, 'account-a', 'INBOX', 1, ?, ?, 'work', 0.9, 0.8,
-                      '{}', 'model-a', 'config-a', ?, 'model', ?)
-            """,
-            (
-                classification_id,
-                classification_id,
-                f"message-{classification_id}",
-                status,
-                current_action_plan_id,
-            ),
-        )
+        upsert_email_message(db, _message(
+            identity, account_id="account-a", folder="INBOX", uidvalidity=1,
+            uid=classification_id,
+        ))
+        insert_email_classification(db, _classification(
+            identity, id=classification_id, account_id="account-a", folder="INBOX",
+            uidvalidity=1, uid=classification_id, category="work", confidence=0.9,
+            margin=0.8, probabilities_json="{}", model_id="model-a", config_version="config-a",
+            status=status, classification_source="model", current_action_plan_id=current_action_plan_id,
+        ))
 
 
 def test_worker_status_counts_retryable_email_action_separately_from_failed(
@@ -3561,3 +3555,25 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
     assert item["status"]["raw"] == "pending"
     assert "已在后续消息中亲自回复" not in item["status"]["message"]
     assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+def test_reply_memory_queue_reads_current_action_schema_and_its_own_events(tmp_path):
+    from app.action_storage import insert_action
+
+    path = tmp_path / "reply-memory-queue.sqlite3"
+    store = AutoReplyStore(path)
+    EmailStore(path)
+    attempt_id = seed_attempt(store)
+    with store._connect() as db:
+        insert_action(db, "memory_write_events", {
+            "attempt_id": attempt_id, "event_type": "profile", "status": "pending",
+        })
+        insert_action(db, "memory_write_events", {
+            "attempt_id": attempt_id, "event_type": "summary", "status": "failed",
+            "last_error": "source unavailable",
+        })
+        result = audit_web_module._memory_write_queue_snapshot(db, "Reply Memory")
+    assert result["table"] == "memory_write_events"
+    assert result["counts"] == {"failed": 1, "pending": 1}
+    assert result["pending"] == result["failed"] == 1
+    assert result["latest_error"] == "source unavailable"

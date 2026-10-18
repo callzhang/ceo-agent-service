@@ -1,0 +1,23 @@
+{
+  "status": "accepted_unselected_a3_component",
+  "freeze": "docs/superpowers/specs/2026-10-18-provenance-weekly-reader-freeze.json",
+  "freeze_sha256": "953b24328aa0464b4e59faf77f129914235b71c66e3fac892488eeadc9d52000",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-weekly-reader-spec-review.json",
+    "sha256": "0338888e173c408f213d8724d89bbf84a7d2b76f4c6ec19ad4e6991c91a22d64"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-weekly-reader-quality-review.json",
+    "sha256": "be8fb1ff4897fe5ca3624e5164264f9511c3c40aa787f01152a3fa3d9dcc58d4"
+  },
+  "scope": "Exact current/historicalweekly canonical source reconstruction with bodyfree locator; native configured+fetch, exactnode/version0 supported, common fullbody identity checks.",
+  "remaining": [
+    "Console source reader",
+    "actual sourceavailability refresh",
+    "Store/API/transaction/bundle/backfill conversion",
+    "physical provenance/bodyretirement",
+    "scanner fixture retirement",
+    "fullcapacity/nativeCLI/UI/CI/deploy acceptance"
+  ],
+  "evidence_boundary": "No actual provider recovery or runtime/physicalschema selection."
+}

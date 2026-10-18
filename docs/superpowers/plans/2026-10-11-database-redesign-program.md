@@ -1,5 +1,1173 @@
 # Database Redesign Program
 
+## Current execution authority
+
+The user superseded the micro-stage process. The sole current master checklist is
+`../../database-redesign-final-acceptance.md`: native trajectory first, final spec
+structure and deletion list, early same-input comparable capacity, final stable
+business/recovery proof, root-owned production deployment. Luna source and
+structure/capacity analysis run independently; E1 standalone review stopped
+without approval. Historical entries below remain evidence, not current gates.
+
+## Latest: source refresh completed; E1 delivered pending review
+
+The latest human authorization remains exact20 historical originals /489023
+UTF8bytes, with adopted facts, source identity and execution receipts retained.
+It is recorded in the existing original-retirement decision receipt and has
+not been executed. It does not authorize losses for other versions.
+
+Read-only current production denominator refresh found220 source versions,
+7164322 original UTF8bytes and929 Signals, with0 source-key mismatches.
+The121 schema entries comprise116 ordinary tables,1 virtual FTS and4 shadows;
+this is not evidence of five additional ordinary business tables. Receipt:
+`../specs/2026-10-18-provenance-live-source-denominator-refresh.json`.
+
+The real native Minutes refresh completed all130 historical positives:
+127 exact current matches /4602380bytes /428 Signals;3 reconstructed version
+mismatches /35226bytes /18 Signals;0 unavailable or pending. It completed423
+read-only calls in655.37s with one explicit organization profile and a complete
+129-page list. Receipt `../specs/2026-10-18-business-minutes-positive-availability-refresh.json`
+SHA `e88720a3998f998fef57b359b046a9f5c55868f0aa2d4a22155b82fcc93ee754`.
+A separate bounded source-era diagnostic now proves the cause for IDs9/10/11:
+provider meeting/Todos components match exactly; the genuine historical
+whole-paragraph excerpt formatter reconstructs each full original body and every
+linked key exactly, while current sentence-split excerpts reproduce all three
+refresh mismatches. The18 read-only native calls took34.53s, using complete
+one-page date-window listing with exact unique UUID matches and complete
+transcriptions. This proves historical serialization mismatch for these three,
+not provider disappearance. The date-window diagnostic is not validation of the
+A2 unwindowed runtime lookup. Explicit version-aware serialization composition
+remains needed before retirement; no current-then-legacy fallback is selected.
+Separate receipt `../specs/2026-10-18-business-minutes-source-era-diagnostic.json`
+SHA `c9a226f61221c7de4d9b2a09842010f2433ddbe5e004eca7076220ac26938e85`;
+the completed130 refresh receipt remains unchanged.
+
+E1 final author delivery passed17 focused synthetic tests in155.48s, including
+genuine RED/GREEN repair of an invented empty dictionary-key restriction.
+Default declaration pins and all non-E1 runtime modules remain unchanged.
+Root froze7 delivery files,6 requirements and the complete runtime/assets in
+`../specs/2026-10-18-provenance-physical-component-freeze.json`. Fresh SPEC then
+fresh QUALITY remain required. No selected Store/coordinator/producer switch,
+physical migration/body deletion, commit, push or deploy occurred.
+
+## Latest: E1 unselected physical component implementation started
+
+Root reviewed the source-derived physical plan
+`2026-10-18-provenance-physical-implementation-plan.md` SHA
+`72a30dcc9fbbf9b666205780368c27d8aca8746d3855fbc25744b4bbe2ca6a6a`.
+It now covers complete canonicalEmail+inlineLegacy Actions factory plumbing,
+all writable outer Action columns in the immutable promotion guard, raw INSERT
+duplicate semantics (service owns replay), and canonical stored source-binding
+reuse when an incoming optional locator differs or is missing. Logical source
+identity remains unchanged7scalars+fullbody; locator is not an extra key field.
+Fresh sole runtime author `provenance_physical_component_impl` began Task1 only.
+Initial real-factory RED tests fail for absent physical_provenance opt-in in
+both actual_no_memory_fk/fresh_memory_fk variants. Before existing builder edits
+the author captured full default canonicalEmail/inlineLegacy object baselines:
+222objects SHA `fd382a83539117330531dcd703f9580de02ab29571e7fd423bf14c1e411ff9f0`,
+224objects SHA `864459528f6bcae685df253cfe83a2d004c7d0af4f63f99d65c7eec759258975`.
+Exact digest serialization/source pins belong in its validation note. This is
+not E1 acceptance; fresh SPEC then QUALITY follow completed delivery. No selected
+Store, producer, paired coordinator, physical body deletion or release switch.
+
+Correction from complete prompt-path inspection: current WorkItem body enters
+source_bundle with full=True and then the existing native CLI prompt. The2048char
+limit concerns ordinary historical context. Prefer exact native prompt-location
+capture for new Agent inputs; inspect actual historical files before upstream.
+The earlier removal-of-summary inference did not inspect the whole call chain.
+Independent bounded Email search analysis
+`../../database-redesign-email-search-retirement-source-analysis-20261018.md`
+SHA `e7ed043ea7278e2cc8ae99877c7887bc3657d96bd5d3697bb4da835cc6d820e7`
+proved real renderer substring semantics on synthetic inputs and left provider
+SEARCH completeness/performance unproved. It selects no metadata-only downgrade,
+FTS/body cache, provider access or retirement. Full goal remains incomplete.
+
+## Latest: B/C/D local runtime accepted; physical provenance remains
+
+SAME SPEC and fresh independent QUALITY approved exact R2 freeze
+`../specs/2026-10-18-provenance-runtime-integration-freeze-r2.json`
+SHA `b46beb4a14b046952988a9a6cbc0ebe4b0878a4569c3057a83e03f6586d7de9e`.
+Root rechecked all30delivery/7requirements/378runtime/16assets and lineage pins.
+Independent QUALITY reran141 reader/native tests,6 pure C1/C2 regressions,
+3 real Store cases,1 typed API case,63 frontend tests and TS/Vite build; all
+passed, task-owned temporary roots cleaned. Local acceptance is recorded in
+`../specs/2026-10-18-provenance-runtime-integration-acceptance.json`.
+Old single SourceDoc body remains selected. No new actual-copy/provider/native
+CLI/capacity/production acceptance follows from this runtime slice. Physical E
+still needs shared/inline declaration, immutable promotion, actual new-write
+locator capture, historical availability refresh, scoped20 retirement and
+current-state inverse/forward-repair proof. No body deletion or deploy occurred.
+
+## Latest B/C/D R2: SAME SPEC approved; fresh QUALITY running
+
+Same author reproduced and repaired both C gaps. Pure `require_fact` compares
+full prepared metadata/binding without an original-availability requirement.
+Actual Attention upsert now uses the same caller-owned writer as relevant
+card/member/Project-proof checks. Checks are scoped per assessment; two distinct
+cards can update without mistaking the first ownwrite for a race, and initial
+Task-link snapshots are not replayed after legitimate domain mutations.
+Author focused evidence:141 fast reader/native tests,6 pure repairs, standalone
+acceptance/upsert and real TaskAgent acceptance/post-domain Attention cases pass;
+static checks pass and task-owned temporary data cleaned. These are separate
+focused runs, not a full-suite count or migration rehearsal.
+R2 freeze `../specs/2026-10-18-provenance-runtime-integration-freeze-r2.json` SHA
+`b46beb4a14b046952988a9a6cbc0ebe4b0878a4569c3057a83e03f6586d7de9e`.
+SAME SPEC rechecked30delivery/7requirements/378runtime/16assets/base and prior
+freeze with zero mismatches and approved; receipt SHA
+`3444871c70cc18329bb2a9fc96589b6bc60ab6044f7ebe86e0e913f6b82b5911`.
+Fresh independent QUALITY is running targeted tests and source review. No B/C/D
+acceptance yet. Physical E, exact20 original retirement and release unexecuted.
+
+## Latest B/C/D checkpoint: author delivered; fresh SPEC requires two C repairs
+
+Local delivery is frozen in `../specs/2026-10-18-provenance-runtime-integration-freeze.json`
+SHA `9cf93f551f7364345cabfdf871985b2a6b47da0c292869a4c4c76400171a6100`.
+Author evidence includes final140 fast reader/native regressions,63 frontend tests
+and isolated TS/Vite build, source-bundle22, focused API/races18 and backfill3.
+These are separate focused runs, not a full suite or actual-copy acceptance.
+Fresh SPEC independently verified all pins and found two C gaps: metadata-only
+acceptance/identity references need prepared fact/binding equality in writer;
+the later Attention transaction needs its relevant prepared card/member snapshot
+rechecked after main commit. Same author repairs with regressions, then SAME SPEC
+re-review and fresh QUALITY. No integrated acceptance or physical selection yet.
+Old authoritative DB body reads transiently derive missing hash/byte metadata;
+no body escapes Fact. Eliminating those SQL reads belongs to physical E.
+The scoped20 latest human retirement decision below remains authorized/unexecuted.
+
+## Latest human decision: scoped20 original retirement authorized, not executed
+
+Derek sent two answers to the same question; his latest explicit answer is
+“接受永久移除原文，保留事实、来源和回执”, which supersedes the preceding
+keep-original reply. Root recorded the exact20 identity keys/489023 UTF8bytes
+from immutable inventory in
+`../specs/2026-10-18-provenance-original-retirement-decision.json` SHA
+`993ce83d9e42ca8e67f4ea4bcc54ea8aad640c3de075b9e610e55852254646ed`.
+Design section4 now states this bounded exception, and the reader implementation
+plan tail reflects it. This is accepted original loss, not a positive source
+availability proof; other originals and future missing versions are outside it.
+Facts, exact locators/checks, Signal IDs/roles/relationships, businessresults and
+receipts remain. No target body archive/copy is allowed. Final migration still
+requires copied-data proof and recovery rehearsal; no production body deleted.
+
+B/C/D soleauthor continues focused runtime/API/frontend testing with oldbody
+backend selected, no DDL. Draft sourcebundle file22PASS155.71s and original
+locator/currentbody + bindingconflict regressions repaired; fullunit notaccepted.
+The20 decision no longer blocks laterphysical development; currentavailability
+for other historicalproofs and post-forward inverse/forwardrepair remain.
+
+
+## Latest: A4 Console component accepted; B/C/D atomic runtime integration beginning
+
+A4 unselected Console source reconstruction passed SAME SPEC and SAME QUALITY
+at R2 freeze `../specs/2026-10-18-provenance-console-reader-freeze-r2.json`, SHA
+`0159e5ef6dd2b8b1f53fc737e718dfd005974f7182791f1ddfbc0c8a4e6e8ae7`.
+Independent137 focused tests passed0.81s/exit0;3 fresh import orders passed,
+all17delivery/requirementpins stable and ownedtemp removed. R1 QUALITY had
+136passingtests but reproduced oversized numeric Console coordinate escaping
+as Python ValueError. Sameauthor added genuine RED and narrow conversion
+classification plus nonstrguard; no arbitrary digitcap/broadcatch or producer
+behavior change. Malformed-source probes unavailable/no lookup, programmer
+lookup error remains visible. Nonblocking oversized regression test uses the
+present Python4300-digit conversion limit; disabled limit yields source_missing,
+not an available original. Acceptance receipt
+`../specs/2026-10-18-provenance-console-reader-acceptance.json` SHA
+`7978add524b1e99ecae73e4e44dfc7dda93e926b09467ce5a765394c824a0233`.
+
+Fresh sole author provenance_fact_runtime_integration_impl is beginning the
+approved finite B/C/D integration: body-free Signal fact returns/replay,
+explicit API/frontend source availability, request-scoped historical reads
+before existing writer transactions with identity/link revalidation, source
+bundle identity-key grouping, and current exact-Minutes backfill. The author returned the actual representation/API/prepared-read contract and
+root approved it before edits: validated fullbody model stays transient input;
+Store returns bodyfree facts, per-Signal metadata remains distinct while exact
+identity-key source reads share a request map; API exposes honest availability.
+Existing authoritative SourceDoc body backend remains selected until physical
+cutover; no provider-failure fallback or new DDL is selected here.
+A1–A4 components alone do not establish integrated runtime behavior.
+
+
+B/C/D draft validation subsequently exposed two genuine integration bugs, both
+reproduced before same-author repairs: conflicting bindings with one identity
+could borrow the first cached body in source_bundle, and current exactbody
+registration rejected bindings with retained native locator metadata. Per-fact
+read-result checks and shared pure body-identity/hash/byte validation repaired
+those drafts; focused synthetic tests passed. Initial seven cross-surface tests
+were2PASS/5old-contract fixture failures, not a feature RED or an integrated
+acceptance; fixture assertions must preserve exactbody/quote/link/rollback
+coverage while adopting fact+explicitread APIs. Typed source-view API contracts
+and full focused integration/frontend checks remain in progress.
+
+A separate root source-only note
+`../../database-redesign-provenance-physical-transition-source-analysis-20261018.md`
+identifies actual immutable-Signal-trigger promotion, shared-field projection/
+index, oldcontainer inverse and pairedordering constraints. It selects no DDL
+or bodyretirement. It does not change the independent historical20 decision.
+
+Actual11 full storage proof below remains valid for its immutable pre-A2 code,
+not for these later additions. No new actualcopy is running and production was
+not deployed. Final body-free sharedprovenance/uniqueinline, unproved20 original
+retirement decision, post-forward inverse or approved forward-repair closure,
+Email body/training lifecycle, fair capacity and CLI/UI/CI/release gates remain.
+The full approved objective remains active; no final schema or capacity claim.
+
+
+## Latest: actual11 full storage rehearsal passed; A3 and scanner fixture accepted, A4 implementing
+
+Actual11 attempt2 session87209 terminal exit0,1828.541s, stages116→11→116→11.
+Firstcold613.79s; inverse/currentfacts1196.9s; genuine1fcbddda oldcode coldwrites
+1205.01s; coldreforward1828.541s. Rootaudited fullsource-schema restoration,
+all116 original retainedfact/type digests,42families inclnewcurrent/oldfacts,
+allallocatorstreams,2freshcurrentconstructors, no FTS/shadowobjects, real
+provider/native-roleinvocations0, sourceoriginalreadonly andbothownedrootsabsent.
+Receipt `../specs/2026-10-18-legacy-inline-owner-current-copy-attempt2.json` SHA
+`9e982b012917fd8f2348aa3c32b7d665e5af0417693c562ff10a4586349a91eb`;
+scopedacceptance `../specs/2026-10-18-legacy-inline-owner-actual11-storage-acceptance.json`
+SHA `6239ff451528e5f1a40f31eef0fd77651d76f8bfccba33a35d43333470dd4bb8`.
+This is intermediate11 retaining business_source_documents.body, notfinal
+bodyfreeprovenance. Sameinputactive504406016B→555180032B,+48.421875MiB;
+capacity NOTaccepted. Finaltarget555368448B includes intentionalfakewrites,
+so firstcoldallocation is fair sameinputcomparison. ProductionHEAD rechecked
+1fcbddda unchanged; no deployment.
+
+Unselected A2 and A3 exactproviderreaders passed freshSPEC/QUALITY. A3independent
+118focusedtests1.73s/exit0 +32fakeassertions/nativeprobe-coordinatecheck,
+ownedtempremoved. A3acceptance SHA
+`3da09d431270fb6e5507517f8bffa7777093dcf97a7f0194e5764149de90a5dd`.
+Broader scannerfailure was oldtestprojection, notscanner3then0 behavior. Its
+2-line currenttask20projection testrepair now separatelySPEC/QUALITYaccepted,
+independentexactnode1PASS27.79s/ownedtempremoved, originalRED andwrongtask12
+candidate failure retained. Receipt `../specs/2026-10-18-weekly-scanner-fixture-acceptance.json`
+SHA `815239d7f52941fd74c10847e114ebac3c143e3a867552c1a2c116d588bc33d2`.
+No whole-suite claim, and author interrupted storage run is notpassed.
+
+Fresh sole A4author provenance_console_reader_impl now implementing actual
+Console sourceformatter reconstruction from retained Signal/Event facts with
+injected local lookup. No doc8/44specialcase, no repairdoc30 inference, no Store
+or sourcebodyaccess, no physicalretirement orproviderread. Followingunits remain
+Store/API/model, preparedread-before-writer transactions, bundle/backfill,
+physical sharedprovenance/uniqueinline and post-forward rollback/forwardrepair,
+Emailbody/training lifecycle, actualcapacity/nativeCLI/UI/CI/deploy gates.
+Historical20 original-retirement productdecision pending, notinferred. Full
+approvedobjective remainsactive and no currentproduction/schemafinalclaim.
+
+
+## Latest: reviewed combined snapshot in actual11 attempt2; A2 repairs under final QUALITY
+
+Exact unchanged R3caller delivery plus acceptedA1 source/native component passed
+SAME SPEC and SAME QUALITY composition review (independent82tests0.24s and
+import-only checks). Combined375-runtime freeze SHA
+`dcd4beac50f93be25a7c69da4962c5b203149eadd583428ae1dafb34ea5dc4e1`;
+acceptance SHA `d3246ea5bf0d3cf9563a8889015d1bd0ae8c11d19c6d736e8c07a90008f58969`.
+SAME harness activation review passed26controls and separate attempt2 paths;
+proof SHA `4ff6f5346818a41ef3bc56b3340be785c5cda9923a15828cbdc5347458907006`.
+Attempt2 session87209 remains RUNNING after FIRST_COLD_11_PASS613.79s.
+Current fake Business/Error/Email/WeChat writes emitted observed progress; later
+read/write and inverse checks continue in the live parent. No inverse/fullpass
+result yet. Original attempt1 failure remains preserved. No source/production
+writes or real sends.
+
+Unselected AI Minutes A2 extends acceptedA1 exactnative reader with canonical
+provider reconstruction. FreshSPEC approved firstfreeze; QUALITY94tests passed
+but independent probes found wrong-type serialized locator and nonfinite provider
+timestamp exceptions. Sameauthor reproduced5RED then27GREEN, with narrow explicit
+locator typeguard and OverflowError classification only around transcript formatter.
+R2freeze SHA `f773be42aa184f695ddc51b3cf51aca25add25fdb18dda244c22849a34f28f07`
+(5delivery/12requirements) passed SAME SPEC and SAME QUALITY:99tests3.12s,
+exit0/ownedtempremoved, independentfakeprobesincludingbothrepairspassed.
+Unselected A2 acceptance `../specs/2026-10-18-provenance-minutes-reader-acceptance.json`
+SHA `c67c2e7e6f77964f9dc90424f1c4f73b664f318fb52166805e5ed02cde4060a9`.
+No selected Store/API/DDL/bodyretirement or actual-provideravailability acceptance.
+Fresh sole A3author now implementing exactweeklycurrent/history adapter. Existing
+DwsClient.docread differsfromproven+fetch path; actualcurrent4probe source in
+native rollout line158051 confirms nested complete/status/content/target fields.
+Fakes and adapter mustfollowthat realresponse, not computed metadata labels.
+
+Capacity source note `../../database-redesign-payload-encoding-capacity-options-20261018.md`
+records38635005B repeated-key/colon serialized ceiling, below50753536B measured
+active growth. Fixed vectors would require reviewed type/DDL/projection/inverse
+changes acrossmany modules, not a silent codec swap; no representation selected.
+Finish approved source/bodylifecycles and compare actual sameinput pages before
+claiming capacity. Full ten-core-plus-ledger/lifecycle/release goal remains active.
+
+
+## Latest: actual11 first cold passed; witness harness repair accepted, full rehearsal incomplete
+
+The stopped author's two R2 QUALITY repairs are frozen in
+`../specs/2026-10-18-legacy-inline-owner-callers-freeze-r3.json`, SHA
+`4f75c826b6534c6143d3167e98fa98b24ea6d69debf3f014a3939ff7391b7e04`.
+SAME SPEC approved with all22 delivery,11 requirements,374 runtime Python
+members and16 assets stable before/after. SAME QUALITY independently passed
+7 selected nodes in225.76s, session51315 exit0, owned temporary directory
+removed. Local acceptance receipt is
+`../specs/2026-10-18-legacy-inline-owner-callers-acceptance.json`, SHA
+`7f29ea5ad2e0e7bed03bbe6841242bf2bb7eb8c790304e6ba33b85a0078c4a04`. Indexed point lookups retain the complete
+preflight fingerprint, supporting-source race checks and exact SQLite value/digest
+shape. Fresh-only native Legacy construction prevents obsolete table/index
+recreation during current known-object repair. Author focused RED/GREEN evidence
+is in the caller validation note; it is not independent QUALITY acceptance.
+
+The actual11 proof and immutable launcher passed SAME activation source review
+and25 synthetic controls with zero source DB accesses or real child launches.
+Activation receipt: `../../database-redesign-final-capacity-evidence.json → historical_component_reviews[2026-10-18-legacy-inline-copy-harness-activation-review.json]`.
+An activation-only control assumption still expected a draft barrier; that real
+failure was repaired to AST-only activated-form checks before rereview passed.
+Proof SHA `1bc5fa8fbcb034ff46bdbb1ba9b0e1db46ca0c05eaf48e75d20ba385353a9fca`;
+launcher SHA `e432cd1545c2e196ec4d0d307f70f42dbfd9cf7b43866c16f018b44fa62e2bbd`.
+Actual11 attempt1 session74923 is terminal exit1. FIRST_COLD_11_PASS549.99s
+proved source116 to target11 cold migration on the copy, then the witness
+assignment failed: it used a read connection while assign_import_task requires
+an existing writer transaction. Both managed roots removed; production/source
+not opened for writing. Original failure receipt remains immutable, SHA
+`1f099d83a6853e596c5c31548d9ac96735a5deff941a11e95c9cd4f38f651919`.
+Compact outcome and measured allocation/payload totals:
+`../specs/2026-10-18-legacy-inline-owner-attempt1-summary.json`.
+
+Root extracted the exact witness and changed it to business_task_transaction;
+new in-memory control using actual assignment primitives reproduced the RED
+ProgrammingError then GREEN26 controls. SAME reviewer approved source fix only.
+Proof SHA `c340f6bc3f9d78624c8c997026fef85f04574f5fe178d68621ead009310b5acb`;
+controls SHA `aefdd395998a489a254ce19bc9677903bb0da669682a8b0f292c16379f58a761`.
+Launcher still pins earlier proof and cannot execute. Before retry compose the
+already independently accepted caller R3 plus A1 native/newreader changes into
+current375-runtime membership, review combined freeze, use separate attempt2
+receipt paths and refresh/review activation pins. No blind unchanged retry.
+Full inverse/predecessor-write/reforward and capacity remain unaccepted.
+Measured active bytes504360960 to555114496; SQL NULL-key elision serialized
+potential1548675B acrossActions/Tasks is too small to recover50753536B growth,
+and serialized potential is not page savings. No representation change selected.
+
+After immutable code capture, A1 unselected provenance binding/fact/native
+reader completed and passed fresh SPEC then fresh QUALITY. Independent82
+synthetic tests passed0.29s/exit0 plus a same-reference distinct-version and
+samekey-locator conflict probe; reviewer-owned temporary roots removed.
+Acceptance: `../specs/2026-10-18-provenance-reader-binding-acceptance.json`, SHA
+`6b669984507d44a5f400577d818f9c03ed2a7130fb8e6818d4b361006bacf263`.
+Root prefreeze rejected exception-message dispatch; typed NativeSourceMissing
+and NativeSourceVersionChanged retain LookupError/message compatibility instead.
+Existing Store/model/provider callers, schema and source bodies remain unchanged.
+Provider/Console readers, runtime/transaction/bundle/backfill conversion and
+physical retirement remain unfinished. Historical20 original-retirement product
+decision is pending asynchronously; no authorization is inferred. No production
+migration occurred. Full ten-core-plus-ledger/lifecycle goal remains active.
+
+## Latest: caller SPEC docs/transport-test findings under same-author repair
+
+Fresh SPEC REQUEST_CHANGES on firstfreeze26e92f4a, allpinsstable at reviewclose.
+No scoped runtime blocker found. Required repairs: false present-tense current12/
+retainedLegacy summaries in architecture/runtime docs, and paired BLOBtimestamp
+transport mock missing EMAIL_CANONICAL_INVERSE + LEGACY_OWNER_INVERSE.
+Receipt ../../database-redesign-final-capacity-evidence.json → historical_component_reviews[2026-10-18-legacy-inline-owner-callers-spec-review.json] SHA
+4daf866cc103f4d82a181ee646f8ad72f55d27486eb7b77c0fe1417220b2eeca.
+Same author has exact docs/test-only repair; transportRED2FAIL9.57s, GREEN63699
+still confirmed live PID45429CPU93.5%/elapsed5m23s. No duplicate tests or runtime
+edits. New freeze then SAME SPEC, fresh QUALITY only after approval.
+
+Root nextcopy harness 2026-10-18-legacy-inline-owner-actual-copy.py is explicitly
+UNEXECUTABLE DRAFT (first-statement barrier), AST checked only. It carries prior
+successful full42family/current-fact inverse/genuineoldwrites/reforward structure
+into selected11, with logical Legacy owner/target pair and explicit retired
+container metadata. Pending immutable launch/code snapshot, exactreviewedpins,
+900s traceback diagnostic, controls and review before anycopyrun. No new database
+run, actual11, capacity or production claim.
+
+## Latest: caller delivery frozen; fresh SPEC review running
+
+Caller author stopped editing after focused 17-component tests PASS98.04s,
+both cold constructor orders2PASS137.09s, and independent historical canonical
+fixture correction1PASS121.67s. Paired forward/inverse and bounded importer/CLI
+checks passed as recorded in validation note; not whole-file acceptance.
+Freeze ../specs/2026-10-18-legacy-inline-owner-callers-freeze.json SHA
+26e92f4a91983293846f90be030966022b4f2a6dd1a2f92b1e8462f795ba453e
+pins22delivery/7requirements/374runtimePython/16assets. Fresh source-only SPEC
+reviewer legacy_inline_owner_callers_spec running; fresh QUALITY follows only
+approval. Extra historical canonical fixture uses native capsule reconstruction,
+not component forward/inverse. Accepted component runtime unchanged5fe14154.
+Actual selected11 copy/inverse, capacity and release remain unproved.
+
+## Current: Legacy caller checks progressing; capacity diagnostic failed at existing deadline
+
+R4 component acceptance remains bounded to its accepted source-only component
+and independent 17-test result. Sole caller author is integrating the intermediate
+11-table graph. Focused fresh construction, formal and history-only imports,
+paired forward and inverse have passed. Cold Store-to-Email and Email-to-Store
+initialization found a real old-guard recognition omission; explicit canonical
+stage parameter fixed it, and both cold orders passed137.09s. Historical canonical
+default and inverse remain strict. Final component regressions and fresh SPEC
+then QUALITY review remain. The final-source inverse assertion was corrected:
+Store19/Email51 never contained the intermediate Action guard. No production,
+commit, push or deploy; body-free provenance and capacity acceptance remain open.
+
+Capacity diagnostic session16770 is TERMINAL exit1, not an observation timeout.
+The immutable accepted-R3 code child exceeded its unchanged 900-second deadline;
+receipt ../specs/2026-10-18-current12-payload-aggregates-failure.json SHA
+3d0f93d2fe51a8facf20f04453eabaea834a41a1f6e26c37fa9287186c1f71d8.
+Elapsed915.576s, last stage backup_ready, managed temporary directory removed.
+No payload aggregates or success receipt obtained. Source allocation504082432B
+is only311296B above prior R3; growth alone does not explain this failure.
+Observed high system load is a possible lead, not established cause. Do not
+retry unchanged or increase the deadline; locate/profile the slow stage first.
+The code snapshot excluded the new Legacy module, so concurrent caller edits
+could not affect that measurement. No provider, CLI, sends or source writes.
+
+Read-only unresolved provenance inventory refresh:
+../specs/2026-10-18-provenance-unproved-source-inventory-refresh.json SHA
+4a854e0b2df844dc4a67c45f0fff432ea224277b13231846dbdc9e47b5329d39:
+20versions/489023B/188Signal references. No new native source availability
+proof or retirement selected. Internal repair note classification inspection
+is not independent original-source recovery.
+
+Source-only Email lifecycle plan:
+2026-10-18-email-body-training-lifecycle-source-plan.md SHA
+9031a0c38fa577a8e520e0aacf35d0c98bd2c7e7f53e5dfcca9b257f49f2da13.
+Exact body readers, SQL body-search parity, model_text dependencies, active pins,
+training file identity and current-fact inverse must precede physical retirement.
+Full10core+ledger/bodyfreeprovenance/capacity/latestmain/CLI/fakes/UI/release remain.
+
+## Current: Legacy R3 SPEC approved, QUALITY found inbound FK defect; sameauthor R4 repair
+
+FreshQUALITY independently14PASS48.80s/closed99318/tempremoved/pinsstable, but
+REQUEST_CHANGES blackboxcounterexample: unknownpopulatedchild FK toLegacyLinks
+accepted thenparentdropped, childforeign_key_checkviolated. Addknownfinite
+MAIN/TEMPinboundFK preflight+unchangedstateRED/GREEN. AlsoexistingTaskIDvalidation
+mustprecedeidempotence (NULL/float/bool cancurrentlyskip). Sameauthorrepairrunning;
+R3freezefailedquality9563fe preserved, reviewreceipt
+../specs/2026-10-18-legacy-inline-owner-component-review-r3.json. NewR4freeze then
+SAMEspec thenSAMEquality rereviews; componentUNSELECTED, no caller/factory/copy/
+capacity/release acceptance. Full10core+ledgergoal remainsACTIVE.
+
+## Legacy R2 SPEC one remaining TEMP-dependency gap; sameauthor R3 repair
+
+SAMEspec confirmed priorR1blockersrepaired andfullcurrent12fixturecredible, but
+REQUEST_CHANGES: inverseprobes MAINschema only, missesTEMPview/triggerrefs to
+import_task_id. Sameauthor dispatched minimalTEMPobjectclone usingexistinghelper,
+meaningfulTEMPdependencyRED/GREEN withliveMAIN+TEMPunchanged; scratchDROPmusttarget
+main.business explicitly soTEMPshadowcannotredirectprobe. NoQUALITY/callerselection
+untilsameSPECapprovesnewfreeze. R2d223dc preserved, componentstillunselected.
+
+Read-only driftrefresh: origin/main remains2adf9bbc13286fc945339efbdadcb3841abb519e;
+production1fcbddda5fe1e13d7c71cc0462e428d66e336370 clean. No fetch/refmutation,
+productionwrite/restart/deploy. Existinglatest-mainintegrationrequirementsremain.
+
+## Legacy component R2 repaired/frozen; SAME SPEC rereview running
+
+Sameauthor completed exactrepair: inverse knownLegacy/Actionguard/metadata
+pre-DDLvalidation, immutabledecl-onlyforwardcomparison withlivecurrentlinks,
+SQLite schema-onlyscratch DROPdependencyprobe beforeinverseDDL. MeaningfulREDs
+recorded; realcurrent12syntheticfixture withseededBusiness+Actions checksallstored
+values/types/physicalIDs/unrelatedobjects/waters, invalidendpoints/deps. Author
+focused11PASS46.53s plusRuff/compile/diff. Newfreeze
+../specs/2026-10-18-legacy-inline-owner-component-freeze-r2.json SHA
+d223dc1d0b2971f2c139f3f5f229ba3a427b65e8d32a568debabc871ee87ad0a.
+Failedfirstfreeze preserved. Rootverified373priorruntime/4requirements unchanged
+and374runtime membershipexact. SAMEspec reviewer running; QUALITY notstarted.
+ComponentstillUNSELECTED; no caller/factory/actualcopy/capacity/productionclaim.
+
+New source-only nextreaderplan
+2026-10-18-provenance-reader-runtime-implementation-plan.md SHA
+b0368db725ab87872e192afda8a373b48e62c5f46b03679cc35eeacb97bcbfe3
+identifies fifthdirectbodyconsumer minutes_owner_backfill inaddition4Storeleaves.
+Finite reader/model/transactionimplementationcanproceed withoutoriginalretirement.
+20unprovedoriginals/489023B remainhistoricalsnapshotboundary, notfreshcount.
+Physicalunit unresolvedrollback: sourcebackupcanonlysupplypre-forwardoriginals,
+notnewpost-forwardSignalbodies orreceipts; inverse mustpreservecurrentfactsand
+exactsourcebody reconstruction, orsafe forwardrepair resolved beforeactivation.
+No bodyplaceholder/archive/targetcopy/staleDBrollback allowed. This isseparate
+fromhistoricalunprovedbody-retirementdecision, notnewblockonreadercomponent.
+
+## Legacy direct-owner component SPEC requested changes; same author repairing
+
+New unselected component3files frozen6d844cae received freshSPEC REQUEST_CHANGES
+from legacy_inline_owner_component_spec. Known inverse metadata/guard must be
+validated beforeDDL (currently self-consistent alteredmetadata can installwrong
+schema/guard); forward must not compare mutable legacy_water as declaration.
+Required regressions: corruptinverselegacy+guard pre-DDL unchangedstate,
+capture->supportedinsert/liveforward->inverseoldlookup/reforward, realpopulated
+Business AND Actions storedvalues/types/IDs/sequence/object preservation,
+invalidendpoints/externaldependency refusal. Four minimaltests didnotestablish
+fullpreservation. Same soleauthor legacy_inline_owner_component_impl dispatched
+repair with meaningfulRED/GREEN; keep failedfreeze immutable. Freshupdatedfreeze
+then SAMEspec rereview, QUALITY onlyafterAPPROVE. No caller/factoryactivation,
+actualcopy, production, commit/push/deploy. Do notcall componentaccepted.
+
+Root explicitly clarified redundantlinkid/time/allocator retirement for ALL
+supportedWorkTodo->Tasksource mappings, retainingowner+target andallowingnormal
+inverse/oldreader/reforward withoutinventedrowmarker/callerreceiptgate. Unsupported
+alternativesstillrefuse. Selectedplan updated. This cancels container metadata,
+notadoptedformalTask/Signal/evidence or targetFK restrictions.
+
+Source-onlycapacitynote database-redesign-current12-payload-cost-source-analysis-20261018.md
+SHA d74ee4ec905f8e41e9b914f97e7e569f86a0f79232326e427ae266c8c426d238:
+Actions/Tasks finiteJSON includeskeys/defaults/null, generatedprojectionsVIRTUAL;
+Runs mostlytypedwidecolumns with49.74MiBindexes. Net48.35MiBactivegrowth remains
+unattributed; no code/index/retentionselected. Next aggregate-onlydisposablecopy
+measurement is withinexistingauthority AFTERstablesourcefreeze, no newuserapproval
+flow. Finalprovenance/capacity/latestmain/realCLI/fakes/UI/releasegatesremain.
+
+## Exact retired identifier fixture cleanup accepted; next Legacy component
+
+Sole author removed ONLY obsolete17nativeDDL helper and its2positive tests.
+Fresh SPEC then QUALITY APPROVED exact preedit SHA reconstruction and unchanged
+277surviving ASTs. TestSHA now5ea7cc9dc7c743f32bcc0a7757259387434b4016c08b6dad8abe89017d5ee5da.
+QUALITY independently tokenizer1PASS2.02s/exit0, managedtempremoved; Ruff/diffPASS.
+Acceptance ../specs/2026-10-18-email-identifier-fixture-retirement-acceptance.json.
+All373R3runtime/43requirement pins unchanged; only approved testfile changed
+AFTER R3terminal. No wholefile/suite/capacity/production acceptance.
+Next sole unselected directLegacyowner component, then fresh SPEC/QUALITY before
+caller selection and another copy proof. Full10core+ledger goal remains ACTIVE.
+
+## R3 complete actual-copy roundtrip PASS; capacity NOT accepted
+
+Session43535 terminated exit0 with COLD_REFORWARD_12_PASS1616.862s and immutable
+receipt ../specs/2026-10-17-email-canonical-current-copy.json SHA256
+1d9d2edb43e9d8470bbbdbd37177678c2f72e01a403cfd228223092825493b09.
+Stages116->12->116->12 passed, all116original retainedfact/type/identity checks,
+42family current+genuine1fcbpublicfakewrites, exact source inverse, two fresh
+current constructors, source markers/FK findings and allocator comparisons.
+Root reread receipt, checked all22delivery/43requirement/373runtime pins stable,
+and confirmed managed temporary root absent. No source/production write,
+provider/nativeCLI invocation, outbound send, integration or deployment.
+
+Same-input source allocation503771136B (active503767040B); firsttarget allocation
+564404224B (active554467328B). Final synthetic-write target564404224B, active
+554733568B. Fewer tables did not meet capacity goal: no space acceptance.
+LegacyLinks remains0rows and current target still12ordinarytables:
+actions,business,business_legacy_links,business_source_documents,configs,
+email_schema_migrations,emails,provider_state,runs,schedules,state,tasks.
+Next source-approved test-only retirement of exactly2obsolete identifier DDL
+mutator positives+their helper, fresh SPEC then QUALITY; then selected direct
+Legacy owner component/callers, provenance reader/body retirement and remaining
+capacity/integration/realCLI/fakes/UI/release gates. Full goal remains ACTIVE.
+Previous entries are historical stage reports, superseded by this terminal result.
+
+## R3 inverse and GENUINE old write passed; same43535 reforward running
+
+Existing43535 emitted INVERSE_116_CURRENT_FACTS_PASS1068.93s, then
+GENUINE_PREDECESSOR_COLD_WRITE_PASS1077.71s. All116original declaredfacts/types/
+identities and42post-current-write families survivedinverse; actual1fcbcode
+coldstarted and publicfakewrites passed. This crosses the stage where R2's root
+child syntax bug had stopped. Reforward/cold12 stillRUNNING, no fullcopy or
+capacity/release acceptance. ContinueONLY43535; no app/test mutations, retries,
+newcopy or timeoutchange. EarlierR1/R2failures remainpreserved.
+
+Unfrozen nextLegacyplan clarified sourceconstraint disposition: inline ownerFK
+retains formalTask/Signal/evidence and targetFK, retires the independent-link
+sourceowner-delete/publicIDrestriction instead of inventing trigger machinery.
+Boundedappsearch finds no publiclegacyownerdelete or delete_business caller.
+Prefernativeone-columnADD/DROP afterexact-DDLtest and retireonewholeownedAction
+legacytrigger; no arbitrarySQLrewriter. This isplanningonly underexistinguser
+permission to cancelredundantfields/functions, notnewruntime/schema selection.
+
+
+## R3 first forward/cold12 passed; same43535 still running
+
+Existing43535 emitted FIRST_COLD_12_PASS609.75s. Exact12table/noFTS/retirednative
+Emailparents checks,42family sourcevalues/types/waters andcold no-mutation checks
+passed. Currentpublicfakewrites nowoccurred/inversepending. No all116inverse,
+genuineold-write/reforward/fullcopy/capacity/release pass yet. Continue SAME43535,
+neverduplicate/retryon observationtimeout; normal900child deadline unchanged.
+
+Parallel source-only work changedno frozeninputs. A filename-only pass over6476
+nativepaths found0of24previouslymissing candidate sessions, so archive relocation
+didnotrecover originals (receipt e364b019). NativeDWS+detail summary-only read for
+3unproveddocs31/46/51 (2exactknownUUIDs) returnedcomplete=false/2failed/0success,
+retryable=false; no retry. Receipt92b9f8d8 distinguishes retrievalfailure from a
+successful mismatchingbody; lower-levelerror text notretained, causeunknown.
+No original retired/promoted. A newunselected source-only plan proposes explicit
+retirement of2oldcurrent-positive17nativeDDLmutator tests/helper, preserving all
+realbusiness/native/inverse/identifier/read-onlycoverage. No testeditwhile43535.
+
+
+## Current continuation: fresh actual-copy R3 RUNNING, session43535
+
+Fresh runtime SPEC then QUALITY both APPROVED freeze f7b3de2a. QUALITY independently
+executed5casesPASS80.07s/closed93622 and removednewmanagedtemp; allpinsstable.
+Runtime acceptance f0d03da6 islocalunitonly. EffectivecallerR3freeze
+cde6ccbbaa887f79be2212738424ba8b2ffd78e7672390485f6119ee7160ca4b
+pins22delivery/43requirements/373runtime/12JSONassets; composedlocalacceptance
+a36e8f532dd1187b276910edcf03265bc486418552da118fd5c4d60d9aa2dfe2
+includesacceptedR2caller+test-only+runtimeunits, no wholefile/copy/capacity/deploy.
+
+RootV17 first passed pureASTcompile ofouter+bothdedented embeddedchildprograms;
+bothchildASTsexactlymatchoriginalV13. Actualexec43535started andsamehandlepolled
+stillRUNNING. POLLexisting43535, doNOTduplicate/retry/raise900s colddeadline.
+Samehandle now emitted BACKUP_READY:116ordinarytables/42families, Class9246/
+Message9246, SourceDocs220, LegacyLinks0. Sourcegenuine1fcb; firstforward still
+running. Snapshotready doesNOTprove migration or preservation success.
+Full116->12->116->12,42families+all116original facts/types/identity, exactsame
+reviewedsource1fcb, currentpublicfakewrites andGENUINEoldpublicfakewrites.
+Source onlymode=ro/onlinebackup; allmutationstemporarycopy; no externalproviders,
+nativeCLI/sends, productionwrite/integration/deploy. Failure receipt distinctr3;
+preserveR1/R2partialfailures. No fullR3success or firstforwardpass outputyet.
+
+AllauthorsDONE, app/testpinsremainfrozen untilthisspecificcopyends. Remaining
+finaltarget10core+ledger includes directLegacyownerunit, body-freeprovenance
+reader/lifecycle/unprovedoriginals, actualcapacity,latestmainintegration,
+realCLI/fakesbranches,UI,release. Oldquoted17nativefixture stillpendingexplicit
+final testdisposition; no wholefilepassclaim. Do not markgoalcomplete.
+
+
+## Current continuation: runtime regression repair frozen for fresh SPEC
+
+This section supersedes older running/test-only entries below. Test-only
+freeze5b7b29ba is source-reviewed APPROVED by fresh SPEC then fresh QUALITY;
+acceptance7ad95cd3 explicitly retains3runtime failures, not allgreen/runtimepass.
+Sole runtime author now repaired ONLY2apphunks (lightweight terminal-firstscan,
+existing schema-identifier domain validation before hashing), plus2testfunction
+fixtures/current metadata coverage and1import. Exact owned-hunk reversal restores
+whole prior R2 app hashes and whole95ebb88 test: no unrelated source edits.
+
+Runtime freeze `../specs/2026-10-17-email-current12-runtime-closure-freeze.json`
+SHAf7b3de2af72b3ecc80f4969c1e0ccd1ff441304395e97b3237b37781d736d89f
+pins4delivery/18unchangedparent/39requirements/373runtime/12JSONmembership.
+Fresh /root/email_runtime_closure_spec is RUNNING source-only; QUALITY next.
+Author focused evidence:2BLOBcasesGREEN22078, nohydrate1GREEN7458/27.68s,
+malformed-declaration4GREEN97046, terminalstatus4GREEN32843/61.64s,
+cold-readonly2GREEN21644/29.56s. Detailed failures/repair sequence remain in
+runtime-closure validationdoc. Old quotedidentifier fixture expects17retired
+tables and still fails before runtime; explicitly pending final test disposition,
+not silently relaxed. No wholefile/currentcopy/capacity/release acceptance.
+
+Next after fresh SPEC then QUALITY: freeze effective caller inputs incorporating
+accepted test/runtime units, update blockedV16 pins, compile embedded child
+sources with dedent and compare expectedAST, then a FRESH full actualcopyR3
+116->12->116->12 with genuineold/current fake-only writes. R2session59444 CLOSED1
+later root child syntax error; its inverse all116proof remains valid partial
+metadata, not fullroundtrip. Do not poll/restart any old terminal handle.
+
+Provenance source-only review206c7982 reclassifies3exactmatching bodies49/50/52:
+queue suffix lineageunknown is not unavailablebody. Same220snapshot20/489023B
+remain unproved,130historical Providerproofs need readerrefresh; reader/body
+lifecycle not implemented and no original retired. Selected next Legacy plan
+2026-10-17-legacy-inline-owner-selected-plan.md followsdirectWorkTodo->Task FK
+and explicit dead/genericfield retirement underexistinguserauthority; no new
+implementation until Email acceptance. Final10core+ledger/provenance/capacity/
+latestmainintegration/nativeCLI-fakes/UI/release remain required.
+
+Production1fcb remainsunchanged andclean; origin/main2adf reverified. No push or
+deploy. Cleanup ofnewexact tasktmp /tmp/email-current12-runtime.sUH2fs was
+platformrejected approvalrequired/Never, like5olderauthorizedtargets; no retry,
+alternate delete or repeated permission ask. New finalcoldtmp context cleaned.
+
+
+## Current continuation: R2 terminal; test-only closure in progress
+
+This section supersedes older running-session entries below. Session59444
+closed with exit1 after FIRST_COLD_12_PASS482.57s and
+INVERSE_116_CURRENT_FACTS_PASS834.7s. All116 original declared facts/types/full
+identities (505784 rows) and42 current-family facts including fake writes
+survived inverse migration. Exact source schema and table checks passed.
+Failure receipt: `../specs/2026-10-17-email-canonical-current-copy-failure-r2.json`
+SHA8575eb5696395a12e2e7b47dc5ba987996d87bfced1f9baf021ea8ff44bce498.
+The genuine predecessor child did NOT run: root harness triple-string indentation
+raised IndentationError. No full roundtrip, old writes, capacity or release pass.
+Do not poll or restart59444. Managed copy was removed; source remained read-only.
+
+V16 is explicitly UNEXECUTABLE until test closure and refreshed freeze/reviews.
+Dedenting embedded child source fixes the harness syntax: raw old child reproduces
+IndentationError, both dedented children compile and match V13 child ASTs exactly.
+This syntax check opened no database. Same test-only author now implements32
+selected-current test translations and a new validation doc; app runtime remains
+unchanged. Next: fresh SPEC then QUALITY for test-only unit, new freeze, full fresh
+actual-copy with normal900s child deadline and genuine old/current fake writes.
+
+Comparable allocation before fake writes: source503631872 bytes; first target
+564289536 allocated,554352640 active,9936896 freelist bytes. This is partial
+measurement, not space acceptance; final target/reforward remains unmeasured.
+
+From the same failure-r2 allocation objects, first-target table plus owned
+indexes (MiB): actions202.36 (indexes32.55, within-page unused33.61), runs130.00
+(indexes49.70, unused9.55), tasks68.73 (indexes10.38, unused7.10), emails64.13
+(indexes4.21, unused8.17), provider_state25.89 (indexes12.19, unused1.82),
+business11.21, state8.84, configs8.41, source_documents7.02. sqlite_schema2.04
+is SQLite internal storage. Within-page unused is NOT freelist and must not be
+added to or reported as already reclaimed space. Merged families moved between
+tables, so source actions90.80 versus target202.36 alone is not net duplication.
+No index or historical-fact retirement is selected by these measurements.
+
+
+## Actual-copy R2 first forward/cold12 passed
+
+Existing exec59444 emitted FIRST_COLD_12_PASS482.57s. Exact12tables/42families
+andwaters preserved, currentcoldconstructors passed; currentfakewrites/inverse
+running. No all116inverse/genuineold/reforward/fullcopy or capacitypass yet.
+Fresh bounded test-only proposal author is preparing copied-text patch/doc only,
+no existingtest/app edits or test/DBruns while actualcopy isactive. RuntimeR2
+freeze remains locked. Apply/test proposal only after thiscopyends.
+
+## Actual-copy R2 running after reviewed checker identity correction
+
+R1 CLOSED1 at effects original-row comparison; retained failure receipt.
+Minimal exactnative13component2variant probe c3863ab6 proves declaredkeys/values/
+types preserved while effects/retry hiddenROWIDs change. Independent sameQUALITY
+review8f127857 approves only2 existing Email composite identities. ActualR1
+declared-data preservation remains unproved, not dismissed. Root retained
+allfields/types/fullkey hashes and allotherROWIDs, added13negativecontrols plus
+wrong-keydecl refusal, allPASS; reusable controls script SHAa3165766. No runtime
+change. V15 freshactual exec59444 nowrunning, pinsR2caller1be1ab, review8f1278,
+controlsa3165766 and genuineprod1fcb. Normal900s child; partial failure metadata
+will nowpersist. No copy/capacity/release acceptance yet. Continue existing59444,
+do not run again.
+
+## Actual-copy R1 stopped at all-source inverse comparison
+
+Session36487 CLOSED1: FIRST_COLD_12_PASS427.57s, then inverse sourceDDL/table
+names/cache-default checks completed but all116originalfact comparison stopped
+at email_unsubscribe_effects. Failure receipt current-copy-failure-r1.json.
+No genuineold-write/reforward/fullcopy/capacity acceptance. All pinned bytes
+unchanged, managedcopy temp absent. Investigate declared facts/types vs hidden
+ROWID before patching runtime or checker. Accepted finiteEmailcomponent uses
+composite identity for effects/directretry; blanketROWID may be wrong, but
+not yet proven. No automatic rerun/timeoutchange or production writes.
+
+## Actual-copy first forward/cold12 passed, inverse pending
+
+Activeexec36487 emitted FIRST_COLD_12_PASS427.57s. Source116→target12,
+42sourcefamily values/types/waters preserved, noFTS/shadows/retiredEmailparents,
+currentcoldconstructors preservefacts. Firsttargetallocation captured before
+fakewrites. Current publicfixtures nowwriting; all116originalfact inverse,
+genuineoldwrites and reforward pending. This is NOTfullcopy/capacity/release
+acceptance. Continue existing session, no duplicate run.
+
+## Remaining selected Email test closure source plan complete
+
+Readonlyplan `docs/database-redesign-email-current12-test-closure-plan-20261017.md`
+SHA2d6d883020233173aa787d1a51f283956fbde59ef4263bb3d51f815fed15fc3c classifies34navigationcandidates:
+31withcurrentfixture/read/instrumentation translation,2harmlesslabels/negative
+assertions,1obsolete shared-account duplicate state. Mixed locator variants
+need3rawfield checks versus2sharedUID source-refusal/retirement dispositions.
+These are static findings, NOT31executed failures. Root read fullplan and
+reverified frozen20/36/373pins; no test/runtime edits while actualcopy runs.
+Exact canonical declaration vs older extra-column fixtures needs explicit
+contract disposition, not a runtime allowlist. No implementation dispatched.
+
+## Current12 R2 caller accepted; root actual-copy running
+
+SameSPEC2PASS46.98s and sameQUALITY2PASS49.63s acceptedR2freeze1be1ab.
+Root all20/36/373/12pins and genuine1fcb clean productionHEAD reverified.
+Local caller acceptance receipt a8ead92db26ddb4898112314d0f5288340585d76828f1d4426a21ceb803c2c69
+explicitly excludes actualcopy/capacity/release. V13 root actual-copy started as
+execsession36487: read-only source onlinebackup then116→12→116→12,42families
+andall116originalsourcefact/type/identity hashes, genuineold/current fake-only
+publicwrites, ordinaryruntime900s child deadline. No deadlineoverride/retry.
+Pending receipt; no actual12/capacity/prod acceptance. Broader current-test SQL
+closure, Legacy/source lifecycle, latest-main/finalCLI/UI/release remain.
+
+## Current12 R2 SPEC approved; same QUALITY rereview running
+
+SameSPEC APPROVE, exact2nodes2PASS46.98s with all20/36/373/12 pins stable.
+Receipt spec-review-r2.json. SameQUALITY now dispatched on frozenR2; no actual
+copy or runtime/production changes.
+
+## Current12 R2 repair frozen; same SPEC rereview running
+
+Same author exact2nodes RED2/31.68s then GREEN2/35.09s, Ruff/AST17 anddiffPASS.
+Only2test nodes plus validationdoc changed; all runtime/component bytes unchanged.
+Freeze1be1ab809a81c58eed59f82e7258418e0b8f4969c6406e32e093e82c1e454edf
+pins20delivery/36requirements/373Python/12JSON. Root verified exactly3changed
+files vs9067. SameSPEC rereview running, sameQUALITY only after approval.
+V12 actual-copy pinsR2 but remains UNEXECUTABLE. Remaining broader current-test
+SQLclosure is separate required finalCLI/release work, not wholefile pass.
+
+## Current12 QUALITY requires test-only repair
+
+Root added read-only current-test closure navigation inventory in
+`docs/database-redesign-email-current12-test-closure-20261017.json`. It is NOT
+a failure count: includes historical factories/schema assertions and projection
+names. At least separate current public replay test still reads retired parents.
+Complete finite classification/retained public assertions in a subsequent scoped
+test unit before final CLI/release, not broad string replacement or runtime
+compatibility tables. Current2review-findings repair scope remains unchanged.
+
+Freeze9067 freshSPEC passed, but freshQUALITY independent9nodes returned
+7PASS/2FAIL235.91s. Public rescan has6retired-parent SELECTs; public poll trace
+wrapper lacks current foreign_keys argument and later setup UPDATE still uses
+retiredClass table. Original assertions were not reached. Same original author
+owns bounded2node+validationdoc repair; runtime/component unchanged. Preserve
+9067 and quality-review.json as historical rejection. NewR2freeze and sameSPEC
+then sameQUALITY required. V11 actual-copy remains UNEXECUTABLE; no copy12 or
+production acceptance.
+
+## Legacy import source preparation complete, not selected
+
+Docs-only capsule6e99fd0957383a5a4c8c53b1233adee4638a0ea3afa472bfcbf957b866df9bcf
+records selected12 synthetic LegacyLinks12fields/10outgoingFK/4indexes and3
+guards; no inboundFK. Declaration matches known intermediate13. Root verified
+lookup-before-history-only and public WorkUpdate vs physicalActions ID boundary.
+Current reachable successful producer is WorkTodo-to-formalTask; latent Project
+branch and other valid endpoints are not retirement permission. No target
+selected; actual12 and complete nativeDML oracle pending. Frozen caller pins
+unchanged. Metadata probe7491 closed0 and temp removed; earlier duplicate probe
+exit/session evidence unavailable, no exact exit claim, zero matching tempdirs
+observed. Do not recreate or guess yielded process IDs.
+
+## Current12 caller SPEC approved; fresh QUALITY running
+
+Fresh SPEC APPROVE:5 synthetic tests/179.17s, all20 delivery/32 requirement/373
+Python/12JSON pins unchanged before/after, root reverified. Receipt:
+2026-10-17-email-canonical-current12-spec-review.json. Fresh independent QUALITY
+is running; actual-copy V10 remains unexecutable until its approval. Production
+HEAD rechecked1fcbddda5, no production DB write or deployment.
+
+## Current12 caller frozen for fresh independent review
+
+Sole author DONE after final5public writes139.52s, fullcurrent12module6/131.30s
+and all documented scoped controls; Ruff/AST17Python/diff allpass after one
+verified-unused import removal. Root verified20ownedfiles (9app8tests3docs),
+acceptedR6 component and all other runtime unchanged. Freeze9067d11e97e22b951b9cfb7bbbd11fae155c08c1edd5724ee4e2cf0db85b396f
+pins20files/32requirements/373runtime and12existingJSONassets. Fresh SPEC
+reviewer dispatched; freshQUALITY follows only after SPEC. Actual-copy harness
+V10 pins caller9067 and refreshed1fcb/47b273 baseline but retains unconditional
+UNEXECUTABLE barrier until bothreviews approve. No actual12/capacity/release.
+
+Independent Legacy import source-only preparation is dispatched: may inspect
+frozen current12 synthetic declarations and knownactual13capsule, but no target
+DDL, selection, existingapp/test/requirement edits, sourceDB/provider or rollout.
+This does not bypass pending12actualcopy.
+
+## Current12 caller and refreshed production preflight checkpoint
+
+Same caller author closed exact public rescan RED nodes2/31.32s, public training
+labeler certain/uncertain branches2/74.36s with original assertions preserved,
+constructor repair/refusal matrix19/471.13s, tightened mixed-parent refusal
+1/31.93s, fresh-candidate paired forward/inverse/reapply1/96.28s, and stable
+claim locator refresh1/34.54s. Remaining bounded direct-action/locator cases and
+final caller freeze/fresh reviews remain, not actual12 acceptance.
+
+Production advanced to1fcbddda5 (tracked clean), origin/main2adf9bbc1. Baseline
+refresh47b27303 records3History-only runtime changes, unchanged six schema-module
+blobs and raw116ordinary+1virtual+4shadow source. Full source preflight remains
+pending at its real migration stage; the intermediate13 canonical capsule is
+not the raw116 declaration. Separate readonly pairing query measured9245Class
+and9245Message rows, zero class-only/message-only and zero four-shared-fact value
+or type mismatch. Recheck on the actual consistent snapshot; no data write.
+
+Model retention follow-up is reconciled with the already-approved storage
+slimming rule: current+previous+latest-readable-candidate. The observed three
+external weights match that rule. Initial literal-only gap hypothesis withdrawn;
+no new model-retention/fallback change is introduced by this database unit.
+
+## Latest component gate: R6 accepted; same current12 caller resumes
+
+R6 freeze aaeeed85 passed author30/95.08s, same SPEC7/46.22s and same QUALITY
+independent prior-failure Row-factory populated forward/current-fact inverse
+probe. Root reverified4component/12requirement/373runtime pins. Acceptance
+receipt2026-10-17-email-canonical-component-acceptance-r6.json covers component
+only. Same current12 author resumes exact two rescan RED nodes, interrupted
+repair/refusal matrix and bounded integration cases. Fresh caller SPEC/QUALITY,
+actual copy, capacity and production gates remain. R5 rejection preserved.
+
+Root separately re-read the exact three provider UUIDs for documents49/50/52:
+all93763bytes match complete reconstructed bodies and stored source identities;
+original suffix producer lineage remains unexplained. Receipt a823f66b records
+body availability only, no proof promotion or retirement. Source access mode=ro,
+raw provider data stayed in memory, no source/production writes or sends.
+
+## Latest component gate: R5 rejected; R6 same-author repair
+
+R5 freeze ba860e90 fixed update comparison and passed author29/71.27s,
+SPEC8/48.90s. QUALITY independently reproduced a second actual Row-factory
+representation defect: _projection_snapshot retained Row objects while native
+_snapshot stores tuples. A populated exact known source forward rejects equal
+facts; inverse shares the defective snapshot path. R5 is NOT accepted. Same
+author R6 repair and full Row-factory forward/current-fact inverse regression
+are dispatched; caller remains paused. Review receipt:
+2026-10-17-email-canonical-component-review-r5.json. No production change.
+
+## Current caller validation checkpoint: component row-factory repair
+
+Selected12 caller tests passed exact ordinary-table set with both cold orders
+(3/100.63s), actual-profile paired apply/inverse/reapply (1/104.98s), cold
+known-index repair (1/26.72s), and indexed Attention lookup (2/50.24s).
+Two actual public rescan tests exposed a component representation defect:
+`update_email_classification` compares a fetched sqlite3.Row directly with a
+tuple and rejects equal shared facts. Root verified the comparison. Caller edits
+are paused; the same component author owns a bounded R5 repair and Row-factory
+regression, followed by the same SPEC then QUALITY reviewers. Do not omit shared
+values in the caller just to evade this defect. R4 acceptance is historical;
+current12 caller acceptance and actual-copy/capacity/release remain pending.
+
+## Latest actual-data acceptance: Email history current13; canonical Email next
+
+Latest fully accepted actual-data milestone is current13/6b8c310c. Current13
+component and six public callers passed fresh SPEC then QUALITY; same-author
+measured paired-child deadline repair passed both rereviews at freeze
+c68a4f96 (16 immutable/10 requirement/371 runtime pins). Original300s actual-copy
+failure and diagnostic1200s one-forward timings remain historical evidence, not
+full acceptance. Normal runtime deadline is900s, no diagnostic override/retry.
+
+The next normal attempt stopped at preflight before DB access because production
+advanced83c1d7f0→4f3d52a0. Baseline refresh673e631e proves exact app/source-spec Git
+trees unchanged; only OA Skill/release manifest/claims differ. Root then started
+normal full116→13→116→13 copy session57030 on a fresh readonly online backup.
+Backup confirms116tables/40distinct retained families,183history/0operations.
+Whole proof CLOSED/EXIT0 PASS1558.671s116→13→116→13; firstcold586.21s,
+inverse955.20s, genuine predecessor cold/read/write976.08s. All40 retained
+families/types/IDs/ROWIDs/waters and sourceDDL/markers/preexistingFKfinding hold;
+all16/10/371 pins and managed-copy absence independently rechecked.
+Receipt6b8c310cf83694000ee671400f17136452452f0ae79edf4dbe39c0bd28a428fc.
+Capacity NOT accepted:502931456→563466240B(+60534784), final563642368B afterfakes.
+Per-table/index/slack breakdown: ../../database-redesign-current13-capacity-20261017.md.
+No source/production write, real send or deployment has occurred.
+
+Next canonical Email source analysis corrects raw-folder normalization:49 source
+columns map to45 retained facts, four shared identity/UID facts; no body/timestamp
+retirement selected. New unselected component plan
+`2026-10-17-email-canonical-component-plan.md` now has
+exact source capsule79f04ccf (49fields/12triggers/one physical ActionsFK used by
+seven kinds), fresh synthetic26.48s. Actual/fresh DDL differs in trigger indent
+and historical message-column order; preserve both exact profiles. Fresh sole
+author `/root/email_canonical_component_impl` completed four new component/
+test/validation files; separate caller integration below is now active. Root resolved FK representation
+to exact unique classification alias in canonical Emails, unchanged public
+Actions numbers, no duplicate new relationship. Component R3 accepted below. Final11/capacity/full
+field disposition/nativeCLI with fake sends/UI/release remain open.
+
+Derek authorized five task-owned temporary directories after reviews. Refreshed
+ownership/internal-symlink/no-open-file checks passed (554448961 regular bytes),
+but exact deletion again rejected by automatic approval (approval required,
+AskForApproval Never). No deletion or alternate method executed.
+
+## Canonical Email R4 accepted; same current12 integration author resumed
+
+Same QUALITY R4 APPROVE8PASS58.99s, all4/12/373pins and paused snapshot stable.
+Root rechecked hashes/membership and records component-only acceptance6588d88f0a923df1a0eae808f6887bae376ab7ce4293dae543687b6b5ce7fb36.
+SAME current12 author resumed the original unit, retaining mixed known sourceDDL;
+will correct its separate synthetic class-only row for success-path pair tests
+and retain explicit invalid-source refusal controls. R4 component files now frozen.
+No current12 caller acceptance or actualcopy/capacity/production acceptance yet.
+
+Same current12 author now reports first actual-variant synthetic paired
+publish→inverse→repeatability GREEN1/104.98s with valid crossed declarations and
+matching Message fixture; JSON inverse-key transport1/0.67s. Exact12/no virtual
+or shadow fresh/cold rerun is still active, not yet accepted as a complete unit.
+Root bounded future provenance reader closure is recorded in
+../../database-redesign-provenance-reader-closure-20261017.md: four leaf Store
+bodyjoins behind six access methods, actual quotation/context/UI consumers,
+metadata-only dedupe/ID paths and writer-transaction boundary. No reader/runtime
+or body retirement selected; this source analysis does not refresh availability.
+
+R4 author DONE28PASS56.26s+Ruff/AST; frozen376348b9bfe45bddd647908027a9d107dee89944c8934d1081b84606ec77894a
+pins4files/12requirements/373runtime, nine paused integrationfiles unchanged.
+SameSPEC APPROVE9PASS37.35s: four known combinations/currentwrite/inverse plus
+unknown dependency/sharedfact/MAX/FULL controls. SameQUALITY final rereview active.
+Exactly362oforiginal371runtime remain source-capsule-identical; nine partial
+integrationfiles are snapshot-pinned only, not approved. Caller author stays paused.
+
+Root unexecuted42-family proof draft now additionally streams hashes of original
+fact rows/types from ALL116 ordinary source tables and checks them after inverse.
+Only existing work_projects.memory_context_json retirement and the two accepted
+provider composite-family hiddenROWID exceptions are excluded. Five independent
+in-memory negative controls catch deletion/value/type/other-field/hiddenROWID loss;
+equality, new synthetic rows and WITHOUTROWID controls pass. Parent/nativechild AST
+parse only; no actual DB run or broad preservation claim yet. New helper is in
+session store whole_original_source_hash_helper; full draft remains deliberately
+unexecutable until caller reviews/predecessor/freeze/targetdryrun gates.
+
+Previous turn made concrete progress: R3component author26/SPEC10/QUALITY7
+acceptance and native public fixture are durable evidence, but integration now
+exposes an additional independent-variant defect. Current12 author PAUSED all
+edits/tests at safe boundary;3fresh/cold constructor cases PASS71.51s. Snapshot
+214efae476e3bdafc7523042aaf394cef70d95887157401a2fd42257d4f22693 pins373runtime
+and nine integration changes, with all4R3component files still exact before repair.
+
+Existing paired source[actual] legitimately yields exact fresh Email profile with
+exact actual Actions variant: native Actions declarationcheck true, quickcheckok,
+only baseline unrelated_child FKfinding, but canonical diagonal allowlist rejects
+and outer apply rolls backledger51. Same QUALITY independently proves BOTH crossed
+known variants FK0 and identical EmailFK; Actions distinction is unrelated Memory
+attempt FK. Same original component author now repairs only capture/inverse known
+axis coupling plus explicit historical13 component fixture, retaining all prior
+tests and adding four-known-combination roundtrip. Do not alter valid sourceDDL
+to fit diagonal guard. Class-only sourcefixture row remains a separate invalid
+data condition; integration author will add its matching Message after R4 approval.
+R4freeze→sameSPEC→sameQUALITY required before resuming sole caller author. Not
+selected12/actualcopy/capacity/production acceptance.
+
+R3 same QUALITY APPROVE7PASS27.82s plus independent prior-failure probes now
+GREEN; all4/9/373pins stable. Root independently rechecked hashes/membership and
+records component-only acceptance04c15acfb87e7bdce6a0d324b07ad72e737658613a10ca375215aac1b42b7f81.
+Fresh sole `/root/email_canonical_current12_impl` (gpt-6-sol medium, ordinary
+finite integration) now owns next caller/release implementation under plan
+6b91ef61. Component files remain frozen; current13 remains latest installed and
+actual-data acceptance until this separate unit's reviews and42-family proof.
+No selected12/actualcanonical/capacity/deployment acceptance yet.
+
+Fresh current12 author retained constructor RED1/21.34s and identifies47current
+EmailStore literal consumers plus6external functions; earlier references include
+historical factories, not current readers. Author preserves those source roles
+and is integrating13native write sites through finite accepted primitives.
+Root immutable genuine4f3d native synthetic fixture PASS2.237s; expanded Message-only
+writer→public scan/replay/context/exact claim/paired fake MOVE/receipt/no-reclaim
+fixture PASS1.948s, managed temps removed. Receipt native-fixture-r2; no real provider.
+Root42-family fullcopy draft remains RAM-only, deliberately unexecutable pending
+caller freeze/reviews/HEAD verification and final target dryrun. Not actual12 proof.
+Author first Store→Email fresh selected12 GREEN1/22.81s follows constructor
+RED1/21.34s; conversion is within existing Email transaction. Paired JSON metadata,
+inverse placement, other constructor order/cold/runtime coverage remain in progress;
+this is one synthetic constructor path, not completed caller/release acceptance.
+
+Same author closed the two QUALITY repairs locally:26PASS53.18s, Ruff/AST and
+claim check clean. New immutable R3 freeze304de83bbe1b2b4fd288a9fff4d38f12e86c2192f276c105d80a5059ca62ff93
+pins4files/9requirements/373runtime, original371runtime unchanged. A finite paired
+locator UPDATE retains existing caller old-locator predicates and field-specific
+timestamps; native scratch affinity precedes shared fact comparison. Same SPEC
+APPROVE10independentPASS33.88s; all4/9/373pins stable and prior allocation/FULL
+fixes remain closed. Same QUALITY rereview now active. No selected12 or actualcanonical
+acceptance. Next selected-caller plan is2026-10-17-email-canonical-current12-plan.md;
+its future root proof adds both Email parents to40, yielding42 distinct families.
+
+Latest same-author repair freeze c254bc25503ff7c1a125e7bc23d5c1e38d2c2d31fd9065b32a92042865ae44d9
+pins4files/8requirements/373runtime;19PASS46.16s+Ruff. Root reverseinmemory
+confirms exactly the two helper repairs return to old storage hash. Same SPEC
+APPROVE5independentPASS29.49s, allpins/pathsetstable; public random ordinary
+class allocator unchanged. Firstfresh QUALITY returned two P2 findings: the
+existing classification-then-message locator update transaction lacks a usable
+paired mutation, and Python comparisons reject values SQLite INTEGER/TEXT
+affinity would accept. Same author is repairing only the four owned component
+files with retained RED/GREEN controls. R3 freeze, same SPEC rereview, then same
+QUALITY rereview are required. Original freezes and verdicts remain historical.
+No callers12 or actualcanonical acceptance.
+
+Sole author handed off4newfiles,18focusedPASS41.52s+Ruff/AST; rootfreeze
+`2026-10-17-email-canonical-component-freeze.json` SHA256
+ca56383a1dc03b35cb579934c9965c3d743cc5d65100b46d40fd41dcddb2ab4e
+pins4files/7requirements/373runtime. Original371runtime byte-identical;
+selected constructors/callers remain13. New finite Emails46physicalcolumns
+retain45sourcefacts, dualpublicaliases/bodyonce/12triggers/4accessindexes.
+
+Fresh SPEC independent18PASS42.68s, all4/7/373pins stable, but CHANGES REQUIRED:
+P2structural physical-ID collision atINT64MAX uses random allocation, violating
+deterministic mapping; P2Message AUTO exhaustion loses native errorcode13/name
+SQLITE_FULL despite correctrollback. Sameauthor repair with explicitRED→GREEN
+is nowactive; firstfreeze staysimmutable. RootwillfreezeR2, sameSPEC rereview,
+then firstfreshQUALITY. No selected12/actualcanonical/publicruntime acceptance.
+The public ordinary classification allocator's native random-atMAX behavior
+must remain; it is distinct from deterministic structural migration identity.
+
+## Release integration boundary refreshed, 2026-10-17
+
+Readonly Git/AST navigation: isolatedHEAD8eae51e versus origin/main4f3d52a0
+has mergebase44ee956d and89 upstream commits; upstream app delta34files/
+2266insertions/332deletions. Primary checkoutHEAD4ff8e547 has additional local
+commits and is not the deployed predecessor. No checkout/refs/source edits made.
+Of101 upstream changed/added/removed function ASTs, current isolated89 still
+match mergebase and12 differ from both; none match complete upstream ASTs.
+These are navigation counts, not a semantic correctness or regression verdict.
+
+Final integration must preserve recent upstream History/attempt, OA/recovery,
+message receipt and other runtime fixes, including12 overlapping function bodies
+that need intent-level storage translation. Treat integration as a separately
+owned/reviewed unit; do not blindly replace current typed storage or upstream
+behavior, reset another author's commits, or merge dirty work during the current
+unselected component author's tests. Actual13 proof remains its exact frozen
+storage/public-fixture evidence; it is not latest-main functional completeness.
+No release until that integration, final11, capacity and final runtime gates pass.
+
+## Latest local current15 caller freeze, 2026-10-17
+
+Latest accepted actual-data candidate is now15ordinary: root76140 EXIT0/CLOSED PASS775.246s116→15→116→15 atgenuine83, receiptf4bc7d656279b0df49fc11d9a9fbbe9b0d3e2b38b7b2b032fb3afbb6459970e7. Firstcold289.35s/inverse487.3s/oldreadwrite492.7s/final775.246s. All38familyfacts/types/ROWIDs/waters andcurrent+oldpublicwrites survive, wholeoriginalDDL/markers/onepreexistingFKfinding restore; soleapprovedproject-cache retirementexception. Rootrechecks26/10/369pins+completepathsetandownedtmpabsence. Currentproduction/sourceunchanged116, no sends/deploy. CapacityNOTaccepted: sameinput502599680→562970624B(+60370944); final563146752B afterfakes. See ../../database-redesign-current15-capacity-20261017.md. Final11/Email/provenance/bodyavailability/wholefieldmatrix/CLI+fakes/UI/release stillopen. Earlier running/pending statements below preserve history.
+
+Current continuation: r2freeze d36f144c is now sequentiallyAPPROVED bysameSPEC2/35.48s andsameQUALITY independentnumeric/generalplans plusgenuinepublicfixture1/18.49s;26/10/369pinsstable. Rootactualcopysession76140 RUNNING afterreadonlyconsistentbackup116tables/38families, exactgenuine83/cleancheckoutguard. Firstforward/currentcold/inverse/reforward acceptance notyetreported. Latestacceptedactualcandidate stays25 untilproofexitsuccess. No source/productionwrite/send/deploy.
+
+Latest review outcome: freshSPEC APPROVE7/121.22s; freshQUALITY CHANGES REQUIRED/P2 allocator/directID/order numericindexscope omitted, causing kindpartitionscans/temporarysort despite existingpartialnumericindex. IndependentQUALITY2/47.91s oldinverse/readerindexcasespassbutdonotcoverthispath. Sameauthorrepairnowactive; r2freeze→sameSPEC→sameQUALITY required. Original70ad1adb remains historical failedqualityfreeze; actualcopy15 notstarted.
+
+Business Actions caller author is DONE/noedits, frozen in70ad1adb192aa0e0fa9a96955f212d2181204286911a3e2a3d1f13521a013109:25immutable ownedfiles,9requirements,369runtime pins. Root independently matched all26authorhashes before excluding mutableclaims. Fresh SPEC `/root/business_actions_callers_spec` is active; QUALITY and actual38family116→15→116→15 have not started. Previous accepted actual-data candidate remains25ordinary. Corrected current callerplan23d8ec05 supersedes dispatched58675910 for38distinct-family count; these ten were already part of38, not48. Older dispatch/preparation statements below are historical.
+
+Author focused results: component19/320.76s; publicnativeparity8/114.10s; service9pass4fixturefail239.20s→exact4GREEN53.16s; extra rollback/import7/82.28s; paired14pass5fail257.10s→same5GREEN60.51s after real currentrepair fix restricting historical Signal ALTER to freshsource; selected Signal/Date scalar/immutable and public observations4/67.16s. No whole-suite claim. Full results and root code-read evidence in `../../database-redesign-business-actions-callers-validation-20261017.md`. Root copydraft remains RAM-only/unexecuted with a reviewedfreeze placeholder, now verifies allthree manifestpin groups before/after.
+
+Final11/canonicalEmails/provenance/source-retirement/capacity/nativeCLI+fakes/UI/reconciliation/deployment remain open. No source/production DB write or externalsend. Automaticapproval rejected cleanup of author-owned `/tmp/business-actions-callers.e44HNH`; pendingauthorization, no retry/bypass. Email read-only follow-up confirms current Actions references nativeclassification IDs and existing training/search body dependencies; no Email implementation begun.
+
+## Latest accepted current25 continuation, 2026-10-17
+
+
+## Actual r2 current25 accepted; capacity still open
+
+Root session68834 EXIT0/CLOSED PASS738.207s. Exact r2freeze2d5951f4 is stable; all367runtime Python and26caller pins independently rechecked after completion. Real readonly actual83c1 production online backup116→25→116→25, with first cold264.38s, complete inverse462.54s and genuine archived predecessor cold read/write468.83s. All38retained-family values/types/sourceROWIDs/publicwaters survive; whole original schema restored, original unrelated runs190042→tasks FK finding unchanged. Approved work_projects.memory_context_json cache retirement alone is excluded:975 source rows/992510B, inverse and archived-native defaults TEXT{}/1950B. Current+old synthetic Business/Feedback/provider/error/internal enqueue facts preserved; Memory receipts are fake local strings. No provider/native-role/send/UI/production acceptance claimed.
+
+Receipt `2026-10-17-business-candidates-current-copy.json` SHA256 `5c5a0e30f2a8dde986e08a7aa5f98a8c1de4d6801740f6bdd4e200f2c15ec09e`; root independently confirms owned temp absent. Latest integrated accepted actual-data candidate is now25 ordinary tables, not28. Remaining16native names are ten Business action/evidence families, four Email families, SourceDocuments and LegacyLinks; final10core+ledger11 remains open. Capacity derivative records source502329344B→first560893952B→final561041408B, firsttarget+58564608B. This is not saved-space acceptance. No commit/push/deploy or production DB write occurred.
+
+## Next sole implementation: ten Business Actions families
+
+Root exact post-current25 source metadata7c65b685 contains10tables/62existingfields/21outgoingFKrows plus retained LegacyLinks declaration and fixed pre-edit Actions actual/fresh and Business9/12 oracles. Root independently rechecks all62names and Actions destination against approved CSV. Component plan initially9f5598b2, clarifieda5bc7c16 is dispatched to sole `/root/business_actions_component_impl` (gpt-6-sol medium ordinary scoped execution). New schema remains opt-in/default-false; current Store/Email/coordinator/callers stay on accepted25 until subsequent reviewed integration. SourceDocuments/LegacyLinks remain native for this slice; no body retirement or30day retention. Independent fresh SPEC then QUALITY required before next unit; current/final11/capacity/production gates stay open.
+
+## Current15 caller unit dispatched; later Email analysis only
+
+Fresh sole `/root/business_actions_callers_impl` (gpt-6-sol medium ordinary scopedexecution) now implements reviewed plan58675910. It reports firstRED fresh25vsrequired15/12.84s, classifies native freshDDL vs currentSQL, and is proving specificcomposite-conflict/datecopy semantics before enablingcurrent15. No partially converted selector/publication accepted. NewcallerunitneedsitsownfreshSPECthenQUALITY androotactualcopy15. Root dedicated tracker `../../database-redesign-business-actions-callers-validation-20261017.md` records the38distinct-family correction, nonexecuted15copydraft and genuine archived83 expandednativefixture PASS10.626s (managedtmpremoved). This is a freshsynthetic nativebaseline, notactualcopy15acceptance.
+
+Root read-only synthesis `../../database-redesign-emails-canonical-source-analysis-20261017.md` records the original onecanonicalrow-per-email requirement and existing metadata, not a new production measure: fourEmailtables73currentcolumns (canceledaction_plan_json absent), classificationordinaryIPK vs messageAUTO, history/operationTEXT-PK+hiddenROWID, all4outgoingFKsempty. Recorded9227joinedpairs haveallIDs/created_attimestampsdifferent,21RFCnullabilitydifferences and9225differentmodel/readabletextpairs. Actualscan/upsert/externaltrainingreaders confirm these are not mechanically interchangeablefields. No Email implementation/newbusinessfield/bodyretirement/nextauthorstarted; this remains planning whileBusinesscallerworks.
+
+## Capacity and input-reference evidence advanced, 2026-10-17
+
+Readonly diagnostics: exact all20Task source serialization36190rows yields53,686,777B payload,8,425,465B keys/separators and2,399,868B value representation overhead; nullable-null removal candidate only92,208B. Receipt836098c4. Same accepted25-copy allocation grouping7963bd8f attributes Actions+29.794MB, Tasks+13.758MB (whole data+index groups); separate diagnostic snapshot is not falsely equated to that copy.
+
+Exact genuine canonical-context proof0aee7089 verifies222/290terminal meeting contexts,7,867,162B, including full source_json reconstruction from existing snapshot/managed revision and two exact original Skill files. Remaining68/2,320,122B depend on three old operation Skill versions. Bounded same-path Git history and four persisted native candidates did not recover them (4f330f8f); no permanent-unavailability claim, retirement or new body archive. Reader/lifecycle/reference/inverse implementation remains separate from current Actions10 component.
+
+Actions10 author is now DONE and frozen9owned paths/369runtime pins in component manifest163ba72d. Final15PASS126.70s followed by final scalar-affinity differential1PASS32.53s; native FULL4PASS47.93s. Root independently verifies only4existing factories changed and2runtime modules added versus preedit367; current Store/Email/callers unchanged. Fresh SPEC found one-statement created_at default-time failure despite6focusedPASS69.99s; freeze163ba72d allpinsstable. Sameauthor repair now frozenr2/5edadcba, retained statement-clock RED19.40s/GREEN19.97s and16focusedPASS141.12s. SameSPEC r2APPROVE1/19.78s plus independentboundary/scalar/NULL/ignore probe19.23s, allpinsstable. FirstQUALITY CHANGES REQUIRED/P2:5missing sourceindexpositions (reverseRelation/documentSignal leadingindexes plus3publicid-order suffixes), verifiedby2EXPLAINprobes17.89s/16.76s; allpinsstable. Sameauthor indexrepair frozenr3/1b403a45 after RED16.85s/GREEN17.87s and17PASS137.95s; synthetic1000relation/test-onlyANALYZE, no caller/runtime-statistics change. r3nowCLOSED ACCEPTED: sameSPEC4/17.64s then sameQUALITYindependent17.88s; rootrechecks9owned/5requirement/369runtimepinsstable. Nextsolecurrentcaller25→15unitmaynowstart, withitsownreviews/actualcopybeforeproduction. Next caller25→15 plan dc2ddaa1 is prepared only, not dispatched.
+
+Evidence correction: the earlier suspected inverse allocator-prefix loss was NOT reproduced: controlled original-prefix module PASSED1/26.61s because SQLite retained the independently named sequence row. Exact-owned alias membership remains clearer ownership, not a demonstrated data-loss fix. The different retained-row positional-prefix defect WAS reproduced with a preexisting physical Action INT64_MAX: old-expression RED1/18.32s, corrected filterGREEN1/22.03s. Four native AUTO FULL transaction effects are explicitly different: Events/AnchorLinks rollback; DateEvidence/Signals preserve transaction because of original immutable BEFORE triggers. Actions.id remains ordinary INTEGER PRIMARY KEY, optional sequence preserved exactly; no global AUTO promotion.
+
+## Latest allocator repair continuation, 2026-10-17
+
+Caller r2 freeze2d5951f4 supersedes historical6321 after actual-copy inverse failure. Same-author RED2/GREEN2, retained genuine83 paired roundtrip1/53.85s and affected307/167.20s pass; root verifies all26pins. Same SPEC then QUALITY rereview and fresh38-family actual copy are required next. Latest integrated accepted actual-data candidate remains28 tables; selected development25 is not actual-copy accepted. Final10core+ledger11, provenance/email/action closure, capacity and deployment remain open.
+
+## Business candidate caller25 frozen; independent review underway, 2026-10-17
+
+The next caller unit is implemented and frozen at26files/SHA6321dab1f5ac2cb504b2fe223ddc2506a65efb8f8eda7b49e15ebd26de50dbb6. Development constructors now select25ordinary/current12Business kinds and retire the native Attention/ProjectCandidate/WeChatCandidate tables; default native9-kind factory oracle remains91fedd3d. Exact source fields16/8/22, actual/fresh profiles, existingFKs/publicID/ROWID/counters and caller transaction contracts remain required. Author final24/158.71s includes5 repaired paired cases,18ROWID native/old-expression RED controls and retained genuine83/current25 twin; full paired run120pass/5staleexpectation failures is historical and the exact5pass in the final targeted run, not a claimed final125single invocation. Root independently passed evolving empty25 bothconstructororders and two coldprocesses33.361s. Fresh independent SPEC APPROVES25/33.11s+20/350.21s with all26pinsstable; fresh QUALITY APPROVES3/55.45s+10/162.17s with all26pinsstable. Root38-family actualcopy80832 passed firstcold25/retainedfacts298.44s but FAILED paired inverse sourceverification: new3manual Business allocator aliases survive component inverse. Sameauthor confirmed2profile RED0.91s after native/public/private highwater checks, and is repairing only ownership-correct alias cleanup plus regression coverage. Original6321reviews are historical; revised sameSPEC/QUALITY then new realcopy required. Approved WorkProject cache retirement stays explicit. Until then, latest independently accepted integrated actual-data candidate remains28, not25. Component-r2 acceptance015ede53/SPEC737+QUALITY32 remains the historical unselected boundary. No production write/send/deploy or body retirement. Final11 and capacity remain open; current28 used560.3MB vs501.9MBsource. See2026-10-17-business-candidates-callers-plan.md and ../../database-redesign-business-candidates-callers-validation-20261017.md.
+
+
+## Feedback Actions historical implementation and accepted28 rehearsal, 2026-10-17
+
+The next sole implementation covers three native Feedback tables only, preserving all26source fields, three existing Tasks foreign keys, source ROWIDs and one AUTOwater. Actual metadata counts48events/0decisionitems/5transitions, metadata receipt2026-10-17-feedback-actions-source-metadata.json. Opt-in default-false component now has sequential independent SPEC21/49.03s and QUALITY21/50.36s approval at freeze-r3, after three source-behavior fixes. Default31DDL byte equality independently proved against exact pre-editSHA385c45b3. Caller cutover is now under sole-author implementation as a separate unit, with fresh28 constructors and actual/fresh current-public/inverse/reforward tests passing at their evolving code state; no frozen caller approval or real-copy acceptance yet. Stable full Feedback processing215run yielded170failures/45passes1360.81s; exact inventory is2026-10-17-feedback-processing-failure-inventory.json. Sameauthor completed fixture-only closure with app frozen: full218 processing parameters nowPASS1374.35s (22:54), zero exclusions; all365app files unchanged againstfailureinventory and testbefore/afterSHA3f9ecf8d stable. Historical native14cases and currentcache2controls are separate; one genuine archived Store+Email source passes complete publisher/current28 readback. Freshcomponent/selectedcaller28/131.24s pass, root23-filefreeze532a5079. Fresh independentSPEC approves34focused tests andall23hashesstable; freshQUALITY approves16/116.62s with all23hashesstable. Root actualcopy nowPASS116→28→116→28/735.44s at actual83c1;14families/types/ROWIDs/waters/current+genuineoldwrites and two fresh currentprocesses preserved. Receipt2026-10-17-feedback-actions-current-copy.json; final11/fullnativeCLI/UI/capacity/release remainopen. Separate other Feedback/API suite39passes/one independently confirmed old Skillreceipt fixture excluded336.25s is not full processing acceptance. Store initializer plus23methods and one Quality reader are inventoried; caller plan targets31→28 only after component SPEC+QUALITY. The accepted sequence reaches28; production remains116. See2026-10-17-feedback-actions-component-plan.md and2026-10-17-feedback-actions-callers-plan.md. No new body-retention rule or runtime safety policy.
+
+## Source-version continuation during caller25 implementation, 2026-10-17
+
+Source documents have grown213→220/7,164,322B. Root exact Console reconstruction adds1/111B (signal44/task-event44 document8), metadata9d2875aa. Root binds new214–220 through3completed input/TaskAgent run source pairs to one known CLI session and proves7/147173B; refreshed unchanged native reader also rereads prior55 coordinates in2explicit known files. Final native metadata59217b62 gives62/220 current native reader proofs/1850293B, plusConsole1.130 older verified Provider records/4637606B still match current content; canonical Provider reader remains unimplemented and availability is not refreshed.A later bounded3node current-Provider read proves complete canonical bodies/ref/all52identities for weekly67/69/91/93 (4/93526B), receipt28c489d3. Relative to that220snapshot, strict recorded coverage is197, including67fresh native/Console/currentProvider and130olderProvider;23older versions/582786B remain unproved, not permanently unavailable. The four-row refresh does not rehash the full current denominator. No runtime source reader activation, archive or body retirement. Final provenance depends on closing those read-path/source requirements, independently of caller25. Detailed evidence in ../../database-redesign-live-source-readback-20261017.md.
+
+## Current physical closure, 2026-10-17
+
+Latest actual28 capacity: source501903360B, firsttarget560275456B, finaltarget560390144B aftersyntheticwrites. This is58372096B above source, not saved space. Wholecandidate capacity/representation/source-retirement remainsunresolved. Exact derivative allocation analysis in `../../database-redesign-current28-capacity-20261017.md` accounts for the58,372,096B increase as table40,095,744B/index16,764,928B/schema1,511,424B, with zero freelist in both snapshots. This is not a new production measurement. Business3 caller integration is now frozen26files/current25 and under fresh SPEC review; this does not change the latest accepted actual-copy28 boundary until its separate reviews and rehearsal pass.
+
+The latest independently reviewed Store+Email candidate now has **28 ordinary tables** with real current-production copy PASS116→28→116→28/735.44s at83c1. It is not the final eleven. Eight final core names plus the Email ledger are present; `emails` and `provenance` remain absent.19remaining native names map to12 Actions,3 Business,2 Emails,1 Provenance and the legacy-link table's proven inline identities. Retire19/add2 yields the required ten cores plus one ledger. Feedback source3 has completed independent SPEC34/QUALITY16 and actual14family proof with two fresh current constructor processes; whole116schema exact inverse, originalFKfinding unchanged, no targetFTS, no production change. Complete bounded24-method Errors native public differential now has independent SPEC+QUALITY approval15/99.62s+15/99.02s, with real old883 scalar-task settlement/input-compaction cases; full History/service/final acceptance remain open. Older sections preserve historical32-table receipt boundaries.
+
+The latest Provider native-four-field revision has independent SPEC+QUALITY50/38.37s+50/34.56s and real seven-family copy PASS587.938s116→31→116→31 at actual1ab1ded2. It preserves whole source schema, all7values/types/waters and current+oldpublic writes. Provider data+indexes now27.14MB, approximately7MBbelow priorJSONcandidate (different snapshots; controlledsame-inputRAM saves7.02MB). Wholecandidate558317568B remains above500490240Bsource: finalspaceoptimization is stillopen. No vacuum/retention change or production migration. Receipt2026-10-17-provider-native-fields-current-copy.json. Sharedcodec doc list correction is complete with sequential doc-only SPEC+QUALITY approval at freeze-r2; app is unchanged.
+
+Read-only production `pragma_table_list` currently reports 116 ordinary
+tables, one virtual FTS table and four shadow tables; the 121-table aggregate
+must not be labelled 121 ordinary tables. The fresh candidate inventory and
+exact actual/fresh four-family source metadata are recorded in
+`../specs/2026-10-17-task-delivery-source-metadata.json`.
+
+The selected task-delivery Actions unit is `meeting_alignment_delivery_claims`,
+`meeting_memory_write_events`, `task_memory_write_events` and
+`wechat_deliveries`. Production currently has 0, 595, 611 and 133 rows in
+those respective families. Claims preserve their task-primary-key cascade;
+meeting Memory preserves its unique task key, and task Memory preserves its
+task/generation unique key and nullable scalar `consumer_run_id` without an
+invented Run FK. Read-only actual metadata proves a material profile
+difference: production WeChat has a task/generation unique constraint, while
+the fresh candidate does not. Actual meeting Memory has an appended
+`execution_generation` field with default `''`; fresh has no default.
+Both native profiles and exact inverse declarations must be preserved.
+
+The four-family typed component, current Store and direct readers, task-child
+guards, paired coordinator/fresh construction and current-fact inverse are now
+selected together in the isolated development candidate. Independent SPEC
+approves this bounded slice:60 component cases pass, plus31 focused caller
+cases; one known historical Config-hybrid fixture fails before meeting logic.
+Fresh independent QUALITY also approves (10 focused cases and native UPSERT
+counter comparison); the next copied-database/current-predecessor acceptance
+found a cold inverse metadata-transport regression after the real116→32
+forward succeeded; the two-site representation fix has independent SPEC and QUALITY approval,
+including six exact-declaration negative controls. Root real-copy rehearsal now
+passes116→32→116→32 in566.413s, including all four families' values/types,
+new current writes, complete source schema and genuine predecessor cold write.
+Receipt:../specs/2026-10-17-task-delivery-current-copy.json. Source snapshots are metadata only, with no trajectory
+or source-body backup. Final11, full final-schema acceptance, native CLI with fake sends, UI,
+publication and space reclamation
+remain open; no production write or deployment is claimed.
+
+The Errors Actions component and full caller cutover now have sequential independent SPEC and QUALITY approval at the21-file freeze-r2 manifest. Current focused constructors select31 ordinary tables, retiring Errors (22 native names remain). The31 earlier native SQL sites are closed. The initial SPEC rejection exposed missing numeric partial-index qualification; the corrected shared predicate preserves exact existing index DDL, point/range/recent access and unresolved Attention budgets. QUALITY independently passes23 focused cases plus2 nonempty Quality/Attention readbacks and a native/typed bulk-update/rollback probe. Real current883c7c9f copy now passes116→31→116→31 in609.571s, preserving whole source schema and five families/current+old writes/types/waters. Receipt2026-10-17-error-actions-current-copy.json is separate from the32 receipt. Complete bounded24-method native differential now passes separate SPEC+QUALITY; fullHistory/service/final11 remainsopen. The next sole implementation corrects four-existing-field Provider representation under its separate2026-10-17 plan. No release or production mutation occurred. Evidence: `../../database-redesign-error-actions-validation-20261017.md`.
+
 ## Current continuation after complete Task12 DAO proposals, 2026-10-16
 
 Final target remains **ten core tables plus email_schema_migrations**. Production readonly head44ee956d still has116ordinary tables; the last integrated nonempty copied-DB forward/current-write/inverse/true-predecessor/reforward proof remains67ordinary. No integrated Tasks20 runtime selection, production update or final11 acceptance is claimed.
@@ -853,15 +2021,169 @@ Currentcode e29560247 selects20kindTasks/currentconstructors/callers/publication
 Next approvedremainingrouting is 2026-10-16-remaining-55-to-11-routing.md. BotholdWorkbenchconfirmation andindependentsearchindex/FTS remainintermediate dependencies slatedforretirement; preserveexisting7searchmetadatafacts ratherthanblindlyderive700rowsfromallruns (2alias/title/session mismatches,54nonmembers,timestampsdiffer). Confirmationcurrentcreate/validator/recovery/API/UIclosure needs separate exactcomponent; originalnativefactories remainhistoricaloracles. No furtherappimplementation started, no main/push/productionmutation/deploy; final11/nativefakeoutbound/UI/performance/CI/humanapproval stillrequired.
 
 
-### 2026-10-16 Runs11 unselected implementation checkpoint
+### 2026-10-16 Runs11 selected current51 and fixture closure
 
-Installed the three pure Runs11 declaration/writer/release modules plus native
-source oracle and275 focused regressions. Source-bound final-hash copied proof:
-116→54→51→54→51,474.445s, current writes/types/counters/source declarations intact,
-50 unaffected baseline tables identical, original FK finding unchanged and frozen
-input SHA unchanged. Installed275 tests/Ruff7 and a cold Store+Email54-table/
-Email52/fresh-FK control pass. Canonical SPEC and revised QUALITY pass; fresh
-applied SPEC275 and QUALITY61/Ruff7 APPROVE the exact installed code c14cb181d. The current runtime still selects54
-ordinary tables and production is untouched. Runs11 current callers/coordinator
-and51-table cold startup are the next stage; the final11-table goal is incomplete.
-See `2026-10-16-runs11-consolidation-plan.md` and final-hash copy/applied receipts.
+Commit317536b6e selects the reviewed current Runs11 callers, constructor and
+paired release; the source-bound copy proof remains116→51→116→51 with all three
+Runs source families, counters, current/predecessor writes and the original FK
+finding preserved. Fresh APPLIED SPEC/QUALITY accepted the installed runtime,
+and the selected tests passed487. The follow-up test-only fixture repair at
+8eae51e05 keeps65 quality tests/126 assertion ASTs and the historical Email
+source oracle, replaces stale physical-table fixture writes with existing typed
+helpers, and passes the exact12-file regression556 plus the focused fixture
+tests69. Production remains44ee and unchanged. This establishes the isolated
+51-table current candidate, not the final10+1 schema. The current remaining-table
+routing and Runs11 plan contain the detailed source/copy receipts.
+
+### 2026-10-16 Business fifth source family candidate
+
+The current isolated candidate folds the source-backed
+`service_bugfix_candidates` family into the existing `business` table as the
+fifth exact typed kind, preserving its 12 source fields, public ID/allocator,
+unique feedback event key, status index, and current DAO result shape. The
+paired Email/Business release restores schema-only Tasks20/Runs11 source
+declarations for its actual/fresh source fixtures. The full paired release file
+passes 125 tests in 1419.97s; the focused Business/Store suite passes 454. A
+frozen SQLite-copy forward/current-fact inverse retains all 3 candidate rows,
+allocator water 3, and the pre-existing FK diagnostic; the frozen source SHA is
+unchanged. The test fingerprint now checks logical FTS content only when the
+optional FTS virtual table exists. This is isolated, unpublished candidate
+code's cold Store+Email constructor now yields50 non-sqlite tables, with
+`business` present and the old candidate table absent; a focused constructor
+test asserts both table facts. This is not a full116→50 source-copy proof and
+does not replace the published51-table baseline. There is no commit, push,
+production write, or deployment. This addition does not close the final10+1
+design or establish final table-count/space acceptance.
+
+### 2026-10-16 Business Work Cluster typed-storage slice
+
+The next isolated Business slice adds only the source-backed `work_cluster`
+kind with its exact `id`, `title` and `created_at` fields. Its three observed
+incoming `cluster_id` FKs in `business_work_cluster_tasks`,
+`business_project_candidates` and `business_legacy_links` now target the typed
+Business public-ID alias; callers keep their signed IDs and transaction
+boundaries. The constructor no longer creates the old cluster table. Exact
+actual/fresh source-shaped release, current-fact inverse and reforward tests
+pass37; resolution/console/retrieval selection passes25; paired publication,
+inverse and constructor selection passes5. A Business-only forward/current
+write/inverse/rollback check on the frozen 463 MiB actual source copy preserved
+16 clusters, allocator water, and the full file SHA; its temporary cluster got
+public ID17. The broader semantic-store file has474 passes and9 stale fixture
+failures unrelated to this change. The full paired116-to-11 release has not
+been rerun on the frozen actual copy, so the Business-only proof is not final
+table-count acceptance. No main, commit, push, production write or deployment
+occurred. See
+`docs/database-redesign-business-work-cluster-validation-20261016.md`.
+
+### 2026-10-17 Business TODO evidence candidate typed-storage slice
+
+The next Business source kind is `todo_evidence_candidates`. The migration
+maps its 15 source fields into the existing `business` row using only observed
+common columns and typed payload fields. It retains the five source status
+values, `dedupe_key` uniqueness, public ID/allocator, and exact scalar
+project/todo/work-summary-input references; no foreign key is inferred. The
+candidate DAO and existing History/discovery projections read and write through
+the typed Business projection, while preserving the API model and logical
+History source labels.
+
+The focused Business, storage and candidate DAO tests pass (455 passed). A
+frozen 463 MiB SQLite copy with three source candidates passed forward
+migration, a post-migration candidate write, schema inverse and reforward; the
+source SHA `970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320`
+is unchanged. `quick_check` passes and the one pre-existing `runs` → `tasks`
+foreign-key finding is unchanged. This remains a Business-only rehearsal: no
+full paired 116-to-11 copy proof, commit, push, production write or deploy has
+occurred.
+
+### 2026-10-17 Business Work Projects and Todos typed-storage slice
+
+The next two source-backed kinds are `work_project` and `work_todo`. Their
+exact CSV dispositions preserve all mapped source fields, public IDs and
+allocator waters; the only removed source value is the explicitly canceled
+`work_projects.memory_context_json` query/memory cache. No new field or inferred
+foreign key was added. The actual frozen DB contains 975 projects and 3,327
+todos; 904 projects had cache data totaling 992,368 bytes, and no entry
+contained `official_project_registry_key`.
+
+The Business schema/storage tests passed454, project repair/semantic import/
+retrieval passed59, relevant Console project tests passed6 and Store tests
+passed5. Ruff, compileall and diff check passed. On a frozen read-only source
+copy, all nine Business source kinds, child facts, allocator waters and the
+existing FK finding matched through migration; a completed TODO's timestamp
+and receipt were retained. Current-fact inverse/ reforward and an independent
+exact iterdump rollback rehearsal passed on disposable copies. Source SHA
+`970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320` is
+unchanged. One broader Console suite attempt stopped at an unrelated stale
+fixture that inserts into retired `scheduled_tasks`; it is not counted as
+passing. See
+`docs/database-redesign-business-work-projects-todos-validation-20261017.md`.
+
+This remains an unpublished Business-only slice. The paired full116-to-11
+copy, final10+1 schema proof, production write, commit, push and deployment
+remain open.
+
+### 2026-10-17 Follow-up/Todo-sync caller cutover inventory
+
+The ten source families now have typed `actions` declarations, source capture,
+migration/inverse logic, runtime caller cutover and paired Store14.1/Email52
+selection in this unpublished worktree candidate. The inventory below records
+the earlier pre-cutover scan and is retained as historical evidence, not a
+current status report.
+
+A current literal-SQL scan found 139 references across ten application
+modules: `app/store.py` (100), `app/dispatcher/adapters.py` (24),
+`app/task_project_repair.py` (5), `app/todo_completion.py` (2),
+`app/task_agent.py` (2), `app/quality_gate.py` (2), and one each in
+`app/task_semantic_service.py`, `app/task_semantic_import.py`,
+`app/task_owner_backfill.py`, and `app/action_followup_sync_storage.py`.
+These were text matches, not 139 independent behavior sites; dynamic SQL and
+non-SQL callers were not represented. The listed Store, dispatcher, completion,
+repair, import, quality and audit paths have since moved to typed
+projections/writes while retaining transaction and effect semantics.
+
+The first caller conversion is now implemented for the exact Task Event paths:
+`AutoReplyStore.append_business_task_event`,
+`AutoReplyStore.list_business_task_events`, and the semantic command replay
+lookup write/read the typed `business_task_events` action projection. Target
+schema tests verify the event ID, raw JSON-string API values, signal/task parent
+IDs, semantic replay result, and retirement of the old Event table. Earlier
+fixture failures from pre-sync Actions schemas were resolved in the paired
+schema/fixture integration; no legacy runtime fallback was added.
+
+Business completion callers are further centralized through Store: Todo
+completion now uses the transaction-bound provider-link lookup and follow-up
+completion DAO, while Task Agent uses the same follow-up update and the
+caller-connection-aware link list before enqueueing the existing outbox action.
+Three Store DAO tests passed at this intermediate point, including the caller
+transaction and newest matching provider link. The later caller cutover removed
+the remaining runtime dependence on these physical source tables.
+
+The current dispatcher/Store slice routes Task and Business Todo outbox
+metrics, claim/lease, enqueue/list/get, retry/terminal completion and unknown
+effect recovery through the exact typed `actions` projections and
+`update_sync_action` writes. Target-schema regression cases cover lease
+ownership, attempt/backoff behavior, receipts, provider-absence reconciliation
+and recovery from a provider receipt already recorded on the link. The paired
+release selects this slice; target-only fixtures seed links through
+`insert_sync_action`, not retired source tables.
+
+### Actual LaunchAgent database paired forward/inverse rehearsal, 2026-10-17
+
+A read-only online backup of the configured LaunchAgent database (498,741,248
+bytes; Store `2026-10-13.5`, Email51) was used for the release rehearsal. The
+frozen source passed `quick_check`, contained 449 non-internal schema objects,
+48 `sqlite_sequence` rows and the one pre-existing
+`runs.run_id=190042 -> tasks` FK finding. The production Business declaration
+is the `actual` variant; its paired target child fingerprint is frozen
+separately from the `fresh` variant. The actual copy passed the cold paired
+coordinator/constructor path to Store `2026-10-14.1`, Email52. All nine
+Business parent source tables and ten follow-up/Todo-sync source tables were
+absent in the target, and target `quick_check` passed.
+
+The inverse restored all 449 source schema objects, all 48 allocator rows,
+Store/Email markers and the same one FK finding; `quick_check` passed. The only
+data boundary was the approved `work_projects.memory_context_json` retirement:
+all 975 rows remained, and 585,773 cache bytes became 975 empty `{}` values
+(1,950 bytes total). Re-forward preflight succeeded and the owned temporary
+copy was removed. No production database write, service restart, provider call,
+main, push or deployment occurred.

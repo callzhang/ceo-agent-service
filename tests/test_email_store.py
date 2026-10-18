@@ -1,3 +1,4 @@
+from tests.support.email_listing_oracle import StoredEmailListingOracle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -52,7 +53,6 @@ from app.email_store import (
     EmailClassificationConflict,
     EmailClassificationIdentityCollision,
     EmailPersistenceCorruption,
-    EmailTrainingInclusionConflict,
     EmailTrainingSnapshotConflict,
     EmailUnsubscribeClaimConflict,
     EmailUnsubscribeReceiptConflict,
@@ -75,8 +75,23 @@ from app.action_storage import (
 )
 from app.action_email_definitions import EMAIL_TYPES_ORDER
 from app.action_email_storage import SOURCE_TABLES
+from app.email_canonical_storage import (
+    email_classification_projection, email_message_projection,
+)
+from app.email_canonical_storage import (
+    capture_email_canonical_source, migrate_email_canonical_schema,
+    delete_email_classification,
+)
+from tests.test_email_canonical_storage import (
+    current13,  # noqa: F401 - imported pytest fixture
+    _db as _native_email_db,
+    _insert as _insert_native_email,
+    _message as _native_email_message,
+    _classification as _native_email_classification,
+)
 from app.configs_definitions import config_projection
 from app.configs_storage import insert_config, update_config
+from app.task8_storage import task8_set_parts
 
 
 def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
@@ -931,7 +946,7 @@ def test_classification_body_display_removes_html_style_payload(
         ),
     )
 
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=20,
         offset=0,
@@ -941,7 +956,7 @@ def test_classification_body_display_removes_html_style_payload(
     assert total == 1
     assert rows[0]["message_text"] == "Hello world. Keep this original message."
     assert detail is not None
-    assert detail["message_text"] == "Hello world. Keep this original message."
+    assert "message_text" not in detail  # Originals are read by the Console source reader.
 
 
 def test_classification_body_display_removes_standalone_css_prefix(
@@ -959,7 +974,7 @@ def test_classification_body_display_removes_standalone_css_prefix(
         ),
     )
 
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=20,
         offset=0,
@@ -993,7 +1008,7 @@ def test_persist_scan_result_stores_thread_reference_metadata(tmp_path: Path):
     )
 
     row = _fetchall(
-        database, "select in_reply_to, references_json from email_messages"
+        database, f"select in_reply_to, references_json from ({email_message_projection()})"
     )[0]
     assert row["in_reply_to"] == "<parent@example.com>"
     assert json.loads(row["references_json"]) == [
@@ -1539,7 +1554,7 @@ def test_backfill_fills_only_an_empty_recipient_list(tmp_path: Path):
     persisted = _persist_scan(store, _classification(status=EmailClassificationStatus.PENDING_FEEDBACK))
     account, identity = "dingtalk-account", persisted["stable_message_identity"]
     with store._connect() as db:
-        db.execute("update email_messages set recipients_json='[]'")
+        db.execute("update emails set message_recipients_json='[]'")
 
     assert store.backfill_email_message_recipients(account, identity, ["a@example.com", " b@example.com "])
     assert store.get_classification(int(persisted["id"]))["recipients"] == ["a@example.com", "b@example.com"]
@@ -1585,13 +1600,13 @@ def test_list_unsubscribe_classifications_projects_durable_claims(tmp_path: Path
     )
     assert claim is not None and claim["acquired"] is True
 
-    rows, total = store.list_unsubscribe_classifications(limit=20, offset=0)
+    rows, total = StoredEmailListingOracle(store).list_unsubscribe_classifications(limit=20, offset=0)
 
     assert total == 1
     assert [row["id"] for row in rows] == [authorization["classification_id"]]
     assert rows[0]["message_text"]
     with pytest.raises(ValueError, match="pagination"):
-        store.list_unsubscribe_classifications(limit=0, offset=0)
+        StoredEmailListingOracle(store).list_unsubscribe_classifications(limit=0, offset=0)
 
 
 def _count_connections(store: EmailStore, monkeypatch) -> list[int]:
@@ -1745,116 +1760,6 @@ def _downgrade_email_database_to_v16(database: Path) -> None:
         )
 
 
-def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) -> None:
-    required_identifiers = set(email_store_module._REQUIRED_TABLE_COLUMNS)
-    for columns in email_store_module._REQUIRED_TABLE_COLUMNS.values():
-        required_identifiers.update(columns)
-    required_identifiers.update(email_store_module._REQUIRED_INDEXES)
-    required_identifiers.update(email_store_module._REQUIRED_TRIGGER_SQL)
-    assert len(required_identifiers) == 261
-    all_replacements = {
-        identifier: (
-            identifier.upper()
-            if index % 2 == 0
-            else "_".join(part.capitalize() for part in identifier.split("_"))
-        )
-        for index, identifier in enumerate(sorted(required_identifiers))
-    }
-    quote_styles = (('"', '"'), ("`", "`"), ("[", "]"))
-    all_sql_replacements = {
-        identifier: (
-            f"{quote_styles[index % len(quote_styles)][0]}{replacement}"
-            f"{quote_styles[index % len(quote_styles)][1]}"
-            if quote
-            else replacement
-        )
-        for index, (identifier, replacement) in enumerate(all_replacements.items())
-    }
-
-    with sqlite3.connect(database) as db:
-        schema_version = db.execute("pragma schema_version").fetchone()[0]
-        rows = db.execute(
-            "select rowid, type, name, tbl_name, sql from sqlite_master"
-        ).fetchall()
-        retained_tables = {
-            name
-            for _, object_type, name, _, _ in rows
-            if object_type == "table"
-            and name.startswith("email_")
-            and name != "email_schema_migrations"
-            and name not in SOURCE_TABLES
-        }
-        assert len(retained_tables) == 17
-        selected = [row for row in rows if row[3] in retained_tables]
-        assert {
-            kind: sum(row[1] == kind for row in selected)
-            for kind in ("table", "index", "trigger")
-        } == {
-            "table": 17,
-            "index": 25,
-            "trigger": 32,
-        }
-        assert sum(row[4] is not None for row in selected) == 58
-        owner_identifiers = set(retained_tables)
-        for table in retained_tables:
-            owner_identifiers.update(
-                row[1] for row in db.execute(f"pragma table_xinfo({json.dumps(table)})")
-            )
-        owner_identifiers.update(
-            name
-            for _, object_type, name, _, sql in selected
-            if object_type in {"index", "trigger"} and sql is not None
-        )
-        replacements = {
-            name: value
-            for name, value in all_replacements.items()
-            if name in owner_identifiers
-        }
-        sql_replacements = {
-            name: value
-            for name, value in all_sql_replacements.items()
-            if name in owner_identifiers
-        }
-        assert len(replacements) == 186
-        assert {
-            kind: sum(row[1] == kind and row[2] in replacements for row in selected)
-            for kind in ("table", "index", "trigger")
-        } == {"table": 14, "index": 8, "trigger": 32}
-        if quote:
-            assert all(
-                any(value.startswith(opening) for value in sql_replacements.values())
-                for opening, _ in quote_styles
-            )
-
-        def rewrite_sql(value: str) -> str:
-            return " ".join(
-                sql_replacements.get(token, token)
-                for token in email_store_module._schema_sql_tokens(value)
-            )
-
-        selected_rowids = {row[0] for row in selected}
-        protected_before = [row for row in rows if row[0] not in selected_rowids]
-        db.execute("pragma writable_schema = on")
-        for rowid, _, name, table_name, sql in selected:
-            db.execute(
-                "update sqlite_master set name=?, tbl_name=?, sql=? where rowid=?",
-                (
-                    replacements.get(name, name),
-                    replacements.get(table_name, table_name),
-                    rewrite_sql(sql) if sql is not None else None,
-                    rowid,
-                ),
-            )
-        db.execute(f"pragma schema_version = {schema_version + 1}")
-        db.commit()
-        db.execute("pragma writable_schema = off")
-
-    with sqlite3.connect(database) as db:
-        after = db.execute(
-            "select rowid, type, name, tbl_name, sql from sqlite_master"
-        ).fetchall()
-        assert [row for row in after if row[0] not in selected_rowids] == protected_before
-        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
 def _corrupt_schema_object_name(
@@ -2114,8 +2019,8 @@ def test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads(tmp
     def guarded_connect():
         with original_connect() as db:
             def authorize(action, table, column, database, source):
-                if action == sqlite3.SQLITE_READ and table == "email_classifications":
-                    if column in {"subject", "preview", "model_text", "agent_result_json"}:
+                if action == sqlite3.SQLITE_READ and table == "emails":
+                    if column in {"class_subject", "class_preview", "class_model_text", "class_agent_result_json"}:
                         return sqlite3.SQLITE_DENY
                 return sqlite3.SQLITE_OK
             db.set_authorizer(authorize)
@@ -2146,9 +2051,11 @@ def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path,
         trigger_text="Unsubscribe projection test",
         execution_generation="test-generation",
     )
-    with sqlite3.connect(database) as db:
+    with store._connect() as db:
         db.execute(
-            "update tasks set status=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            "update tasks set "
+            f"{task8_set_parts('reply_tasks', {}, update_sql={'status': '?'}).sql} "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (status, task.id),
         )
     rows = store.list_terminal_unsubscribe_tasks_missing_receipts()
@@ -2579,10 +2486,10 @@ def test_email_store_lists_pending_and_processed_separately(tmp_path: Path):
     )
     store.upsert_classification(second)
 
-    pending, pending_total = store.list_classifications(
+    pending, pending_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK, limit=20, offset=0
     )
-    processed, processed_total = store.list_classifications(
+    processed, processed_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED, limit=20, offset=0
     )
 
@@ -2717,14 +2624,14 @@ def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
     ]
     assert len(confirmed) == 1
     assert len(conflicts) == 1
-    persisted, total = store.list_classifications(
+    persisted, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED,
         limit=10,
         offset=0,
     )
     assert total == 1
     assert persisted[0]["category"] == confirmed[0]["category"]
-    assert len(store.list_training_examples()) == 1
+    assert store.count_unincluded_training_examples() == 1
 
 
 def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reopen(
@@ -2755,176 +2662,25 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
     with sqlite3.connect(database) as db:
         db.execute(
             """
-            update email_classifications
-            set classification_source='user'
-            where id=?
+            update emails
+            set class_classification_source='user'
+            where classification_id=?
             """,
             (contaminated["id"],),
         )
 
-    assert store.list_training_examples() == [
-        {
-            "message_id": confirmed_row["stable_message_identity"],
-            "model_text": "__subject__need a decision",
-            "label": "notification",
-        }
-    ]
+    assert store.count_unincluded_training_examples() == 1
+    assert store.get_classification(confirmed_row["id"])["confirmed_category"] == "notification"
 
 
-def test_training_inclusion_marks_exact_confirmed_samples_atomically(tmp_path: Path):
-    store = EmailStore(tmp_path / "training-inclusion.sqlite3")
-    rows = []
-    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 1):
-        row = store.upsert_classification(
-            _classification(
-                status=EmailClassificationStatus.PENDING_FEEDBACK,
-                message_id=f"training-{index}",
-                category=category,
-            ),
-            model_text=f"__subject__{category.value}-{index}",
-        )
-        rows.append(_confirm(store, row["id"], category))
-    snapshots = store.list_unincluded_training_examples()
-
-    assert len(snapshots) == 2
-    assert all(len(row["sample_digest"]) == 64 for row in snapshots)
-    store.mark_training_examples_included(
-        snapshots, model_id="email-tfidf-lr-x-12345678"
-    )
-    store.mark_training_examples_included(
-        snapshots, model_id="email-tfidf-lr-x-12345678"
-    )
-
-    assert store.list_unincluded_training_examples() == []
-    assert {
-        row["included_in_model_id"]
-        for row in store.list_training_examples(include_inclusion=True)
-    } == {"email-tfidf-lr-x-12345678"}
 
 
-def test_training_inclusion_conflict_rolls_back_partial_batch(tmp_path: Path):
-    store = EmailStore(tmp_path / "training-inclusion-conflict.sqlite3")
-    identities = []
-    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 1):
-        row = store.upsert_classification(
-            _classification(
-                status=EmailClassificationStatus.PENDING_FEEDBACK,
-                message_id=f"conflict-{index}",
-                category=category,
-            ),
-            model_text=f"__subject__{category.value}-{index}",
-        )
-        confirmed = _confirm(store, row["id"], category)
-        assert confirmed is not None
-        identities.append(confirmed["stable_message_identity"])
-    snapshots = store.list_unincluded_training_examples()
-    store.mark_training_examples_included(
-        [snapshots[0]], model_id="email-tfidf-lr-old-12345678"
-    )
-
-    with pytest.raises(EmailTrainingInclusionConflict):
-        store.mark_training_examples_included(
-            snapshots, model_id="email-tfidf-lr-new-87654321"
-        )
-
-    rows = {
-        row["message_id"]: row
-        for row in store.list_training_examples(include_inclusion=True)
-    }
-    assert rows[identities[0]]["included_in_model_id"] == "email-tfidf-lr-old-12345678"
-    assert rows[identities[1]]["included_in_model_id"] is None
 
 
-def test_training_inclusion_digest_cas_rejects_concurrent_correction_and_clears_old_model(
-    tmp_path: Path,
-):
-    database = tmp_path / "training-cas.sqlite3"
-    store = EmailStore(database)
-    row = store.upsert_classification(
-        _classification(
-            status=EmailClassificationStatus.PENDING_FEEDBACK,
-            message_id="cas-sample",
-            category=EmailCategory.WORK,
-        ),
-        model_text="__subject__original",
-    )
-    _confirm(store, row["id"], EmailCategory.WORK)
-    snapshot = store.list_unincluded_training_examples()[0]
-    store.mark_training_examples_included([snapshot], model_id="old-model")
-
-    with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_classifications set confirmed_category=?, category=? where id=?",
-            ("important", "important", row["id"]),
-        )
-
-    latest = store.list_unincluded_training_examples()[0]
-    assert latest["included_in_model_id"] is None
-    assert latest["sample_digest"] != snapshot["sample_digest"]
-    with pytest.raises(EmailTrainingInclusionConflict):
-        store.mark_training_examples_included([snapshot], model_id="new-model")
 
 
-def test_training_promotion_lease_rejects_changed_snapshot_before_promote(
-    tmp_path: Path,
-):
-    store = EmailStore(tmp_path / "lease-cas.sqlite3")
-    row = store.upsert_classification(
-        _classification(
-            status=EmailClassificationStatus.PENDING_FEEDBACK,
-            message_id="lease-cas",
-        ),
-        model_text="__subject__before",
-    )
-    _confirm(store, row["id"], EmailCategory.WORK)
-    snapshot = store.list_unincluded_training_examples()[0]
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update email_classifications set model_text='__subject__after' where id=?",
-            (row["id"],),
-        )
-    promoted = []
-
-    with pytest.raises(EmailTrainingInclusionConflict):
-        store.commit_training_promotion(
-            [snapshot],
-            model_id="candidate",
-            promote=lambda: promoted.append(True),
-            restore=lambda: None,
-        )
-
-    assert promoted == []
 
 
-def test_training_promotion_lease_blocks_feedback_write_during_manifest_switch(
-    tmp_path: Path,
-):
-    store = EmailStore(tmp_path / "lease-lock.sqlite3")
-    row = store.upsert_classification(
-        _classification(
-            status=EmailClassificationStatus.PENDING_FEEDBACK,
-            message_id="lease-lock",
-        ),
-        model_text="__subject__locked",
-    )
-    _confirm(store, row["id"], EmailCategory.WORK)
-    snapshot = store.list_unincluded_training_examples()[0]
-    blocked = []
-
-    def promote():
-        connection = sqlite3.connect(store.path, timeout=0)
-        try:
-            connection.execute("begin immediate")
-        except sqlite3.OperationalError as exc:
-            blocked.append("locked" in str(exc).lower())
-        finally:
-            connection.close()
-
-    store.commit_training_promotion(
-        [snapshot], model_id="candidate", promote=promote, restore=lambda: None
-    )
-
-    assert blocked == [True]
 
 
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
@@ -3028,19 +2784,9 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
             "select name from sqlite_master where type='table'",
         )
     }
-    retained_email_tables = {
-        "email_schema_migrations",
-        "email_agent_classification_tasks",
-        "email_scan_cursors",
-        "email_messages",
-        "email_classifications",
-        "email_classifier_runtime_samples",
-        "email_historical_candidates",
-        "email_historical_classification_history",
-        "email_historical_operations",
-        "email_historical_traversals",
-    }
-    assert {name for name in table_names if name.startswith("email_")} == retained_email_tables
+    assert "emails" in table_names
+    assert not {"email_messages", "email_classifications"} & table_names
+    assert {name for name in table_names if name.startswith("email_")} == {"email_schema_migrations"}
     assert {"configs", "schedules", "runs", "actions"} <= table_names
     assert "provider_state" in table_names
     assert not {"email_provider_observations", "email_provider_folder_observation_generations"} & table_names
@@ -3065,18 +2811,22 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     assert {"imap_secret_reference", "smtp_secret_reference"} <= account_columns
     assert not {"password", "imap_secret", "smtp_secret"} & account_columns
 
-    classification_columns = {
-        row["name"]
-        for row in _fetchall(database, "pragma table_info(email_classifications)")
-    }
-    assert {
-        "account_id",
-        "stable_message_identity",
-        "predicted_category",
-        "confirmed_category",
-        "model_id",
-        "current_action_plan_id",
-    } <= classification_columns
+    email_columns = {row["name"] for row in _fetchall(database, "pragma table_info(emails)")}
+    assert {"account_id", "stable_message_identity", "uidvalidity", "uid",
+            "classification_id", "message_id", "class_predicted_category",
+            "class_confirmed_category", "class_model_id", "class_current_action_plan_id",
+            "message_normalized_text", "message_recipients_json"} <= email_columns
+    with sqlite3.connect(database) as db:
+        classification_columns = {column[0] for column in db.execute(
+            f"select * from ({email_classification_projection()}) limit 0"
+        ).description}
+        message_columns = {column[0] for column in db.execute(
+            f"select * from ({email_message_projection()}) limit 0"
+        ).description}
+    assert {"id", "account_id", "stable_message_identity", "predicted_category",
+            "confirmed_category", "model_id", "current_action_plan_id"} <= classification_columns
+    assert {"id", "account_id", "stable_message_identity", "recipients_json",
+            "normalized_text", "thread_identity"} <= message_columns
 
     with sqlite3.connect(database) as db:
         feedback_columns = {
@@ -3198,8 +2948,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     EmailStore(database)
 
     assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
-    assert len(_fetchall(database, "select * from email_messages")) == 1
-    assert len(_fetchall(database, "select * from email_classifications")) == 1
+    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 1
+    assert len(_fetchall(database, f"select * from ({email_classification_projection()})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 1
 
@@ -3267,8 +3017,10 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     statements: list[str] = []
     original_open_connection = EmailStore._open_connection
 
-    def traced_open_connection(self: EmailStore) -> sqlite3.Connection:
-        db = original_open_connection(self)
+    def traced_open_connection(
+        self: EmailStore, *, foreign_keys: bool = True
+    ) -> sqlite3.Connection:
+        db = original_open_connection(self, foreign_keys=foreign_keys)
         db.set_trace_callback(statements.append)
         if read_data_version:
             # SQLite 3.45.1 emits this read during schema introspection on Linux.
@@ -3315,9 +3067,23 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         f"rejected normalized SQLite traces={rejected}; "
         f"Python={sys.version}; SQLite={sqlite3.sqlite_version}"
     )
-    assert all(
-        any(statement.startswith(prefix) for statement in normalized)
-        for prefix in read_pragma_prefixes
+    required_current_pragmas = (
+        "pragma table_list",
+        "pragma main.table_xinfo",
+        "pragma main.foreign_key_list",
+        "pragma main.index_list",
+        "pragma main.index_xinfo",
+    )
+    observed_pragma_counts = {
+        prefix: sum(statement.startswith(prefix) for statement in normalized)
+        for prefix in required_current_pragmas
+    }
+    missing_pragmas = [
+        prefix for prefix, count in observed_pragma_counts.items() if count == 0
+    ]
+    assert not missing_pragmas, (
+        f"missing current schema pragmas={missing_pragmas}; "
+        f"counts={observed_pragma_counts}"
     )
     assert not any(
         statement.startswith(("create ", "alter ", "insert ", "update ", "delete "))
@@ -3325,68 +3091,8 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     )
 
 
-def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    database = tmp_path / "mixed-case-required-identifiers.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    with sqlite3.connect(database) as db:
-        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
-    _rewrite_required_identifier_case(database)
-    with sqlite3.connect(database) as db:
-        schema_version_before = db.execute("pragma schema_version").fetchone()[0]
-    bytes_before = sha256(database.read_bytes()).hexdigest()
-
-    statements: list[str] = []
-    original_open_connection = EmailStore._open_connection
-
-    def traced_open_connection(self: EmailStore) -> sqlite3.Connection:
-        db = original_open_connection(self)
-        db.set_trace_callback(statements.append)
-        return db
-
-    monkeypatch.setattr(EmailStore, "_open_connection", traced_open_connection)
-
-    EmailStore(database)
-
-    with sqlite3.connect(database) as db:
-        assert db.execute("pragma journal_mode").fetchone()[0] == "delete"
-        assert (
-            db.execute("pragma schema_version").fetchone()[0] == schema_version_before
-        )
-    normalized = [" ".join(statement.lower().split()) for statement in statements]
-    assert "begin immediate" not in normalized
-    assert not any(
-        statement.startswith(
-            (
-                "create ",
-                "alter ",
-                "insert ",
-                "update ",
-                "delete ",
-                "pragma journal_mode",
-            )
-        )
-        for statement in normalized
-    )
-    assert sha256(database.read_bytes()).hexdigest() == bytes_before
-    assert not Path(f"{database}-wal").exists()
 
 
-def test_current_schema_accepts_quoted_required_identifiers(tmp_path: Path):
-    database = tmp_path / "quoted-required-identifiers.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    with sqlite3.connect(database) as db:
-        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
-    _rewrite_required_identifier_case(database, quote=True)
-    bytes_before = sha256(database.read_bytes()).hexdigest()
-
-    EmailStore(database)
-    assert sha256(database.read_bytes()).hexdigest() == bytes_before
-    assert not Path(f"{database}-wal").exists()
 
 
 def test_schema_tokenizer_canonicalizes_quoted_identifiers_not_string_literals():
@@ -3398,8 +3104,8 @@ def test_schema_tokenizer_canonicalizes_quoted_identifiers_not_string_literals()
 @pytest.mark.parametrize(
     ("object_type", "object_name"),
     (
-        ("table", "email_messages"),
-        ("trigger", "trg_email_classification_status_insert"),
+        ("table", "emails"),
+        ("trigger", "trg_emails_class_status_insert"),
     ),
 )
 def test_current_schema_rejects_non_text_sqlite_master_identifiers(
@@ -3513,33 +3219,50 @@ def test_current_schema_missing_required_column_is_domain_corruption(
         )
     gc.collect()
     with sqlite3.connect(database) as db:
-        db.execute("alter table email_messages drop column normalized_text")
+        db.execute("alter table emails drop column message_normalized_text")
 
     with pytest.raises(
-        EmailPersistenceCorruption,
-        match="email_messages.*normalized_text",
+        sqlite3.IntegrityError,
+        match="malformed current provider/config declaration",
     ):
         EmailStore(database)
 
 
-def test_current_schema_allows_unrelated_extra_tables_and_columns(tmp_path: Path):
+def test_current_schema_allows_unrelated_extra_tables(tmp_path: Path):
     database = tmp_path / "extra-schema.sqlite3"
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
         db.executescript(
             """
-            alter table email_messages add column unrelated_extension
-                text collate "NOCASE" default 'Mixed Case'
-                check(length(unrelated_extension) >= 0);
             create table unrelated_email_extension (
                 extension_id integer primary key,
                 payload text
             );
             """
         )
-
     EmailStore(database)
+    assert "unrelated_email_extension" in {
+        row["name"] for row in _fetchall(
+            database, "select name from sqlite_master where type='table'"
+        )
+    }
+
+
+def test_current_schema_rejects_extra_canonical_email_column(tmp_path: Path):
+    database = tmp_path / "extra-canonical-column.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.execute("alter table emails add column unrelated_extension text")
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="malformed current provider/config declaration",
+    ):
+        EmailStore(database)
+    assert "unrelated_extension" in {
+        row["name"] for row in _fetchall(database, "pragma table_info(emails)")
+    }
 
 
 def test_current_schema_rejects_weakened_cursor_column_declarations_and_checks(
@@ -3795,7 +3518,7 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     def read_missing_field(_self, db):
-        row = db.execute("select stable_message_identity from email_messages").fetchone()
+        row = db.execute(f"select stable_message_identity from ({email_message_projection()})").fetchone()
         row["thread_identity"]
 
     monkeypatch.setattr(EmailStore, "_validate_durable_rows", read_missing_field)
@@ -4025,47 +3748,109 @@ def test_current_schema_missing_required_primary_key_is_domain_corruption(
         EmailStore(database)
 
 
-def test_current_schema_missing_required_unique_key_is_domain_corruption(
+
+def test_current_schema_missing_required_unique_key_is_rejected_without_repair(
     tmp_path: Path,
 ):
     database = tmp_path / "missing-message-unique-key.sqlite3"
     EmailStore(database)
     gc.collect()
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            alter table email_messages rename to old_email_messages;
-            create table email_messages (
-                id integer primary key autoincrement,
-                account_id text not null,
-                stable_message_identity text not null,
-                folder text not null,
-                uidvalidity integer not null check(uidvalidity > 0),
-                uid integer not null check(uid > 0),
-                rfc_message_id text not null,
-                in_reply_to text not null default '',
-                references_json text not null default '[]'
-                    check(json_valid(references_json)),
-                thread_identity text not null,
-                sender text not null,
-                recipients_json text not null check(json_valid(recipients_json)),
-                subject text not null,
-                normalized_text text not null,
-                preview text not null,
-                attachment_metadata_json text not null
-                    check(json_valid(attachment_metadata_json)),
-                received_at text not null,
-                created_at text not null,
-                updated_at text not null
-            );
-            drop table old_email_messages;
-            create index idx_email_messages_account_locator
-                on email_messages(account_id, folder, uidvalidity, uid);
-            """
-        )
 
-    with pytest.raises(EmailPersistenceCorruption, match="unique key.*email_messages"):
+    def unique_index_columns(db):
+        return {
+            tuple(column[2] for column in db.execute(
+                f"pragma index_info({json.dumps(index[1])})"
+            ))
+            for index in db.execute("pragma index_list('emails')")
+            if index[2]
+        }
+
+    with sqlite3.connect(database) as db:
+        assert not db.in_transaction
+        assert db.execute("pragma foreign_keys").fetchone()[0] == 0
+        assert db.execute("select count(*) from emails").fetchone()[0] == 0
+        original_sql = db.execute(
+            "select sql from sqlite_schema where type='table' and name='emails'"
+        ).fetchone()[0]
+        required_unique = "stable_message_identity text not null unique,"
+        assert original_sql.count(required_unique) == 1
+        owned_objects = db.execute(
+            "select type,name,sql from sqlite_schema "
+            "where tbl_name='emails' and type in ('index','trigger') "
+            "and sql is not null order by type,name"
+        ).fetchall()
+        protected_schema = db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where tbl_name!='emails' order by type,name,tbl_name"
+        ).fetchall()
+        sequence_exists = db.execute(
+            "select 1 from sqlite_schema where name='sqlite_sequence'"
+        ).fetchone() is not None
+        sequence_before = (
+            db.execute("select name,seq from sqlite_sequence order by name").fetchall()
+            if sequence_exists else None
+        )
+        columns_before = db.execute("pragma table_xinfo('emails')").fetchall()
+        foreign_keys_before = db.execute("pragma foreign_key_list('emails')").fetchall()
+        unique_before = unique_index_columns(db)
+        assert {
+            ("classification_id",), ("message_id",),
+            ("stable_message_identity",),
+        } <= unique_before
+
+        # Empty parent: DROP does not rename dependent references.
+        db.execute("drop table emails")
+        db.execute(original_sql.replace(
+            required_unique, "stable_message_identity text not null,"
+        ))
+        for _kind, _name, sql in owned_objects:
+            db.execute(sql)
+
+        assert db.execute("select count(*) from emails").fetchone()[0] == 0
+        assert db.execute("pragma table_xinfo('emails')").fetchall() == columns_before
+        assert db.execute("pragma foreign_key_list('emails')").fetchall() == foreign_keys_before
+        assert unique_index_columns(db) == unique_before - {("stable_message_identity",)}
+        assert db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where tbl_name!='emails' order by type,name,tbl_name"
+        ).fetchall() == protected_schema
+        if sequence_exists:
+            assert db.execute(
+                "select name,seq from sqlite_sequence order by name"
+            ).fetchall() == sequence_before
+
+    with sqlite3.connect(database) as db:
+        damaged_schema = db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema order by type,name,tbl_name"
+        ).fetchall()
+        damaged_actions = db.execute(
+            "select record_type,legacy_key,payload_json from actions order by id"
+        ).fetchall()
+        damaged_ledger = db.execute(
+            "select version,applied_at from email_schema_migrations order by version"
+        ).fetchall()
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+    damaged_bytes = sha256(database.read_bytes()).hexdigest()
+
+    # Paired preflight rejects the malformed current declaration before row validation.
+    with pytest.raises(
+        sqlite3.IntegrityError, match="malformed current provider/config declaration"
+    ):
         EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+        assert db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema order by type,name,tbl_name"
+        ).fetchall() == damaged_schema
+        assert db.execute(
+            "select record_type,legacy_key,payload_json from actions order by id"
+        ).fetchall() == damaged_actions
+        assert db.execute(
+            "select version,applied_at from email_schema_migrations order by version"
+        ).fetchall() == damaged_ledger
+        assert db.execute("select count(*) from emails").fetchone()[0] == 0
+    assert sha256(database.read_bytes()).hexdigest() == damaged_bytes
 
 
 def test_invalid_utf8_json_blob_is_domain_corruption(tmp_path: Path):
@@ -4232,7 +4017,8 @@ def test_future_email_schema_version_fails_closed_before_schema_changes(
         facts_before = db.execute("select * from email_schema_migrations").fetchall()
         marker_before = (
             db.execute(
-                "select value, updated_at from service_state where key='store_schema_version'"
+                f"select value, updated_at from ({state_projection('service_state')}) "
+                "where key='store_schema_version'"
             ).fetchone()
             if full_pair else None
         )
@@ -4254,7 +4040,8 @@ def test_future_email_schema_version_fails_closed_before_schema_changes(
         ).fetchall() == facts_before
         if full_pair:
             assert db.execute(
-                "select value, updated_at from service_state where key='store_schema_version'"
+                f"select value, updated_at from ({state_projection('service_state')}) "
+                "where key='store_schema_version'"
             ).fetchone() == marker_before
         assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
     assert sha256(database.read_bytes()).hexdigest() == bytes_before
@@ -4286,12 +4073,12 @@ def test_concurrent_first_initialization_is_transactionally_idempotent(
 
     assert len(stores) == 2
     assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
-    assert EmailStore(database).list_training_examples() == []
+    assert EmailStore(database).count_unincluded_training_examples() == 0
 
 
 
 
-@pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
+@pytest.mark.parametrize("missing_table", ["emails", "email_actions"])
 def test_normal_startup_does_not_repair_missing_durable_rows(
     tmp_path: Path,
     missing_table: str,
@@ -4311,7 +4098,9 @@ def test_normal_startup_does_not_repair_missing_durable_rows(
             for (source_rowid,) in source_rows:
                 assert delete_email_action(db, "email_actions", source_rowid).rowcount == 1
         else:
-            db.execute(f"delete from {missing_table}")
+            assert db.execute("select count(*) from emails").fetchone()[0] == 1
+            assert db.execute("delete from emails").rowcount == 1
+            assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 1
 
     with pytest.raises(EmailPersistenceCorruption):
         EmailStore(database)
@@ -4319,35 +4108,46 @@ def test_normal_startup_does_not_repair_missing_durable_rows(
     remaining_sql = (
         f"select * from ({EMAIL_DIRECT_ACTION_SQL})"
         if missing_table == "email_actions"
-        else f"select * from {missing_table}"
+        else "select * from emails"
     )
     assert len(_fetchall(database, remaining_sql)) == 0
 
 
 
 
-def test_startup_rejects_message_account_identity_mismatch(tmp_path: Path):
-    database = tmp_path / "message-mismatch.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(status=EmailClassificationStatus.PROCESSED),
-    )
-    with sqlite3.connect(database) as db:
-        db.execute("update email_messages set account_id='wrong-account'")
-
-    with pytest.raises(EmailPersistenceCorruption, match="message identity"):
-        EmailStore(database)
+@pytest.mark.parametrize(
+    ("field", "different"),
+    [("account_id", "wrong-account"), ("uidvalidity", 84), ("uid", 9)],
+)
+def test_native_source_rejects_unequal_shared_email_fields_before_migration(
+    tmp_path: Path,
+    current13: Path,  # noqa: F811 - pytest fixture parameter
+    field: str,
+    different,
+):
+    db = _native_email_db(tmp_path, current13)
+    try:
+        _insert_native_email(db, "email_messages", _native_email_message())
+        _insert_native_email(
+            db, "email_classifications", _native_email_classification(**{field: different})
+        )
+        source = capture_email_canonical_source(db)
+        with pytest.raises(ValueError, match="unrepresentable shared Email facts"):
+            migrate_email_canonical_schema(db, source)
+        assert capture_email_canonical_source(db) == source
+        assert db.execute("select count(*) from email_messages").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 1
+        assert db.execute("select name from sqlite_master where name='emails'").fetchone() is None
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize(
     "tamper_sql",
     [
-        "update email_messages set folder='Archive'",
-        "update email_messages set uidvalidity=84",
-        "update email_messages set uid=9",
-        "update email_messages set rfc_message_id='<tampered@example.com>'",
-        "update email_messages set thread_identity='thread-tampered'",
+        "update emails set message_folder='Archive'",
+        "update emails set message_rfc_message_id='<tampered@example.com>'",
+        "update emails set message_thread_identity='thread-tampered'",
     ],
 )
 def test_startup_rejects_message_locator_and_thread_mismatch(
@@ -4378,7 +4178,7 @@ def test_startup_rejects_orphan_message_without_classification(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute("delete from email_classifications")
+        assert delete_email_classification(db, int(db.execute("select classification_id from emails").fetchone()[0])) == 1
 
     EmailStore(database)
 
@@ -4410,13 +4210,12 @@ def test_startup_accepts_canonical_and_empty_locator_metadata_equivalence(
     rows = _fetchall(
         database,
         """
-        select c.stable_message_identity, c.rfc_message_id as classification_rfc,
-               c.thread_id as classification_thread,
-               m.rfc_message_id as message_rfc,
-               m.thread_identity as message_thread
-        from email_classifications c
-        join email_messages m using (stable_message_identity)
-        order by c.stable_message_identity
+        select stable_message_identity,
+               class_rfc_message_id as classification_rfc,
+               class_thread_id as classification_thread,
+               message_rfc_message_id as message_rfc,
+               message_thread_identity as message_thread
+        from emails order by stable_message_identity
         """,
     )
     by_identity = {row["stable_message_identity"]: row for row in rows}
@@ -4447,21 +4246,21 @@ def test_startup_normalizes_both_persisted_locator_metadata_sides(tmp_path: Path
     with sqlite3.connect(database) as db:
         db.execute(
             """
-            update email_messages
-            set rfc_message_id='<msg-1@EXAMPLE.COM>',
-                thread_identity='  thread-semantic  '
+            update emails
+            set message_rfc_message_id='<msg-1@EXAMPLE.COM>',
+                message_thread_identity='  thread-semantic  '
             """
         )
         db.execute(
             """
-            update email_classifications
-            set rfc_message_id=' msg-1@example.com ',
-                thread_id='thread-semantic'
+            update emails
+            set class_rfc_message_id=' msg-1@example.com ',
+                class_thread_id='thread-semantic'
             """
         )
 
-    message = _fetchall(database, "select * from email_messages")[0]
-    classification = _fetchall(database, "select * from email_classifications")[0]
+    message = _fetchall(database, f"select * from ({email_message_projection()})")[0]
+    classification = _fetchall(database, f"select * from ({email_classification_projection()})")[0]
     assert message["rfc_message_id"] != classification["rfc_message_id"]
     assert message["thread_identity"] != classification["thread_id"]
     message_canonical = EmailProviderLocator.model_validate(
@@ -4513,8 +4312,8 @@ def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
     with sqlite3.connect(database) as db:
         db.execute(
             """
-            update email_classifications
-            set current_action_plan_id=?
+            update emails
+            set class_current_action_plan_id=?
             """,
             (
                 classification.action_plan.action_plan_id,
@@ -4526,20 +4325,19 @@ def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("classification_update", "message_update"),
+    "classification_update",
     [
-        ("account_id='other-account'", "account_id='other-account'"),
-        ("category='personal', confirmed_category='personal'", None),
-        ("classification_source='user'", None),
-        ("confidence=0.22", None),
-        ("model_id='email/logistic/other-model'", None),
-        ("config_version='other-config'", None),
+        "account_id='other-account'",
+        "class_category='personal', class_confirmed_category='personal'",
+        "class_classification_source='user'",
+        "class_confidence=0.22",
+        "class_model_id='email/logistic/other-model'",
+        "class_config_version='other-config'",
     ],
 )
 def test_startup_rejects_current_plan_classification_field_mismatch(
     tmp_path: Path,
     classification_update: str,
-    message_update: str | None,
 ):
     database = tmp_path / "plan-classification-mismatch.sqlite3"
     store = EmailStore(database)
@@ -4548,9 +4346,7 @@ def test_startup_rejects_current_plan_classification_field_mismatch(
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
     with sqlite3.connect(database) as db:
-        db.execute(f"update email_classifications set {classification_update}")
-        if message_update is not None:
-            db.execute(f"update email_messages set {message_update}")
+        db.execute(f"update emails set {classification_update}")
 
     with pytest.raises(EmailPersistenceCorruption, match="classification fields"):
         EmailStore(database)
@@ -4565,7 +4361,7 @@ def test_startup_rejects_pending_feedback_with_action_plan(tmp_path: Path):
     )
     with sqlite3.connect(database) as db:
         db.execute(
-            "update email_classifications set status='pending_feedback', confirmed_category=null"
+            "update emails set class_status='pending_feedback', class_confirmed_category=null"
         )
 
     with pytest.raises(
@@ -4582,7 +4378,7 @@ def test_startup_rejects_pending_feedback_with_user_source(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_classifications set classification_source='user'")
+        db.execute("update emails set class_classification_source='user'")
 
     with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*model"):
         EmailStore(database)
@@ -4596,7 +4392,7 @@ def test_startup_rejects_pending_feedback_with_legacy_marker(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_classifications set legacy_processed_without_plan=1")
+        db.execute("update emails set class_legacy_processed_without_plan=1")
 
     with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*legacy"):
         EmailStore(database)
@@ -4614,10 +4410,10 @@ def test_startup_rejects_legacy_user_processed_with_mismatched_confirmation(
     with sqlite3.connect(database) as db:
         db.execute(
             """
-            update email_classifications
-            set status='processed', classification_source='user',
-                category='important', confirmed_category='work',
-                legacy_processed_without_plan=1
+            update emails
+            set class_status='processed', class_classification_source='user',
+                class_category='important', class_confirmed_category='work',
+                class_legacy_processed_without_plan=1
             """
         )
 
@@ -4633,7 +4429,7 @@ def test_startup_accepts_model_processed_without_user_confirmation(tmp_path: Pat
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_classifications set confirmed_category=null")
+        db.execute("update emails set class_confirmed_category=null")
 
     EmailStore(database)
 
@@ -4657,8 +4453,8 @@ def test_startup_rejects_normal_processed_classification_without_plan(
                 assert delete_email_action(db, kind, source_rowid).rowcount == 1
         db.execute(
             """
-            update email_classifications
-            set current_action_plan_id=null
+            update emails
+            set class_current_action_plan_id=null
             """
         )
 
@@ -4681,7 +4477,7 @@ def test_pending_feedback_persists_message_and_cursor_without_plan_or_actions(
 
     assert persisted["status"] == "pending_feedback"
     assert persisted["current_action_plan_id"] is None
-    assert len(_fetchall(database, "select * from email_messages")) == 1
+    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 0
     assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 0
     cursor = store.get_scan_cursor("dingtalk-account", "INBOX")
@@ -4739,11 +4535,11 @@ def test_exact_scan_replay_is_idempotent(tmp_path: Path):
     second = _persist_scan(store, classification)
 
     assert second["id"] == first["id"]
-    assert len(_fetchall(database, "select * from email_messages")) == 1
-    assert len(_fetchall(database, "select * from email_classifications")) == 1
+    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 1
+    assert len(_fetchall(database, f"select * from ({email_classification_projection()})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 1
-    assert len(store.list_training_examples()) == 0
+    assert store.count_unincluded_training_examples() == 0
 
 
 def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
@@ -4764,9 +4560,9 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
     )
     _persist_scan(store, original)
     classification_before = dict(
-        _fetchall(database, "select * from email_classifications")[0]
+        _fetchall(database, f"select * from ({email_classification_projection()})")[0]
     )
-    message_before = dict(_fetchall(database, "select * from email_messages")[0])
+    message_before = dict(_fetchall(database, f"select * from ({email_message_projection()})")[0])
     plans_before = [
         dict(row)
         for row in _fetchall(
@@ -4778,7 +4574,7 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
         dict(row)
         for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ]
-    training_before = store.list_training_examples()
+    training_before = store.owner_labelled_examples()[0]
 
     changed = _classification(
         status=EmailClassificationStatus.PROCESSED,
@@ -4805,9 +4601,9 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
     )
 
     classification_after = dict(
-        _fetchall(database, "select * from email_classifications")[0]
+        _fetchall(database, f"select * from ({email_classification_projection()})")[0]
     )
-    message_after = dict(_fetchall(database, "select * from email_messages")[0])
+    message_after = dict(_fetchall(database, f"select * from ({email_message_projection()})")[0])
     assert {
         field: classification_after[field]
         for field in ("folder", "uidvalidity", "uid", "thread_id")
@@ -4857,9 +4653,9 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
         dict(row)
         for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ] == actions_before
-    assert store.list_training_examples() == training_before
-    assert len(_fetchall(database, "select * from email_messages")) == 1
-    assert len(_fetchall(database, "select * from email_classifications")) == 1
+    assert store.owner_labelled_examples()[0] == training_before
+    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 1
+    assert len(_fetchall(database, f"select * from ({email_classification_projection()})")) == 1
 
 
 def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path):
@@ -5196,7 +4992,7 @@ def test_rescan_updates_locator_without_replacing_final_decision_or_plan(
     assert rescanned["status"] == "processed"
     assert rescanned["model_id"] == first["model_id"]
     assert rescanned["current_action_plan_id"] == first["current_action_plan_id"]
-    assert len(_fetchall(database, "select * from email_messages")) == 1
+    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 1
     assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 1
 
@@ -5248,9 +5044,9 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     )
     assert confirmed is not None
 
-    message_before = dict(_fetchall(database, "select * from email_messages")[0])
+    message_before = dict(_fetchall(database, f"select * from ({email_message_projection()})")[0])
     classification_before = dict(
-        _fetchall(database, "select * from email_classifications")[0]
+        _fetchall(database, f"select * from ({email_classification_projection()})")[0]
     )
     plans_before = [
         dict(row)
@@ -5263,10 +5059,10 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
         dict(row)
         for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ]
-    training_before = store.list_training_examples()
+    training_before = store.owner_labelled_examples()[0]
     count_sources = {
-        "email_messages": "email_messages",
-        "email_classifications": "email_classifications",
+        "email_messages": f"({email_message_projection()})",
+        "email_classifications": f"({email_classification_projection()})",
         "email_action_plans": f"({EMAIL_PLAN_SQL})",
         "email_actions": f"({EMAIL_DIRECT_ACTION_SQL})",
     }
@@ -5311,9 +5107,9 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
         cursor_last_success_at="2026-08-30T12:01:00+00:00",
     )
 
-    message_after = dict(_fetchall(database, "select * from email_messages")[0])
+    message_after = dict(_fetchall(database, f"select * from ({email_message_projection()})")[0])
     classification_after = dict(
-        _fetchall(database, "select * from email_classifications")[0]
+        _fetchall(database, f"select * from ({email_classification_projection()})")[0]
     )
     assert {
         field: message_after[field]
@@ -5364,7 +5160,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
         dict(row)
         for row in _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by action_id")
     ] == actions_before
-    assert store.list_training_examples() == training_before
+    assert store.owner_labelled_examples()[0] == training_before
     assert {
         table: _fetchall(database, f"select count(*) as count from {source}")[0]["count"]
         for table, source in count_sources.items()
@@ -5390,7 +5186,7 @@ def test_classification_id_collision_fails_closed_with_domain_error(tmp_path: Pa
         _persist_scan(store, second)
 
     rows = _fetchall(
-        database, "select stable_message_identity from email_classifications"
+        database, f"select stable_message_identity from ({email_classification_projection()})"
     )
     assert [row["stable_message_identity"] for row in rows] == [
         first.stable_message_identity
@@ -5509,8 +5305,8 @@ def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically
         expected_cursor_uidvalidity=42,
     )
     source_tables = {
-        "email_messages": "email_messages",
-        "email_classifications": "email_classifications",
+        "email_messages": f"({email_message_projection()})",
+        "email_classifications": f"({email_classification_projection()})",
         "email_action_plans": f"({EMAIL_PLAN_SQL})",
         "email_actions": f"({EMAIL_DIRECT_ACTION_SQL})",
     }
@@ -5549,7 +5345,7 @@ def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically
     } == counts_before
     assert not _fetchall(
         database,
-        "select id from email_classifications where id=?",
+        f"select id from ({email_classification_projection()}) where id=?",
         (stale.classification_id,),
     )
 
@@ -5589,8 +5385,8 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
         expected_cursor_uidvalidity=42,
     )
     source_tables = {
-        "email_messages": "email_messages",
-        "email_classifications": "email_classifications",
+        "email_messages": f"({email_message_projection()})",
+        "email_classifications": f"({email_classification_projection()})",
         "email_action_plans": f"({EMAIL_PLAN_SQL})",
         "email_actions": f"({EMAIL_DIRECT_ACTION_SQL})",
     }
@@ -5629,7 +5425,7 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
     } == counts_before
     assert not _fetchall(
         database,
-        "select id from email_classifications where id=?",
+        f"select id from ({email_classification_projection()}) where id=?",
         (stale.classification_id,),
     )
 
@@ -6947,9 +6743,9 @@ def test_direct_action_completion_rejects_superseded_plan(tmp_path: Path):
     claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert claimed is not None
     with sqlite3.connect(database) as db:
-        db.execute("drop trigger trg_email_direct_action_blocks_plan_switch")
+        db.execute("drop trigger trg_emails_direct_action_blocks_plan_switch")
         db.execute(
-            "update email_classifications set current_action_plan_id=null where id=?",
+            "update emails set class_current_action_plan_id=null where classification_id=?",
             (claimed.classification_id,),
         )
 
@@ -7048,11 +6844,12 @@ def test_locator_refresh_does_not_invalidate_stable_claim_identity(tmp_path: Pat
     claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert claimed is not None
     with sqlite3.connect(database) as db:
+        # The locator UID is shared by the two selected Email aliases.
         db.execute(
             """
-            update email_classifications
-            set folder='Archive', uidvalidity=43, uid=8
-            where id=?
+            update emails
+            set class_folder='Archive', uidvalidity=43, uid=8
+            where classification_id=?
             """,
             (claimed.classification_id,),
         )
@@ -7330,8 +7127,8 @@ def test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor(
             _classification(status=EmailClassificationStatus.PROCESSED),
         )
 
-    assert len(_fetchall(database, "select * from email_messages")) == 0
-    assert len(_fetchall(database, "select * from email_classifications")) == 0
+    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 0
+    assert len(_fetchall(database, f"select * from ({email_classification_projection()})")) == 0
     assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 0
     assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 0
     assert len(_fetchall(database, "select * from (" + state_projection("email_scan_cursors") + ")")) == 0
@@ -7345,7 +7142,7 @@ def test_corrupt_stored_json_is_reported_as_domain_corruption(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_classifications set probabilities_json='not-json'")
+        db.execute("update emails set class_probabilities_json='not-json'")
 
     with pytest.raises(EmailPersistenceCorruption, match="probabilities_json"):
         EmailStore(database)
@@ -7935,15 +7732,15 @@ def test_unsubscribe_claim_fences_current_authorization_during_browser_write(
         if mutation == "plan":
             with sqlite3.connect(store.path) as db:
                 db.execute(
-                    "update email_classifications set current_action_plan_id=null "
-                    "where id=?",
+                    "update emails set class_current_action_plan_id=null "
+                    "where classification_id=?",
                     (authorization["classification_id"],),
                 )
         elif mutation == "status":
             with sqlite3.connect(store.path) as db:
                 db.execute(
-                    "update email_classifications set status='pending_feedback' "
-                    "where id=?",
+                    "update emails set class_status='pending_feedback' "
+                    "where classification_id=?",
                     (authorization["classification_id"],),
                 )
         elif mutation == "account":
@@ -7956,7 +7753,7 @@ def test_unsubscribe_claim_fences_current_authorization_during_browser_write(
         else:
             with sqlite3.connect(store.path) as db:
                 db.execute(
-                    "update email_messages set thread_identity='changed-thread' "
+                    "update emails set message_thread_identity='changed-thread' "
                     "where stable_message_identity=?",
                     (authorization["stable_message_identity"],),
                 )
@@ -9891,7 +9688,7 @@ def test_flagged_important_between_lists_only_done_flags_in_the_window(
             action_rows = db.execute(
                 f"""select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})
                    where classification_id=(
-                       select id from email_classifications
+                       select classification_id from emails
                        where stable_message_identity=?
                    )""",
                 (f"dingtalk-account:message-id:<{message_id}@example.com>",),
@@ -9908,3 +9705,23 @@ def test_flagged_important_between_lists_only_done_flags_in_the_window(
 
     assert len(flagged) == 1
     assert flagged[0]["category"] == "work"
+
+
+def test_pending_training_count_preserves_eligibility_without_loading_texts(tmp_path):
+    store = EmailStore(tmp_path / "training-count.sqlite3")
+    for name, model_text, confirm in [
+        ("eligible", "__subject__eligible", True),
+        ("empty", "", True),
+        ("included", "__subject__included", True),
+        ("pending", "__subject__pending", False),
+    ]:
+        value = store.upsert_classification(
+            _classification(status=EmailClassificationStatus.PENDING_FEEDBACK, message_id=name),
+            model_text=model_text,
+        )
+        if confirm:
+            _confirm(store, value["id"], EmailCategory.WORK)
+        if name == "included":
+            with store._connect() as db:
+                db.execute("update emails set class_included_in_model_id='existing-model' where classification_id=?", (value["id"],))
+    assert store.count_unincluded_training_examples() == 1

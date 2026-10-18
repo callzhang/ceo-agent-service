@@ -260,7 +260,7 @@ def test_failed_publication_inverts_current_facts_before_old_start(tmp_path, fai
     updater = RepositoryUpdater(
         checkout, _State(), database_path=path, stop=lambda: events.append("stop"),
         restart=start, health=lambda: failure != "health" or starts > 1,
-        database_publication=lambda: release,
+        database_publication=lambda _backup: release,
         dependency_sync=lambda: fail_at("dependencies"), verification=lambda: fail_at("verification"),
     )
     with pytest.raises(UpgradeFailed):

@@ -4260,10 +4260,10 @@ def test_immediate_write_transaction_preserves_body_lock_error(tmp_path: Path, m
 
     with pytest.raises(sqlite3.OperationalError) as caught:
         with store._immediate_write_transaction() as db:
-            db.execute(
-                "insert into errors (conversation_id, message_id, kind, detail) "
-                "values ('cid', 'msg', 'test', 'must roll back')"
-            )
+            store_module.insert_error_action(db, {
+                "conversation_id": "cid", "message_id": "msg",
+                "kind": "test", "detail": "must roll back",
+            })
             raise error
 
     assert caught.value is error
@@ -11304,7 +11304,7 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
 
     assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
     with store._connect() as db:
-        row = db.execute("select resolved_at from errors").fetchone()
+        row = db.execute(f"select resolved_at from ({store_module.ERROR_SQL})").fetchone()
     assert row is not None
     assert row["resolved_at"]
 

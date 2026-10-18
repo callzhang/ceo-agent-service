@@ -1,0 +1,23 @@
+{
+  "recorded_at": "2026-10-18T03:05:02.088244+00:00",
+  "status": "test_only_translation_accepted_with_known_runtime_failures",
+  "freeze_sha256": "5b7b29ba53f6fc45f157333f0144205250448310589ddd3b339c1f6eda562504",
+  "spec": {
+    "agent": "/root/email_test_closure_spec",
+    "result": "APPROVE",
+    "scope": "source-only; test adaptation and pin verification; no independent test execution"
+  },
+  "quality": {
+    "agent": "/root/email_test_closure_quality",
+    "result": "APPROVE",
+    "scope": "source-only; fixture/assertion quality and pin verification; no independent test execution"
+  },
+  "remaining_failed_cases": 3,
+  "remaining_runtime_mechanisms": 2,
+  "all_green": false,
+  "runtime_accepted": false,
+  "actual_copy_accepted": false,
+  "capacity_accepted": false,
+  "deployment": false,
+  "next_unit": "Two-function runtime repair with exact existing regressions retained; then fresh SPEC/QUALITY and fresh actual-copy proof"
+}

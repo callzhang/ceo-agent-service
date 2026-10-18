@@ -5,16 +5,18 @@ from datetime import datetime, timedelta
 from app.run_storage import insert_run
 from app import native_trajectory
 from app.store import AutoReplyStore
-from app.task_storage import insert_task
 from app.task_project_repair import apply_manifest, build_repair_manifest
 
 
 def _set_project_times(db_path, project_id, *, created_at):
     with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update work_projects set created_at=?, updated_at=?, last_activity_at=? where id=?",
-            (created_at, created_at, created_at, project_id),
-        )
+        from app.business_storage import update_business
+        db.execute("begin immediate")
+        update_business(db, "work_project", project_id, {
+            "created_at": created_at,
+            "updated_at": created_at,
+            "last_activity_at": created_at,
+        })
 
 
 def _record_agent_value(db_path, project_id, *, title, created_at):
@@ -108,19 +110,17 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
             source_ref=source_ref,
             summary="历史材料",
         )
-        with sqlite3.connect(db_path) as db:
-            insert_task(db, "work_summary_inputs", {
-                "source_type": "local_file",
-                "source_ref": source_ref,
-                "payload_json": json.dumps({
-                    "source": {
-                        "type": "local_file",
-                        "ref": source_ref,
-                        "created_at": old_source_time.isoformat(),
-                    },
-                }),
-                "status": "done",
-            })
+        store.enqueue_work_summary_input(
+            "local_file",
+            source_ref,
+            json.dumps({
+                "source": {
+                    "type": "local_file",
+                    "ref": source_ref,
+                    "created_at": old_source_time.isoformat(),
+                },
+            }),
+        )
     store.create_work_todo(project_id=excluded_id, title="真实 TODO")
 
     manifest = build_repair_manifest(db_path)

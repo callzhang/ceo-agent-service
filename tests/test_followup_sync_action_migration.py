@@ -1,6 +1,8 @@
 """Read-only source capture for the disabled follow-up/Todo migration."""
 
 from contextlib import closing
+import json
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -8,11 +10,15 @@ import pytest
 from app.action_storage import create_action_schema
 from app import action_storage as action_storage
 from app.action_email_definitions import EMAIL_AUTOINCREMENT_TYPES
+from app.action_followup_sync_definitions import sync_action_projection
 from test_followup_sync_source import values
 from app.action_followup_sync_storage import (
     capture_followup_sync_source, migrate_followup_sync_schema, restore_followup_sync_schema,
 )
 from test_followup_sync_source import CAPTURE, NAMES
+
+EVENT_SOURCE = json.loads((Path(__file__).parents[1] /
+                           "docs/superpowers/specs/2026-10-17-action-task-events-source-extension.json").read_text())
 
 
 @pytest.fixture(params=("actual_no_memory_fk", "fresh_memory_fk"))
@@ -33,6 +39,11 @@ def source(request, tmp_path):
             for index in reversed(table["indexes"]):
                 if index["sql"]:
                     db.execute(index["sql"])
+        event = EVENT_SOURCE["actual"]
+        db.execute(event["sql"])
+        for index in reversed(event["indexes"]):
+            if index["sql"]:
+                db.execute(index["sql"])
         external = frozen["external_schema_references"][0]
         db.execute(external["sql"])
         for obj in frozen["related_table_objects"]["business_legacy_links"]["objects"]:
@@ -64,8 +75,8 @@ def test_capture_both_variants_and_native_watermarks(source):
             before = db.in_transaction, db.execute("pragma foreign_keys").fetchone()[0], db.execute("pragma query_only").fetchone()[0]
             captured = capture_followup_sync_source(db)
             assert captured["source_variant"] == ("actual" if variant == "actual_no_memory_fk" else "fresh_candidate")
-            assert len(captured["source_tables"]) == 9
-            assert sum(len(table["columns"]) for table in captured["source_tables"].values()) == 150
+            assert len(captured["source_tables"]) == 10
+            assert sum(len(table["columns"]) for table in captured["source_tables"].values()) == 158
             assert captured["sequences"]["work_updates"] == 500
             assert captured["sequences"]["follow_up_drafts"] == 0
             assert captured["sequences"]["business_task_follow_ups"] is None
@@ -91,6 +102,29 @@ def test_forward_inverse_roundtrip_both_frozen_sources(source, factory):
         restore_followup_sync_schema(db, state)
         assert db.execute("select summary from work_updates").fetchone()[0] == b"raw\x00value"
         assert capture_followup_sync_source(db)["source_variant"] == captured["source_variant"]
+        db.rollback()
+
+
+def test_task_event_current_fact_and_receipt_survive_forward_inverse(source):
+    path, variant = source
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("insert into business_tasks(id) values(11)")
+        db.execute("insert into business_task_signals(id) values(12)")
+        db.execute("insert into business_task_events"
+                   "(id,task_id,event_type,signal_id,before_json,after_json,reason,created_at) "
+                   "values(41,11,'status_changed',12,'{}','{\"status\":\"open\"}','source event','2026-10-16 12:00:00')")
+        db.commit()
+        db.execute("begin")
+        captured = capture_followup_sync_source(db)
+        state = migrate_followup_sync_schema(db, captured)
+        source_variant = "actual" if variant == "actual_no_memory_fk" else "fresh_candidate"
+        projected = db.execute(sync_action_projection("business_task_events", source_variant=source_variant)).fetchone()
+        assert projected == (41, 11, "status_changed", 12, "{}", '{"status":"open"}',
+                             "source event", "2026-10-16 12:00:00")
+        restore_followup_sync_schema(db, state)
+        assert db.execute("select * from business_task_events").fetchone() == projected
+        assert db.execute("select seq from sqlite_sequence where name='business_task_events'").fetchone() == (41,)
         db.rollback()
 
 

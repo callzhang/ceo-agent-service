@@ -4,7 +4,7 @@ This fixture models the historical feedback reported for attempt #8308.  It
 uses the real local Console API and persists only the deterministic summary
 and references; no model invocation is involved in the import step.
 """
-from app.action_storage import update_action
+from app.action_storage import update_action, _native_payload
 from app.task12_storage import task12_set_parts
 from app.task20_definitions import task20_column
 
@@ -279,14 +279,23 @@ def _seed_feedback_noise(
     received_at: str = "2030-01-01 00:00:00",
 ) -> None:
     with store._connect() as db:
+        first_rowid = db.execute(
+            "select coalesce(max(cast(legacy_key as integer)),0)+1 "
+            "from actions where record_type='feedback_events'"
+        ).fetchone()[0]
+        timestamp = db.execute("select current_timestamp").fetchone()[0]
         db.executemany(
-            """
-            insert into feedback_events (
-                key, feedback_token, received_at
-            ) values (?, ?, ?)
-            """,
+            "insert into actions(record_type,legacy_key,payload_json) "
+            "values('feedback_events',?,?)",
             [
-                (f"noise-{index:05d}", f"noise-token-{index:05d}", received_at)
+                (str(first_rowid + index), _native_payload({
+                    "key": f"noise-{index:05d}",
+                    "feedback_token": f"noise-token-{index:05d}",
+                    "rating": "", "rating_label": "", "comment": "",
+                    "original_text": "", "reply_text": "", "source": "",
+                    "received_at": received_at, "resolved_at": "", "raw_json": "{}",
+                    "created_at": timestamp, "updated_at": timestamp,
+                }))
                 for index in range(count)
             ],
         )

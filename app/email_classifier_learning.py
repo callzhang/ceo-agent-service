@@ -32,6 +32,7 @@ from app.email_classifier_retrain import (
 )
 from app.email_model_registry import EmailModelRegistry, ModelRegistryError
 from app.email_pipeline import apply_human_confirmation
+from app.email_selected_training_reader import build_selected_training_reader
 from app.email_store import EmailStore
 from app.email_training_snapshot import (
     SELECTED_TRAINING_SNAPSHOT_ID_PREFIX,
@@ -81,6 +82,7 @@ def _selection_provenance(
     sources: list[str],
     categories: list[str],
     allow_empty: bool = False,
+    selected_training_reader=None,
 ) -> dict[str, object]:
     supported_sources = {
         "folder_snapshot",
@@ -116,26 +118,15 @@ def _selection_provenance(
                     "category_key": row["category_key"],
                 }
             )
-    list_records = getattr(store, "list_selected_training_records", None)
-    if callable(list_records):
-        for row in list_records():
+    if set(sources) & {"agent_auto_label", "user_feedback"}:
+        reader = (
+            build_selected_training_reader(store)
+            if selected_training_reader is None else selected_training_reader
+        )
+        for row in reader.list_selected_training_records(sources=sources):
             source = str(row.get("source") or "")
             if source in source_records:
                 source_records[source].append(dict(row))
-    else:
-        # Kept only for narrow, legacy test doubles. Production EmailStore
-        # always supplies redacted model input through the method above.
-        for row in store.list_training_examples(include_inclusion=True):
-            source_records["user_feedback"].append(
-                {
-                    "source": "user_feedback",
-                    "account_id": row.get("account_id", "legacy"),
-                    "stable_message_identity": row["message_id"],
-                    "normalized_model_input": row.get("model_text", "legacy"),
-                    "category_key": row["label"],
-                    "provider_thread_id": None,
-                }
-            )
     available = {
         str(row["category_key"])
         for source in sources
@@ -244,6 +235,7 @@ class EmailClassifierLearningService:
         policy: RetrainPolicy = RetrainPolicy(),
         controller: TrainingSubprocessController | None = None,
         description_optimizer: object | None = None,
+        selected_training_reader=None,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -253,6 +245,10 @@ class EmailClassifierLearningService:
             registry, store_path=store.path
         )
         self.description_optimizer = description_optimizer
+        self.selected_training_reader = (
+            build_selected_training_reader(store)
+            if selected_training_reader is None else selected_training_reader
+        )
 
     def confirm_and_maybe_retrain(
         self,
@@ -336,7 +332,8 @@ class EmailClassifierLearningService:
         if not sources or not categories:
             raise ValueError("training selection requires sources and categories")
         canonical = _selection_provenance(
-            self.store, sources=sources, categories=categories
+            self.store, sources=sources, categories=categories,
+            selected_training_reader=self.selected_training_reader,
         )
         selected_records = canonical.pop("selected_training_records")
         assert isinstance(selected_records, list)

@@ -8,6 +8,7 @@ from __future__ import annotations
 from app.state_definitions import state_projection
 from app.task20_definitions import task20_column, task20_projection
 from app.task8_storage import register_task8_functions, task8_set_parts
+from app.deferral_receipt_storage import receipt_projection, find_receipt, insert_receipt, update_receipt
 
 import argparse
 import hashlib
@@ -33,31 +34,6 @@ from app.action_storage import (
 REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
-_RECEIPT_DDL = """
-create table if not exists reply_task_deferral_receipts (
- id integer primary key,
- request_id text not null unique,
- task_id integer not null,
- business_object_key text not null,
- execution_generation text not null,
- input_version integer not null,
- latest_failed_run_id integer not null,
- latest_failed_run_fingerprint text not null,
- original_status text not null,
- original_available_at text not null,
- deferred_until text not null,
- duration_seconds integer not null,
- rationale text not null,
- backup_path text not null,
- backup_integrity text not null,
- status text not null check(status in ('paused','resumed')),
- resume_request_id text not null default '',
- created_at text not null default current_timestamp,
- resumed_at text not null default ''
-);
-create unique index if not exists idx_reply_task_one_active_deferral
- on reply_task_deferral_receipts(task_id) where status='paused';
-"""
 
 
 def _time(now: datetime | None) -> datetime:
@@ -143,14 +119,10 @@ def _snapshot(
     run = db.execute(f"""select * from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
         order by id desc limit 1""", (task_id,)).fetchone()
     blocked: list[str] = []
-    receipt_table = db.execute("""select 1 from sqlite_master where type='table'
-        and name='reply_task_deferral_receipts'""").fetchone()
-    if receipt_table is not None:
-        active = db.execute("""select id from reply_task_deferral_receipts
-            where task_id=? and status='paused'""", (task_id,)).fetchall()
-        if any(row['id'] != ignored_receipt_id for row in active):
-            blocked.append('already_paused')
-    current = db.execute('select reply_task_id from business_object_tasks where business_object_key=?',
+    active = db.execute('select id from (' + receipt_projection() + ") where task_id=? and status='paused'", (task_id,)).fetchall()
+    if any(row['id'] != ignored_receipt_id for row in active):
+        blocked.append('already_paused')
+    current = db.execute(f"select reply_task_id from ({task20_projection('business_object_tasks')}) where business_object_key=?",
                          (task['business_object_key'],)).fetchone()
     if current is None or current[0] != task_id:
         blocked.append('business_object_binding_changed')
@@ -254,7 +226,7 @@ def _verified_backup(backup_path: Path | str, task_id: int, expected: dict[str, 
 
 
 def _receipt(db: sqlite3.Connection, receipt_id: int) -> dict[str, Any]:
-    return dict(db.execute('select * from reply_task_deferral_receipts where id=?', (receipt_id,)).fetchone())
+    return find_receipt(db, receipt_id=receipt_id)
 
 
 def apply_deferral(
@@ -278,10 +250,7 @@ def apply_deferral(
     with _connect(db_path, readonly=False) as db:
         db.execute('begin immediate')
         try:
-            for statement in _RECEIPT_DDL.split(';'):
-                if statement.strip():
-                    db.execute(statement)
-            prior = db.execute('select * from reply_task_deferral_receipts where request_id=?', (request_id,)).fetchone()
+            prior = find_receipt(db, request_id=request_id)
             if prior is not None:
                 if (prior['task_id'], prior['business_object_key'], prior['execution_generation'], prior['input_version'],
                     prior['latest_failed_run_id'], prior['latest_failed_run_fingerprint'], prior['backup_path'],
@@ -308,16 +277,14 @@ def apply_deferral(
                 raise ValueError('existing deferral is later')
             db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': '?', 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing')""",
                 (until, _stamp(instant), task_id))
-            db.execute("""insert into reply_task_deferral_receipts
-                (request_id,task_id,business_object_key,execution_generation,input_version,
-                 latest_failed_run_id,latest_failed_run_fingerprint,original_status,
-                 original_available_at,deferred_until,duration_seconds,rationale,backup_path,backup_integrity,status)
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'paused')""",
-                (request_id,task_id,snap['business_object_key'],expected_generation,
-                 expected_input_version,expected_run_id,expected_run_fingerprint,
-                 snap['task_status'],snap['available_at'],until,duration_seconds,
-                 rationale,backup_name,backup_integrity))
-            saved = _receipt(db, db.execute('select last_insert_rowid()').fetchone()[0])
+            receipt_id = insert_receipt(db, dict(
+                request_id=request_id, task_id=task_id, business_object_key=snap['business_object_key'],
+                execution_generation=expected_generation, input_version=expected_input_version,
+                latest_failed_run_id=expected_run_id, latest_failed_run_fingerprint=expected_run_fingerprint,
+                original_status=snap['task_status'], original_available_at=snap['available_at'],
+                deferred_until=until, duration_seconds=duration_seconds, rationale=rationale,
+                backup_path=backup_name, backup_integrity=backup_integrity, status='paused'))
+            saved = _receipt(db, receipt_id)
             db.commit()
             return saved
         except Exception:
@@ -336,9 +303,8 @@ def resume_deferral(
     with _connect(db_path, readonly=False) as db:
         db.execute('begin immediate')
         try:
-            row = db.execute('select * from reply_task_deferral_receipts where id=? and task_id=?',
-                             (receipt_id,task_id)).fetchone()
-            if row is None:
+            row = find_receipt(db, receipt_id=receipt_id)
+            if row is None or row['task_id'] != task_id:
                 raise ValueError('deferral receipt not found')
             if row['status'] == 'resumed':
                 if row['resume_request_id'] != request_id:
@@ -359,9 +325,7 @@ def resume_deferral(
                 raise ValueError('deferral state changed')
             db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'available_at': '?', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='pending'""",
                        (row['original_available_at'],_stamp(instant),task_id))
-            db.execute("""update reply_task_deferral_receipts set status='resumed',
-                resume_request_id=?,resumed_at=? where id=? and status='paused'""",
-                (request_id,_stamp(instant),receipt_id))
+            update_receipt(db, receipt_id, dict(status='resumed', resume_request_id=request_id, resumed_at=_stamp(instant)))
             saved = _receipt(db, receipt_id)
             db.commit()
             return saved

@@ -11,6 +11,7 @@ from app.action_delivery_storage import (
     capture_action_delivery_schema,
     restore_action_delivery_schema,
 )
+from app.final_action_schema import final_action_schema_is_current
 from app.action_storage import (
     ACTION_PROJECTIONS,
     DELIVERY_ACTION_TYPES,
@@ -40,7 +41,7 @@ def publication_delivery_sources(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
-    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
+    if version == "2026-10-14.1" and final_action_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
     raise ValueError("unknown or mixed sent delivery publication source schema")
 

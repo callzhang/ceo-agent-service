@@ -29,7 +29,7 @@ SOURCE_FINGERPRINTS = {
         GEN: "0759d174cab09f98a3720d771b3522c7eb5ed6a2c750b12397ba3cff65a2ec56",
     },
 }
-TARGET_FINGERPRINT = "4abf0813629cc48aea6ba8116a2f1328529c6f0823890d6d0132923b7835d4be"
+TARGET_FINGERPRINT = "7e314cb5425c81e126e59e5626d4a18cb0ddaa956f2125c27d5842b97c264cbf"
 TARGET_INDEX_NAMES = tuple(ddl.split(" INDEX ", 1)[1].split(" ON ", 1)[0]
                            for ddl in PROVIDER_STATE_INDEXES)
 
@@ -136,8 +136,9 @@ def apply_provider_state_migration(db: sqlite3.Connection, metadata: dict) -> No
     create_provider_state_schema(db)
     obs_sql = (
         "insert into main.provider_state "
-        "(record_type,account_id,stable_message_identity,state,provider_folder_id,observed_at,payload_json) "
-        "values('observation',?,?,?,?,?,?)"
+        "(record_type,account_id,stable_message_identity,state,provider_folder_id,"
+        "provider_folder_name,category_key,important,observed_at,important_signals_json) "
+        "values('observation',?,?,?,?,?,?,?,?,?)"
     )
     obs_fields = ",".join(map(_quote, OBSERVATION_FIELDS))
     observations = db.execute(f"select {obs_fields} from main.{_quote(OBS)}")
@@ -145,8 +146,8 @@ def apply_provider_state_migration(db: sqlite3.Connection, metadata: dict) -> No
                              for row in observations))
     gen_sql = (
         "insert into main.provider_state "
-        "(record_type,account_id,provider_folder_id,observed_at,payload_json) "
-        "values('folder_generation',?,?,?,'{}')"
+        "(record_type,account_id,provider_folder_id,observed_at) "
+        "values('folder_generation',?,?,?)"
     )
     gen_fields = ",".join(map(_quote, GENERATION_FIELDS))
     generations = db.execute(f"select {gen_fields} from main.{_quote(GEN)}")

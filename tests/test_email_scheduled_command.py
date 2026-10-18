@@ -502,7 +502,7 @@ def test_scheduled_model_rejection_goes_to_the_agent_only_when_the_agent_would_t
     )
     with sqlite3.connect(tmp_path / "scheduled-model-review.sqlite3") as db:
         tasks = db.execute(
-            "select count(*) from email_agent_classification_tasks"
+            "select count(*) from tasks where record_type='email_agent_classification_tasks'"
         ).fetchone()[0]
     if unread:
         # The model would not decide it, so the Agent gets it. Nothing waits

@@ -32,14 +32,16 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
-from app.email_classification_schema import create_current_email_classifications
+from app.email_canonical_storage import (
+    email_classification_projection, email_message_projection,
+)
 from app.runs11_current_schema import (
     create_current_run11_schema, current_run11_schema_is_current,
     current_configs_schema_is_current,
 )
 
 from app.configs_definitions import config_projection
-from app.configs_storage import create_configs_schema, insert_config, update_config, delete_config
+from app.configs_storage import insert_config, update_config, delete_config
 from app.action_skill_config_storage import (
     insert_skill_receipt, load_receipt_projection, list_skill_load_receipts,
     latest_skill_load_receipt_for_pid, export_receipt_projection,
@@ -47,7 +49,7 @@ from app.action_skill_config_storage import (
 )
 from app.schedules_definitions import schedule_projection
 from app.schedules_storage import (
-    create_schedules_schema, insert_schedule, update_schedule, delete_schedule,
+    insert_schedule, update_schedule, delete_schedule,
     rename_schedule_runtime,
 )
 from app.configs_schema_transfer import (
@@ -56,9 +58,6 @@ from app.configs_schema_transfer import (
 )
 from app.action_email_schema_release import (
     require_current_email_pair, TARGET_EMAIL_VERSION,
-    CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
-    CURRENT_CONFIG_REPAIRABLE_INDEXES,
-    CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
     configs_current_or_known_skill_guard_repair,
     CURRENT_STATE_REPAIRABLE_INDEXES, state_current_or_known_dispatcher_index_repair,
 )
@@ -79,8 +78,7 @@ from app.task20_definitions import (
     TASK20_NEW_KINDS, task20_column, task20_projection,
 )
 from app.task20_current_schema import (
-    create_current_task20_schema, create_current_feedback_child_schema,
-    create_current_workbench_auxiliary_schema, install_current_task_child_guards,
+    create_current_task20_schema, install_current_task_child_guards,
     task20_schema_is_current, task20_feedback_child_is_current,
     task20_workbench_schema_is_current,
 )
@@ -88,6 +86,10 @@ from app.task8_storage import (
     register_task8_functions, task8_insert_parts, task8_set_parts, task8_meeting_returning,
 )
 from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
+from app.action_feedback_definitions import FEEDBACK_KINDS, feedback_projection
+from app.action_feedback_storage import (insert_feedback_action,
+    upsert_feedback_event, insert_feedback_decision_items,
+    resolve_feedback_events, reopen_feedback_event)
 
 from app.workbench_storage import (
     RETIRED_WORKBENCH_TABLES,
@@ -109,10 +111,28 @@ from app.agent_cron.models import (
 from app.business_identity import oa_identifiers_from_url, reply_business_object_key
 from app.state_definitions import STATE_INDEX_DDL, state_projection
 from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES, state_schema_is_current
-from app.state_storage import create_state_schema, insert_state, state_json_field, update_state_rows, upsert_state
-from app.business_definitions import BUSINESS_PROJECTIONS, BUSINESS_TASK_LIST_PROJECTION
-from app.business_storage import create_business_schema, insert_business, update_business
-from app.business_schema_release import business_schema_is_current
+from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
+from app.business_definitions import (
+    BUSINESS_PROJECTIONS, BUSINESS_TASK_LIST_PROJECTION,
+)
+from app.business_storage import (
+    insert_business, update_business,
+)
+from app.business_schema_release import (
+    business_schema_is_current, business_schema_parent_is_current,
+)
+from app.business_candidate_definitions import candidate_projection
+from app.business_candidate_storage import (
+    insert_business_candidate, update_business_candidate,
+)
+from app.action_business_definitions import (
+    BUSINESS_ACTION_AUTO, BUSINESS_ACTION_KINDS, business_action_column,
+    business_action_projection,
+)
+from app.action_business_storage import (
+    insert_business_action, update_business_action,
+    copy_business_action_date_evidence, upsert_business_action_anchor_link,
+)
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
@@ -227,10 +247,16 @@ from app.work_summary_payload import (
     encode_work_summary_payload,
 )
 from app.task_source_documents import source_document_key, source_is_observed
+from app.business_source_reader import (
+    BusinessTaskSignalFact, RequestSourceReader, SourceVersionBinding,
+)
+from app.provenance_definitions import SOURCE_FIELDS
+from app.provenance_storage import signal_projection, insert_signal_version, provenance_schema_is_current
 from app.wechat.models import WechatReplyScope
 
 
 from app.action_storage import (
+    ACTION_RECORD_TYPES, _action_layout,
     _current_objects as action_schema_objects,
     email_action_auxiliary_objects_are_current,
     ACTION_TYPES, DELIVERY_ACTION_TYPES, REPLY_ACTION_TYPES,
@@ -241,6 +267,7 @@ from app.action_storage import (
     insert_action,
     update_action,
     delete_action,
+    insert_sync_action,
     reply_action_projection,
     email_action_projection,
     _reply_variant_for,
@@ -253,7 +280,32 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL,
     AGENT_EFFECT_INTENT_SQL,
     AGENT_EXECUTION_RECEIPT_SQL,
+    update_sync_action,
+    SYNC_ACTION_PROJECTIONS,
+    _autoincrement_high_water,
+    _raise_autoincrement_full,
+    task_delivery_projection,
+    insert_task_delivery_action,
+    task_delivery_set_parts,
+    task_delivery_insert_parts,
+    _email_lock,
+    insert_error_action,
+    error_set_parts,
 )
+from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS, TASK_DELIVERY_DEFAULTS_FRESH, TASK_DELIVERY_KINDS
+from app.action_error_definitions import error_projection
+
+MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
+TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
+WECHAT_DELIVERY_SQL = task_delivery_projection("wechat_deliveries")
+ERROR_SQL = error_projection()
+FEEDBACK_EVENT_SQL = feedback_projection("feedback_events")
+FEEDBACK_TRANSITION_SQL = feedback_projection("feedback_processing_transitions")
+FEEDBACK_DECISION_ITEM_SQL = feedback_projection("feedback_iteration_decision_items")
+ERROR_RESOLVE_PARAM_SET_SQL = error_set_parts(
+    update_sql={"resolved_at": "current_timestamp", "resolution": "?"})[0]
+ERROR_REDACT_SET_SQL = error_set_parts(
+    update_sql={"detail": "?", "resolved_at": "current_timestamp", "resolution": "?"})[0]
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -392,68 +444,93 @@ create index if not exists idx_task_memory_write_events_lease
     on task_memory_write_events(status, lease_expires_at, id);
 """
 
+# Fresh Store bootstraps the exact retired source declarations inside its
+# existing publication transaction, then immediately converts them to Actions.
+# Current Store opens never create these tables.
+FRESH_TASK_DELIVERY_SOURCE_DDL = """
+                create table if not exists meeting_alignment_delivery_claims (
+                    job_id integer primary key,
+                    claim_token text not null,
+                    foreign key(job_id) references tasks(id) on delete cascade
+                );
+
+
+
+
+
+
+
+
+
+                create table if not exists meeting_memory_write_events (
+                    id integer primary key autoincrement,
+                    meeting_job_id integer not null unique,
+                    execution_generation text not null,
+                    payload_json text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    available_at text not null default '',
+                    error text not null default '',
+                    memory_id text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    started_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(meeting_job_id) references tasks(id)
+                );
+                create index if not exists idx_meeting_memory_write_events_due
+                    on meeting_memory_write_events(status, available_at, id);
+
+
+
+                create table if not exists wechat_deliveries (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    account_id text not null,
+                    target_type text not null,
+                    target_id text not null,
+                    conversation_id text not null default '',
+                    reply_text text not null,
+                    execution_generation text not null default 'initial',
+                    status text not null default 'ready_to_send',
+                    action_started_at text not null default '',
+                    pre_action_failure integer not null default 0,
+                    evidence_json text not null default '{}',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(reply_task_id) references tasks(id)
+                );
+                create index if not exists idx_wechat_deliveries_status
+                    on wechat_deliveries(status, id);
+""" + TASK_MEMORY_WRITE_EVENTS_DDL + """
+create index if not exists idx_meeting_memory_write_events_lease on meeting_memory_write_events(status, lease_expires_at, id);
+create index if not exists idx_wechat_deliveries_task_generation on wechat_deliveries(reply_task_id, execution_generation, id);
+"""
+
 STORE_SCHEMA_REQUIRED_TABLES = (
     "actions",
     "state",
-    "meeting_alignment_delivery_claims",
-    "task_memory_write_events",
-    "feedback_processing_transitions",
-    "task_todo_sync_outbox",
     "runs",
-    "meeting_memory_write_events",
     "tasks",
-    "follow_up_send_attempts",
-    "todo_evidence_candidates",
-    "feedback_iteration_decision_items",
     "business",
-    "business_source_documents",
-    "business_task_signals",
-    "business_task_dingtalk_links",
-    "business_task_follow_ups",
-    "business_task_follow_up_send_attempts",
-    "business_task_todo_sync_outbox",
-    "business_task_evidence",
-    "business_task_date_evidence",
-    "business_task_events",
-    "business_task_relations",
-    "business_work_clusters",
-    "business_work_cluster_tasks",
-    "business_task_anchor_links",
-    "business_project_evidence",
-    "business_project_candidates",
-    "business_attention_items",
-    "business_attention_tasks",
-    "business_attention_proposal_tasks",
-    "business_attention_events",
-    "business_legacy_links",
+    "provenance",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
-    "idx_errors_unresolved",
-    "idx_feedback_processing_transitions_feedback",
-    "idx_feedback_processing_transitions_batch_round",
-    "idx_feedback_processing_transitions_round",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
     "idx_agent_runtime_attempts_run",
     "idx_task_agent_runs_active_input",
     "idx_agent_run_state_events_run",
-    "idx_errors_reply_task_settlement",
     "idx_meeting_alignment_runs_active_job",
-    "idx_wechat_deliveries_task_generation",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_events_event_type",
-    "idx_todo_evidence_candidates_todo",
-    "idx_todo_evidence_candidates_status",
-    "idx_todo_evidence_candidates_work_input",
-    "idx_todo_evidence_candidates_project",
     "idx_scheduled_task_runs_scheduled_instant",
     "idx_scheduled_task_runs_dispatch",
     "idx_scheduled_task_runs_claim",
     "idx_scheduled_task_runs_latest",
     "idx_scheduled_task_runs_reply_execution",
-    "idx_meeting_memory_write_events_lease",
-    "idx_task_memory_write_events_lease",
-    "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_public_id",
     "idx_business_typed_id",
     "idx_business_typed_anchor",
@@ -467,41 +544,52 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_task_public_id",
     "idx_business_project_public_id",
     "idx_business_anchor_public_id",
-    "idx_business_task_signals_source",
-    "idx_business_signal_document",
-    "idx_business_task_dingtalk_links_task",
-    "idx_business_task_dingtalk_links_one_active",
-    "idx_business_task_follow_ups_due",
-    "idx_business_task_follow_up_send_attempts_state",
-    "idx_business_task_todo_sync_outbox_status",
-    "idx_business_task_evidence_task",
-    "idx_business_task_date_evidence_task",
-    "idx_business_task_events_task",
-    "idx_business_task_relations_from",
-    "idx_business_task_relations_to",
-    "idx_business_work_cluster_tasks_task",
-    "idx_business_task_anchor_links_task",
-    "idx_business_project_candidates_cluster",
-    "idx_business_attention_items_list",
-    "idx_business_attention_tasks_task",
-    "idx_business_attention_proposal_tasks_task",
-    "idx_business_attention_events_item",
-    "idx_business_legacy_links_task",
+    "idx_business_work_cluster_public_id",
+    "idx_business_work_project_public_id",
+    "idx_business_work_todo_public_id",
+    "idx_business_work_project_status_priority",
+    "idx_business_work_todo_project_status",
+    "idx_business_work_todo_follow_up",
+    "idx_business_todo_evidence_dedupe_key",
+    "idx_business_todo_evidence_todo",
+    "idx_business_todo_evidence_status",
+    "idx_business_todo_evidence_work_input",
+    "idx_business_todo_evidence_project",
+    "idx_business_project_candidate_cluster",
+    "idx_business_attention_list",
+    "idx_business_attention_stable_key",
+    "idx_business_wechat_candidate_identity",
     *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"')
       for sql in TASK20_INDEX_DDL),
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    "reply_task_deferral_receipts",
+    "business_source_documents",
+    "business_legacy_links",
+    *BUSINESS_ACTION_KINDS,
+    *FEEDBACK_KINDS,
+    "errors",
     "workbench_confirmations",
+    *TASK_DELIVERY_KINDS,
     *STATE_SOURCE_TABLES,
     *TASK20_NEW_KINDS,
     "business_tasks",
     "business_projects",
     "business_anchors",
     "business_project_context_revisions",
+    "service_bugfix_candidates",
+    "business_work_clusters",
+    "todo_evidence_candidates",
+    "work_projects",
+    "work_todos",
+    "business_project_candidates",
+    "business_attention_items",
+    "wechat_memory_candidates",
     *REPLY_ACTION_TYPES,
     *DELIVERY_ACTION_TYPES,
     *POSTFIX_ACTION_TYPES,
     *RECEIPT_ACTION_TYPES,
+    *SYNC_ACTION_PROJECTIONS,
     *RETIRED_WORKBENCH_TABLES,
     *RETIRED_TASK_TABLES,
     "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
@@ -509,11 +597,167 @@ STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
     "universal_action_executions",
 )
+def _business_action_bootstrap_evidence_dates_sql() -> str:
+    return f"""
+                create table if not exists business_task_evidence (
+                    task_id integer not null,
+                    signal_id integer not null,
+                    evidence_role text not null check(evidence_role in (
+                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',
+                        'correction', 'merge_identity', 'relevance', 'resolution'
+                    )),
+                    created_at text not null default current_timestamp,
+                    primary key(task_id, signal_id, evidence_role),
+                    foreign key(task_id) references business(task_public_id),
+                    foreign key(signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_evidence_task
+                    on business_task_evidence(task_id, created_at, signal_id);
+                create table if not exists business_task_date_evidence (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    date_type text not null check(date_type in (
+                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',
+                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'
+                    )),
+                    value_at text not null default '',
+                    raw_phrase text not null check({_business_nonblank_sql("raw_phrase")}),
+                    source_signal_id integer not null,
+                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),
+                    actor_user_id text not null default '',
+                    actor_name text not null default '',
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references business(task_public_id),
+                    foreign key(source_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_date_evidence_task
+                    on business_task_date_evidence(task_id, id);
+                create trigger if not exists trg_business_task_date_evidence_immutable_update
+                before update on business_task_date_evidence
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create trigger if not exists trg_business_task_date_evidence_immutable_delete
+                before delete on business_task_date_evidence
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create trigger if not exists trg_business_task_date_evidence_immutable_replace
+                before insert on business_task_date_evidence
+                when exists (select 1 from business_task_date_evidence where id=new.id)
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+    """
+
+
+def _business_action_bootstrap_links_sql() -> str:
+    fresh = True
+    return f"""
+                create table if not exists business_task_relations (
+                    from_task_id integer not null,
+                    to_task_id integer not null,
+                    relation_type text not null check(relation_type in (
+                        'depends_on', 'blocks', 'supports', 'supersedes', 'related_to'
+                    )),
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    supporting_signal_id integer not null,
+                    reason text not null default '',
+                    created_at text not null default current_timestamp,
+                    primary key(from_task_id, to_task_id, relation_type),
+                    check(from_task_id <> to_task_id),
+                    foreign key(from_task_id) references business(task_public_id),
+                    foreign key(to_task_id) references business(task_public_id),
+                    foreign key(supporting_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_relations_from
+                    on business_task_relations(from_task_id, relation_type, to_task_id);
+                create index if not exists idx_business_task_relations_to
+                    on business_task_relations(to_task_id, relation_type, from_task_id);
+                create table if not exists business_work_cluster_tasks (
+                    cluster_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(cluster_id, task_id),
+                    foreign key(cluster_id) references business(work_cluster_public_id),
+                    foreign key(task_id) references business(task_public_id)
+                );
+                create index if not exists idx_business_work_cluster_tasks_task
+                    on business_work_cluster_tasks(task_id, cluster_id);
+
+                create table if not exists business_task_anchor_links (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    anchor_id integer not null,
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    active integer not null default 1 check(active in (0, 1)),
+                    evidence_signal_id integer not null,
+                    reason text not null default '',
+                    created_at text not null default current_timestamp,
+                    unique(task_id, anchor_id),
+                    foreign key(task_id) references business(task_public_id),
+                    foreign key(anchor_id) references business(anchor_public_id),
+                    foreign key(evidence_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_anchor_links_task
+                    on business_task_anchor_links(task_id, status, active, anchor_id);
+
+
+
+                create table if not exists business_project_evidence (
+                    project_id integer not null,
+                    signal_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(project_id, signal_id),
+                    foreign key(project_id) references business(project_public_id),
+                    foreign key(signal_id) references business_task_signals(id)
+                );
+                create table if not exists business_attention_tasks (
+                    attention_item_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(attention_item_id, task_id),
+                    foreign key(attention_item_id) references {('business_attention_items(id)' if fresh else 'business(attention_item_public_id)')},
+                    foreign key(task_id) references business(task_public_id)
+                );
+                create index if not exists idx_business_attention_tasks_task
+                    on business_attention_tasks(task_id, attention_item_id);
+                create table if not exists business_attention_proposal_tasks (
+                    attention_item_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(attention_item_id, task_id),
+                    foreign key(attention_item_id) references {('business_attention_items(id)' if fresh else 'business(attention_item_public_id)')},
+                    foreign key(task_id) references business(task_public_id)
+                );
+                create index if not exists idx_business_attention_proposal_tasks_task
+                    on business_attention_proposal_tasks(task_id, attention_item_id);
+                create table if not exists business_attention_events (
+                    id integer primary key autoincrement,
+                    attention_item_id integer not null,
+                    event_type text not null check(event_type in (
+                        'opened', 'updated', 'category_changed', 'resolved', 'reopened'
+                    )),
+                    signal_id integer not null,
+                    before_json text not null
+                        check(json_valid(before_json) and json_type(before_json) = 'object'),
+                    after_json text not null
+                        check(json_valid(after_json) and json_type(after_json) = 'object'),
+                    reason text not null check({_business_nonblank_sql("reason")}),
+                    created_at text not null default current_timestamp,
+                    foreign key(attention_item_id) references {('business_attention_items(id)' if fresh else 'business(attention_item_public_id)')},
+                    foreign key(signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_attention_events_item
+                    on business_attention_events(attention_item_id, created_at, id);
+    """
+
+
+BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
+                       for kind in BUSINESS_ACTION_KINDS}
+BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
+                          for kind in BUSINESS_ACTION_AUTO}
+
 STORE_SCHEMA_REMOVED_COLUMNS = {
     "tasks": ("final_text",),
     "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
              "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
-    "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "tasks": (
@@ -523,82 +767,13 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
           for field in fields),
     ),
     "business": ("id", "record_type", "public_id", "task_public_id",
-                 "project_public_id", "anchor_public_id"),
-    "business_source_documents": ("id", "identity_key", "body", "created_at"),
-    "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
-    "business_task_signals": (
-        "id", "source_type", "source_ref", "source_time", "conversation_id",
-        "conversation_title", "author_user_id", "author_name", "source_document_id",
-        "context_json", "dedupe_key", "created_at", "author_kind",
-    ),
-    "business_task_dingtalk_links": (
-        "id", "business_task_id", "dingtalk_task_id", "executor_user_id",
-        "executor_name", "title_snapshot", "deadline_at_snapshot",
-        "priority_snapshot", "status", "last_dingtalk_done",
-        "last_dingtalk_payload_json", "last_pull_at", "last_push_at",
-        "last_error", "retry_count", "created_at", "updated_at",
-    ),
-    "business_task_follow_ups": (
-        "id", "business_task_id", "source_signal_id", "owner_user_id",
-        "owner_name", "target_conversation_id", "target_kind",
-        "question_text", "scheduled_at", "sent_at", "status",
-        "revision", "send_result_json", "evidence_check_json",
-        "suppressed_reason", "dedupe_key", "created_at", "updated_at",
-    ),
-    "business_task_follow_up_send_attempts": (
-        "id", "draft_id", "draft_revision", "claim_token",
-        "idempotency_uuid", "state", "lease_owner", "claimed_at",
-        "lease_until", "result_json", "created_at", "updated_at",
-    ),
-    "business_task_todo_sync_outbox": (
-        "id", "operation_key", "business_task_id", "operation", "status",
-        "evidence_json", "receipt_json", "error", "attempt_count",
-        "lease_owner", "lease_expires_at", "next_attempt_at", "completed_at",
-        "created_at", "updated_at",
-    ),
-    "business_task_evidence": (
-        "task_id", "signal_id", "evidence_role", "created_at",
-    ),
-    "business_task_date_evidence": (
-        "id", "task_id", "date_type", "value_at", "raw_phrase",
-        "source_signal_id", "actor_kind", "actor_user_id", "actor_name", "created_at",
-    ),
-    "business_task_events": (
-        "id", "task_id", "event_type", "signal_id", "before_json", "after_json",
-        "reason", "created_at",
-    ),
-    "business_task_relations": (
-        "from_task_id", "to_task_id", "relation_type", "status",
-        "supporting_signal_id", "reason", "created_at",
-    ),
-    "business_work_clusters": ("id", "title", "created_at"),
-    "business_work_cluster_tasks": ("cluster_id", "task_id", "created_at"),
-    "business_task_anchor_links": (
-        "id", "task_id", "anchor_id", "status", "active",
-        "evidence_signal_id", "reason", "created_at",
-    ),
-    "business_project_evidence": ("project_id", "signal_id", "created_at"),
-    "business_project_candidates": (
-        "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
-        "confirmation_signal_id", "created_at",
-    ),
-    "business_attention_items": (
-        "id", "stable_key", "category", "status", "title", "business_area",
-        "why_attention", "current_state", "ceo_action", "anchor_id",
-        "evidence_signal_id", "assessment_json", "resolution_signal_id", "resolved_at",
-        "created_at", "updated_at",
-    ),
-    "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
-    "business_attention_proposal_tasks": ("attention_item_id", "task_id", "created_at"),
-    "business_attention_events": (
-        "id", "attention_item_id", "event_type", "signal_id", "before_json",
-        "after_json", "reason", "created_at",
-    ),
-    "business_legacy_links": (
-        "id", "signal_id", "task_id", "cluster_id", "anchor_id", "project_id",
-        "project_candidate_id", "attention_item_id", "work_project_id",
-        "work_todo_id", "work_update_id", "created_at",
-    ),
+                 "project_public_id", "anchor_public_id", "work_cluster_public_id",
+                 "work_project_public_id", "work_todo_public_id", "completed_at",
+                 "source_type", "source_ref", "source_created_at",
+                 "todo_evidence_candidate_dedupe_key",
+                 "attention_item_public_id", "project_candidate_public_id",
+                 "wechat_memory_candidate_public_id", "import_task_id"),
+    "provenance": ("id", *SOURCE_FIELDS),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
         "summary_input_id", "error", "projection_json", "job_id", "request_id",
@@ -611,31 +786,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "lease_expires_at",
         "result_schema_id",
     ),
-    "meeting_memory_write_events": (
-        "execution_generation",
-        "lease_owner",
-        "lease_expires_at",
-        "started_at",
-    ),
-    "task_memory_write_events": (
-        "execution_generation",
-        "consumer_run_id",
-        "memories_json",
-        "written_memory_ids_json",
-        "lease_owner",
-        "lease_expires_at",
-    ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
-    "trg_business_source_documents_immutable_update",
-    "trg_business_source_documents_immutable_delete",
-    "trg_business_source_documents_immutable_replace",
-    "trg_business_task_signals_immutable_update",
-    "trg_business_task_signals_immutable_delete",
-    "trg_business_task_signals_immutable_replace",
-    "trg_business_task_date_evidence_immutable_update",
-    "trg_business_task_date_evidence_immutable_delete",
-    "trg_business_task_date_evidence_immutable_replace",
     "trg_runtime_attempt_session_evidence_trim_insert",
     "trg_runtime_attempt_session_evidence_trim_update",
     "trg_runtime_attempt_generalized_lease_insert",
@@ -643,8 +795,6 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_insert",
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
-    "trg_feedback_iteration_decision_items_immutable_update",
-    "trg_feedback_iteration_decision_items_immutable_delete",
     *(sql.split()[2] for sql in TASK20_TRIGGER_DDL),
 )
 MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
@@ -974,14 +1124,7 @@ def _normalize_schema_sql(value: str) -> str:
     return value.strip().removesuffix(";").rstrip()
 
 
-STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
-    "trg_feedback_iteration_decision_items_immutable_update": _normalize_schema_sql(
-        FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL
-    ),
-    "trg_feedback_iteration_decision_items_immutable_delete": _normalize_schema_sql(
-        FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL
-    ),
-}
+STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {}
 
 
 class FeedbackProcessingRoundMigrationIntegrityError(RuntimeError):
@@ -1821,10 +1964,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return False
         try:
             with self._connect() as db:
-                healthy = state_schema_is_current(db) and self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
-                    current_configs_schema_is_current(db, action_variant=variant)
-                    for variant in ("actual_no_memory_fk", "fresh_memory_fk")
-                )
+                healthy = self._schema_manifest_is_current_in_connection(db, include_run_snapshots=False)
         except BaseException:
             _INITIALIZED_STORE_PATHS.discard(path_key)
             raise
@@ -1982,7 +2122,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         cls,
         db: sqlite3.Connection,
     ) -> bool:
-        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db):
+        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db, include_feedback=True):
             return False
         cls._validate_feedback_processing_round_storage(db)
         trigger_names = tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS)
@@ -2051,6 +2191,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "select name from sqlite_master where type='table'"
             )
         }
+        canonical_email = "emails" in present_tables
         present_indexes = {
             str(item["name"])
             for item in db.execute(
@@ -2109,12 +2250,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and feedback_processing_round_storage_valid
             and required_columns_present
             and current_run11_schema_is_current(db)
+            and provenance_schema_is_current(db)
             and task20_schema_is_current(db)
-            and task20_feedback_child_is_current(db)
-            and task20_workbench_schema_is_current(db)
-            and business_schema_is_current(db)
+            and task20_feedback_child_is_current(db, include_feedback=True)
+            and task20_workbench_schema_is_current(db, include_feedback=True)
+            and business_schema_is_current(db, include_followup_sync=True, include_candidates=True,
+                                           include_business_actions=True, inline_legacy_owner=True)
             and state_schema_is_current(db)
-            and any(current_configs_schema_is_current(db, action_variant=variant)
+            and any(current_configs_schema_is_current(
+                        db,
+                        action_variant=variant,
+                        include_followup_sync=True,
+                        include_business_sync=True,
+                        include_task_delivery=True,
+                        include_errors=True, include_feedback=True,
+                        include_business_actions=True,
+                        include_email_history=True,
+                        canonical_email=canonical_email,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True,
+                    )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
             and not removed_columns_present
@@ -2348,1241 +2502,32 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         fresh = self._require_supported_store_bootstrap_source()
+        from app.current_database_schema import create_current_database_schema, FINAL_ACTION_OPTIONS
         with self._connect() as db:
+            db.execute("pragma foreign_keys=off")
+            db.execute("begin immediate")
             if fresh:
-                create_state_schema(db)
+                create_current_database_schema(db)
             else:
+                # Eligibility already limits this branch to the existing known
+                # auxiliary repairs; current rows and declarations stay intact.
+                create_current_task20_schema(db)
+                create_current_run11_schema(db)
+                for declaration in _config_target_declarations().values():
+                    for item in (*declaration["indexes"], *declaration["triggers"]):
+                        if item["sql"] is not None and db.execute(
+                            "select 1 from sqlite_schema where name=?", (item["name"],)
+                        ).fetchone() is None:
+                            db.execute(item["sql"])
                 for sql in STATE_INDEX_DDL:
                     name = sql.split(" on state(", 1)[0].split()[-1].strip('"')
                     if name in CURRENT_STATE_REPAIRABLE_INDEXES and db.execute(
-                        "select 1 from sqlite_schema where type='index' and name=?",
-                        (name,),
+                        "select 1 from sqlite_schema where type='index' and name=?", (name,)
                     ).fetchone() is None:
                         db.execute(sql)
-            db.execute("pragma foreign_keys=off")
-            reply_variant = (
-                _reply_variant_for(db)
-                if db.execute("select 1 from sqlite_master where name='actions'").fetchone()
-                else "fresh_memory_fk"
-            )
-            create_current_task20_schema(db)
-            create_current_feedback_child_schema(db)
-            create_current_run11_schema(db)
-            create_current_workbench_auxiliary_schema(db)
-            self._migrate_business_task_source_documents(db)
-            if db.execute("select 1 from sqlite_schema where type='table' "
-                          "and name='business'").fetchone() is None:
-                create_business_schema(db)
-            db.executescript(
-                """
-                
-                
-                
-                
-                
-                create table if not exists feedback_events (
-                    key text primary key,
-                    feedback_token text not null,
-                    rating text not null default '',
-                    rating_label text not null default '',
-                    comment text not null default '',
-                    original_text text not null default '',
-                    reply_text text not null default '',
-                    source text not null default '',
-                    received_at text not null default '',
-                    resolved_at text not null default '',
-                    raw_json text not null default '{}',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_feedback_events_token
-                    on feedback_events(feedback_token, received_at);
-                create table if not exists feedback_processing_transitions (
-                    id integer primary key autoincrement,
-                    feedback_key text not null,
-                    round_id integer not null default 0,
-                    batch_id text not null default '',
-                    from_status text not null default ''
-                        check (from_status in ('', 'pending', 'processing', 'resolved')),
-                    to_status text not null
-                        check (to_status in ('pending', 'processing', 'resolved')),
-                    reason text not null default '',
-                    workbench_task_id text not null default '',
-                    workbench_turn_id text not null default '',
-                    created_at text not null default current_timestamp
-                );
-                create index if not exists idx_feedback_processing_transitions_feedback
-                    on feedback_processing_transitions(feedback_key, id desc);
-                create index if not exists idx_feedback_processing_transitions_batch_round
-                    on feedback_processing_transitions(batch_id, round_id, id);
-                create index if not exists idx_feedback_processing_transitions_round
-                    on feedback_processing_transitions(round_id, id);
-                create table if not exists service_bugfix_candidates (
-                    id integer primary key autoincrement,
-                    feedback_event_key text not null unique,
-                    feedback_token text not null default '',
-                    attempt_id integer not null default 0,
-                    status text not null default 'pending',
-                    title text not null,
-                    reason text not null,
-                    feedback_comment text not null,
-                    conversation_title text not null default '',
-                    trigger_text text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_service_bugfix_candidates_status
-                    on service_bugfix_candidates(status, created_at);
-                create table if not exists errors (
-                    id integer primary key autoincrement,
-                    conversation_id text,
-                    message_id text,
-                    kind text not null,
-                    detail text not null,
-                    created_at text not null default current_timestamp,
-                    resolved_at text not null default '',
-                    resolution text not null default ''
-                );
-                create table if not exists meeting_memory_write_events (
-                    id integer primary key autoincrement,
-                    meeting_job_id integer not null unique,
-                    execution_generation text not null,
-                    payload_json text not null,
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    available_at text not null default '',
-                    error text not null default '',
-                    memory_id text not null default '',
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    started_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(meeting_job_id) references tasks(id)
-                );
-                create index if not exists idx_meeting_memory_write_events_due
-                    on meeting_memory_write_events(status, available_at, id);
-                
-                
-                
-                create table if not exists wechat_deliveries (
-                    id integer primary key autoincrement,
-                    reply_task_id integer not null,
-                    account_id text not null,
-                    target_type text not null,
-                    target_id text not null,
-                    conversation_id text not null default '',
-                    reply_text text not null,
-                    execution_generation text not null default 'initial',
-                    status text not null default 'ready_to_send',
-                    action_started_at text not null default '',
-                    pre_action_failure integer not null default 0,
-                    evidence_json text not null default '{}',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(reply_task_id) references tasks(id)
-                );
-                create index if not exists idx_wechat_deliveries_status
-                    on wechat_deliveries(status, id);
-                create table if not exists wechat_memory_candidates (
-                    id integer primary key autoincrement,
-                    import_run_id text not null,
-                    account_id text not null,
-                    statement text not null,
-                    edited_statement text not null default '',
-                    category text not null,
-                    confidence real not null,
-                    sensitivity text not null,
-                    source_conversation_ids_json text not null default '[]',
-                    source_message_ids_json text not null default '[]',
-                    source_time_start text not null default '',
-                    source_time_end text not null default '',
-                    evidence_excerpt text not null default '',
-                    cleanup_notes text not null default '',
-                    status text not null default 'pending',
-                    reviewer text not null default '',
-                    reviewed_at text not null default '',
-                    memory_write_status text not null default '',
-                    memory_id text not null default '',
-                    memory_write_error text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(import_run_id, statement)
-                );
-                create table if not exists meeting_alignment_delivery_claims (
-                    job_id integer primary key,
-                    claim_token text not null,
-                    foreign key(job_id) references tasks(id) on delete cascade
-                );
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                """
-                f"""
-                {';'.join(BUSINESS_SOURCE_DOCUMENT_SCHEMA)};
-                {_business_task_signal_table_sql("business_task_signals")};
-                {';'.join(BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS)};
-
-
-
-
-                create table if not exists business_task_dingtalk_links (
-                    id integer primary key autoincrement,
-                    business_task_id integer not null,
-                    dingtalk_task_id text not null default '',
-                    executor_user_id text not null default '',
-                    executor_name text not null default '',
-                    title_snapshot text not null default '',
-                    deadline_at_snapshot text not null default '',
-                    priority_snapshot text not null default '',
-                    status text not null check(status in ('creating','active','done','cancelled','failed')),
-                    last_dingtalk_done integer,
-                    last_dingtalk_payload_json text not null default '{{}}',
-                    last_pull_at text not null default '', last_push_at text not null default '',
-                    last_error text not null default '', retry_count integer not null default 0,
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(business_task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_task_dingtalk_links_task
-                    on business_task_dingtalk_links(business_task_id, status, id);
-                create unique index if not exists idx_business_task_dingtalk_links_one_active
-                    on business_task_dingtalk_links(business_task_id)
-                    where status in ('creating','active');
-                create table if not exists business_task_follow_ups (
-                    id integer primary key autoincrement,
-                    business_task_id integer not null,
-                    source_signal_id integer not null,
-                    owner_user_id text not null default '',
-                    owner_name text not null default '',
-                    target_conversation_id text not null,
-                    target_kind text not null check(target_kind in ('group','direct')),
-                    question_text text not null,
-                    scheduled_at text not null,
-                    sent_at text not null default '',
-                    status text not null default 'draft' check(status in ('draft','approved','sent','completed','skipped','cancelled','failed')),
-                    revision integer not null default 1,
-                    send_result_json text not null default '{{}}',
-                    evidence_check_json text not null default '{{}}',
-                    suppressed_reason text not null default '',
-                    dedupe_key text not null unique,
-                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
-                    foreign key(business_task_id) references business(task_public_id),
-                    foreign key(source_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_follow_ups_due
-                    on business_task_follow_ups(status, scheduled_at, id);
-                create table if not exists business_task_follow_up_send_attempts (
-                    id integer primary key autoincrement,
-                    draft_id integer not null,
-                    draft_revision integer not null,
-                    claim_token text not null unique,
-                    idempotency_uuid text not null,
-                    state text not null check(state in ('claimed','expired_before_send','sending','sent','failed','unknown')),
-                    lease_owner text not null default '',
-                    claimed_at text not null default '',
-                    lease_until text not null default '',
-                    result_json text not null default '{{}}',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(draft_id) references business_task_follow_ups(id)
-                );
-                create index if not exists idx_business_task_follow_up_send_attempts_state
-                    on business_task_follow_up_send_attempts(state, lease_until, id);
-                create table if not exists business_task_todo_sync_outbox (
-                    id integer primary key autoincrement,
-                    operation_key text not null unique, business_task_id integer not null,
-                    operation text not null check(operation in ('create','complete')),
-                    status text not null default 'queued' check(status in ('queued','running','completed','skipped','failed','unknown')),
-                    evidence_json text not null default '{{}}', receipt_json text not null default '{{}}', error text not null default '',
-                    attempt_count integer not null default 0, lease_owner text not null default '', lease_expires_at text not null default '',
-                    next_attempt_at text not null default '', completed_at text not null default '',
-                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
-                    foreign key(business_task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_task_todo_sync_outbox_status
-                    on business_task_todo_sync_outbox(status, next_attempt_at, id);
-                create table if not exists business_task_evidence (
-                    task_id integer not null,
-                    signal_id integer not null,
-                    evidence_role text not null check(evidence_role in (
-                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',
-                        'correction', 'merge_identity', 'relevance', 'resolution'
-                    )),
-                    created_at text not null default current_timestamp,
-                    primary key(task_id, signal_id, evidence_role),
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_evidence_task
-                    on business_task_evidence(task_id, created_at, signal_id);
-                create table if not exists business_task_date_evidence (
-                    id integer primary key autoincrement,
-                    task_id integer not null,
-                    date_type text not null check(date_type in (
-                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',
-                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'
-                    )),
-                    value_at text not null default '',
-                    raw_phrase text not null check({_business_nonblank_sql("raw_phrase")}),
-                    source_signal_id integer not null,
-                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),
-                    actor_user_id text not null default '',
-                    actor_name text not null default '',
-                    created_at text not null default current_timestamp,
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(source_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_date_evidence_task
-                    on business_task_date_evidence(task_id, id);
-                create trigger if not exists trg_business_task_date_evidence_immutable_update
-                before update on business_task_date_evidence
-                begin select raise(abort, 'business task date evidence is immutable'); end;
-                create trigger if not exists trg_business_task_date_evidence_immutable_delete
-                before delete on business_task_date_evidence
-                begin select raise(abort, 'business task date evidence is immutable'); end;
-                create trigger if not exists trg_business_task_date_evidence_immutable_replace
-                before insert on business_task_date_evidence
-                when exists (select 1 from business_task_date_evidence where id=new.id)
-                begin select raise(abort, 'business task date evidence is immutable'); end;
-                create table if not exists business_task_events (
-                    id integer primary key autoincrement,
-                    task_id integer not null,
-                    event_type text not null check(event_type in (
-                        'created', 'promoted', 'commitment_changed', 'owner_changed',
-                        'deadline_changed', 'date_evidence_recorded', 'status_changed',
-                        'relevance_changed', 'details_changed', 'fields_changed', 'merged'
-                    )),
-                    signal_id integer,
-                    before_json text not null
-                        check(json_valid(before_json) and json_type(before_json) = 'object'),
-                    after_json text not null
-                        check(json_valid(after_json) and json_type(after_json) = 'object'),
-                    reason text not null check({_business_nonblank_sql("reason")}),
-                    created_at text not null default current_timestamp,
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_events_task
-                    on business_task_events(task_id, created_at, id);
-                create table if not exists business_task_relations (
-                    from_task_id integer not null,
-                    to_task_id integer not null,
-                    relation_type text not null check(relation_type in (
-                        'depends_on', 'blocks', 'supports', 'supersedes', 'related_to'
-                    )),
-                    status text not null default 'proposed'
-                        check(status in ('proposed', 'confirmed', 'rejected')),
-                    supporting_signal_id integer not null,
-                    reason text not null default '',
-                    created_at text not null default current_timestamp,
-                    primary key(from_task_id, to_task_id, relation_type),
-                    check(from_task_id <> to_task_id),
-                    foreign key(from_task_id) references business(task_public_id),
-                    foreign key(to_task_id) references business(task_public_id),
-                    foreign key(supporting_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_relations_from
-                    on business_task_relations(from_task_id, relation_type, to_task_id);
-                create index if not exists idx_business_task_relations_to
-                    on business_task_relations(to_task_id, relation_type, from_task_id);
-                create table if not exists business_work_clusters (
-                    id integer primary key autoincrement,
-                    title text not null check({_business_nonblank_sql("title")}),
-                    created_at text not null default current_timestamp
-                );
-                create table if not exists business_work_cluster_tasks (
-                    cluster_id integer not null,
-                    task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(cluster_id, task_id),
-                    foreign key(cluster_id) references business_work_clusters(id),
-                    foreign key(task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_work_cluster_tasks_task
-                    on business_work_cluster_tasks(task_id, cluster_id);
-
-                create table if not exists business_task_anchor_links (
-                    id integer primary key autoincrement,
-                    task_id integer not null,
-                    anchor_id integer not null,
-                    status text not null default 'proposed'
-                        check(status in ('proposed', 'confirmed', 'rejected')),
-                    active integer not null default 1 check(active in (0, 1)),
-                    evidence_signal_id integer not null,
-                    reason text not null default '',
-                    created_at text not null default current_timestamp,
-                    unique(task_id, anchor_id),
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(anchor_id) references business(anchor_public_id),
-                    foreign key(evidence_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_anchor_links_task
-                    on business_task_anchor_links(task_id, status, active, anchor_id);
-
-
-
-                create table if not exists business_project_evidence (
-                    project_id integer not null,
-                    signal_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(project_id, signal_id),
-                    foreign key(project_id) references business(project_public_id),
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create table if not exists business_project_candidates (
-                    id integer primary key autoincrement,
-                    cluster_id integer not null,
-                    title text not null check({_business_nonblank_sql("title")}),
-                    reason text not null check({_business_nonblank_sql("reason")}),
-                    status text not null default 'proposed'
-                        check(status in ('proposed', 'confirmed', 'rejected')),
-                    confirmed_project_id integer,
-                    confirmation_signal_id integer,
-                    created_at text not null default current_timestamp,
-                    check((status = 'confirmed') = (confirmed_project_id is not null)),
-                    check((status = 'confirmed') = (confirmation_signal_id is not null)),
-                    foreign key(cluster_id) references business_work_clusters(id),
-                    foreign key(confirmed_project_id) references business(project_public_id),
-                    foreign key(confirmation_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_project_candidates_cluster
-                    on business_project_candidates(cluster_id, status, id);
-                create table if not exists business_attention_items (
-                    id integer primary key autoincrement,
-                    stable_key text not null unique check({_business_nonblank_sql("stable_key")}),
-                    category text not null check(category in ('fyi', 'watch', 'decision', 'push')),
-                    status text not null default 'active' check(status in ('active', 'resolved')),
-                    title text not null check({_business_nonblank_sql("title")}),
-                    business_area text not null default '',
-                    why_attention text not null check({_business_nonblank_sql("why_attention")}),
-                    current_state text not null check({_business_nonblank_sql("current_state")}),
-                    ceo_action text not null check({_business_nonblank_sql("ceo_action")}),
-                    anchor_id integer not null,
-                    evidence_signal_id integer not null,
-                    assessment_json text not null default '{{}}',
-                    resolution_signal_id integer,
-                    resolved_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    check(
-                        (status = 'active' and resolution_signal_id is null and resolved_at = '')
-                        or (status = 'resolved' and resolution_signal_id is not null
-                            and {_business_nonblank_sql("resolved_at")})
-                    ),
-                    foreign key(anchor_id) references business(anchor_public_id),
-                    foreign key(evidence_signal_id) references business_task_signals(id),
-                    foreign key(resolution_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_attention_items_list
-                    on business_attention_items(status, category, updated_at, id);
-                create table if not exists business_attention_tasks (
-                    attention_item_id integer not null,
-                    task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(attention_item_id, task_id),
-                    foreign key(attention_item_id) references business_attention_items(id),
-                    foreign key(task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_attention_tasks_task
-                    on business_attention_tasks(task_id, attention_item_id);
-                create table if not exists business_attention_proposal_tasks (
-                    attention_item_id integer not null,
-                    task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(attention_item_id, task_id),
-                    foreign key(attention_item_id) references business_attention_items(id),
-                    foreign key(task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_attention_proposal_tasks_task
-                    on business_attention_proposal_tasks(task_id, attention_item_id);
-                create table if not exists business_attention_events (
-                    id integer primary key autoincrement,
-                    attention_item_id integer not null,
-                    event_type text not null check(event_type in (
-                        'opened', 'updated', 'category_changed', 'resolved', 'reopened'
-                    )),
-                    signal_id integer not null,
-                    before_json text not null
-                        check(json_valid(before_json) and json_type(before_json) = 'object'),
-                    after_json text not null
-                        check(json_valid(after_json) and json_type(after_json) = 'object'),
-                    reason text not null check({_business_nonblank_sql("reason")}),
-                    created_at text not null default current_timestamp,
-                    foreign key(attention_item_id) references business_attention_items(id),
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_attention_events_item
-                    on business_attention_events(attention_item_id, created_at, id);
-                create table if not exists business_legacy_links (
-                    id integer primary key autoincrement,
-                    signal_id integer,
-                    task_id integer,
-                    cluster_id integer,
-                    anchor_id integer,
-                    project_id integer,
-                    project_candidate_id integer,
-                    attention_item_id integer,
-                    work_project_id integer unique,
-                    work_todo_id integer unique,
-                    work_update_id integer unique,
-                    created_at text not null default current_timestamp,
-                    check(
-                        (signal_id is not null) + (task_id is not null) + (cluster_id is not null)
-                        + (anchor_id is not null) + (project_id is not null)
-                        + (project_candidate_id is not null) + (attention_item_id is not null) = 1
-                    ),
-                    check(
-                        (work_project_id is not null) + (work_todo_id is not null)
-                        + (work_update_id is not null) = 1
-                    ),
-                    foreign key(signal_id) references business_task_signals(id),
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(cluster_id) references business_work_clusters(id),
-                    foreign key(anchor_id) references business(anchor_public_id),
-                    foreign key(project_id) references business(project_public_id),
-                    foreign key(project_candidate_id) references business_project_candidates(id),
-                    foreign key(attention_item_id) references business_attention_items(id),
-                    foreign key(work_project_id) references work_projects(id),
-                    foreign key(work_todo_id) references work_todos(id),
-                    foreign key(work_update_id) references work_updates(id)
-                );
-                create index if not exists idx_business_legacy_links_task
-                    on business_legacy_links(task_id, id);
-                """
-                """
-                create table if not exists work_projects (
-                    id integer primary key autoincrement,
-                    title text not null,
-                    category text not null default 'other',
-                    tags_json text not null default '[]',
-                    status text not null default 'active',
-                    priority text not null default 'none',
-                    risk_level text not null default 'none',
-                    needs_derek_attention integer not null default 0,
-                    owner_user_id text not null default '',
-                    owner_name text not null default '',
-                    owner_evidence_json text not null default '{}',
-                    related_people_json text not null default '[]',
-                    goal text not null default '',
-                    background text not null default '',
-                    facts_json text not null default '[]',
-                    current_state text not null default '',
-                    blocker text not null default '',
-                    next_step text not null default '',
-                    next_follow_up_at text not null default '',
-                    follow_up_mode text not null default 'none',
-                    source_conversations_json text not null default '[]',
-                    memory_context_json text not null default '{}',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    last_activity_at text not null default current_timestamp
-                );
-                create index if not exists idx_work_projects_status_priority
-                    on work_projects(status, priority, updated_at);
-                create table if not exists work_todos (
-                    id integer primary key autoincrement,
-                    project_id integer not null,
-                    title text not null,
-                    description text not null default '',
-                    owner_user_id text not null default '',
-                    owner_name text not null default '',
-                    owner_evidence_json text not null default '{}',
-                    status text not null default 'open',
-                    priority text not null default 'none',
-                    deadline_at text not null default '',
-                    next_follow_up_at text not null default '',
-                    follow_up_question text not null default '',
-                    blocker text not null default '',
-                    completion_evidence_json text not null default '{}',
-                    created_from_update_id integer not null default 0,
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    completed_at text not null default ''
-                );
-                create index if not exists idx_work_todos_project_status
-                    on work_todos(project_id, status);
-                create index if not exists idx_work_todos_follow_up
-                    on work_todos(status, next_follow_up_at);
-                create table if not exists work_todo_dingtalk_links (
-                    id integer primary key autoincrement,
-                    work_todo_id integer not null,
-                    dingtalk_task_id text not null default '',
-                    executor_user_id text not null default '',
-                    executor_name text not null default '',
-                    title_snapshot text not null default '',
-                    deadline_at_snapshot text not null default '',
-                    priority_snapshot text not null default '',
-                    status text not null default 'creating',
-                    last_dingtalk_done integer,
-                    last_dingtalk_payload_json text not null default '{}',
-                    last_pull_at text not null default '',
-                    last_push_at text not null default '',
-                    last_error text not null default '',
-                    retry_count integer not null default 0,
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_work_todo_dingtalk_links_todo
-                    on work_todo_dingtalk_links(work_todo_id, status, id);
-                create unique index if not exists idx_work_todo_dingtalk_links_task_id
-                    on work_todo_dingtalk_links(dingtalk_task_id)
-                    where dingtalk_task_id != '';
-                create unique index if not exists idx_work_todo_dingtalk_links_active_todo
-                    on work_todo_dingtalk_links(work_todo_id)
-                    where status in ('creating', 'active');
-                create table if not exists task_todo_sync_outbox (
-                    id integer primary key autoincrement,
-                    operation_key text not null unique,
-                    work_todo_id integer not null,
-                    operation text not null check(operation in ('create', 'complete')),
-                    evidence_json text not null default '{}',
-                    status text not null default 'queued'
-                        check(status in ('queued', 'running', 'completed',
-                                         'skipped', 'failed', 'unknown')),
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    receipt_json text not null default '{}',
-                    error text not null default '',
-                    attempt_count integer not null default 0,
-                    next_attempt_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    completed_at text not null default ''
-                );
-                create index if not exists idx_task_todo_sync_outbox_due
-                    on task_todo_sync_outbox(status, lease_expires_at, id);
-                create table if not exists work_updates (
-                    id integer primary key autoincrement,
-                    project_id integer not null,
-                    source_type text not null,
-                    source_ref text not null,
-                    summary text not null,
-                    changes_json text not null default '{}',
-                    merge_reason text not null default '',
-                    confidence real not null default 0,
-                    created_at text not null default current_timestamp
-                );
-                create index if not exists idx_work_updates_project
-                    on work_updates(project_id, id);
-                create index if not exists idx_work_updates_created
-                    on work_updates(created_at, id);
-                create table if not exists todo_evidence_candidates (
-                    id integer primary key autoincrement,
-                    project_id integer not null,
-                    todo_id integer not null,
-                    source_type text not null,
-                    source_ref text not null,
-                    source_created_at text not null default '',
-                    evidence_text text not null default '',
-                    reason text not null default '',
-                    confidence real not null default 0,
-                    status text not null default 'candidate'
-                        check(status in (
-                            'candidate',
-                            'enqueued',
-                            'accepted',
-                            'rejected',
-                            'error'
-                        )),
-                    work_summary_input_id integer not null default 0,
-                    decision_json text not null default '{}',
-                    dedupe_key text not null unique,
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_todo_evidence_candidates_todo
-                    on todo_evidence_candidates(todo_id, status, id);
-                create index if not exists idx_todo_evidence_candidates_status
-                    on todo_evidence_candidates(status, id);
-                create index if not exists idx_todo_evidence_candidates_work_input
-                    on todo_evidence_candidates(work_summary_input_id);
-                create index if not exists idx_todo_evidence_candidates_project
-                    on todo_evidence_candidates(project_id, id desc);
-                create table if not exists follow_up_drafts (
-                    id integer primary key autoincrement,
-                    project_id integer not null,
-                    todo_id integer not null default 0,
-                    title text not null default '',
-                    description text not null default '',
-                    owner_user_id text not null default '',
-                    owner_name text not null default '',
-                    owners_json text not null default '[]',
-                    target_conversation_id text not null default '',
-                    target_kind text not null default '',
-                    question_text text not null default '',
-                    priority text not null default '',
-                    tags_json text not null default '[]',
-                    participants_json text not null default '[]',
-                    files_json text not null default '[]',
-                    risk_check_json text not null default '{}',
-                    status text not null default 'draft',
-                    send_result_json text not null default '{}',
-                    evidence_check_json text not null default '{}',
-                    reaction_status text not null default '',
-                    reaction_summary text not null default '',
-                    suppressed_reason text not null default '',
-                    dedupe_key text not null default '',
-                    scheduled_at text not null default '',
-                    sent_at text not null default '',
-                    revision integer not null default 1,
-                    send_claim_revision integer not null default 0,
-                    send_claim_token text not null default '',
-                    send_claim_idempotency_uuid text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_follow_up_drafts_status
-                    on follow_up_drafts(status, scheduled_at, id);
-                create index if not exists idx_follow_up_drafts_project_schedule
-                    on follow_up_drafts(project_id, scheduled_at, id);
-                create index if not exists idx_follow_up_drafts_todo_schedule
-                    on follow_up_drafts(todo_id, scheduled_at, id);
-                create index if not exists idx_follow_up_drafts_owner_sent
-                    on follow_up_drafts(owner_user_id, sent_at, id);
-                create index if not exists idx_follow_up_drafts_conversation_sent
-                    on follow_up_drafts(target_conversation_id, sent_at, id);
-                create table if not exists follow_up_send_attempts (
-                    id integer primary key autoincrement,
-                    draft_id integer not null,
-                    draft_revision integer not null,
-                    claim_token text not null unique,
-                    idempotency_uuid text not null,
-                    state text not null default 'claimed',
-                    lease_owner text not null default '',
-                    claimed_at text not null default '',
-                    lease_until text not null default '',
-                    result_json text not null default '{}',
-                    review_enqueued_revision integer not null default 0,
-                    review_source_ref text not null default '',
-                    late_result_json text not null default '{}',
-                    conflict_json text not null default '{}',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_follow_up_send_attempts_draft_revision
-                    on follow_up_send_attempts(draft_id, draft_revision, id);
-                create index if not exists idx_follow_up_send_attempts_reconciliation
-                    on follow_up_send_attempts(state, lease_until, id);
-                
-                """
-            )
-            attention_columns = {
-                row["name"] for row in db.execute("pragma table_info(business_attention_items)")
-            }
-            if "assessment_json" not in attention_columns:
-                db.execute(
-                    "alter table business_attention_items add column "
-                    "assessment_json text not null default '{}'"
-                )
-            signal_columns = {
-                row["name"] for row in db.execute("pragma table_info(business_task_signals)")
-            }
-            if "author_kind" not in signal_columns:
-                db.execute(
-                    "alter table business_task_signals add column author_kind text not null "
-                    "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
-                )
-            delivery_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
-            }
-            if "execution_generation" not in delivery_columns:
-                db.execute(
-                    "alter table wechat_deliveries add column "
-                    "execution_generation text not null default 'initial'"
-                )
-            if "pre_action_failure" not in delivery_columns:
-                db.execute(
-                    "alter table wechat_deliveries add column "
-                    "pre_action_failure integer not null default 0"
-                )
-            delivery_indexes = db.execute(
-                "pragma index_list(wechat_deliveries)"
-            ).fetchall()
-            has_task_unique_key = any(
-                bool(index["unique"])
-                and [column["name"] for column in db.execute(
-                    f"pragma index_info({index['name']})"
-                ).fetchall()] == ["reply_task_id"]
-                for index in delivery_indexes
-            )
-            if has_task_unique_key:
-                db.execute(
-                    """
-                    create table wechat_deliveries_revised (
-                        id integer primary key autoincrement,
-                        reply_task_id integer not null,
-                        account_id text not null,
-                        target_type text not null,
-                        target_id text not null,
-                        conversation_id text not null default '',
-                        reply_text text not null,
-                        execution_generation text not null default 'initial',
-                        status text not null default 'ready_to_send',
-                        action_started_at text not null default '',
-                        pre_action_failure integer not null default 0,
-                        evidence_json text not null default '{}',
-                        error text not null default '',
-                        created_at text not null default current_timestamp,
-                        updated_at text not null default current_timestamp,
-                        foreign key(reply_task_id) references tasks(id),
-                        unique(reply_task_id, execution_generation)
-                    )
-                    """
-                )
-                db.execute(
-                    """
-                    insert into wechat_deliveries_revised (
-                        id, reply_task_id, account_id, target_type, target_id,
-                        conversation_id, reply_text, execution_generation, status,
-                        action_started_at, pre_action_failure, evidence_json, error,
-                        created_at, updated_at
-                    )
-                    select id, reply_task_id, account_id, target_type, target_id,
-                           conversation_id, reply_text, execution_generation, status,
-                           action_started_at, pre_action_failure, evidence_json, error,
-                           created_at, updated_at
-                    from wechat_deliveries
-                    """
-                )
-                db.execute("drop table wechat_deliveries")
-                db.execute(
-                    "alter table wechat_deliveries_revised rename to wechat_deliveries"
-                )
-                db.execute(
-                    "create index idx_wechat_deliveries_status "
-                    "on wechat_deliveries(status, id)"
-                )
-            db.execute(
-                "create index if not exists idx_wechat_deliveries_task_generation "
-                "on wechat_deliveries(reply_task_id, execution_generation, id)"
-            )
-            # Preserve the existing transaction boundary after table/column DDL.
-            # Workbench reconciliation continues on this same connection.
-            if db.in_transaction:
-                db.commit()
-            meeting_memory_write_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(meeting_memory_write_events)"
-                ).fetchall()
-            }
-            if "execution_generation" not in meeting_memory_write_columns:
-                db.execute(
-                    "alter table meeting_memory_write_events add column "
-                    "execution_generation text not null default ''"
-                )
-            for column, definition in (
-                ("lease_owner", "text not null default ''"),
-                ("lease_expires_at", "text not null default ''"),
-                ("started_at", "text not null default ''"),
-            ):
-                if column not in meeting_memory_write_columns:
-                    db.execute(
-                        "alter table meeting_memory_write_events add column "
-                        f"{column} {definition}"
-                    )
-            db.execute(
-                "create index if not exists idx_meeting_memory_write_events_lease "
-                "on meeting_memory_write_events(status, lease_expires_at, id)"
-            )
-            task_memory_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(task_memory_write_events)"
-                ).fetchall()
-            }
-            if task_memory_columns and "memories_json" not in task_memory_columns:
-                # The first shape was never written to (no drain existed), so
-                # it is rebuilt rather than migrated; a row in it means that
-                # assumption is wrong and must not be dropped silently.
-                if db.execute("select 1 from task_memory_write_events limit 1").fetchone():
-                    raise RuntimeError(
-                        "task_memory_write_events has rows in its retired shape"
-                    )
-                db.execute("drop table task_memory_write_events")
-            for statement in TASK_MEMORY_WRITE_EVENTS_DDL.split(";"):
-                if statement.strip():
-                    db.execute(statement)
-            db.execute(
-                "update meeting_memory_write_events "
-                "set execution_generation='migrated-' || id "
-                "where trim(execution_generation)=''"
-            )
-            db.execute(
-                "update meeting_memory_write_events set payload_json='{}' "
-                "where payload_json<>'{}'"
-            )
-            feedback_event_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(feedback_events)").fetchall()
-            }
-            for column, definition in (
-                ("resolved_at", "text not null default ''"),
-            ):
-                if column not in feedback_event_columns:
-                    db.execute(
-                        f"alter table feedback_events add column {column} {definition}"
-                    )
-
-
-
-
-            db.execute(
-                """
-                create table if not exists service_bugfix_candidates (
-                    id integer primary key autoincrement,
-                    feedback_event_key text not null unique,
-                    feedback_token text not null default '',
-                    attempt_id integer not null default 0,
-                    status text not null default 'pending',
-                    title text not null,
-                    reason text not null,
-                    feedback_comment text not null,
-                    conversation_title text not null default '',
-                    trigger_text text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                )
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_service_bugfix_candidates_status
-                on service_bugfix_candidates(status, created_at)
-                """
-            )
-
-            
-            
-
-            error_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(errors)").fetchall()
-            }
-            for column, definition in (
-                ("resolved_at", "text not null default ''"),
-                ("resolution", "text not null default ''"),
-            ):
-                if column not in error_columns:
-                    db.execute(f"alter table errors add column {column} {definition}")
-            
-            
-            work_todo_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(work_todos)").fetchall()
-            }
-            for column, definition in (
-                ("description", "text not null default ''"),
-                ("owner_evidence_json", "text not null default '{}'"),
-            ):
-                if column not in work_todo_columns:
-                    db.execute(
-                        f"alter table work_todos add column {column} {definition}"
-                    )
-            work_project_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(work_projects)").fetchall()
-            }
-            if "owner_evidence_json" not in work_project_columns:
-                db.execute(
-                    "alter table work_projects add column "
-                    "owner_evidence_json text not null default '{}'"
-                )
-            work_todo_dingtalk_link_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(work_todo_dingtalk_links)"
-                ).fetchall()
-            }
-            if "retry_count" not in work_todo_dingtalk_link_columns:
-                db.execute(
-                    "alter table work_todo_dingtalk_links add column "
-                    "retry_count integer not null default 0"
-                )
-            follow_up_draft_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(follow_up_drafts)").fetchall()
-            }
-            for column, definition in (
-                ("title", "text not null default ''"),
-                ("description", "text not null default ''"),
-                ("owners_json", "text not null default '[]'"),
-                ("priority", "text not null default ''"),
-                ("tags_json", "text not null default '[]'"),
-                ("participants_json", "text not null default '[]'"),
-                ("files_json", "text not null default '[]'"),
-                ("evidence_check_json", "text not null default '{}'"),
-                ("reaction_status", "text not null default ''"),
-                ("reaction_summary", "text not null default ''"),
-                ("suppressed_reason", "text not null default ''"),
-                ("dedupe_key", "text not null default ''"),
-                ("updated_at", "text not null default ''"),
-                ("revision", "integer not null default 1"),
-                ("send_claim_revision", "integer not null default 0"),
-                ("send_claim_token", "text not null default ''"),
-                (
-                    "send_claim_idempotency_uuid",
-                    "text not null default ''",
-                ),
-            ):
-                if column not in follow_up_draft_columns:
-                    db.execute(
-                        f"alter table follow_up_drafts add column {column} {definition}"
-                    )
-            follow_up_send_attempt_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(follow_up_send_attempts)"
-                ).fetchall()
-            }
-            for column, definition in (
-                ("lease_owner", "text not null default ''"),
-                ("claimed_at", "text not null default ''"),
-                ("lease_until", "text not null default ''"),
-                ("review_enqueued_revision", "integer not null default 0"),
-                ("review_source_ref", "text not null default ''"),
-                ("late_result_json", "text not null default '{}'"),
-                ("conflict_json", "text not null default '{}'"),
-            ):
-                if column not in follow_up_send_attempt_columns:
-                    db.execute(
-                        "alter table follow_up_send_attempts "
-                        f"add column {column} {definition}"
-                    )
-            db.execute(
-                """
-                create index if not exists idx_follow_up_drafts_owner_sent
-                    on follow_up_drafts(owner_user_id, sent_at, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_follow_up_drafts_project_schedule
-                    on follow_up_drafts(project_id, scheduled_at, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_follow_up_drafts_todo_schedule
-                    on follow_up_drafts(todo_id, scheduled_at, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_follow_up_drafts_conversation_sent
-                    on follow_up_drafts(target_conversation_id, sent_at, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_follow_up_send_attempts_reconciliation
-                    on follow_up_send_attempts(state, lease_until, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_follow_up_drafts_history_updated
-                    on follow_up_drafts(updated_at, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_errors_unresolved
-                    on errors(conversation_id, kind, message_id, id)
-                    where coalesce(resolved_at, '')=''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_errors_reply_task_settlement
-                    on errors(conversation_id, message_id, kind)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_work_updates_created
-                    on work_updates(created_at, id)
-                """
-            )
-            outbox_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(task_todo_sync_outbox)").fetchall()
-            }
-            for column, definition in (
-                ("attempt_count", "integer not null default 0"),
-                ("next_attempt_at", "text not null default ''"),
-            ):
-                if column not in outbox_columns:
-                    db.execute(f"alter table task_todo_sync_outbox add column {column} {definition}")
-            outbox_sql = db.execute(
-                "select sql from sqlite_master where type='table' "
-                "and name='task_todo_sync_outbox'"
-            ).fetchone()
-            if outbox_sql is not None and "'skipped'" not in str(outbox_sql["sql"]):
-                db.execute(
-                    """
-                    create table task_todo_sync_outbox_skipped_migration (
-                        id integer primary key autoincrement,
-                        operation_key text not null unique,
-                        work_todo_id integer not null,
-                        operation text not null check(operation in ('create', 'complete')),
-                        evidence_json text not null default '{}',
-                        status text not null default 'queued'
-                            check(status in ('queued', 'running', 'completed',
-                                             'skipped', 'failed', 'unknown')),
-                        lease_owner text not null default '',
-                        lease_expires_at text not null default '',
-                        receipt_json text not null default '{}',
-                        error text not null default '',
-                        attempt_count integer not null default 0,
-                        next_attempt_at text not null default '',
-                        created_at text not null default current_timestamp,
-                        updated_at text not null default current_timestamp,
-                        completed_at text not null default ''
-                    )
-                    """
-                )
-                db.execute(
-                    """
-                    insert into task_todo_sync_outbox_skipped_migration (
-                        id, operation_key, work_todo_id, operation, evidence_json,
-                        status, lease_owner, lease_expires_at, receipt_json, error,
-                        attempt_count, next_attempt_at, created_at, updated_at,
-                        completed_at
-                    )
-                    select id, operation_key, work_todo_id, operation, evidence_json,
-                           status, lease_owner, lease_expires_at, receipt_json, error,
-                           attempt_count, next_attempt_at, created_at, updated_at,
-                           completed_at
-                    from task_todo_sync_outbox
-                    """
-                )
-                db.execute("drop table task_todo_sync_outbox")
-                db.execute(
-                    "alter table task_todo_sync_outbox_skipped_migration "
-                    "rename to task_todo_sync_outbox"
-                )
-                db.execute(
-                    "create index if not exists idx_task_todo_sync_outbox_due "
-                    "on task_todo_sync_outbox(status, lease_expires_at, id)"
-                )
-            
-            
-            wechat_memory_columns = {
-                row["name"] for row in db.execute(
-                    "pragma table_info(wechat_memory_candidates)"
-                ).fetchall()
-            }
-            if "memory_write_error" not in wechat_memory_columns:
-                db.execute(
-                    "alter table wechat_memory_candidates add column "
-                    "memory_write_error text not null default ''"
-                )
-            wechat_delivery_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
-            }
-            if "execution_generation" not in wechat_delivery_columns:
-                db.execute(
-                    "alter table wechat_deliveries add column "
-                    "execution_generation text not null default 'initial'"
-                )
-            if "pre_action_failure" not in wechat_delivery_columns:
-                db.execute(
-                    "alter table wechat_deliveries add column "
-                    "pre_action_failure integer not null default 0"
-                )
-            error_columns = {
-                row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
-            }
-            if "resolved_at" not in error_columns:
-                db.execute(
-                    "alter table errors add column resolved_at text not null default ''"
-                )
-            if "resolution" not in error_columns:
-                db.execute(
-                    "alter table errors add column resolution text not null default ''"
-                )
-            self._migrate_removed_runtime(db)
-            # Earlier legacy bootstrap helpers deliberately commit. The new
-            # parent/actions and Store marker publish together only after them.
-            db.execute("begin immediate")
-            create_current_email_classifications(db)
-            if fresh:
-                create_schedules_schema(db)
-                create_configs_schema(db)
-            else:
-                target = _config_target_declarations()
-                for owner, repairable_indexes, repairable_triggers in (
-                    ("configs", CURRENT_CONFIG_REPAIRABLE_INDEXES,
-                     CURRENT_CONFIG_REPAIRABLE_TRIGGERS),
-                    ("schedules", CURRENT_SCHEDULE_REPAIRABLE_INDEXES,
-                     frozenset()),
-                ):
-                    for object_type, items, permitted in (
-                        ("index", target[owner]["indexes"], repairable_indexes),
-                        ("trigger", target[owner]["triggers"], repairable_triggers),
-                    ):
-                        for item in items:
-                            if item["name"] not in permitted:
-                                continue
-                            if db.execute(
-                                "select 1 from sqlite_schema where type=? and name=?",
-                                (object_type, item["name"]),
-                            ).fetchone() is None:
-                                db.execute(item["sql"])
-            create_action_schema(
-                db, include_reply=True, reply_variant=reply_variant,
-                include_email=True, include_skill_config_receipts=True,
-            )
-            
-            
-            
-            reply_source = f"({REPLY_TASK_CURRENT_SQL})"
-            legacy_ready_deliveries = db.execute(
-                f"""
-                select deliveries.id, deliveries.reply_text, tasks.trigger_text
-                from wechat_deliveries as deliveries
-                join {reply_source} as tasks on tasks.id=deliveries.reply_task_id
-                left join ({OUTBOUND_POSTFIX_SQL}) as postfixes
-                  on postfixes.channel='wechat'
-                 and postfixes.delivery_key=('wechat:' || deliveries.id)
-                where deliveries.execution_generation=tasks.execution_generation
-                  and (
-                      deliveries.status='ready_to_send'
-                      or (
-                          deliveries.status='failed'
-                          and deliveries.pre_action_failure=1
-                          and deliveries.action_started_at<>''
-                      )
-                  )
-                  and postfixes.delivery_key is null
-                """
-            ).fetchall()
-            for delivery in legacy_ready_deliveries:
-                prepared = self._prepare_outbound_postfix_in_transaction(
-                    db,
-                    channel="wechat",
-                    delivery_key=f"wechat:{delivery['id']}",
-                    body=str(delivery["reply_text"]),
-                    original_text=str(delivery["trigger_text"] or ""),
-                )
-                db.execute(
-                    "update wechat_deliveries set reply_text=? where id=?",
-                    (prepared.final_body, delivery["id"]),
-                )
-            self._migrate_project_attention_evidence(db)
-            install_run_child_guards(db)
-            install_current_task_child_guards(db)
+                create_action_schema(db, reply_variant=_reply_variant_for(db), **FINAL_ACTION_OPTIONS)
+                install_run_child_guards(db)
+                install_current_task_child_guards(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise FeedbackProcessingSchemaIntegrityError(FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR)
             upsert_state(
@@ -3599,7 +2544,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return
         rows = db.execute(
             "select distinct project.id as project_id, signal.id as signal_id, signal.source_type "
-            "from business_attention_items card "
+            f"from ({candidate_projection('attention_item')}) card "
             f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=card.anchor_id '
             "join business_task_anchor_links link on link.anchor_id=card.anchor_id "
             "join business_task_evidence evidence on evidence.task_id=link.task_id "
@@ -4398,8 +3343,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return {int(row["execution_id"]): int(row["scheduled_task_id"]) for row in rows}
 
     @staticmethod
-    def _business_task_signal_from_row(row: sqlite3.Row) -> BusinessTaskSignal:
-        return BusinessTaskSignal.model_validate(dict(row))
+    def _business_task_signal_from_row(row: sqlite3.Row) -> BusinessTaskSignalFact:
+        values = dict(row)
+        binding = SourceVersionBinding(**{field: values[field] for field in SOURCE_FIELDS})
+        return BusinessTaskSignalFact(
+            id=values["id"], source=binding,
+            conversation_title=values["conversation_title"], context_json=values["context_json"],
+            dedupe_key=values["dedupe_key"], created_at=values["created_at"],
+        )
+
+    def business_source_reader(self, *, provider_reader=None) -> RequestSourceReader:
+        return RequestSourceReader(provider_reader=provider_reader, console_lookup=self._business_console_sources)
+
+    def _business_console_sources(self, source_ref):
+        from app.business_console_source_reader import retained_console_sources
+        with self._connect() as db:
+            return retained_console_sources(db, source_ref)
 
     @staticmethod
     def _business_task_from_row(row: sqlite3.Row) -> BusinessTask:
@@ -4473,10 +3432,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def get_business_task_signal_by_dedupe_key(
         self, *, dedupe_key: str, _db: sqlite3.Connection
-    ) -> BusinessTaskSignal | None:
+    ) -> BusinessTaskSignalFact | None:
         row = _db.execute(
-            "select signal.*, document.body as evidence_text from business_task_signals signal "
-            "join business_source_documents document on document.id=signal.source_document_id "
+            f"select signal.* from ({BUSINESS_ACTION_SQL['business_task_signals']}) signal "
             "where signal.dedupe_key=?", (dedupe_key,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
@@ -4506,6 +3464,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_type: str,
         source_ref: str,
         evidence_text: str,
+        source_binding: SourceVersionBinding | None = None,
         dedupe_key: str,
         source_time: str = "",
         conversation_id: str = "",
@@ -4522,7 +3481,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).isoformat(timespec="seconds")
         signal = BusinessTaskSignal(
             id=0,
-            source_document_id=0,
             source_type=source_type,
             source_ref=source_ref,
             source_time=source_time,
@@ -4536,31 +3494,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             dedupe_key=dedupe_key,
             created_at=timestamp,
         )
-        document_id = self._business_source_document_id(_db, signal.model_dump(mode="json"))
-        cursor = _db.execute(
-            """
-            insert into business_task_signals (
-                source_type, source_ref, source_time, conversation_id, conversation_title,
-                author_user_id, author_name, source_document_id, context_json, dedupe_key,
-                created_at, author_kind
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                signal.source_type,
-                signal.source_ref,
-                signal.source_time,
-                signal.conversation_id,
-                signal.conversation_title,
-                signal.author_user_id,
-                signal.author_name,
-                document_id,
-                signal.context_json,
-                signal.dedupe_key,
-                signal.created_at,
-                signal.author_kind.value,
-            ),
-        )
-        return int(cursor.lastrowid)
+        binding = source_binding or SourceVersionBinding.from_signal(signal)
+        BusinessTaskSignalFact.from_signal(signal, binding=binding)
+        return insert_signal_version(_db, binding,
+            conversation_title=signal.conversation_title, context_json=signal.context_json,
+            dedupe_key=signal.dedupe_key, created_at=signal.created_at)
 
     def create_business_task_in_transaction(
         self,
@@ -4642,20 +3580,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             evidence_role=evidence_role,
             created_at="",
         )
-        _db.execute(
-            """
-            insert into business_task_evidence (task_id, signal_id, evidence_role)
-            values (?, ?, ?)
-            on conflict(task_id, signal_id, evidence_role) do nothing
-            """,
-            (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
-        )
+        insert_business_action(_db, "business_task_evidence", {
+            "task_id": evidence.task_id, "signal_id": evidence.signal_id,
+            "evidence_role": evidence.evidence_role.value,
+        }, on_conflict_key_do_nothing=True)
 
     def list_business_task_evidence_in_transaction(
         self, *, task_id: int, _db: sqlite3.Connection
     ) -> tuple[BusinessTaskEvidence, ...]:
         rows = _db.execute(
-            "select * from business_task_evidence where task_id=? "
+            f"select * from ({BUSINESS_ACTION_SQL['business_task_evidence']}) where task_id=? "
             "order by created_at, signal_id, evidence_role",
             (task_id,),
         ).fetchall()
@@ -4664,13 +3598,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_business_task_signal_for_task_source_ref_in_transaction(
         self, *, task_id: int, source_ref: str, _db: sqlite3.Connection,
         source_type: str | None = None,
-    ) -> BusinessTaskSignal | None:
+    ) -> BusinessTaskSignalFact | None:
         source_type_filter = " and signal.source_type=?" if source_type is not None else ""
         args = (task_id, source_ref, source_type) if source_type is not None else (task_id, source_ref)
         row = _db.execute(
-            """select signal.*, document.body as evidence_text from business_task_signals as signal
-               join business_source_documents document on document.id=signal.source_document_id
-               join business_task_evidence as evidence on evidence.signal_id=signal.id
+            f"""select signal.* from ({BUSINESS_ACTION_SQL['business_task_signals']}) as signal
+               join ({BUSINESS_ACTION_SQL['business_task_evidence']}) as evidence on evidence.signal_id=signal.id
                where evidence.task_id=? and signal.source_ref=?"""
             + source_type_filter + " order by signal.id desc limit 1",
             args,
@@ -4679,7 +3612,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def get_business_task_signal_for_task_source_ref(
         self, *, task_id: int, source_ref: str, source_type: str | None = None,
-    ) -> BusinessTaskSignal | None:
+    ) -> BusinessTaskSignalFact | None:
         with self._connect() as db:
             return self.get_business_task_signal_for_task_source_ref_in_transaction(
                 task_id=task_id,
@@ -4700,51 +3633,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             actor_kind=actor_kind, actor_user_id=actor_user_id, actor_name=actor_name,
             created_at="",
         )
-        cursor = _db.execute(
-            """insert into business_task_date_evidence (
-                task_id, date_type, value_at, raw_phrase, source_signal_id,
-                actor_kind, actor_user_id, actor_name
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                fact.task_id, fact.date_type.value, fact.value_at, fact.raw_phrase,
-                fact.source_signal_id, fact.actor_kind.value, fact.actor_user_id, fact.actor_name,
-            ),
-        )
-        return int(cursor.lastrowid)
+        result = insert_business_action(_db, "business_task_date_evidence", {
+            "task_id": fact.task_id, "date_type": fact.date_type.value,
+            "value_at": fact.value_at, "raw_phrase": fact.raw_phrase,
+            "source_signal_id": fact.source_signal_id,
+            "actor_kind": fact.actor_kind.value,
+            "actor_user_id": fact.actor_user_id,
+            "actor_name": fact.actor_name,
+        })
+        return int(result.lastrowid)
 
     def copy_business_task_date_evidence_in_transaction(
         self, *, source_task_id: int, target_task_id: int, _db: sqlite3.Connection
     ) -> int:
         """Carry an identical source date fact onto a merged target once."""
-        cursor = _db.execute(
-            """insert into business_task_date_evidence (
-                task_id, date_type, value_at, raw_phrase, source_signal_id,
-                actor_kind, actor_user_id, actor_name, created_at
-            ) select ?, source.date_type, source.value_at, source.raw_phrase,
-                     source.source_signal_id, source.actor_kind, source.actor_user_id,
-                     source.actor_name, source.created_at
-              from business_task_date_evidence source
-             where source.task_id=?
-               and not exists (
-                   select 1 from business_task_date_evidence target
-                    where target.task_id=?
-                      and target.date_type=source.date_type
-                      and target.value_at=source.value_at
-                      and target.raw_phrase=source.raw_phrase
-                      and target.source_signal_id=source.source_signal_id
-                      and target.actor_kind=source.actor_kind
-                      and target.actor_user_id=source.actor_user_id
-                      and target.actor_name=source.actor_name
-                      and target.created_at=source.created_at
-               )""",
-            (target_task_id, source_task_id, target_task_id),
-        )
-        return cursor.rowcount
+        return copy_business_action_date_evidence(
+            _db, source_task_id=source_task_id, target_task_id=target_task_id)
 
     def list_business_task_date_evidence(self, task_id: int) -> tuple[BusinessTaskDateEvidence, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_date_evidence where task_id=? order by id",
+                f"select * from ({BUSINESS_ACTION_SQL['business_task_date_evidence']}) where task_id=? order by id",
                 (task_id,),
             ).fetchall()
             return tuple(self._business_task_date_evidence_from_row(row) for row in rows)
@@ -4753,7 +3662,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, signal_id: int, _db: sqlite3.Connection
     ) -> tuple[int, ...]:
         rows = _db.execute(
-            f'select distinct task.id from business_task_evidence as evidence\n               join ({BUSINESS_PROJECTIONS["task"]}) as task on task.id=evidence.task_id\n               where evidence.signal_id=? and task.stage=\'formal\' and task.status<>\'merged\'\n               order by task.id',
+            f'select distinct task.id from ({BUSINESS_ACTION_SQL["business_task_evidence"]}) as evidence\n               join ({BUSINESS_PROJECTIONS["task"]}) as task on task.id=evidence.task_id\n               where evidence.signal_id=? and task.stage=\'formal\' and task.status<>\'merged\'\n               order by task.id',
             (signal_id,),
         ).fetchall()
         return tuple(int(row["id"]) for row in rows)
@@ -4763,7 +3672,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         _db: sqlite3.Connection
     ) -> tuple[int, ...]:
         rows = _db.execute(
-            f'select distinct task.id from business_task_signals as signal\n               join business_task_evidence as evidence on evidence.signal_id=signal.id\n               join ({BUSINESS_PROJECTIONS["task"]}) as task on task.id=evidence.task_id\n               where signal.source_type=? and signal.source_ref=?\n                 and signal.conversation_id=?\n                 and task.stage=\'formal\' and task.status<>\'merged\'\n               order by task.id',
+            f'select distinct task.id from ({BUSINESS_ACTION_SQL["business_task_signals"]}) as signal\n               join ({BUSINESS_ACTION_SQL["business_task_evidence"]}) as evidence on evidence.signal_id=signal.id\n               join ({BUSINESS_PROJECTIONS["task"]}) as task on task.id=evidence.task_id\n               where signal.source_type=? and signal.source_ref=?\n                 and signal.conversation_id=?\n                 and task.stage=\'formal\' and task.status<>\'merged\'\n               order by task.id',
             (source_type, source_ref, conversation_id),
         ).fetchall()
         return tuple(int(row["id"]) for row in rows)
@@ -4789,22 +3698,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             reason=reason,
             created_at="",
         )
-        cursor = _db.execute(
-            """
-            insert into business_task_events
-                (task_id, event_type, signal_id, before_json, after_json, reason)
-            values (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event.task_id,
-                event.event_type.value,
-                event.signal_id,
-                event.before_json,
-                event.after_json,
-                event.reason,
-            ),
+        result = insert_sync_action(
+            _db,
+            "business_task_events",
+            {
+                "task_id": event.task_id,
+                "event_type": event.event_type.value,
+                "signal_id": event.signal_id,
+                "before_json": event.before_json,
+                "after_json": event.after_json,
+                "reason": event.reason,
+            },
         )
-        return int(cursor.lastrowid)
+        if result.lastrowid is None or result.rowcount != 1:
+            raise RuntimeError("business Task Event insert did not create one action")
+        return int(result.lastrowid)
 
     def create_business_task_signal(
         self,
@@ -4812,6 +3720,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_type: str,
         source_ref: str,
         evidence_text: str,
+        source_binding: SourceVersionBinding | None = None,
         dedupe_key: str,
         source_time: str = "",
         conversation_id: str = "",
@@ -4827,29 +3736,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 source_type=source_type, source_ref=source_ref, source_time=source_time,
                 conversation_id=conversation_id, conversation_title=conversation_title,
                 author_user_id=author_user_id, author_name=author_name,
-                author_kind=author_kind, evidence_text=evidence_text,
+                author_kind=author_kind, evidence_text=evidence_text, source_binding=source_binding,
                 context_json=context_json, dedupe_key=dedupe_key, now=now, _db=db,
             )
 
-    def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
+    def list_business_task_signals(self) -> tuple[BusinessTaskSignalFact, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select signal.*, document.body as evidence_text from business_task_signals signal "
-                "join business_source_documents document on document.id=signal.source_document_id "
+                f"select signal.* from ({BUSINESS_ACTION_ID_SQL['business_task_signals']}) signal "
                 "order by signal.id"
             ).fetchall()
             return tuple(self._business_task_signal_from_row(row) for row in rows)
 
-    def get_business_task_signal(self, signal_id: int) -> BusinessTaskSignal | None:
+    def get_business_task_signal(self, signal_id: int) -> BusinessTaskSignalFact | None:
         with self._connect() as db:
             return self.get_business_task_signal_in_transaction(signal_id=signal_id, _db=db)
 
     def get_business_task_signal_in_transaction(
         self, *, signal_id: int, _db: sqlite3.Connection
-    ) -> BusinessTaskSignal | None:
+    ) -> BusinessTaskSignalFact | None:
         row = _db.execute(
-            "select signal.*, document.body as evidence_text from business_task_signals signal "
-            "join business_source_documents document on document.id=signal.source_document_id "
+            f"select signal.* from ({BUSINESS_ACTION_ID_SQL['business_task_signals']}) signal "
             "where signal.id=?", (signal_id,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row else None
@@ -4932,16 +3839,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             evidence_role=evidence_role, created_at="",
         )
         with self._immediate_write_transaction() as db:
-            db.execute(
-                """
-                insert into business_task_evidence (
-                    task_id, signal_id, evidence_role
-                ) values (?, ?, ?)
-                """,
-                (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
-            )
+            insert_business_action(db, "business_task_evidence", {
+                "task_id": evidence.task_id, "signal_id": evidence.signal_id,
+                "evidence_role": evidence.evidence_role.value,
+            })
             row = db.execute(
-                "select * from business_task_evidence where task_id=? and signal_id=? and evidence_role=?",
+                f"select * from ({BUSINESS_ACTION_SQL['business_task_evidence']}) where task_id=? and signal_id=? and evidence_role=?",
                 (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
             ).fetchone()
             assert row is not None
@@ -4952,7 +3855,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> tuple[BusinessTaskEvidence, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_evidence where task_id=? "
+                f"select * from ({BUSINESS_ACTION_SQL['business_task_evidence']}) where task_id=? "
                 "order by created_at, signal_id, evidence_role",
                 (task_id,),
             ).fetchall()
@@ -4967,8 +3870,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return ()
         with self._connect() as db:
             rows = db.execute(
-                "select distinct evidence.task_id from business_task_evidence evidence "
-                "join business_task_signals signal on signal.id=evidence.signal_id "
+                f"select distinct evidence.task_id from ({BUSINESS_ACTION_SQL['business_task_evidence']}) evidence "
+                f"join ({BUSINESS_ACTION_SQL['business_task_signals']}) signal on signal.id=evidence.signal_id "
                 "where signal.conversation_id=? order by evidence.task_id limit ? offset ?",
                 (conversation_id, limit, offset),
             ).fetchall()
@@ -4984,8 +3887,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return ()
         with self._connect() as db:
             rows = db.execute(
-                "select distinct evidence.task_id from business_task_evidence evidence "
-                "join business_task_signals signal on signal.id=evidence.signal_id "
+                f"select distinct evidence.task_id from ({BUSINESS_ACTION_SQL['business_task_evidence']}) evidence "
+                f"join ({BUSINESS_ACTION_SQL['business_task_signals']}) signal on signal.id=evidence.signal_id "
                 "where signal.source_type=? and (signal.source_ref=? or substr(signal.source_ref, 1, ?)=?) "
                 "order by evidence.task_id limit ? offset ?",
                 (source_type, source_id, len(source_id) + 1, source_id + "#", limit, offset),
@@ -4997,8 +3900,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> tuple[BusinessTaskEvent, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_events where task_id=? "
-                "order by created_at, id",
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_events']}) "
+                "where task_id=? order by created_at, id",
                 (task_id,),
             ).fetchall()
             return tuple(self._business_task_event_from_row(row) for row in rows)
@@ -5012,8 +3915,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return ()
         with self._connect() as db:
             rows = db.execute(
-                "select distinct evidence.project_id from business_project_evidence evidence "
-                "join business_task_signals signal on signal.id=evidence.signal_id "
+                f"select distinct evidence.project_id from ({BUSINESS_ACTION_SQL['business_project_evidence']}) evidence "
+                f"join ({BUSINESS_ACTION_SQL['business_task_signals']}) signal on signal.id=evidence.signal_id "
                 "where signal.source_type=? and (signal.source_ref=? or substr(signal.source_ref,1,?)=?) "
                 "order by evidence.project_id limit ? offset ?",
                 (source_type, source_id, len(source_id) + 1, source_id + "#", limit, offset),
@@ -5027,7 +3930,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("business project pagination requires positive limit and non-negative offset")
         with self._connect() as db:
             rows = db.execute(
-                "select link.task_id from business_task_anchor_links link "
+                f"select link.task_id from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) link "
                 f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=link.anchor_id '
                 f'join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id '
                 "where project.id=? and link.status='confirmed' and link.active=1 and anchor.active=1 "
@@ -5038,7 +3941,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
         with self._connect() as db:
             rows = db.execute(
-                f'\n                select p.* from ({BUSINESS_PROJECTIONS["project"]}) p\n                join business_task_anchor_links l on l.anchor_id = p.canonical_anchor_id\n                join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id = l.anchor_id\n                where l.task_id=? and l.status=\'confirmed\' and l.active=1 and a.active=1\n                order by p.id\n                ',
+                f'\n                select p.* from ({BUSINESS_PROJECTIONS["project"]}) p\n                join ({BUSINESS_ACTION_SQL["business_task_anchor_links"]}) l on l.anchor_id = p.canonical_anchor_id\n                join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id = l.anchor_id\n                where l.task_id=? and l.status=\'confirmed\' and l.active=1 and a.active=1\n                order by p.id\n                ',
                 (task_id,),
             ).fetchall()
             return [self._business_project_from_row(row, _db=db) for row in rows]
@@ -5049,17 +3952,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, title: str, _db: sqlite3.Connection
     ) -> int:
         cluster = BusinessWorkCluster(id=0, title=title, created_at="")
-        return int(_db.execute(
-            "insert into business_work_clusters (title) values (?)", (cluster.title,)
-        ).lastrowid)
+        result = insert_business(_db, "work_cluster", {"title": cluster.title})
+        return int(result.lastrowid)
 
     def add_business_work_cluster_task_in_transaction(
         self, *, cluster_id: int, task_id: int, _db: sqlite3.Connection
     ) -> None:
-        _db.execute(
-            "insert into business_work_cluster_tasks (cluster_id, task_id) values (?, ?)",
-            (cluster_id, task_id),
-        )
+        insert_business_action(_db, "business_work_cluster_tasks", {
+            "cluster_id": cluster_id, "task_id": task_id,
+        })
 
     def get_business_anchor_in_transaction(
         self, *, anchor_id: int, _db: sqlite3.Connection
@@ -5087,7 +3988,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, task_id: int, anchor_id: int, _db: sqlite3.Connection
     ) -> BusinessTaskAnchorLink | None:
         row = _db.execute(
-            "select * from business_task_anchor_links where task_id=? and anchor_id=?",
+            f"select * from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where task_id=? and anchor_id=?",
             (task_id, anchor_id),
         ).fetchone()
         return (
@@ -5100,7 +4001,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, candidate_id: int, _db: sqlite3.Connection
     ) -> BusinessProjectCandidate | None:
         row = _db.execute(
-            "select * from business_project_candidates where id=?", (candidate_id,)
+            f"select * from ({candidate_projection('project_candidate')}) where id=?", (candidate_id,)
         ).fetchone()
         return (
             BusinessProjectCandidate.model_validate(dict(row))
@@ -5141,8 +4042,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if limit < 1 or offset < 0:
             raise ValueError("project evidence pagination requires positive limit and non-negative offset")
         rows = _db.execute(
-            "select * from business_project_evidence where project_id=? and (signal_id in ("
-            "select signal_id from business_project_evidence where project_id=? "
+            f"select * from ({BUSINESS_ACTION_SQL['business_project_evidence']}) where project_id=? and (signal_id in ("
+            f"select signal_id from ({BUSINESS_ACTION_SQL['business_project_evidence']}) where project_id=? "
             "order by signal_id desc limit ? offset ?) or signal_id in "
             "(select value from json_each(?))) order by signal_id",
             (project_id, project_id, limit, offset, json.dumps(pinned_signal_ids)),
@@ -5153,7 +4054,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, task_id: int, _db: sqlite3.Connection
     ) -> BusinessRelevance:
         rows = _db.execute(
-            f'\n            select link.status, link.active as link_active, anchor.active as anchor_active\n            from business_task_anchor_links as link\n            join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=link.anchor_id\n            where link.task_id=?\n            ',
+            f'\n            select link.status, link.active as link_active, anchor.active as anchor_active\n            from ({BUSINESS_ACTION_SQL["business_task_anchor_links"]}) as link\n            join ({BUSINESS_PROJECTIONS["anchor"]}) as anchor on anchor.id=link.anchor_id\n            where link.task_id=?\n            ',
             (task_id,),
         ).fetchall()
         if any(
@@ -5182,18 +4083,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             status=status, supporting_signal_id=supporting_signal_id, reason=reason, created_at="",
         )
         existing = _db.execute(
-            """select rowid as relation_id, * from business_task_relations
-               where from_task_id=? and to_task_id=? and relation_type=?""",
+            f"select _source_rowid as relation_id, * from ({business_action_projection('business_task_relations', include_rowid=True)}) "
+            "where from_task_id=? and to_task_id=? and relation_type=?",
             (relation.from_task_id, relation.to_task_id, relation.relation_type.value),
         ).fetchone()
         if existing is None:
-            return int(_db.execute(
-                """insert into business_task_relations
-                   (from_task_id, to_task_id, relation_type, status, supporting_signal_id, reason)
-                   values (?, ?, ?, ?, ?, ?)""",
-                (relation.from_task_id, relation.to_task_id, relation.relation_type.value,
-                 relation.status.value, relation.supporting_signal_id, relation.reason),
-            ).lastrowid)
+            return int(insert_business_action(_db, "business_task_relations", {
+                "from_task_id": relation.from_task_id,
+                "to_task_id": relation.to_task_id,
+                "relation_type": relation.relation_type.value,
+                "status": relation.status.value,
+                "supporting_signal_id": relation.supporting_signal_id,
+                "reason": relation.reason,
+            }).lastrowid)
         relation_id = int(existing["relation_id"])
         existing_status = BusinessRelationStatus(existing["status"])
         if existing_status is relation.status:
@@ -5206,17 +4108,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("conflicting relation decision")
         if relation.status is BusinessRelationStatus.PROPOSED:
             raise AssertionError("same proposed status handled above")
-        _db.execute(
-            """update business_task_relations
-               set status=?, supporting_signal_id=?, reason=?
-               where rowid=?""",
-            (
-                relation.status.value,
-                relation.supporting_signal_id,
-                relation.reason,
-                relation_id,
-            ),
-        )
+        update_business_action(_db, "business_task_relations", relation_id, {
+            "status": relation.status.value,
+            "supporting_signal_id": relation.supporting_signal_id,
+            "reason": relation.reason,
+        })
         return relation_id
 
     def create_business_anchor_in_transaction(
@@ -5242,22 +4138,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             id=0, task_id=task_id, anchor_id=anchor_id, status=status, active=active,
             evidence_signal_id=evidence_signal_id, reason=reason, created_at="",
         )
-        _db.execute(
-            """insert into business_task_anchor_links
-               (task_id, anchor_id, status, active, evidence_signal_id, reason)
-               values (?, ?, ?, ?, ?, ?)
-               on conflict(task_id, anchor_id) do update set
-                 status=excluded.status, active=excluded.active,
-                 evidence_signal_id=excluded.evidence_signal_id, reason=excluded.reason""",
-            (link.task_id, link.anchor_id, link.status.value, int(link.active),
-             link.evidence_signal_id, link.reason),
-        )
-        row = _db.execute(
-            "select id from business_task_anchor_links where task_id=? and anchor_id=?",
-            (link.task_id, link.anchor_id),
-        ).fetchone()
-        assert row is not None
-        return int(row["id"])
+        return upsert_business_action_anchor_link(
+            _db, task_id=link.task_id, anchor_id=link.anchor_id,
+            status=link.status.value, active=int(link.active),
+            evidence_signal_id=link.evidence_signal_id, reason=link.reason)
 
     def create_business_project_in_transaction(
         self,
@@ -5389,7 +4273,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_business_task_project_customer_names(self, *, task_id: int) -> tuple[str, ...]:
         with self._connect() as db:
             rows = db.execute(
-                f'select distinct project.crm_customer_name\n                   from ({BUSINESS_PROJECTIONS["project"]}) project\n                   join business_task_anchor_links link\n                     on link.anchor_id=project.canonical_anchor_id\n                   join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n                   where link.task_id=? and link.status=\'confirmed\' and link.active=1\n                     and anchor.active=1 and project.crm_customer_id<>\'\'\n                     and project.crm_customer_name<>\'\'\n                   order by project.crm_customer_name',
+                f'select distinct project.crm_customer_name\n                   from ({BUSINESS_PROJECTIONS["project"]}) project\n                   join ({BUSINESS_ACTION_SQL["business_task_anchor_links"]}) link\n                     on link.anchor_id=project.canonical_anchor_id\n                   join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n                   where link.task_id=? and link.status=\'confirmed\' and link.active=1\n                     and anchor.active=1 and project.crm_customer_id<>\'\'\n                     and project.crm_customer_name<>\'\'\n                   order by project.crm_customer_name',
                 (task_id,),
             ).fetchall()
             return tuple(str(row[0]) for row in rows)
@@ -5400,10 +4284,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         candidate = BusinessProjectCandidate(
             id=0, cluster_id=cluster_id, title=title, reason=reason, created_at=""
         )
-        return int(_db.execute(
-            "insert into business_project_candidates (cluster_id, title, reason) values (?, ?, ?)",
-            (candidate.cluster_id, candidate.title, candidate.reason),
-        ).lastrowid)
+        return int(insert_business_candidate(_db, "project_candidate", {
+            "cluster_id": candidate.cluster_id, "title": candidate.title,
+            "reason": candidate.reason,
+        }).lastrowid)
 
     def confirm_business_project_candidate_in_transaction(
         self,
@@ -5427,18 +4311,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if candidate.confirmed_project_id != project_id:
                 raise ValueError("project candidate is already confirmed to a different project")
             raise ValueError("project candidate is already confirmed with different evidence")
-        cursor = _db.execute(
-            """update business_project_candidates
-               set status='confirmed', confirmed_project_id=?, confirmation_signal_id=?
-               where id=? and status='proposed'""",
-            (project_id, confirmation_signal_id, candidate_id),
-        )
-        if cursor.rowcount != 1:
+        changed = update_business_candidate(_db, "project_candidate", candidate_id, {
+            "status": "confirmed", "confirmed_project_id": project_id,
+            "confirmation_signal_id": confirmation_signal_id,
+        }, expected={"status": "proposed"})
+        if changed != 1:
             raise ValueError("project candidate must exist and be proposed")
 
     def get_business_project_candidate(self, candidate_id: int) -> BusinessProjectCandidate | None:
         with self._connect() as db:
-            row = db.execute("select * from business_project_candidates where id=?", (candidate_id,)).fetchone()
+            row = db.execute(f"select * from ({candidate_projection('project_candidate')}) where id=?", (candidate_id,)).fetchone()
             return BusinessProjectCandidate.model_validate(dict(row)) if row else None
 
     def get_business_project(self, project_id: int) -> BusinessProject | None:
@@ -5469,10 +4351,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("business cluster pagination requires positive limit and non-negative offset")
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_work_clusters order by id limit ? offset ?",
+                f'select * from ({BUSINESS_PROJECTIONS["work_cluster"]}) '
+                "order by id limit ? offset ?",
                 (limit, offset),
             ).fetchall()
             return tuple(BusinessWorkCluster.model_validate(dict(row)) for row in rows)
+
+    def get_business_work_cluster_in_transaction(
+        self, *, cluster_id: int, _db: sqlite3.Connection
+    ) -> BusinessWorkCluster | None:
+        row = _db.execute(
+            f'select * from ({BUSINESS_PROJECTIONS["work_cluster"]}) where id=?',
+            (cluster_id,),
+        ).fetchone()
+        return BusinessWorkCluster.model_validate(dict(row)) if row is not None else None
 
     def list_business_work_cluster_tasks(
         self, *, cluster_id: int | None = None, task_id: int | None = None,
@@ -5495,7 +4387,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         where = f"where {' and '.join(clauses)}" if clauses else ""
         with self._connect() as db:
             rows = db.execute(
-                f"select * from business_work_cluster_tasks {where} "
+                f"select * from ({BUSINESS_ACTION_SQL['business_work_cluster_tasks']}) {where} "
                 "order by cluster_id, task_id limit ? offset ?",
                 (*values, limit, offset),
             ).fetchall()
@@ -5520,7 +4412,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("business relation pagination requires positive limit and non-negative offset")
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_relations where from_task_id=? or to_task_id=? "
+                f"select * from ({BUSINESS_ACTION_SQL['business_task_relations']}) where from_task_id=? or to_task_id=? "
                 "order by from_task_id, to_task_id, relation_type limit ? offset ?",
                 (task_id, task_id, limit, offset),
             ).fetchall()
@@ -5533,7 +4425,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("business anchor-link pagination requires positive limit and non-negative offset")
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_anchor_links where task_id=? "
+                f"select * from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where task_id=? "
                 "order by id limit ? offset ?",
                 (task_id, limit, offset),
             ).fetchall()
@@ -5558,7 +4450,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, item_id: int, _db: sqlite3.Connection
     ) -> BusinessAttentionItem | None:
         row = _db.execute(
-            "select * from business_attention_items where id=?", (item_id,)
+            f"select * from ({candidate_projection('attention_item')}) where id=?", (item_id,)
         ).fetchone()
         return self._business_attention_item_from_row(row) if row is not None else None
 
@@ -5566,7 +4458,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, stable_key: str, _db: sqlite3.Connection
     ) -> BusinessAttentionItem | None:
         row = _db.execute(
-            "select * from business_attention_items where stable_key=?", (stable_key,)
+            f"select * from ({candidate_projection('attention_item')}) where stable_key=?", (stable_key,)
         ).fetchone()
         return self._business_attention_item_from_row(row) if row is not None else None
 
@@ -5593,38 +4485,36 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             evidence_signal_id=evidence_signal_id, created_at=now, updated_at=now,
             assessment_json=assessment_json,
         )
-        return int(_db.execute(
-            """insert into business_attention_items
-               (stable_key, category, status, title, business_area, why_attention,
-                current_state, ceo_action, anchor_id, evidence_signal_id, assessment_json, created_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (item.stable_key, item.category.value, item.status.value, item.title,
-             item.business_area, item.why_attention, item.current_state, item.ceo_action,
-             item.anchor_id, item.evidence_signal_id, item.assessment_json, item.created_at, item.updated_at),
-        ).lastrowid)
+        return int(insert_business_candidate(_db, "attention_item", {
+            "stable_key": item.stable_key, "category": item.category.value,
+            "status": item.status.value, "title": item.title,
+            "business_area": item.business_area, "why_attention": item.why_attention,
+            "current_state": item.current_state, "ceo_action": item.ceo_action,
+            "anchor_id": item.anchor_id, "evidence_signal_id": item.evidence_signal_id,
+            "assessment_json": item.assessment_json, "created_at": item.created_at,
+            "updated_at": item.updated_at,
+        }).lastrowid)
 
     def update_business_attention_item_in_transaction(
         self, *, item: BusinessAttentionItem, _db: sqlite3.Connection
     ) -> None:
-        _db.execute(
-            """update business_attention_items set
-               category=?, status=?, title=?, business_area=?, why_attention=?, current_state=?,
-               ceo_action=?, anchor_id=?, evidence_signal_id=?, resolution_signal_id=?,
-               resolved_at=?, assessment_json=?, updated_at=? where id=?""",
-            (item.category.value, item.status.value, item.title, item.business_area,
-             item.why_attention, item.current_state, item.ceo_action, item.anchor_id,
-             item.evidence_signal_id, item.resolution_signal_id, item.resolved_at,
-             item.assessment_json, item.updated_at, item.id),
-        )
+        update_business_candidate(_db, "attention_item", item.id, {
+            "category": item.category.value, "status": item.status.value,
+            "title": item.title, "business_area": item.business_area,
+            "why_attention": item.why_attention, "current_state": item.current_state,
+            "ceo_action": item.ceo_action, "anchor_id": item.anchor_id,
+            "evidence_signal_id": item.evidence_signal_id,
+            "resolution_signal_id": item.resolution_signal_id,
+            "resolved_at": item.resolved_at, "assessment_json": item.assessment_json,
+            "updated_at": item.updated_at,
+        })
 
     def link_business_attention_task_in_transaction(
         self, *, attention_item_id: int, task_id: int, _db: sqlite3.Connection
     ) -> None:
-        _db.execute(
-            """insert into business_attention_tasks (attention_item_id, task_id)
-               values (?, ?) on conflict(attention_item_id, task_id) do nothing""",
-            (attention_item_id, task_id),
-        )
+        insert_business_action(_db, "business_attention_tasks", {
+            "attention_item_id": attention_item_id, "task_id": task_id,
+        }, on_conflict_key_do_nothing=True)
 
     def replace_business_attention_tasks_in_transaction(
         self, *, attention_item_id: int, task_ids: tuple[int, ...], _db: sqlite3.Connection
@@ -5632,7 +4522,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Make current projection membership equal the supplied Task IDs."""
         selected = tuple(sorted(set(task_ids)))
         rows = _db.execute(
-            "select task_id from business_attention_tasks where attention_item_id=? order by task_id",
+            f"select task_id from ({BUSINESS_ACTION_SQL['business_attention_tasks']}) where attention_item_id=? order by task_id",
             (attention_item_id,),
         ).fetchall()
         current = tuple(int(row["task_id"]) for row in rows)
@@ -5640,12 +4530,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return False
         if selected:
             _db.execute(
-                f"delete from business_attention_tasks where attention_item_id=? and task_id not in ({', '.join('?' for _ in selected)})",
+                "delete from main.actions where record_type='business_attention_tasks' "
+                f"and {business_action_column('business_attention_tasks', 'attention_item_id')}=? "
+                f"and {business_action_column('business_attention_tasks', 'task_id')} "
+                f"not in ({', '.join('?' for _ in selected)})",
                 (attention_item_id, *selected),
             )
         else:
             _db.execute(
-                "delete from business_attention_tasks where attention_item_id=?",
+                "delete from main.actions where record_type='business_attention_tasks' "
+                f"and {business_action_column('business_attention_tasks', 'attention_item_id')}=?",
                 (attention_item_id,),
             )
         for task_id in selected:
@@ -5660,7 +4554,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Persist the latest explicit proposal membership, independent of eligibility."""
         selected = tuple(sorted(set(task_ids)))
         rows = _db.execute(
-            "select task_id from business_attention_proposal_tasks where attention_item_id=? order by task_id",
+            f"select task_id from ({BUSINESS_ACTION_SQL['business_attention_proposal_tasks']}) where attention_item_id=? order by task_id",
             (attention_item_id,),
         ).fetchall()
         current = tuple(int(row["task_id"]) for row in rows)
@@ -5668,20 +4562,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return False
         if selected:
             _db.execute(
-                f"delete from business_attention_proposal_tasks where attention_item_id=? and task_id not in ({', '.join('?' for _ in selected)})",
+                "delete from main.actions where record_type='business_attention_proposal_tasks' "
+                f"and {business_action_column('business_attention_proposal_tasks', 'attention_item_id')}=? "
+                f"and {business_action_column('business_attention_proposal_tasks', 'task_id')} "
+                f"not in ({', '.join('?' for _ in selected)})",
                 (attention_item_id, *selected),
             )
         else:
             _db.execute(
-                "delete from business_attention_proposal_tasks where attention_item_id=?",
+                "delete from main.actions where record_type='business_attention_proposal_tasks' "
+                f"and {business_action_column('business_attention_proposal_tasks', 'attention_item_id')}=?",
                 (attention_item_id,),
             )
         for task_id in selected:
-            _db.execute(
-                """insert into business_attention_proposal_tasks (attention_item_id, task_id)
-                   values (?, ?) on conflict(attention_item_id, task_id) do nothing""",
-                (attention_item_id, task_id),
-            )
+            insert_business_action(_db, "business_attention_proposal_tasks", {
+                "attention_item_id": attention_item_id, "task_id": task_id,
+            }, on_conflict_key_do_nothing=True)
         return True
 
     def append_business_attention_event_in_transaction(
@@ -5700,13 +4596,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             signal_id=signal_id, before_json=before_json, after_json=after_json,
             reason=reason, created_at="",
         )
-        return int(_db.execute(
-            """insert into business_attention_events
-               (attention_item_id, event_type, signal_id, before_json, after_json, reason)
-               values (?, ?, ?, ?, ?, ?)""",
-            (event.attention_item_id, event.event_type.value, event.signal_id,
-             event.before_json, event.after_json, event.reason),
-        ).lastrowid)
+        return int(insert_business_action(_db, "business_attention_events", {
+            "attention_item_id": event.attention_item_id,
+            "event_type": event.event_type.value,
+            "signal_id": event.signal_id,
+            "before_json": event.before_json,
+            "after_json": event.after_json,
+            "reason": event.reason,
+        }).lastrowid)
 
     def get_business_attention_item(self, item_id: int) -> BusinessAttentionItem | None:
         with self._connect() as db:
@@ -5715,7 +4612,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_business_attention_items(self) -> tuple[BusinessAttentionItem, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_attention_items order by updated_at, id"
+                f"select * from ({candidate_projection('attention_item')}) order by updated_at, id"
             ).fetchall()
             return tuple(self._business_attention_item_from_row(row) for row in rows)
 
@@ -5729,7 +4626,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, attention_item_id: int, _db: sqlite3.Connection
     ) -> tuple[BusinessAttentionTask, ...]:
         rows = _db.execute(
-            "select * from business_attention_tasks where attention_item_id=? order by task_id",
+            f"select * from ({BUSINESS_ACTION_SQL['business_attention_tasks']}) where attention_item_id=? order by task_id",
             (attention_item_id,),
         ).fetchall()
         return tuple(self._business_attention_task_from_row(row) for row in rows)
@@ -5738,7 +4635,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, attention_item_id: int, _db: sqlite3.Connection
     ) -> tuple[BusinessAttentionProposalTask, ...]:
         rows = _db.execute(
-            "select * from business_attention_proposal_tasks where attention_item_id=? order by task_id",
+            f"select * from ({BUSINESS_ACTION_SQL['business_attention_proposal_tasks']}) where attention_item_id=? order by task_id",
             (attention_item_id,),
         ).fetchall()
         return tuple(self._business_attention_proposal_task_from_row(row) for row in rows)
@@ -5753,7 +4650,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, attention_item_id: int, _db: sqlite3.Connection
     ) -> tuple[BusinessAttentionEvent, ...]:
         rows = _db.execute(
-            "select * from business_attention_events where attention_item_id=? order by created_at, id",
+            f"select * from ({BUSINESS_ACTION_SQL['business_attention_events']}) where attention_item_id=? order by created_at, id",
             (attention_item_id,),
         ).fetchall()
         return tuple(self._business_attention_event_from_row(row) for row in rows)
@@ -7820,10 +6717,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute(f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "state" in tables else None
             )
-            store_tables = {"state", *STATE_SOURCE_TABLES, *STATE_TARGET_INDEXES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+            store_tables = {*STORE_SCHEMA_REQUIRED_COLUMNS, "business_source_documents", "reply_task_deferral_receipts", "state", *STATE_SOURCE_TABLES, *STATE_TARGET_INDEXES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+                            *SYNC_ACTION_PROJECTIONS,
                             *CONFIG_SOURCE_TABLES, "email_training_snapshot_observations", "configs", "schedules",
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True, include_followup_sync=True, include_skill_config_receipts=True, include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True)),
+                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True, include_followup_sync=True, include_skill_config_receipts=True, include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS,
                             "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
                             *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"') for sql in TASK20_INDEX_DDL),
@@ -7831,26 +6729,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             current_core_with_known_repairs = (
                 marker is not None
                 and marker[0] == STORE_SCHEMA_VERSION
+                and provenance_schema_is_current(db)
                 and current_run11_schema_is_current(db, allow_missing_objects=True)
                 and any(configs_current_or_known_skill_guard_repair(
-                    db, action_variant=variant)
+                    db, action_variant=variant, include_business_actions=True,
+                    include_email_history=True,
+                    canonical_email="emails" in tables,
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
-                and task20_feedback_child_is_current(db, allow_missing_objects=True)
-                and task20_workbench_schema_is_current(db, allow_missing_objects=True)
+                and task20_feedback_child_is_current(db, allow_missing_objects=True, include_feedback=True)
+                and task20_workbench_schema_is_current(db, allow_missing_objects=True, include_feedback=True)
                 and any(
                     action_schema_is_current(
                         db, allow_missing_objects=True, include_reply=True,
                         reply_variant=variant, include_email=True,
-                        include_skill_config_receipts=True,
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant)
+                        include_skill_config_receipts=True, include_followup_sync=True,
+                        include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
+                        include_business_actions=True,
+                        include_email_history=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True,
+                        canonical_email="emails" in tables,
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
                 # Other known retired runtime tables retain their prior repair.
-                and not set(REPLY_ACTION_TYPES).intersection(tables)
-                and business_schema_is_current(db)
+                and not {"reply_task_deferral_receipts", *REPLY_ACTION_TYPES}.intersection(tables)
+                and business_schema_parent_is_current(db, include_candidates=True,
+                                                     include_business_actions=True,
+                                                     inline_legacy_owner=True)
                 and state_current_or_known_dispatcher_index_repair(db)
             )
             if current_core_with_known_repairs:
@@ -8085,7 +6994,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).fetchone() is not None:
             return False
         if db.execute(
-            """select 1 from wechat_deliveries where reply_task_id=?
+            f"""select 1 from ({WECHAT_DELIVERY_SQL}) where reply_task_id=?
                and execution_generation=? and status in ('ready_to_send','sending')
                limit 1""",
             (task_id, task["execution_generation"]),
@@ -8115,7 +7024,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ).fetchone() is not None
                 if not settled:
                     settled = db.execute(
-                        """select 1 from errors where conversation_id=?
+                        f"""select 1 from ({ERROR_SQL}) where conversation_id=?
                            and message_id=? and kind='reply_task_already_settled'
                            and trim(coalesce(resolved_at,''))<>''
                            and trim(coalesce(resolution,''))<>'' limit 1""",
@@ -8691,7 +7600,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         classification_id: int,
     ) -> sqlite3.Row | None:
         return db.execute(
-            """
+            f"""
             select
                 classifications.id as classification_id,
                 classifications.account_id as account_id,
@@ -8700,8 +7609,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 messages.thread_identity as thread_identity,
                 classifications.current_action_plan_id
                     as current_action_plan_id
-            from email_classifications as classifications
-            join email_messages as messages
+            from ({email_classification_projection()}) as classifications
+            join ({email_message_projection()}) as messages
               on messages.account_id=classifications.account_id
              and messages.stable_message_identity=
                  classifications.stable_message_identity
@@ -9539,12 +8448,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 # work_projects let a TODO through only when a project happened
                 # to share its id, and rejected every TODO past the last one.
                 query = (
-                    "select 1 from work_todos where id=? "
+                    f"select 1 from ({BUSINESS_PROJECTIONS['work_todo']}) where id=? "
                     "and status in ('open', 'waiting_owner')"
                 )
             elif separator and not suffix.startswith("decision_repair."):
                 query = (
-                    "select 1 from work_projects where id=? "
+                    f"select 1 from ({BUSINESS_PROJECTIONS['work_project']}) where id=? "
                     "and status in ('active', 'waiting', 'done', 'archived')"
                 )
             else:
@@ -9601,11 +8510,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "and memory_status in ('pending', 'failed')"
                 ),
                 "meeting_memory_write_event": (
-                    "select 1 from meeting_memory_write_events where id=? "
-                    "and status='processing' and execution_generation=?"
+                    "select 1 from actions where record_type='meeting_memory_write_events' "
+                    "and cast(legacy_key as integer)=? "
+                    "and td_status='processing' and td_execution_generation=?"
                 ),
                 "wechat_memory_candidate": (
-                    "select 1 from wechat_memory_candidates where id=? "
+                    f"select 1 from ({candidate_projection('wechat_memory_candidate')}) where id=? "
                     "and status='approved' and memory_write_status='writing'"
                 ),
                 "wechat_memory_import_job": (
@@ -10416,7 +9326,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             cursor = db.execute(
-                """
+                f"""
                 update runs as attempt
                 set status='superseded', failure_class='', failure_code='',
                     failover_permitted=0, lease_owner='', lease_expires_at='',
@@ -10427,7 +9337,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempt.first_effect_started_at=''
                   and exists (
                       select 1
-                      from meeting_memory_write_events as event
+                      from ({MEETING_MEMORY_WRITE_SQL}) as event
                       where attempt.workload_key like (
                           'meeting_memory_write_event:' || event.id || ':%'
                       )
@@ -12995,7 +11905,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and runs.status='running'
                   )
                   and not exists (
-                      select 1 from wechat_deliveries as deliveries
+                      select 1 from ({WECHAT_DELIVERY_SQL}) as deliveries
                       where deliveries.reply_task_id=tasks.id
                         and deliveries.execution_generation=tasks.execution_generation
                         and not (
@@ -13063,9 +11973,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("retryable reply task was not found")
             current_generation = str(task["execution_generation"])
             unresolved_wechat_delivery = db.execute(
-                """
+                f"""
                 select 1
-                from wechat_deliveries
+                from ({WECHAT_DELIVERY_SQL})
                 where reply_task_id=?
                   and execution_generation=?
                   and status in ('sending', 'send_unknown')
@@ -13463,17 +12373,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         new_generation: str,
     ) -> None:
         row = db.execute(
-            "select id from wechat_deliveries "
+            f"select id from ({WECHAT_DELIVERY_SQL}) "
             "where reply_task_id=? and status='ready_to_send'",
             (task_id,),
         ).fetchone()
         if row is None:
             return
         error = f"superseded_by_generation:{new_generation}"
+        assignments, set_args = task_delivery_set_parts(
+            "wechat_deliveries", {"status": "superseded", "error": error},
+            update_sql={"updated_at": "current_timestamp"},
+        )
         db.execute(
-            "update wechat_deliveries set status='superseded', error=?, "
-            "updated_at=current_timestamp where id=? and status='ready_to_send'",
-            (error, row["id"]),
+            f"update actions set {assignments} "
+            "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+            "and td_status='ready_to_send'",
+            (*set_args, row["id"]),
         )
         cls._sync_wechat_delivery_reply_attempt(
             db,
@@ -13494,9 +12409,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         conversation_id: str,
     ) -> None:
         unresolved = db.execute(
-            """
+            f"""
             select 1
-            from wechat_deliveries
+            from ({WECHAT_DELIVERY_SQL})
             where reply_task_id!=?
               and account_id=?
               and target_type=?
@@ -13519,9 +12434,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
         error = f"superseded_by_newer_wechat_trigger:{reply_task_id}"
         older_deliveries = db.execute(
-            """
+            f"""
             select id
-            from wechat_deliveries
+            from ({WECHAT_DELIVERY_SQL})
             where reply_task_id!=?
               and account_id=?
               and target_type=?
@@ -13539,13 +12454,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ),
         ).fetchall()
         for older in older_deliveries:
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", {"status": "superseded", "error": error},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             db.execute(
-                """
-                update wechat_deliveries
-                set status='superseded', error=?, updated_at=current_timestamp
-                where id=?
-                """,
-                (error, older["id"]),
+                f"update actions set {assignments} "
+                "where record_type='wechat_deliveries' and cast(legacy_key as integer)=?",
+                (*set_args, older["id"]),
             )
             cls._sync_wechat_delivery_reply_attempt(
                 db,
@@ -13622,27 +12538,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     conversation_id=conversation_id,
                 )
                 existing = db.execute(
-                    """select * from wechat_deliveries
+                    f"""select * from ({WECHAT_DELIVERY_SQL})
                        where reply_task_id=? and execution_generation=?""",
                     (task_id, expected_execution_generation),
                 ).fetchone()
                 evidence_json = json.dumps(evidence or {}, ensure_ascii=False)
                 if existing is None:
-                    delivery_cursor = db.execute(
-                        """
-                        insert into wechat_deliveries (
-                            reply_task_id, account_id, target_type, target_id,
-                            conversation_id, reply_text, execution_generation,
-                            status, evidence_json
-                        ) values (?, ?, ?, ?, ?, ?, ?, 'preparing', ?)
-                        """,
-                        (
-                            task_id, account_id, target_type, target_id,
-                            conversation_id, reply_text,
-                            expected_execution_generation, evidence_json,
-                        ),
-                    )
-                    delivery_id = int(delivery_cursor.lastrowid)
+                    delivery_id = int(insert_task_delivery_action(db, "wechat_deliveries", {
+                        "reply_task_id": task_id, "account_id": account_id,
+                        "target_type": target_type, "target_id": target_id,
+                        "conversation_id": conversation_id, "reply_text": reply_text,
+                        "execution_generation": expected_execution_generation,
+                        "status": "preparing", "evidence_json": evidence_json,
+                    }).lastrowid)
                 else:
                     delivery_id = int(existing["id"])
                 prepared = self._prepare_outbound_postfix_in_transaction(
@@ -13652,14 +12560,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     body=reply_text,
                     original_text=str(task["trigger_text"] or ""),
                 )
+                assignments, set_args = task_delivery_set_parts(
+                    "wechat_deliveries", {"reply_text": prepared.final_body,
+                                          "status": "ready_to_send"},
+                    update_sql={"updated_at": "current_timestamp"},
+                )
                 prepared_cursor = db.execute(
-                    """
-                    update wechat_deliveries
-                    set reply_text=?, status='ready_to_send',
-                        updated_at=current_timestamp
-                    where id=? and status in ('preparing', 'ready_to_send')
-                    """,
-                    (prepared.final_body, delivery_id),
+                    f"update actions set {assignments} "
+                    "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+                    "and td_status in ('preparing', 'ready_to_send')",
+                    (*set_args, delivery_id),
                 )
                 if prepared_cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(
@@ -13711,7 +12621,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 conversation_id=conversation_id,
             )
             existing = db.execute(
-                """select * from wechat_deliveries
+                f"""select * from ({WECHAT_DELIVERY_SQL})
                    where reply_task_id=? and execution_generation=?""",
                 (reply_task_id, generation),
             ).fetchone()
@@ -13721,29 +12631,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     existing["status"] == "failed"
                     and bool(existing["pre_action_failure"])
                 ):
+                    assignments, set_args = task_delivery_set_parts(
+                        "wechat_deliveries",
+                        {"status": "ready_to_send", "pre_action_failure": 0, "error": ""},
+                        update_sql={"updated_at": "current_timestamp"},
+                    )
                     db.execute(
-                        """update wechat_deliveries
-                           set status='ready_to_send', pre_action_failure=0,
-                               error='', updated_at=current_timestamp
-                           where id=?""",
-                        (delivery_id,),
+                        f"update actions set {assignments} "
+                        "where record_type='wechat_deliveries' and cast(legacy_key as integer)=?",
+                        (*set_args, delivery_id),
                     )
                 return delivery_id
-            cursor = db.execute(
-                """
-                insert into wechat_deliveries (
-                    reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text, execution_generation, status,
-                    evidence_json
-                ) values (?, ?, ?, ?, ?, ?, ?, 'preparing', ?)
-                """,
-                (
-                    reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text, generation,
-                    json.dumps(evidence or {}, ensure_ascii=False),
-                ),
-            )
-            delivery_id = int(cursor.lastrowid)
+            delivery_id = int(insert_task_delivery_action(db, "wechat_deliveries", {
+                "reply_task_id": reply_task_id, "account_id": account_id,
+                "target_type": target_type, "target_id": target_id,
+                "conversation_id": conversation_id, "reply_text": reply_text,
+                "execution_generation": generation, "status": "preparing",
+                "evidence_json": json.dumps(evidence or {}, ensure_ascii=False),
+            }).lastrowid)
             prepared = self._prepare_outbound_postfix_in_transaction(
                 db,
                 channel="wechat",
@@ -13751,11 +12656,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 body=reply_text,
                 original_text=str(task["trigger_text"] or ""),
             )
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", {"reply_text": prepared.final_body,
+                                      "status": "ready_to_send"},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             db.execute(
-                """update wechat_deliveries
-                   set reply_text=?, status='ready_to_send', updated_at=current_timestamp
-                   where id=? and status='preparing'""",
-                (prepared.final_body, delivery_id),
+                f"update actions set {assignments} "
+                "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+                "and td_status='preparing'",
+                (*set_args, delivery_id),
             )
             return delivery_id
 
@@ -13763,7 +12673,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         from app.wechat.models import WechatDelivery
         with self._connect() as db:
             row = db.execute(
-                f"""select deliveries.* from wechat_deliveries as deliveries
+                f"""select deliveries.* from ({WECHAT_DELIVERY_SQL}) as deliveries
                    join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                    where deliveries.reply_task_id=?
                    order by (deliveries.execution_generation=tasks.execution_generation)
@@ -13789,7 +12699,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select wechat_deliveries.* from wechat_deliveries
+                select wechat_deliveries.* from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
                 join ({REPLY_TASK_CURRENT_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
                 where wechat_deliveries.status=?
                   and wechat_deliveries.execution_generation=
@@ -13827,7 +12737,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     reply_tasks.conversation_id,
                     reply_tasks.trigger_message_id,
                     wechat_deliveries.id as delivery_id
-                from wechat_deliveries
+                from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
                 join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
                 where wechat_deliveries.status='ready_to_send'
                   and wechat_deliveries.execution_generation=
@@ -13867,7 +12777,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     order by attempts.id desc
                     limit 1
                 ) as attempt_id
-                from wechat_deliveries as deliveries
+                from ({WECHAT_DELIVERY_SQL}) as deliveries
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
                   and deliveries.pre_action_failure=1
@@ -13890,22 +12800,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             requeued = 0
             for row in rows:
                 delivery_id = int(row["delivery_id"])
+                assignments, set_args = task_delivery_set_parts(
+                    "wechat_deliveries",
+                    {"status": "ready_to_send", "error": "", "pre_action_failure": 0},
+                    update_sql={"updated_at": "current_timestamp"},
+                )
                 cursor = db.execute(
                     f"""
-                    update wechat_deliveries
-                    set status='ready_to_send', error='', pre_action_failure=0,
-                        updated_at=current_timestamp
-                    where id=?
-                      and status='failed'
-                      and pre_action_failure=1
+                    update actions as wechat_deliveries set {assignments}
+                    where wechat_deliveries.record_type='wechat_deliveries'
+                      and cast(wechat_deliveries.legacy_key as integer)=?
+                      and wechat_deliveries.td_status='failed'
+                      and wechat_deliveries.td_pre_action_failure=1
                       and exists (
                       select 1 from ({REPLY_TASK_SQL}) as reply_tasks
-                      where reply_tasks.id=wechat_deliveries.reply_task_id
+                      where reply_tasks.id=wechat_deliveries.td_reply_task_id
                         and reply_tasks.execution_generation=
-                            wechat_deliveries.execution_generation
+                            wechat_deliveries.td_execution_generation
                       )
                     """,
-                    (delivery_id,),
+                    (*set_args, delivery_id),
                 )
                 if cursor.rowcount != 1:
                     continue
@@ -13922,7 +12836,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                trigger_message_id, trigger_sender, trigger_text
                         from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                         where id=(
-                            select reply_task_id from wechat_deliveries where id=?
+                            select reply_task_id from ({WECHAT_DELIVERY_SQL}) where id=?
                         )
                         """,
                         (delivery_id,),
@@ -13965,7 +12879,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select deliveries.id as delivery_id
-                from wechat_deliveries as deliveries
+                from ({WECHAT_DELIVERY_SQL}) as deliveries
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
                   and deliveries.error='accessibility_not_trusted'
@@ -13977,22 +12891,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             requeued = 0
             for row in rows:
                 delivery_id = int(row["delivery_id"])
+                assignments, set_args = task_delivery_set_parts(
+                    "wechat_deliveries",
+                    {"status": "ready_to_send", "error": "", "pre_action_failure": 0},
+                    update_sql={"updated_at": "current_timestamp"},
+                )
                 cursor = db.execute(
                     f"""
-                    update wechat_deliveries
-                    set status='ready_to_send', error='', pre_action_failure=0,
-                        updated_at=current_timestamp
-                    where id=? and status='failed'
-                      and error='accessibility_not_trusted'
-                      and pre_action_failure=1
+                    update actions as wechat_deliveries set {assignments}
+                    where wechat_deliveries.record_type='wechat_deliveries'
+                      and cast(wechat_deliveries.legacy_key as integer)=?
+                      and wechat_deliveries.td_status='failed'
+                      and wechat_deliveries.td_error='accessibility_not_trusted'
+                      and wechat_deliveries.td_pre_action_failure=1
                       and exists (
                           select 1 from ({REPLY_TASK_SQL}) as reply_tasks
-                          where reply_tasks.id=wechat_deliveries.reply_task_id
+                          where reply_tasks.id=wechat_deliveries.td_reply_task_id
                             and reply_tasks.execution_generation=
-                                wechat_deliveries.execution_generation
+                                wechat_deliveries.td_execution_generation
                       )
                     """,
-                    (delivery_id,),
+                    (*set_args, delivery_id),
                 )
                 if cursor.rowcount != 1:
                     continue
@@ -14019,25 +12938,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if delivery_id < 1:
             raise ValueError("delivery_id must be positive")
         with self._immediate_write_transaction() as db:
-            closed = db.execute("select error from wechat_deliveries where id=?", (delivery_id,)).fetchone()
+            closed = db.execute(f"select error from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)).fetchone()
             if closed is not None and principal_reply_supersession(closed["error"]):
                 raise AgentRunLeaseLostError(f"WeChat delivery superseded by principal reply: {delivery_id}")
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries",
+                {"status": "ready_to_send", "error": "", "pre_action_failure": 0},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
                 f"""
-                update wechat_deliveries
-                set status='ready_to_send', error='', pre_action_failure=0,
-                    updated_at=current_timestamp
-                where id=?
-                  and status='skipped'
-                  and trim(action_started_at)<>''
+                update actions as wechat_deliveries set {assignments}
+                where wechat_deliveries.record_type='wechat_deliveries'
+                  and cast(wechat_deliveries.legacy_key as integer)=?
+                  and wechat_deliveries.td_status='skipped'
+                  and trim(wechat_deliveries.td_action_started_at)<>''
                   and exists (
                       select 1 from ({REPLY_TASK_SQL}) as tasks
-                      where tasks.id=wechat_deliveries.reply_task_id
+                      where tasks.id=wechat_deliveries.td_reply_task_id
                         and tasks.execution_generation=
-                            wechat_deliveries.execution_generation
+                            wechat_deliveries.td_execution_generation
                   )
                 """,
-                (delivery_id,),
+                (*set_args, delivery_id),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
@@ -14050,7 +12973,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 error="",
             )
             row = db.execute(
-                "select * from wechat_deliveries where id=?", (delivery_id,)
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
             ).fetchone()
         return WechatDelivery(
             id=row["id"], task_id=row["reply_task_id"],
@@ -14075,23 +12998,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if delivery_id < 1:
             raise ValueError("delivery_id must be positive")
         with self._immediate_write_transaction() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries",
+                {"status": "ready_to_send", "error": "", "pre_action_failure": 0},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
                 f"""
-                update wechat_deliveries
-                set status='ready_to_send', error='', pre_action_failure=0,
-                    updated_at=current_timestamp
-                where id=?
-                  and status='send_unknown'
-                  and error='read_only_reconciliation_inconclusive'
-                  and trim(action_started_at)<>''
+                update actions as wechat_deliveries set {assignments}
+                where wechat_deliveries.record_type='wechat_deliveries'
+                  and cast(wechat_deliveries.legacy_key as integer)=?
+                  and wechat_deliveries.td_status='send_unknown'
+                  and wechat_deliveries.td_error='read_only_reconciliation_inconclusive'
+                  and trim(wechat_deliveries.td_action_started_at)<>''
                   and exists (
                       select 1 from ({REPLY_TASK_SQL}) as tasks
-                      where tasks.id=wechat_deliveries.reply_task_id
+                      where tasks.id=wechat_deliveries.td_reply_task_id
                         and tasks.execution_generation=
-                            wechat_deliveries.execution_generation
+                            wechat_deliveries.td_execution_generation
                   )
                 """,
-                (delivery_id,),
+                (*set_args, delivery_id),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
@@ -14105,7 +13032,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 error="",
             )
             row = db.execute(
-                "select * from wechat_deliveries where id=?", (delivery_id,)
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
             ).fetchone()
         return WechatDelivery(
             id=row["id"], task_id=row["reply_task_id"],
@@ -14127,26 +13054,30 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         from app.wechat.models import WechatDelivery
 
         with self._immediate_write_transaction() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries",
+                {"status": "sending", "pre_action_failure": 0, "error": ""},
+                update_sql={
+                    "action_started_at": "case when ?='' then current_timestamp else ? end",
+                    "updated_at": "current_timestamp",
+                },
+                update_parameters=(now, now),
+            )
             cursor = db.execute(
                 f"""
-                update wechat_deliveries
-                set status='sending',
-                    action_started_at=case
-                        when ?='' then current_timestamp else ? end,
-                    pre_action_failure=0,
-                    error='',
-                    updated_at=current_timestamp
-                where id=? and status='ready_to_send'
-                  and execution_generation=?
+                update actions as wechat_deliveries set {assignments}
+                where wechat_deliveries.record_type='wechat_deliveries'
+                  and cast(wechat_deliveries.legacy_key as integer)=?
+                  and wechat_deliveries.td_status='ready_to_send'
+                  and wechat_deliveries.td_execution_generation=?
                   and exists (
                       select 1 from ({REPLY_TASK_SQL}) as reply_tasks
-                      where reply_tasks.id=wechat_deliveries.reply_task_id
+                      where reply_tasks.id=wechat_deliveries.td_reply_task_id
                         and reply_tasks.execution_generation=?
                   )
                 """,
                 (
-                    now,
-                    now,
+                    *set_args,
                     delivery_id,
                     expected_execution_generation,
                     expected_execution_generation,
@@ -14161,7 +13092,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 error="",
             )
             row = db.execute(
-                "select * from wechat_deliveries where id=?", (delivery_id,)
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
             ).fetchone()
         return WechatDelivery(
             id=row["id"], task_id=row["reply_task_id"],
@@ -14188,7 +13119,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         from app.wechat.models import WechatDelivery
         with self._connect() as db:
             row = db.execute(
-                "select * from wechat_deliveries where id=?", (delivery_id,)
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
             ).fetchone()
         if row is None:
             return None
@@ -14213,39 +13144,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in expected_statuses)
         generation_guard = (
             f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
-            "where reply_tasks.id=wechat_deliveries.reply_task_id "
+            "where reply_tasks.id=wechat_deliveries.td_reply_task_id "
             "and reply_tasks.execution_generation="
-            "wechat_deliveries.execution_generation)"
+            "wechat_deliveries.td_execution_generation)"
         )
         with self._connect() as db:
+            values = {"status": status, "error": error,
+                      "pre_action_failure": int(pre_action_failure)}
             if action_started_at is not None:
-                cursor = db.execute(
-                    "update wechat_deliveries set status=?, error=?, "
-                    "action_started_at=?, pre_action_failure=?, "
-                    "updated_at=current_timestamp where id=? "
-                    f"and status in ({placeholders}) {generation_guard}",
-                    (
-                        status,
-                        error,
-                        action_started_at,
-                        int(pre_action_failure),
-                        delivery_id,
-                        *expected_statuses,
-                    ),
-                )
-            else:
-                cursor = db.execute(
-                    "update wechat_deliveries set status=?, error=?, "
-                    "pre_action_failure=?, updated_at=current_timestamp where id=? "
-                    f"and status in ({placeholders}) {generation_guard}",
-                    (
-                        status,
-                        error,
-                        int(pre_action_failure),
-                        delivery_id,
-                        *expected_statuses,
-                    ),
-                )
+                values["action_started_at"] = action_started_at
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", values,
+                update_sql={"updated_at": "current_timestamp"},
+            )
+            cursor = db.execute(
+                f"update actions as wechat_deliveries set {assignments} "
+                "where wechat_deliveries.record_type='wechat_deliveries' "
+                "and cast(wechat_deliveries.legacy_key as integer)=? "
+                f"and wechat_deliveries.td_status in ({placeholders}) {generation_guard}",
+                (*set_args, delivery_id, *expected_statuses),
+            )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
                     f"WeChat delivery superseded or not in expected state: {delivery_id}"
@@ -14281,23 +13199,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not inactivity_cutoff:
             raise ValueError("inactive_before must be non-empty")
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", {"status": "superseded", "error": explanation},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
                 f"""
-                update wechat_deliveries
-                set status='superseded', error=?, updated_at=current_timestamp
-                where id=? and status='send_unknown'
-                  and execution_generation=?
+                update actions as wechat_deliveries set {assignments}
+                where wechat_deliveries.record_type='wechat_deliveries'
+                  and cast(wechat_deliveries.legacy_key as integer)=?
+                  and wechat_deliveries.td_status='send_unknown'
+                  and wechat_deliveries.td_execution_generation=?
                   and datetime(
-                    coalesce(nullif(action_started_at, ''), created_at)
+                    coalesce(nullif(wechat_deliveries.td_action_started_at, ''),
+                             wechat_deliveries.td_created_at)
                   ) <= datetime(?)
                   and exists (
                     select 1 from ({REPLY_TASK_SQL}) as reply_tasks
-                    where reply_tasks.id=wechat_deliveries.reply_task_id
+                    where reply_tasks.id=wechat_deliveries.td_reply_task_id
                       and reply_tasks.execution_generation=?
                   )
                 """,
                 (
-                    explanation,
+                    *set_args,
                     delivery_id,
                     generation,
                     inactivity_cutoff,
@@ -14338,21 +13262,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if max_retries < 1:
             raise ValueError("max_retries must be positive")
         with self._immediate_write_transaction() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries",
+                {"status": "skipped", "error": explanation, "pre_action_failure": 0},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             updated = db.execute(
                 f"""
-                update wechat_deliveries
-                set status='skipped', error=?, pre_action_failure=0,
-                    updated_at=current_timestamp
-                where id=?
-                  and status='failed'
-                  and pre_action_failure=1
-                  and trim(action_started_at)<>''
-                  and datetime(action_started_at) <= datetime(?)
-                  and execution_generation=?
+                update actions as wechat_deliveries set {assignments}
+                where wechat_deliveries.record_type='wechat_deliveries'
+                  and cast(wechat_deliveries.legacy_key as integer)=?
+                  and wechat_deliveries.td_status='failed'
+                  and wechat_deliveries.td_pre_action_failure=1
+                  and trim(wechat_deliveries.td_action_started_at)<>''
+                  and datetime(wechat_deliveries.td_action_started_at) <= datetime(?)
+                  and wechat_deliveries.td_execution_generation=?
                   and exists (
                       select 1
                       from ({REPLY_TASK_SQL}) as tasks
-                      where tasks.id=wechat_deliveries.reply_task_id
+                      where tasks.id=wechat_deliveries.td_reply_task_id
                         and tasks.execution_generation=?
                         and (
                             select attempts.retry_count
@@ -14364,10 +13292,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             limit 1
                         ) >= ?
                   )
-                returning id
+                returning cast(legacy_key as integer) as id
                 """,
                 (
-                    explanation,
+                    *set_args,
                     delivery_id,
                     inactivity_cutoff,
                     generation,
@@ -14405,22 +13333,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not inactivity_cutoff:
             raise ValueError("inactive_before must be non-empty")
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", {"status": "superseded", "error": explanation},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
                 f"""
-                update wechat_deliveries
-                set status='superseded', error=?, updated_at=current_timestamp
-                where id=? and status='ready_to_send'
-                  and execution_generation=?
-                  and coalesce(action_started_at, '')=''
-                  and datetime(created_at) <= datetime(?)
+                update actions as wechat_deliveries set {assignments}
+                where wechat_deliveries.record_type='wechat_deliveries'
+                  and cast(wechat_deliveries.legacy_key as integer)=?
+                  and wechat_deliveries.td_status='ready_to_send'
+                  and wechat_deliveries.td_execution_generation=?
+                  and coalesce(wechat_deliveries.td_action_started_at, '')=''
+                  and datetime(wechat_deliveries.td_created_at) <= datetime(?)
                   and exists (
                     select 1 from ({REPLY_TASK_SQL}) as reply_tasks
-                    where reply_tasks.id=wechat_deliveries.reply_task_id
+                    where reply_tasks.id=wechat_deliveries.td_reply_task_id
                       and reply_tasks.execution_generation=?
                   )
                 """,
                 (
-                    explanation,
+                    *set_args,
                     delivery_id,
                     generation,
                     inactivity_cutoff,
@@ -14452,10 +13385,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         so preserve the audit trail as ``superseded`` instead of retrying.
         """
         sent = db.execute(
-            """
+            f"""
             select account_id, target_type, target_id, conversation_id, reply_task_id,
                    execution_generation
-            from wechat_deliveries
+            from ({WECHAT_DELIVERY_SQL})
             where id=? and status='sent'
             """,
             (sent_delivery_id,),
@@ -14463,9 +13396,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if sent is None:
             return 0
         rows = db.execute(
-            """
+            f"""
             select id
-            from wechat_deliveries
+            from ({WECHAT_DELIVERY_SQL})
             where account_id=?
               and target_type=?
               and target_id=?
@@ -14490,14 +13423,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
         for row in rows:
             delivery_id = int(row["id"])
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries",
+                {"status": "superseded", "error": error, "pre_action_failure": 0},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             db.execute(
-                """
-                update wechat_deliveries
-                set status='superseded', error=?, pre_action_failure=0,
-                    updated_at=current_timestamp
-                where id=? and status='failed' and pre_action_failure=1
-                """,
-                (error, delivery_id),
+                f"update actions set {assignments} "
+                "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+                "and td_status='failed' and td_pre_action_failure=1",
+                (*set_args, delivery_id),
             )
             cls._sync_wechat_delivery_reply_attempt(
                 db,
@@ -14511,7 +13446,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Reconcile historical failures after an interrupted sender restart."""
         with self._connect() as db:
             sent_rows = db.execute(
-                "select id from wechat_deliveries where status='sent' order by id"
+                f"select id from ({WECHAT_DELIVERY_SQL}) where status='sent' order by id"
             ).fetchall()
             total = 0
             for row in sent_rows:
@@ -14525,22 +13460,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Convert legacy user-rejected deliveries to terminal skipped state."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select id
-                from wechat_deliveries
+                from ({WECHAT_DELIVERY_SQL})
                 where status='failed' and error='user_rejected'
                 order by id
                 """
             ).fetchall()
             for row in rows:
                 delivery_id = int(row["id"])
+                assignments, set_args = task_delivery_set_parts(
+                    "wechat_deliveries", {"status": "skipped"},
+                    update_sql={"updated_at": "current_timestamp"},
+                )
                 db.execute(
-                    """
-                    update wechat_deliveries
-                    set status='skipped', updated_at=current_timestamp
-                    where id=? and status='failed' and error='user_rejected'
-                    """,
-                    (delivery_id,),
+                    f"update actions set {assignments} "
+                    "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+                    "and td_status='failed' and td_error='user_rejected'",
+                    (*set_args, delivery_id),
                 )
                 self._sync_wechat_delivery_reply_attempt(
                     db,
@@ -14609,7 +13546,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         row = db.execute(
             f"""
             select tasks.conversation_id, tasks.trigger_message_id
-            from wechat_deliveries as deliveries
+            from ({WECHAT_DELIVERY_SQL}) as deliveries
             join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
             where deliveries.id=?
             """,
@@ -14640,10 +13577,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     # ---- WeChat channel: memory candidates ----
     def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,
                                     candidate) -> int | None:
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             canonical = " ".join(candidate.statement.split()).casefold()
             existing = db.execute(
-                "select * from wechat_memory_candidates where account_id=? "
+                f"select * from ({candidate_projection('wechat_memory_candidate')}) where account_id=? "
                 "and status in ('pending', 'approved') order by id",
                 (account_id,),
             ).fetchall()
@@ -14658,32 +13595,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           candidate.source_time_start) if value]
                 ends = [value for value in (row["source_time_end"],
                         candidate.source_time_end) if value]
-                db.execute(
-                    "update wechat_memory_candidates set source_conversation_ids_json=?, "
-                    "source_message_ids_json=?, source_time_start=?, source_time_end=?, "
-                    "updated_at=current_timestamp where id=?",
-                    (json.dumps(conversations, ensure_ascii=False),
-                     json.dumps(messages, ensure_ascii=False), min(starts, default=""),
-                     max(ends, default=""), row["id"]),
-                )
+                update_business_candidate(db, "wechat_memory_candidate", row["id"], {
+                    "source_conversation_ids_json": json.dumps(conversations, ensure_ascii=False),
+                    "source_message_ids_json": json.dumps(messages, ensure_ascii=False),
+                    "source_time_start": min(starts, default=""),
+                    "source_time_end": max(ends, default=""),
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                })
                 return None
-            cur = db.execute(
-                """
-                insert or ignore into wechat_memory_candidates (
-                    import_run_id, account_id, statement, category, confidence,
-                    sensitivity, source_conversation_ids_json, source_message_ids_json,
-                    source_time_start, source_time_end, evidence_excerpt, cleanup_notes
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    import_run_id, account_id, candidate.statement, candidate.category,
-                    candidate.confidence, candidate.sensitivity,
-                    json.dumps(candidate.source_conversation_ids, ensure_ascii=False),
-                    json.dumps(candidate.source_message_ids, ensure_ascii=False),
-                    candidate.source_time_start, candidate.source_time_end,
-                    candidate.evidence_excerpt, candidate.cleanup_notes,
-                ),
-            )
+            cur = insert_business_candidate(db, "wechat_memory_candidate", {
+                "import_run_id": import_run_id, "account_id": account_id,
+                "statement": candidate.statement, "category": candidate.category,
+                "confidence": candidate.confidence, "sensitivity": candidate.sensitivity,
+                "source_conversation_ids_json": json.dumps(candidate.source_conversation_ids, ensure_ascii=False),
+                "source_message_ids_json": json.dumps(candidate.source_message_ids, ensure_ascii=False),
+                "source_time_start": candidate.source_time_start,
+                "source_time_end": candidate.source_time_end,
+                "evidence_excerpt": candidate.evidence_excerpt,
+                "cleanup_notes": candidate.cleanup_notes,
+            }, ignore=True)
             if cur.rowcount != 1:
                 return None
             return int(cur.lastrowid)
@@ -14691,7 +13621,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_wechat_memory_candidate(self, candidate_id: int) -> dict | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+                f"select * from ({candidate_projection('wechat_memory_candidate')}) where id=?", (candidate_id,)
             ).fetchone()
         return dict(row) if row is not None else None
 
@@ -14708,7 +13638,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     values.append(value)
             where = " where " + " and ".join(clauses) if clauses else ""
             rows = db.execute(
-                f"select * from wechat_memory_candidates{where} order by id",
+                f"select * from ({candidate_projection('wechat_memory_candidate')}){where} order by id",
                 values,
             ).fetchall()
         return [dict(row) for row in rows]
@@ -14717,9 +13647,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, candidate_id: int, action: str, *, reviewer: str = "",
         final_statement: str = "",
     ) -> dict:
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+                f"select * from ({candidate_projection('wechat_memory_candidate')}) where id=?", (candidate_id,)
             ).fetchone()
             if row is None:
                 raise ValueError("candidate not found")
@@ -14735,32 +13665,32 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 statement = validate_final_statement(final_statement)
                 if current != "pending":
                     raise ValueError("only pending candidate can be approved")
-                db.execute(
-                    "update wechat_memory_candidates set status='approved', reviewer=?, "
-                    "edited_statement=?, reviewed_at=current_timestamp, "
-                    "updated_at=current_timestamp where id=? and status='pending'",
-                    (reviewer, statement, candidate_id),
-                )
+                stamp = db.execute("select current_timestamp").fetchone()[0]
+                update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                    "status": "approved", "reviewer": reviewer,
+                    "edited_statement": statement, "reviewed_at": stamp,
+                    "updated_at": stamp,
+                }, expected={"status": "pending"})
             elif action == "reject":
                 if current not in {"pending", "approved"} or write_status in {"writing", "written"}:
                     raise ValueError("candidate cannot be rejected")
-                db.execute(
-                    "update wechat_memory_candidates set status='rejected', reviewer=?, "
-                    "reviewed_at=current_timestamp, updated_at=current_timestamp where id=?",
-                    (reviewer, candidate_id),
-                )
+                stamp = db.execute("select current_timestamp").fetchone()[0]
+                update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                    "status": "rejected", "reviewer": reviewer,
+                    "reviewed_at": stamp, "updated_at": stamp,
+                })
             elif action == "revoke":
                 if current != "approved":
                     raise ValueError("only approved candidate can be revoked")
                 next_write_status = (
                     "revocation_unavailable" if write_status == "written" else write_status
                 )
-                db.execute(
-                    "update wechat_memory_candidates set status='revoked', reviewer=?, "
-                    "memory_write_status=?, reviewed_at=current_timestamp, "
-                    "updated_at=current_timestamp where id=?",
-                    (reviewer, next_write_status, candidate_id),
-                )
+                stamp = db.execute("select current_timestamp").fetchone()[0]
+                update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                    "status": "revoked", "reviewer": reviewer,
+                    "memory_write_status": next_write_status,
+                    "reviewed_at": stamp, "updated_at": stamp,
+                })
             else:
                 raise ValueError("invalid review action")
         result = self.get_wechat_memory_candidate(candidate_id)
@@ -14768,9 +13698,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return result
 
     def claim_wechat_memory_candidate_write(self, candidate_id: int) -> dict:
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+                f"select * from ({candidate_projection('wechat_memory_candidate')}) where id=?", (candidate_id,)
             ).fetchone()
             if row is None:
                 return {"outcome": "rejected", "reason": "candidate not found"}
@@ -14785,14 +13715,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return {"outcome": "rejected", "reason": "unknown memory write outcome requires manual resolution"}
             if candidate["memory_write_status"] == "revocation_unavailable":
                 return {"outcome": "rejected", "reason": "revoked candidate cannot be written"}
-            updated = db.execute(
-                "update wechat_memory_candidates set memory_write_status='writing', "
-                "memory_write_error='', updated_at=current_timestamp where id=? "
-                "and status='approved' and memory_id='' "
-                "and memory_write_status in ('', 'failed')",
-                (candidate_id,),
-            )
-            if updated.rowcount != 1:
+            changed = update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                "memory_write_status": "writing", "memory_write_error": "",
+                "updated_at": db.execute("select current_timestamp").fetchone()[0],
+            }, expected={"status": "approved", "memory_id": ""},
+                expected_in={"memory_write_status": ("", "failed")})
+            if changed != 1:
                 return {"outcome": "writing"}
             candidate["edited_statement"] = (
                 candidate["edited_statement"] or candidate["statement"]
@@ -14805,37 +13733,34 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> None:
         if status not in {"written", "failed", "unknown"}:
             raise ValueError("invalid memory write status")
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             if status == "written":
-                changed = db.execute(
-                    "update wechat_memory_candidates set memory_write_status='written', "
-                    "memory_id=?, memory_write_error='', updated_at=current_timestamp "
-                    "where id=? and status='approved' and memory_write_status='writing'",
-                    (memory_id, candidate_id),
-                )
-                if changed.rowcount == 1:
+                changed = update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                    "memory_write_status": "written", "memory_id": memory_id,
+                    "memory_write_error": "",
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                }, expected={"status": "approved", "memory_write_status": "writing"})
+                if changed == 1:
                     return
                 row = db.execute(
-                    "select status, memory_write_status from wechat_memory_candidates where id=?",
+                    f"select status, memory_write_status from ({candidate_projection('wechat_memory_candidate')}) where id=?",
                     (candidate_id,),
                 ).fetchone()
                 if row is None or row["memory_write_status"] != "writing":
                     raise RuntimeError("memory write claim lost")
                 fallback = "revocation_unavailable" if row["status"] == "revoked" else "unknown"
-                db.execute(
-                    "update wechat_memory_candidates set memory_write_status=?, memory_id=?, "
-                    "memory_write_error='review state changed during write', "
-                    "updated_at=current_timestamp where id=? and memory_write_status='writing'",
-                    (fallback, memory_id, candidate_id),
-                )
+                update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                    "memory_write_status": fallback, "memory_id": memory_id,
+                    "memory_write_error": "review state changed during write",
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                }, expected={"memory_write_status": "writing"})
                 return
-            changed = db.execute(
-                "update wechat_memory_candidates set memory_write_status=?, memory_id='', "
-                "memory_write_error=?, updated_at=current_timestamp "
-                "where id=? and status='approved' and memory_write_status='writing'",
-                (status, error[:500], candidate_id),
-            )
-            if changed.rowcount != 1:
+            changed = update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                "memory_write_status": status, "memory_id": "",
+                "memory_write_error": error[:500],
+                "updated_at": db.execute("select current_timestamp").fetchone()[0],
+            }, expected={"status": "approved", "memory_write_status": "writing"})
+            if changed != 1:
                 raise RuntimeError("memory write claim lost")
 
     def resolve_wechat_memory_candidate_write_unknown(
@@ -14848,16 +13773,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("stale write threshold cannot be less than 900 seconds")
         if not reviewer.strip():
             raise ValueError("reviewer required")
-        with self._connect() as db:
-            changed = db.execute(
-                "update wechat_memory_candidates set memory_write_status='unknown', "
-                "memory_write_error='manually resolved after interrupted write', reviewer=?, "
-                "reviewed_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and memory_write_status='writing' "
-                "and datetime(updated_at) <= datetime('now', ?)",
-                (reviewer.strip(), candidate_id, f"-{int(stale_after_seconds)} seconds"),
-            )
-            if changed.rowcount != 1:
+        with self._immediate_write_transaction() as db:
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            changed = update_business_candidate(db, "wechat_memory_candidate", candidate_id, {
+                "memory_write_status": "unknown",
+                "memory_write_error": "manually resolved after interrupted write",
+                "reviewer": reviewer.strip(), "reviewed_at": stamp,
+                "updated_at": stamp,
+            }, expected={"memory_write_status": "writing"},
+                stale_seconds=int(stale_after_seconds))
+            if changed != 1:
                 raise ValueError("only confirmed stale writing candidate can be resolved to unknown")
 
     @staticmethod
@@ -15112,20 +14037,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError(
                     "meeting Memory write requires a sent conclusion"
                 )
-            cursor = db.execute(
-                f"""
-                insert into meeting_memory_write_events (
-                    meeting_job_id, execution_generation, payload_json
-                )
-                select {task_id_expression('meeting_alignment_jobs', '?')}, ?, ?
-                where not exists (
-                    select 1 from meeting_memory_write_events
-                    where meeting_job_id={task_id_expression('meeting_alignment_jobs', '?')}
-                )
-                """,
-                (meeting_job_id, uuid4().hex, "{}", meeting_job_id),
-            )
-        return cursor.rowcount == 1
+            physical_id = db.execute(
+                f"select {task_id_expression('meeting_alignment_jobs', '?')}",
+                (meeting_job_id,),
+            ).fetchone()[0]
+            if db.execute(
+                "select 1 from actions where record_type='meeting_memory_write_events' "
+                "and td_meeting_job_id=?", (physical_id,),
+            ).fetchone():
+                return False
+            inserted = insert_task_delivery_action(db, "meeting_memory_write_events", {
+                "meeting_job_id": physical_id, "execution_generation": uuid4().hex,
+                "payload_json": "{}",
+            })
+        return inserted.rowcount == 1
 
     #: Task outcomes worth considering for Memory. A task that never reached a
     #: conclusion has nothing to remember; the other three all do, including a
@@ -15176,28 +14101,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             status, skip_reason = (
                 ("pending", "") if memories else ("skipped", "no_durable_memories" if adopted_result else "adopted_consumer_candidate_unavailable")
             )
+        consumer_run_id = consumer_run["id"] if consumer_run is not None else None
+        memories_json = json.dumps(memories, ensure_ascii=False)
+        _email_lock(db, (task_id, execution_generation, consumer_run_id,
+                         memories_json, status, skip_reason))
+        high = _autoincrement_high_water(db, "task_memory_write_events")
+        if high == 2**63 - 1:
+            _raise_autoincrement_full()
+        fields = {
+            "execution_generation": "?", "consumer_run_id": "?", "memories_json": "?",
+            "status": "?", "skip_reason": "?",
+            **{field: expression for field, expression in TASK_DELIVERY_DEFAULTS[
+                "task_memory_write_events"].items() if field not in (
+                    "memories_json", "status", "skip_reason")},
+        }
+        payload_sql = "jsonb_array(" + ",".join(
+            "json(ceo_native_json(" + fields[field] + "))"
+            for field in _action_layout("task_memory_write_events").fields
+        ) + ")"
         db.execute(
-            """
-            insert into task_memory_write_events (
-                reply_task_id, execution_generation, consumer_run_id,
-                memories_json, status, skip_reason
-            ) values (?, ?, ?, ?, ?, ?)
-            on conflict(reply_task_id, execution_generation) do nothing
-            """,
-            (
-                task_id,
-                execution_generation,
-                consumer_run["id"] if consumer_run is not None else None,
-                json.dumps(memories, ensure_ascii=False),
-                status,
-                skip_reason,
-            ),
+            f"insert into actions(_kind,legacy_key,payload_json,td_reply_task_id) "
+            f"values({ACTION_RECORD_TYPES.code('task_memory_write_events')},?,{payload_sql},?) "
+            "on conflict(td_reply_task_id,td_execution_generation) "
+            "where record_type='task_memory_write_events' do nothing",
+            (str(high + 1), execution_generation, consumer_run_id,
+             memories_json, status, skip_reason, task_id),
         )
 
     def get_task_memory_write_event(self, event_id: int) -> TaskMemoryWriteEvent | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from task_memory_write_events where id=?", (event_id,)
+                f"select * from ({TASK_MEMORY_WRITE_SQL}) where id=?", (event_id,)
             ).fetchone()
         return None if row is None else TaskMemoryWriteEvent.model_validate(dict(row))
 
@@ -15206,13 +14140,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> bool:
         """Keep each written memory's id as it lands, so a retry skips it."""
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "task_memory_write_events",
+                {"written_memory_ids_json": json.dumps(written_memory_ids)},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
-                """
-                update task_memory_write_events
-                set written_memory_ids_json=?, updated_at=current_timestamp
-                where id=? and status='processing' and lease_owner=?
-                """,
-                (json.dumps(written_memory_ids), event_id, owner),
+                f"update actions set {assignments} "
+                "where record_type='task_memory_write_events' "
+                "and cast(legacy_key as integer)=? and td_status='processing' "
+                "and td_lease_owner=?",
+                (*set_args, event_id, owner),
             )
         return cursor.rowcount == 1
 
@@ -15240,21 +14178,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, event_id: int, *, owner: str, status: str, error: str, available_at: str
     ) -> bool:
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "task_memory_write_events",
+                {"status": status, "available_at": available_at, "error": error[:500],
+                 "lease_owner": "", "lease_expires_at": ""},
+                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
-                """
-                update task_memory_write_events
-                set status=?, attempts=attempts+1, available_at=?, error=?,
-                    lease_owner='', lease_expires_at='', updated_at=current_timestamp
-                where id=? and status='processing' and lease_owner=?
-                """,
-                (status, available_at, error[:500], event_id, owner),
+                f"update actions set {assignments} "
+                "where record_type='task_memory_write_events' "
+                "and cast(legacy_key as integer)=? and td_status='processing' "
+                "and td_lease_owner=?",
+                (*set_args, event_id, owner),
             )
         return cursor.rowcount == 1
 
     def list_failed_task_memory_write_events(self) -> list[TaskMemoryWriteEvent]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from task_memory_write_events where status='failed' order by id"
+                f"select * from ({TASK_MEMORY_WRITE_SQL}) where status='failed' order by id"
             ).fetchall()
         return [TaskMemoryWriteEvent.model_validate(dict(row)) for row in rows]
 
@@ -15283,8 +14225,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         where jobs.record_type='meeting_alignment_jobs'
                           and jobs.{task20_column('meeting_alignment_jobs', 'status')}='sent'
                           and not exists (
-                              select 1 from meeting_memory_write_events as events
-                              where events.meeting_job_id=jobs.id
+                              select 1 from actions as events
+                              where events.record_type='meeting_memory_write_events'
+                                and events.td_meeting_job_id=jobs.id
                           )
                     )
                     select jobs.id
@@ -15299,24 +14242,42 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return 0
         placeholders = ",".join("?" for _ in missing_ids)
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                f"""
-                insert into meeting_memory_write_events (
-                    meeting_job_id, execution_generation, payload_json
-                )
-                select jobs.id, lower(hex(randomblob(16))), '{{}}'
+            eligible_sql = f"""
                 from tasks as jobs
                 where jobs.record_type='meeting_alignment_jobs'
                   and jobs.id in ({placeholders})
                   and jobs.{task20_column('meeting_alignment_jobs', 'status')}='sent'
                   and trim(jobs.{task20_column('meeting_alignment_jobs', 'final_message')})<>''
                   and not exists (
-                      select 1
-                      from meeting_memory_write_events as events
-                      where events.meeting_job_id=jobs.id
+                      select 1 from actions as events
+                      where events.record_type='meeting_memory_write_events'
+                        and events.td_meeting_job_id=jobs.id
                   )
+            """
+            count = db.execute("select count(*) " + eligible_sql, missing_ids).fetchone()[0]
+            if not count:
+                return 0
+            high = _autoincrement_high_water(db, "meeting_memory_write_events")
+            if high > 2**63 - 1 - count:
+                _raise_autoincrement_full()
+            variant = _reply_variant_for(db)
+            defaults = (TASK_DELIVERY_DEFAULTS if variant == "actual_no_memory_fk"
+                        else TASK_DELIVERY_DEFAULTS_FRESH)["meeting_memory_write_events"]
+            payload_fields = {"payload_json": "'{}'", **defaults,
+                              "execution_generation": "lower(hex(randomblob(16)))"}
+            payload_sql = "jsonb_array(" + ",".join(
+                "json(ceo_native_json(" + payload_fields[field] + "))"
+                for field in _action_layout("meeting_memory_write_events").fields
+            ) + ")"
+            cursor = db.execute(
+                f"""
+                insert into actions (_kind,legacy_key,payload_json,td_meeting_job_id)
+                select {ACTION_RECORD_TYPES.code('meeting_memory_write_events')},
+                       cast(? + row_number() over () as text),
+                       {payload_sql}, jobs.id
+                {eligible_sql}
                 """,
-                missing_ids,
+                (high, *missing_ids),
             )
         return cursor.rowcount
 
@@ -15330,9 +14291,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select events.*, cast(jobs.legacy_key as integer) as public_meeting_job_id
-                from meeting_memory_write_events events
+                from ({MEETING_MEMORY_WRITE_SQL}) events
                 join tasks jobs on jobs.id=events.meeting_job_id
                   and jobs.record_type='meeting_alignment_jobs'
                 where events.status='pending'
@@ -15363,10 +14324,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         now_value, _ = _utc_store_time(now)
         with self._connect() as db:
             event_rows = db.execute(
-                """
+                f"""
                 select id, execution_generation, status, available_at, error,
                        lease_owner, lease_expires_at, created_at, updated_at
-                from meeting_memory_write_events
+                from ({MEETING_MEMORY_WRITE_SQL})
                 order by id
                 """
             ).fetchall()
@@ -15492,14 +14453,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("meeting Memory claim time must include a timezone")
         lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
         with self._immediate_write_transaction() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events",
+                {"status": "processing", "lease_owner": owner,
+                 "lease_expires_at": lease_expires_at, "started_at": now},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             rows = db.execute(
-                """
-                update meeting_memory_write_events
-                set status='processing', lease_owner=?, lease_expires_at=?,
-                    started_at=?, updated_at=current_timestamp
-                where id in (
+                f"""
+                update actions set {assignments}
+                where record_type='meeting_memory_write_events'
+                  and cast(legacy_key as integer) in (
                     select id
-                    from meeting_memory_write_events
+                    from ({MEETING_MEMORY_WRITE_SQL})
                     where (
                         status='pending'
                         and (
@@ -15516,16 +14482,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     order by id
                     limit ?
                 )
-                returning id
+                returning cast(legacy_key as integer) as id
                 """,
-                (owner, lease_expires_at, now, now, now, limit),
+                (*set_args, now, now, limit),
             ).fetchall()
             if not rows:
                 return []
             placeholders = ",".join("?" for _ in rows)
             events = db.execute(
                 f"select events.*, cast(jobs.legacy_key as integer) as public_meeting_job_id "
-                f"from meeting_memory_write_events events "
+                f"from ({MEETING_MEMORY_WRITE_SQL}) events "
                 f"join tasks jobs on jobs.id=events.meeting_job_id "
                 f"and jobs.record_type='meeting_alignment_jobs' "
                 f"where events.id in ({placeholders})",
@@ -15543,16 +14509,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> bool:
         settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events",
+                {"status": "done", "available_at": "", "error": "",
+                 "memory_id": memory_id, "lease_owner": "", "lease_expires_at": ""},
+                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
-                """
-                update meeting_memory_write_events
-                set status='done', attempts=attempts+1, available_at='',
-                    error='', memory_id=?, lease_owner='', lease_expires_at='',
-                    updated_at=current_timestamp
-                where id=? and status='processing' and lease_owner=?
-                  and datetime(lease_expires_at)>datetime(?)
-                """,
-                (memory_id, event_id, owner, settlement_time),
+                f"update actions set {assignments} "
+                "where record_type='meeting_memory_write_events' "
+                "and cast(legacy_key as integer)=? and td_status='processing' "
+                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
+                (*set_args, event_id, owner, settlement_time),
             )
         return cursor.rowcount == 1
 
@@ -15572,14 +14540,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         renewal_time = _meeting_memory_settlement_time(now)
         lease_expires_at = (now + timedelta(seconds=lease_seconds)).isoformat()
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events", {"lease_expires_at": lease_expires_at},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
-                """
-                update meeting_memory_write_events
-                set lease_expires_at=?, updated_at=current_timestamp
-                where id=? and status='processing' and lease_owner=?
-                  and datetime(lease_expires_at)>datetime(?)
-                """,
-                (lease_expires_at, event_id, lease_owner, renewal_time),
+                f"update actions set {assignments} "
+                "where record_type='meeting_memory_write_events' "
+                "and cast(legacy_key as integer)=? and td_status='processing' "
+                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
+                (*set_args, event_id, lease_owner, renewal_time),
             )
         return cursor.rowcount == 1
 
@@ -15602,24 +14572,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events",
+                {"status": "pending", "available_at": available_at, "error": error[:500],
+                 "lease_owner": "", "lease_expires_at": ""},
+                update_sql={
+                    "attempts": "td_attempts+1",
+                    "execution_generation": "case when ? then ? else td_execution_generation end",
+                    "updated_at": "current_timestamp",
+                },
+                update_parameters=(1 if new_generation else 0, uuid4().hex),
+            )
             cursor = db.execute(
-                """
-                update meeting_memory_write_events
-                set status='pending', attempts=attempts+1, available_at=?, error=?,
-                    execution_generation=case when ? then ? else execution_generation end,
-                    lease_owner='', lease_expires_at='', updated_at=current_timestamp
-                where id=? and status='processing' and lease_owner=?
-                  and datetime(lease_expires_at)>datetime(?)
-                """,
-                (
-                    available_at,
-                    error[:500],
-                    1 if new_generation else 0,
-                    uuid4().hex,
-                    event_id,
-                    owner,
-                    settlement_time,
-                ),
+                f"update actions set {assignments} "
+                "where record_type='meeting_memory_write_events' "
+                "and cast(legacy_key as integer)=? and td_status='processing' "
+                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
+                (*set_args, event_id, owner, settlement_time),
             )
         return cursor.rowcount == 1
 
@@ -15633,16 +14602,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> bool:
         settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events",
+                {"status": "failed", "available_at": "", "error": error[:500],
+                 "lease_owner": "", "lease_expires_at": ""},
+                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
-                """
-                update meeting_memory_write_events
-                set status='failed', attempts=attempts+1, available_at='',
-                    error=?, lease_owner='', lease_expires_at='',
-                    updated_at=current_timestamp
-                where id=? and status='processing' and lease_owner=?
-                  and datetime(lease_expires_at)>datetime(?)
-                """,
-                (error[:500], event_id, owner, settlement_time),
+                f"update actions set {assignments} "
+                "where record_type='meeting_memory_write_events' "
+                "and cast(legacy_key as integer)=? and td_status='processing' "
+                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
+                (*set_args, event_id, owner, settlement_time),
             )
         return cursor.rowcount == 1
 
@@ -15658,23 +14629,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not reason.strip():
             raise ValueError("meeting Memory write recovery reason is required")
         with self._immediate_write_transaction() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events",
+                {"status": "pending", "available_at": "", "error": reason[:500],
+                 "execution_generation": uuid4().hex, "lease_owner": "",
+                 "lease_expires_at": "", "started_at": ""},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
                 f"""
-                update meeting_memory_write_events as events
-                set status='pending', available_at='', error=?,
-                    execution_generation=?, lease_owner='', lease_expires_at='',
-                    started_at='', updated_at=current_timestamp
-                where events.id=? and events.status='failed'
+                update actions as events set {assignments}
+                where events.record_type='meeting_memory_write_events'
+                  and cast(events.legacy_key as integer)=? and events.td_status='failed'
                   and exists (
                     select 1
                     from tasks as jobs
                     where jobs.record_type='meeting_alignment_jobs'
-                      and jobs.id=events.meeting_job_id
+                      and jobs.id=events.td_meeting_job_id
                       and jobs.{task20_column('meeting_alignment_jobs', 'status')}='sent'
                       and trim(jobs.{task20_column('meeting_alignment_jobs', 'final_message')})<>''
                   )
                 """,
-                (reason[:500], uuid4().hex, event_id),
+                (*set_args, event_id),
             )
         return cursor.rowcount == 1
 
@@ -15696,22 +14672,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not memory_id:
             raise ValueError("meeting Memory write reconciliation requires memory_id")
         with self._immediate_write_transaction() as db:
+            assignments, set_args = task_delivery_set_parts(
+                "meeting_memory_write_events",
+                {"status": "done", "available_at": "", "error": "", "memory_id": memory_id,
+                 "lease_owner": "", "lease_expires_at": ""},
+                update_sql={"updated_at": "current_timestamp"},
+            )
             cursor = db.execute(
                 f"""
-                update meeting_memory_write_events as events
-                set status='done', available_at='', error='', memory_id=?,
-                    lease_owner='', lease_expires_at='', updated_at=current_timestamp
-                where events.id=? and events.status in ('pending', 'failed')
+                update actions as events set {assignments}
+                where events.record_type='meeting_memory_write_events'
+                  and cast(events.legacy_key as integer)=?
+                  and events.td_status in ('pending', 'failed')
                   and exists (
                     select 1
                     from tasks as jobs
                     where jobs.record_type='meeting_alignment_jobs'
-                      and jobs.id=events.meeting_job_id
+                      and jobs.id=events.td_meeting_job_id
                       and jobs.{task20_column('meeting_alignment_jobs', 'status')}='sent'
                       and trim(jobs.{task20_column('meeting_alignment_jobs', 'final_message')})<>''
                   )
                 """,
-                (memory_id, event_id),
+                (*set_args, event_id),
             )
         return cursor.rowcount == 1
 
@@ -15816,6 +14798,54 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """,
                 args,
             )
+        if filtered.get("status") in {"sent", "skipped"}:
+            self.compact_meeting_consumer_input(job_id)
+
+    def compact_meeting_consumer_input(self, job_id: int) -> bool:
+        """Retire nonreplayable input only after every field has an exact source."""
+        from app.meeting_consumer_source import (
+            compact_meeting_consumer, scheduled_consumer_source_fields,
+        )
+
+        job = self.get_meeting_alignment_job(job_id)
+        if job.status not in {"sent", "skipped"}:
+            return False
+        if "scheduled_consumer" not in json.loads(job.source_json):
+            return False
+        with self._connect() as db:
+            attempts = db.execute(
+                f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
+                f"from ({RUNTIME_ATTEMPT_SQL}) a join runs r "
+                "on a.workload_kind='meeting' and a.workload_key=r.legacy_key "
+                "where r.record_type='meeting_alignment_runs' and r.task_id="
+                + task_id_expression("meeting_alignment_jobs", "?")
+                + " and a.status not in ('starting','running') order by a.id desc",
+                (job_id,),
+            ).fetchall()
+        compact = compact_meeting_consumer(job.source_json, attempts,
+            source_reader=lambda context: scheduled_consumer_source_fields(self, context))
+        if compact is None:
+            return False
+        with self._connect() as db:
+            cursor = db.execute(
+                f"update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'source_json': '?'}, payload_source='tasks.payload_json').sql} "
+                "where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=? "
+                f"and {task20_column('meeting_alignment_jobs', 'status')} in ('sent','skipped') "
+                f"and {task20_column('meeting_alignment_jobs', 'source_json')}=?",
+                (compact, job_id, job.source_json),
+            )
+            return cursor.rowcount == 1
+
+    def compact_terminal_meeting_consumer_inputs(self) -> dict[str, int]:
+        """One explicit migration batch; normal writes compact their own job."""
+        with self._connect() as db:
+            ids = [int(row[0]) for row in db.execute(
+                "select cast(legacy_key as integer) from tasks "
+                "where record_type='meeting_alignment_jobs' "
+                f"and {task20_column('meeting_alignment_jobs', 'status')} in ('sent','skipped')"
+            )]
+        compacted = sum(self.compact_meeting_consumer_input(job_id) for job_id in ids)
+        return {"examined": len(ids), "compacted": compacted}
 
     def schedule_meeting_alignment_job_retry(
         self,
@@ -15882,9 +14912,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ) for row in rows
             ]
             db.executemany(
-                """insert into meeting_alignment_delivery_claims(job_id, claim_token)
-                   values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
-                [(row["id"], token) for row in rows],
+                "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) "
+                "values(?,?,?,?) on conflict do update set payload_json=excluded.payload_json",
+                [task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
+                    {"job_id": row["id"], "claim_token": token})[1] for row in rows],
             )
             return sorted(jobs, key=lambda job: job.id)
 
@@ -15907,9 +14938,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             token = uuid4().hex
             db.execute(
-                """insert into meeting_alignment_delivery_claims(job_id, claim_token)
-                   values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
-                (row["id"], token),
+                "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) "
+                "values(?,?,?,?) on conflict do update set payload_json=excluded.payload_json",
+                task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
+                    {"job_id": row["id"], "claim_token": token})[1],
             )
             return self._meeting_alignment_job_from_row(row).model_copy(
                 update={"delivery_claim_token": token}
@@ -15927,16 +14959,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                      and cast(legacy_key as integer)=?
                      and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send' and {task20_column('meeting_alignment_jobs', 'locked_at')}=?
                      and exists (
-                         select 1 from meeting_alignment_delivery_claims claim
-                         where claim.job_id=tasks.id
-                           and claim.claim_token=? and claim.claim_token!=''
+                         select 1 from actions claim
+                         where claim.record_type='meeting_alignment_delivery_claims'
+                           and claim.td_claim_job_id=tasks.id
+                           and claim.td_claim_token=? and claim.td_claim_token!=''
                      )""",
                 [(job.id, job.locked_at, job.delivery_claim_token) for job in jobs],
             )
             db.executemany(
-                "delete from meeting_alignment_delivery_claims where job_id="
+                "delete from actions where record_type='meeting_alignment_delivery_claims' "
+                "and td_claim_job_id="
                 + task_id_expression("meeting_alignment_jobs", "?")
-                + " and claim_token=?",
+                + " and td_claim_token=?",
                 [(job.id, job.delivery_claim_token) for job in jobs],
             )
 
@@ -15976,7 +15010,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 returning {task8_meeting_returning()}
                 """
             ).fetchall()
-            db.execute("delete from meeting_alignment_delivery_claims")
+            db.execute("delete from actions where record_type='meeting_alignment_delivery_claims'")
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 
@@ -16069,8 +15103,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         )
                       )
                       and not exists (
-                        select 1 from meeting_alignment_delivery_claims delivery
-                        where delivery.job_id=meeting_alignment_jobs.id
+                        select 1 from actions delivery
+                        where delivery.record_type='meeting_alignment_delivery_claims'
+                          and delivery.td_claim_job_id=meeting_alignment_jobs.id
                       )
                       and not exists (
                         select 1 from ({state_projection('dispatcher_claim_leases')}) claim
@@ -18447,18 +17482,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (task_id, generation),
             )
             if cursor.rowcount == 1:
-                db.execute(
-                    "insert into errors (conversation_id, message_id, kind, detail, "
-                    "resolved_at, resolution) "
-                    "values (?, ?, ?, ?, current_timestamp, ?)",
-                    (
-                        task["conversation_id"],
-                        task["trigger_message_id"],
-                        "reply_task_already_settled",
-                        evidence,
-                        evidence,
-                    ),
-                )
+                insert_error_action(db, {
+                    "conversation_id": task["conversation_id"],
+                    "message_id": task["trigger_message_id"],
+                    "kind": "reply_task_already_settled", "detail": evidence,
+                    "resolution": evidence,
+                }, resolved_at_now=True)
                 self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
@@ -18472,7 +17501,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
               and tasks.{task20_column('reply_tasks', 'error')} not in ('external_action_uncertain', 'external_action_failed')
               and exists (
                   select 1
-                  from errors as settled
+                  from ({ERROR_SQL}) as settled
                   where settled.conversation_id=tasks.{task20_column('reply_tasks', 'conversation_id')}
                     and settled.message_id=tasks.{task20_column('reply_tasks', 'trigger_message_id')}
                     and settled.kind='reply_task_already_settled'
@@ -18510,7 +17539,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           and tasks.{task20_column('reply_tasks', 'execution_generation')}=?
                           and exists (
                               select 1
-                              from errors as settled
+                              from ({ERROR_SQL}) as settled
                               where settled.conversation_id=tasks.{task20_column('reply_tasks', 'conversation_id')}
                                 and settled.message_id=tasks.{task20_column('reply_tasks', 'trigger_message_id')}
                                 and settled.kind='reply_task_already_settled'
@@ -18640,7 +17669,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where trim(sr.feedback_token) <> ''
                   and not exists (
                       select 1
-                      from feedback_events fe
+                      from ({FEEDBACK_EVENT_SQL}) fe
                       where fe.feedback_token = sr.feedback_token
                   )
                 order by sr.sent_at desc, sr.id desc
@@ -18690,7 +17719,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         fe.created_at
                     ))) as latest_feedback_at
                     from ({SENT_REPLY_SQL}) sr
-                    join feedback_events fe
+                    join ({FEEDBACK_EVENT_SQL}) fe
                         on fe.feedback_token = sr.feedback_token
                     where sr.conversation_id=?
                       and trim(sr.feedback_token) <> ''
@@ -18703,7 +17732,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and trim(sr.feedback_token) <> ''
                       and not exists (
                           select 1
-                          from feedback_events fe
+                          from ({FEEDBACK_EVENT_SQL}) fe
                           where fe.feedback_token = sr.feedback_token
                       )
                       and (
@@ -18762,53 +17791,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         raw_json: str = "{}",
     ) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                insert into feedback_events (
-                    key,
-                    feedback_token,
-                    rating,
-                    rating_label,
-                    comment,
-                    original_text,
-                    reply_text,
-                    source,
-                    received_at,
-                    raw_json
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(key) do update set
-                    feedback_token=excluded.feedback_token,
-                    rating=excluded.rating,
-                    rating_label=excluded.rating_label,
-                    comment=excluded.comment,
-                    original_text=excluded.original_text,
-                    reply_text=excluded.reply_text,
-                    source=excluded.source,
-                    received_at=excluded.received_at,
-                    raw_json=excluded.raw_json,
-                    updated_at=current_timestamp
-                """,
-                (
-                    key,
-                    feedback_token,
-                    rating,
-                    rating_label,
-                    comment,
-                    original_text,
-                    reply_text,
-                    source,
-                    received_at,
-                    raw_json,
-                ),
-            )
+            upsert_feedback_event(db, {
+                "key": key, "feedback_token": feedback_token, "rating": rating,
+                "rating_label": rating_label, "comment": comment,
+                "original_text": original_text, "reply_text": reply_text,
+                "source": source, "received_at": received_at, "raw_json": raw_json,
+            })
             # Keep a durable, independently mutable processing projection while
             # preserving the original feedback event as the source of truth.
-            _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key}, insert_sql={'status': "case when trim((select resolved_at from feedback_events where key=?)) <> ''\n                              then 'resolved' else 'pending' end", 'resolved_at': "coalesce((select resolved_at from feedback_events where key=?), '')"}, insert_parameters=(key, key,))
+            _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key}, insert_sql={'status': f"case when trim((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?)) <> ''\n                              then 'resolved' else 'pending' end", 'resolved_at': f"coalesce((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?), '')"}, insert_parameters=(key, key,))
             db.execute(
-                f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': f"""case when trim((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
-                                then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
-                                     then (select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
+                f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': f"""case when trim((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
+                                then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
+                                     then (select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
                                      else tasks.{task20_column('feedback_processing_items', 'resolved_at')} end""", 'updated_at': 'current_timestamp'}).sql}""",
                 _task12_insert.parameters,
             )
@@ -19069,11 +18064,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 _task12_insert.parameters,
             )
             decision_id = int(_task12_insert.source_rowid)
-            db.executemany(
-                """insert into feedback_iteration_decision_items
-                   (decision_id, feedback_key, round_id) values (?, ?, ?)""",
-                [(decision_id, key, round_ids_by_key[key]) for key in keys],
-            )
+            insert_feedback_decision_items(db, [
+                {"decision_id": decision_id, "feedback_key": key,
+                 "round_id": round_ids_by_key[key]} for key in keys
+            ])
             row = db.execute(
                 f"""select decision.id, decision.batch_id, decision.workbench_task_id,
                           decision.workbench_turn_id, decision.decision_json,
@@ -19081,7 +18075,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           json_group_array(item.feedback_key) as feedback_keys_json,
                           json_group_array(item.round_id) as round_ids_json
                      from ({task12_projection('feedback_iteration_decisions')}) as decision
-                     join feedback_iteration_decision_items item on item.decision_id=decision.id
+                     join ({FEEDBACK_DECISION_ITEM_SQL}) item on item.decision_id=decision.id
                     where decision.id=?
                     group by decision.id""",
                 (decision_id,),
@@ -19100,7 +18094,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           json_group_array(item.feedback_key) as feedback_keys_json,
                           json_group_array(item.round_id) as round_ids_json
                      from ({task12_projection('feedback_iteration_decisions')}) as decision
-                     join feedback_iteration_decision_items item on item.decision_id=decision.id
+                     join ({FEEDBACK_DECISION_ITEM_SQL}) item on item.decision_id=decision.id
                     where decision.batch_id=?
                     group by decision.id
                     order by decision.id""",
@@ -19140,7 +18134,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 source_rows = db.execute(
                     f"""
                     select key, resolved_at
-                    from feedback_events
+                    from ({FEEDBACK_EVENT_SQL})
                     where key in ({placeholders})
                     """,
                     keys,
@@ -19154,7 +18148,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
             conflicting = db.execute(
                 f"""
-                select fe.key as feedback_key from feedback_events fe
+                select fe.key as feedback_key from ({FEEDBACK_EVENT_SQL}) fe
                 left join ({task12_projection('feedback_processing_items')}) as pi on pi.feedback_key=fe.key
                 where fe.key in ({{}})
                   and (
@@ -19173,15 +18167,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 _task12_insert.parameters,
             )
             for key in keys:
-                _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key, 'batch_id': cleaned_batch_id}, insert_sql={'status': "case when trim(coalesce((select resolved_at from feedback_events where key=?), '')) <> ''\n                             then 'resolved' else 'pending' end", 'resolved_at': "coalesce((select resolved_at from feedback_events where key=?), '')"}, insert_parameters=(key, key,))
+                _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key, 'batch_id': cleaned_batch_id}, insert_sql={'status': f"case when trim(coalesce((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?), '')) <> ''\n                             then 'resolved' else 'pending' end", 'resolved_at': f"coalesce((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?), '')"}, insert_parameters=(key, key,))
                 db.execute(
                     f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'batch_id': f"""case
                             when tasks.{task20_column('feedback_processing_items', 'status')}='resolved'
                             then tasks.{task20_column('feedback_processing_items', 'batch_id')}
                             else excluded.{task20_column('feedback_processing_items', 'batch_id')}
-                        end""", 'status': f"""case when trim(coalesce((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')}), '')) <> ''
-                                    then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim(coalesce((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')}), '')) <> ''
-                                         then (select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
+                        end""", 'status': f"""case when trim(coalesce((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')}), '')) <> ''
+                                    then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim(coalesce((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')}), '')) <> ''
+                                         then (select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
                                          else tasks.{task20_column('feedback_processing_items', 'resolved_at')} end""", 'updated_at': 'current_timestamp'}).sql}""",
                     _task12_insert.parameters,
                 )
@@ -19235,7 +18229,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        coalesce(pi.status, 'pending') as item_status,
                        coalesce(pi.batch_id, '') as item_batch_id,
                        coalesce(pi.current_round_id, 0) as current_round_id
-                from feedback_events fe
+                from ({FEEDBACK_EVENT_SQL}) fe
                 left join ({task12_projection('feedback_processing_items')}) as pi on pi.feedback_key=fe.key
                 where fe.key in ({placeholders})
                 """,
@@ -19351,15 +18345,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 if cursor.rowcount != 1:
                     raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
-                db.execute(
-                    """
-                    insert into feedback_processing_transitions (
-                        feedback_key, round_id, batch_id,
-                        from_status, to_status, created_at
-                    ) values (?, ?, ?, 'pending', 'processing', ?)
-                    """,
-                    (key, round_id, cleaned_batch_id, claim_timestamp),
-                )
+                insert_feedback_action(db, "feedback_processing_transitions", {
+                    "feedback_key": key, "round_id": round_id,
+                    "batch_id": cleaned_batch_id, "from_status": "pending",
+                    "to_status": "processing", "created_at": claim_timestamp,
+                })
             db.execute(
                 f"""update tasks set {task12_set_parts('feedback_processing_batches', {}, update_sql={'status': "'processing'", 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_batches' and {task20_column('feedback_processing_batches', 'batch_id')}=?
                 """,
@@ -19436,7 +18426,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             ).fetchone()
             source = db.execute(
-                "select resolved_at from feedback_events where key=?",
+                f"select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
                 (cleaned_key,),
             ).fetchone()
             batch = db.execute(
@@ -19492,23 +18482,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 )
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    reason, workbench_task_id, workbench_turn_id, created_at
-                ) values (?, ?, ?, 'resolved', 'pending', ?, ?, ?, ?)
-                """,
-                (
-                    cleaned_key,
-                    round_id,
-                    str(current_round["batch_id"] or ""),
-                    reason,
-                    str(current_round["workbench_task_id"] or ""),
-                    str(current_round["workbench_turn_id"] or ""),
-                    reopen_timestamp,
-                ),
-            )
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": cleaned_key, "round_id": round_id,
+                "batch_id": str(current_round["batch_id"] or ""),
+                "from_status": "resolved", "to_status": "pending",
+                "reason": reason,
+                "workbench_task_id": str(current_round["workbench_task_id"] or ""),
+                "workbench_turn_id": str(current_round["workbench_turn_id"] or ""),
+                "created_at": reopen_timestamp,
+            })
             cursor = db.execute(
                 f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'current_round_id': '0', 'batch_id': "''", 'status': "'pending'", 'workbench_task_id': "''", 'workbench_turn_id': "''", 'attempt_id': '0', 'agent_run_id': '0', 'commit_sha': "''", 'test_evidence_json': "'{}'", 'restart_evidence_json': "'{}'", 'health_evidence_json': "'{}'", 'note': "''", 'resolved_at': "''", 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'status')}='resolved' and {task20_column('feedback_processing_items', 'current_round_id')}=?
                 """,
@@ -19519,15 +18501,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 )
-            cursor = db.execute(
-                """
-                update feedback_events
-                   set resolved_at='', updated_at=current_timestamp
-                 where key=? and trim(resolved_at)<>''
-                """,
-                (cleaned_key,),
-            )
-            if cursor.rowcount != 1:
+            if reopen_feedback_event(db, cleaned_key) != 1:
                 raise FeedbackProcessingReopenError(
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
@@ -19581,8 +18555,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._connect() as db:
             rows = db.execute(
-                """
-                select * from feedback_processing_transitions
+                f"""
+                select * from ({FEEDBACK_TRANSITION_SQL})
                  where feedback_key=?
                  order by id desc
                 """,
@@ -19811,7 +18785,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("feedback processing transition history is incomplete")
         if transitions is None:
             transitions = db.execute(
-                "select * from feedback_processing_transitions "
+                f"select * from ({FEEDBACK_TRANSITION_SQL}) "
                 "where round_id=? order by id",
                 (int(current_round["id"]),),
             ).fetchall()
@@ -19953,7 +18927,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "feedback processing batch transition ownership is incomplete"
             )
         batch_transitions = db.execute(
-            "select * from feedback_processing_transitions "
+            f"select * from ({FEEDBACK_TRANSITION_SQL}) "
             "where batch_id=? order by round_id, id",
             (batch_id,),
         ).fetchall()
@@ -19972,7 +18946,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
         placeholders = ",".join("?" for _ in round_by_id)
         round_transitions = db.execute(
-            "select * from feedback_processing_transitions "
+            f"select * from ({FEEDBACK_TRANSITION_SQL}) "
             f"where round_id in ({placeholders}) order by round_id, id",
             list(round_by_id),
         ).fetchall()
@@ -20035,7 +19009,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError(stable_error)
             placeholders = ",".join("?" for _ in item_keys)
             sources = db.execute(
-                f"select key, resolved_at, updated_at from feedback_events "
+                f"select key, resolved_at, updated_at from ({FEEDBACK_EVENT_SQL}) "
                 f"where key in ({placeholders})",
                 item_keys,
             ).fetchall()
@@ -20348,7 +19322,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (feedback_key,),
             ).fetchone()
             source = db.execute(
-                "select resolved_at, updated_at from feedback_events where key=?",
+                f"select resolved_at, updated_at from ({FEEDBACK_EVENT_SQL}) where key=?",
                 (feedback_key,),
             ).fetchone()
             if item is None or source is None:
@@ -20477,7 +19451,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       json_group_array(item.feedback_key) as feedback_keys_json,
                       json_group_array(item.round_id) as round_ids_json
                  from ({task12_projection('feedback_iteration_decisions')}) as decision
-                 join feedback_iteration_decision_items item on item.decision_id=decision.id
+                 join ({FEEDBACK_DECISION_ITEM_SQL}) item on item.decision_id=decision.id
                 where decision.batch_id=?
                 group by decision.id
                 order by decision.id desc""",
@@ -20818,7 +19792,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in item_keys)
             source_rows = db.execute(
                 f"""
-                select key, resolved_at from feedback_events
+                select key, resolved_at from ({FEEDBACK_EVENT_SQL})
                  where key in ({placeholders})
                 """,
                 item_keys,
@@ -20880,32 +19854,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
                     raise ValueError("resolution current round changed during update")
-                db.execute(
-                    """
-                    insert into feedback_processing_transitions (
-                        feedback_key, round_id, batch_id,
-                        from_status, to_status,
-                        workbench_task_id, workbench_turn_id, created_at
-                    ) values (?, ?, ?, 'processing', 'resolved', ?, ?, ?)
-                    """,
-                    (
-                        str(item["feedback_key"]),
-                        int(current_round["id"]),
-                        cleaned_batch_id,
-                        str(current_round["workbench_task_id"] or ""),
-                        str(current_round["workbench_turn_id"] or ""),
-                        resolution_timestamp,
-                    ),
-                )
-            source_cursor = db.execute(
-                f"""
-                update feedback_events
-                   set resolved_at=?, updated_at=?
-                 where key in ({placeholders}) and trim(resolved_at)=''
-                """,
-                [resolution_timestamp, resolution_timestamp, *item_keys],
-            )
-            if source_cursor.rowcount != requested_count:
+                insert_feedback_action(db, "feedback_processing_transitions", {
+                    "feedback_key": str(item["feedback_key"]),
+                    "round_id": int(current_round["id"]),
+                    "batch_id": cleaned_batch_id,
+                    "from_status": "processing", "to_status": "resolved",
+                    "workbench_task_id": str(current_round["workbench_task_id"] or ""),
+                    "workbench_turn_id": str(current_round["workbench_turn_id"] or ""),
+                    "created_at": resolution_timestamp,
+                })
+            if resolve_feedback_events(db, item_keys, resolution_timestamp) != requested_count:
                 raise ValueError("resolution source feedback changed during update")
             cursor = db.execute(
                 f"""update tasks set {task12_set_parts('feedback_processing_batches', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_batches' and {task20_column('feedback_processing_batches', 'batch_id')}=? and {task20_column('feedback_processing_batches', 'status')}='processing'
@@ -20922,9 +19880,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from feedback_events
+                from ({FEEDBACK_EVENT_SQL})
                 where feedback_token=?
                 order by received_at desc, updated_at desc
                 """,
@@ -20939,7 +19897,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return None
         with self._connect() as db:
             row = db.execute(
-                "select * from feedback_events where key=?",
+                f"select * from ({FEEDBACK_EVENT_SQL}) where key=?",
                 (cleaned_key,),
             ).fetchone()
         return FeedbackEvent.model_validate(dict(row)) if row else None
@@ -20955,7 +19913,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select *
-                from feedback_events
+                from ({FEEDBACK_EVENT_SQL})
                 where feedback_token in ({placeholders})
                 order by received_at desc, updated_at desc
                 """,
@@ -20982,41 +19940,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         cleaned_key = feedback_event_key.strip()
         if not cleaned_key:
             return None
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert or ignore into service_bugfix_candidates (
-                    feedback_event_key,
-                    feedback_token,
-                    attempt_id,
-                    title,
-                    reason,
-                    feedback_comment,
-                    conversation_title,
-                    trigger_text
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    cleaned_key,
-                    feedback_token,
-                    max(0, int(attempt_id)),
-                    title,
-                    reason,
-                    feedback_comment,
-                    conversation_title,
-                    trigger_text,
-                ),
-            )
-            if cursor.rowcount != 1:
+        with self._immediate_write_transaction() as db:
+            result = insert_business(db, "service_bugfix_candidate", {
+                "feedback_event_key": cleaned_key,
+                "feedback_token": feedback_token,
+                "attempt_id": max(0, int(attempt_id)),
+                "title": title,
+                "reason": reason,
+                "feedback_comment": feedback_comment,
+                "conversation_title": conversation_title,
+                "trigger_text": trigger_text,
+            }, ignore=True)
+            if result.rowcount != 1 or result.lastrowid is None:
                 return None
             row = db.execute(
-                """
-                select *
-                from service_bugfix_candidates
-                where feedback_event_key=?
-                """,
-                (cleaned_key,),
+                f"select * from ({BUSINESS_PROJECTIONS['service_bugfix_candidate']}) "
+                "where id=?",
+                (result.lastrowid,),
             ).fetchone()
             return ServiceBugfixCandidate.model_validate(dict(row)) if row else None
 
@@ -21034,7 +19974,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     coalesce(ra.id, 0) as attempt_id,
                     coalesce(ra.conversation_title, '') as conversation_title,
                     coalesce(ra.trigger_text, '') as trigger_text
-                from feedback_events fe
+                from ({FEEDBACK_EVENT_SQL}) fe
                 left join ({SENT_REPLY_SQL}) sr
                     on sr.feedback_token = fe.feedback_token
                 left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
@@ -21068,7 +20008,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if status is not None:
             filters.append("status=?")
             args.append(status)
-        query = "select * from service_bugfix_candidates"
+        query = f"select * from ({BUSINESS_PROJECTIONS['service_bugfix_candidate']})"
         if filters:
             query = f"{query} where {' and '.join(filters)}"
         query = f"{query} order by created_at desc, id desc limit ?"
@@ -21083,9 +20023,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if status is not None:
             filters.append("status=?")
             args.append(status)
-        query = "select count(*) as count from service_bugfix_candidates"
+        query = (
+            "select count(*) as count from business "
+            "where record_type='service_bugfix_candidate'"
+        )
         if filters:
-            query = f"{query} where {' and '.join(filters)}"
+            query = f"{query} and {' and '.join(filters)}"
         with self._connect() as db:
             row = db.execute(query, args).fetchone()
             return int(row["count"] if row else 0)
@@ -21110,7 +20053,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     select
                         fe.key as feedback_key,
                         max(ra.id) as attempt_id
-                    from feedback_events fe
+                    from ({FEEDBACK_EVENT_SQL}) fe
                     join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                         on ra.id = cast(substr(fe.key, 8) as integer)
                     where fe.key like 'manual:%'
@@ -21142,7 +20085,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     coalesce(pi.status, case when trim(fe.resolved_at) <> '' then 'resolved' else 'pending' end) as processing_status,
                     fe.resolved_at,
                     fe.updated_at
-                from feedback_events fe
+                from ({FEEDBACK_EVENT_SQL}) fe
                 left join latest_attempt_by_token latest
                     on latest.feedback_token = fe.feedback_token
                 left join manual_attempt_by_key manual
@@ -21176,7 +20119,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 with requested_feedback as (
-                    select * from feedback_events
+                    select * from ({FEEDBACK_EVENT_SQL})
                      where key in ({placeholders})
                 ), latest_attempt_by_token as (
                     select
@@ -21246,7 +20189,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def count_user_feedback_items(self) -> int:
         with self._connect() as db:
             row = db.execute(
-                "select count(*) as count from feedback_events"
+                f"select count(*) as count from ({FEEDBACK_EVENT_SQL})"
             ).fetchone()
             return int(row["count"])
 
@@ -21279,7 +20222,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     group by sr.feedback_token
                 )
                 select count(*) as pending_count
-                from feedback_events fe
+                from ({FEEDBACK_EVENT_SQL}) fe
                 left join ({task12_projection('feedback_processing_items')}) as pi
                     on pi.feedback_key = fe.key
                 left join latest_attempt_by_token latest
@@ -21894,7 +20837,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 and not exists (
                     select 1
-                    from errors as settled
+                    from ({ERROR_SQL}) as settled
                     where settled.conversation_id=tasks.conversation_id
                       and settled.message_id=tasks.trigger_message_id
                       and settled.kind='reply_task_already_settled'
@@ -21922,7 +20865,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 and not exists (
                     select 1
-                    from errors as settled
+                    from ({ERROR_SQL}) as settled
                     where settled.conversation_id=tasks.{task20_column('reply_tasks', 'conversation_id')}
                       and settled.message_id=tasks.{task20_column('reply_tasks', 'trigger_message_id')}
                       and settled.kind='reply_task_already_settled'
@@ -23265,6 +22208,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             sql = f"""
                 select attempts.id, attempts.channel, attempts.conversation_id,
+                       attempts.action,
                        attempts.trigger_message_id, attempts.send_status,
                        attempts.conversation_title, attempts.trigger_text,
                        attempts.updated_at, attempts.send_error
@@ -23366,6 +22310,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 {
                     "id": str(row["id"] or ""),
                     "channel": str(row["channel"] or ""),
+                    "action": str(row["action"] or ""),
                     "conversation_id": str(row["conversation_id"] or ""),
                     "trigger_message_id": str(row["trigger_message_id"] or ""),
                     "send_status": str(row["send_status"] or ""),
@@ -23602,7 +22547,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                 else deliveries.status
                             end
                             from ({REPLY_TASK_CURRENT_SQL}) as tasks
-                            join wechat_deliveries as deliveries
+                            join ({WECHAT_DELIVERY_SQL}) as deliveries
                                 on deliveries.reply_task_id=tasks.id
                             where tasks.channel='wechat'
                               and tasks.conversation_id=reply_attempts.conversation_id
@@ -23795,8 +22740,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updates.source_ref || ' ' || updates.summary || ' ' ||
                     updates.changes_json || ' ' || updates.merge_reason
                     , '') as search_text
-                from work_updates as updates
-                join work_projects as projects on projects.id=updates.project_id
+                from ({SYNC_ACTION_PROJECTIONS['work_updates']}) as updates
+                join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=updates.project_id
                 union all
                 select
                     'task' as kind,
@@ -23830,9 +22775,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     candidates.reason || ' ' || candidates.status || ' ' ||
                     candidates.decision_json
                     , '') as search_text
-                from todo_evidence_candidates as candidates
-                join work_projects as projects on projects.id=candidates.project_id
-                left join work_todos as todos on todos.id=candidates.todo_id
+                from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) as candidates
+                join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=candidates.project_id
+                left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=candidates.todo_id
                 union all
                 select
                     'task' as kind,
@@ -23882,9 +22827,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     drafts.reaction_status || ' ' || drafts.reaction_summary || ' ' ||
                     drafts.suppressed_reason
                     , '') as search_text
-                from follow_up_drafts as drafts
-                join work_projects as projects on projects.id=drafts.project_id
-                left join work_todos as todos on todos.id=drafts.todo_id
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) as drafts
+                join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=drafts.project_id
+                left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=drafts.todo_id
             )
             select * from history_items
         """
@@ -24917,114 +23862,46 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def create_work_project(
         self, *, _db: sqlite3.Connection | None = None, **values
     ) -> int:
-        allowed_columns = {
-            "title",
-            "category",
-            "tags_json",
-            "status",
-            "priority",
-            "risk_level",
-            "needs_derek_attention",
-            "owner_user_id",
-            "owner_name",
-            "owner_evidence_json",
-            "related_people_json",
-            "goal",
-            "background",
-            "facts_json",
-            "current_state",
-            "blocker",
-            "next_step",
-            "next_follow_up_at",
-            "follow_up_mode",
-            "source_conversations_json",
-            "memory_context_json",
-        }
+        if _db is None:
+            with self._immediate_write_transaction() as db:
+                return self.create_work_project(_db=db, **values)
+        allowed_columns = set(BUSINESS_PROJECTIONS["work_project"].split(" from ", 1)[0].split(","))
+        allowed_columns = {field.split(" as ")[-1].strip() for field in allowed_columns} - {"id"}
         filtered = self._filter_allowed_values(values, allowed_columns)
         if "needs_derek_attention" in filtered:
             filtered["needs_derek_attention"] = int(
                 bool(filtered["needs_derek_attention"])
             )
-        keys = list(filtered.keys())
-        columns = ", ".join(keys)
-        placeholders = ", ".join("?" for _ in keys)
         with self._optional_connection(_db) as db:
-            cursor = db.execute(
-                f"insert into work_projects ({columns}) values ({placeholders})",
-                [filtered[key] for key in keys],
-            )
-            return int(cursor.lastrowid)
+            return int(insert_business(db, "work_project", filtered).lastrowid)
 
     def update_work_project(
         self, project_id: int, *, _db: sqlite3.Connection | None = None, **values
     ) -> None:
+        if _db is None:
+            with self._immediate_write_transaction() as db:
+                return self.update_work_project(project_id, _db=db, **values)
         if not values:
             return
-        allowed_columns = {
-            "title",
-            "category",
-            "tags_json",
-            "status",
-            "priority",
-            "risk_level",
-            "needs_derek_attention",
-            "owner_user_id",
-            "owner_name",
-            "owner_evidence_json",
-            "related_people_json",
-            "goal",
-            "background",
-            "facts_json",
-            "current_state",
-            "blocker",
-            "next_step",
-            "next_follow_up_at",
-            "follow_up_mode",
-            "source_conversations_json",
-            "memory_context_json",
-        }
+        allowed_columns = {field.split(" as ")[-1].strip()
+                           for field in BUSINESS_PROJECTIONS["work_project"].split(" from ", 1)[0].split(",")} - {"id"}
         filtered = self._filter_allowed_values(values, allowed_columns)
         if "needs_derek_attention" in filtered:
             filtered["needs_derek_attention"] = int(
                 bool(filtered["needs_derek_attention"])
             )
-        assignments = ", ".join(f"{key}=?" for key in filtered)
         with self._optional_connection(_db) as db:
-            db.execute(
-                f"""
-                update work_projects
-                set {assignments},
-                    updated_at=current_timestamp,
-                    last_activity_at=current_timestamp
-                where id=?
-                """,
-                [*filtered.values(), project_id],
-            )
-
-    def update_work_project_memory_context(
-        self,
-        project_id: int,
-        memory_context_json: str,
-    ) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                update work_projects
-                set memory_context_json=?,
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (memory_context_json, project_id),
-            )
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            update_business(db, "work_project", project_id,
+                            {**filtered, "updated_at": timestamp,
+                             "last_activity_at": timestamp})
 
     def get_work_project(
         self, project_id: int, *, _db: sqlite3.Connection | None = None
     ) -> WorkProject | None:
         with self._optional_connection(_db) as db:
-            row = db.execute(
-                "select * from work_projects where id=?",
-                (project_id,),
-            ).fetchone()
+            row = db.execute(f"select * from ({BUSINESS_PROJECTIONS['work_project']}) where id=?",
+                             (project_id,)).fetchone()
             return None if row is None else WorkProject.model_validate(dict(row))
 
     def list_work_projects(
@@ -25032,7 +23909,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         statuses: tuple[str, ...] | None = None,
         limit: int | None = None,
     ) -> list[WorkProject]:
-        query = "select * from work_projects"
+        query = f"select * from ({BUSINESS_PROJECTIONS['work_project']})"
         args: list[str | int] = []
         if statuses:
             placeholders = ",".join("?" for _ in statuses)
@@ -25047,28 +23924,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
             ]
 
-    def list_work_projects_missing_memory_context(
-        self,
-        limit: int | None = None,
-    ) -> list[WorkProject]:
-        query = """
-            select *
-            from work_projects
-            where trim(coalesce(memory_context_json, '')) in ('', '{}')
-            order by last_activity_at desc, id desc
-        """
-        args: list[int] = []
-        if limit is not None:
-            query = f"{query} limit ?"
-            args.append(limit)
-        with self._connect() as db:
-            return [
-                WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
-            ]
-
     def create_work_todo(
         self, *, _db: sqlite3.Connection | None = None, **values
     ) -> int:
+        if _db is None:
+            with self._immediate_write_transaction() as db:
+                return self.create_work_todo(_db=db, **values)
         allowed_columns = {
             "project_id",
             "title",
@@ -25086,19 +23947,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             "created_from_update_id",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
-        keys = list(filtered.keys())
-        columns = ", ".join(keys)
-        placeholders = ", ".join("?" for _ in keys)
         with self._optional_connection(_db) as db:
-            cursor = db.execute(
-                f"insert into work_todos ({columns}) values ({placeholders})",
-                [filtered[key] for key in keys],
-            )
-            return int(cursor.lastrowid)
+            return int(insert_business(db, "work_todo", filtered).lastrowid)
 
     def update_work_todo(
         self, todo_id: int, *, _db: sqlite3.Connection | None = None, **values
     ) -> None:
+        if _db is None:
+            with self._immediate_write_transaction() as db:
+                return self.update_work_todo(todo_id, _db=db, **values)
         if not values:
             return
         allowed_columns = {
@@ -25121,32 +23978,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         filtered = self._filter_allowed_values(values, allowed_columns)
         if filtered.get("status") == "done" and "completed_at" not in filtered:
             filtered["completed_at"] = "__CURRENT_TIMESTAMP__"
-        assignments: list[str] = []
-        parameters: list[object] = []
-        for key, value in filtered.items():
-            if key == "completed_at" and value == "__CURRENT_TIMESTAMP__":
-                assignments.append("completed_at=current_timestamp")
-                continue
-            assignments.append(f"{key}=?")
-            parameters.append(value)
+        normalized = {key: value for key, value in filtered.items()
+                      if not (key == "completed_at" and value == "__CURRENT_TIMESTAMP__")}
+        if filtered.get("completed_at") == "__CURRENT_TIMESTAMP__":
+            normalized["completed_at"] = None
         with self._optional_connection(_db) as db:
-            db.execute(
-                f"""
-                update work_todos
-                set {', '.join(assignments)}, updated_at=current_timestamp
-                where id=?
-                """,
-                [*parameters, todo_id],
-            )
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            if normalized.get("completed_at") is None and filtered.get("completed_at") == "__CURRENT_TIMESTAMP__":
+                normalized["completed_at"] = timestamp
+            if normalized:
+                update_business(db, "work_todo", todo_id,
+                                {**normalized, "updated_at": timestamp})
 
     def get_work_todo(
         self, todo_id: int, *, _db: sqlite3.Connection | None = None
     ) -> WorkTodo | None:
         with self._optional_connection(_db) as db:
-            row = db.execute(
-                "select * from work_todos where id=?",
-                (todo_id,),
-            ).fetchone()
+            row = db.execute(f"select * from ({BUSINESS_PROJECTIONS['work_todo']}) where id=?",
+                             (todo_id,)).fetchone()
             return None if row is None else WorkTodo.model_validate(dict(row))
 
     def list_work_todos(
@@ -25156,7 +24005,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         statuses: tuple[str, ...] | None = None,
         due_before: str | None = None,
     ) -> list[WorkTodo]:
-        query = "select * from work_todos"
+        query = f"select * from ({BUSINESS_PROJECTIONS['work_todo']})"
         clauses: list[str] = []
         args: list[str | int] = []
         if project_id is not None:
@@ -25183,7 +24032,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not project_ids:
             return {}
         placeholders = ",".join("?" for _ in project_ids)
-        query = f"select * from work_todos where project_id in ({placeholders})"
+        query = f"select * from ({BUSINESS_PROJECTIONS['work_todo']}) where project_id in ({placeholders})"
         args: list[str | int] = list(project_ids)
         if statuses:
             query = f"{query} and status in ({','.join('?' for _ in statuses)})"
@@ -25210,8 +24059,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in project_statuses)
         query = f"""
             select distinct todos.project_id
-            from work_todos todos
-            join work_projects projects on projects.id=todos.project_id
+            from ({BUSINESS_PROJECTIONS['work_todo']}) todos
+            join ({BUSINESS_PROJECTIONS['work_project']}) projects on projects.id=todos.project_id
             where todos.owner_user_id=?
               and projects.status in ({placeholders})
             order by projects.last_activity_at desc, projects.id desc
@@ -25264,13 +24113,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ):
             filtered["last_dingtalk_done"] = int(bool(filtered["last_dingtalk_done"]))
         keys = list(filtered.keys())
-        columns = ", ".join(keys)
-        placeholders = ", ".join("?" for _ in keys)
         with self._immediate_write_transaction() as db:
             existing = db.execute(
-                """
-                select id
-                from work_todo_dingtalk_links
+                f"""select id from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})
                 where work_todo_id=?
                   and status in ('creating', 'active')
                 order by id
@@ -25281,18 +24126,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if existing is not None:
                 return int(existing["id"])
             try:
-                cursor = db.execute(
-                    f"""
-                    insert into work_todo_dingtalk_links ({columns})
-                    values ({placeholders})
-                    """,
-                    [filtered[key] for key in keys],
+                cursor = insert_sync_action(
+                    db, "work_todo_dingtalk_links",
+                    {key: filtered[key] for key in keys},
                 )
             except sqlite3.IntegrityError:
                 existing = db.execute(
-                    """
-                    select id
-                    from work_todo_dingtalk_links
+                    f"""select id from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})
                     where work_todo_id=?
                       and status in ('creating', 'active')
                     order by id
@@ -25333,17 +24173,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and filtered["last_dingtalk_done"] is not None
         ):
             filtered["last_dingtalk_done"] = int(bool(filtered["last_dingtalk_done"]))
-        assignments = ", ".join(f"{key}=?" for key in filtered)
-        with self._connect() as db:
-            db.execute(
-                f"""
-                update work_todo_dingtalk_links
-                set {assignments},
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                [*filtered.values(), link_id],
-            )
+        with self._immediate_write_transaction() as db:
+            filtered["updated_at"] = db.execute("select current_timestamp").fetchone()[0]
+            update_sync_action(db, "work_todo_dingtalk_links", link_id, filtered)
 
     def get_work_todo_dingtalk_link(
         self,
@@ -25351,7 +24183,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> WorkTodoDingTalkLink | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from work_todo_dingtalk_links where id=?",
+                f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) where id=?",
                 (link_id,),
             ).fetchone()
             return None if row is None else self._normalize_dingtalk_todo_link_row(row)
@@ -25362,9 +24194,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> WorkTodoDingTalkLink | None:
         with self._connect() as db:
             row = db.execute(
-                """
-                select *
-                from work_todo_dingtalk_links
+                f"""
+                select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})
                 where work_todo_id=?
                   and status in ('creating', 'active')
                 order by id
@@ -25383,7 +24214,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[WorkTodoDingTalkLink]:
         if limit <= 0:
             return []
-        query = "select * from work_todo_dingtalk_links"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})"
         clauses: list[str] = []
         args: list[str | int] = []
         if work_todo_id is not None:
@@ -25414,7 +24245,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         statuses: tuple[str, ...] | None = None,
     ) -> list[WorkTodoDingTalkLink]:
-        query = "select * from work_todo_dingtalk_links where work_todo_id=?"
+        query = (f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) "
+                 "where work_todo_id=?")
         args: list[str | int] = [work_todo_id]
         if statuses:
             normalized_statuses = tuple(
@@ -25440,8 +24272,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select *
-                from work_todo_dingtalk_links
+                select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})
                 where work_todo_id in ({placeholders})
                 order by id desc
                 """,
@@ -25463,20 +24294,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         allowed = {"dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count"}
         filtered = self._filter_allowed_values(values, allowed)
         filtered["business_task_id"] = business_task_id
-        columns = ", ".join(filtered)
         with self._immediate_write_transaction() as db:
             active = db.execute(
-                "select id from business_task_dingtalk_links where business_task_id=? "
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) "
+                "where business_task_id=? "
                 "and status in ('creating','active') order by id desc limit 1",
                 (business_task_id,),
             ).fetchone()
             if active is not None:
                 return int(active["id"]), False
-            cursor = db.execute(
-                f"insert into business_task_dingtalk_links ({columns}) values ({', '.join('?' for _ in filtered)})",
-                list(filtered.values()),
+            cursor = insert_sync_action(
+                db, "business_task_dingtalk_links", filtered,
             )
-            return int(cursor.lastrowid), True
+            return int(cursor.lastrowid), cursor.rowcount == 1
 
     def create_business_task_follow_up(
         self, *, business_task_id: int, source_signal_id: int,
@@ -25494,23 +24324,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("Task follow-up requires parseable next_check_at") from exc
         with self._optional_connection(_db) as db:
             signal = db.execute(
-                "select s.conversation_id from business_task_signals s "
-                "join business_task_evidence e on e.signal_id=s.id "
+                f"select s.conversation_id from ({BUSINESS_ACTION_SQL['business_task_signals']}) s "
+                f"join ({BUSINESS_ACTION_SQL['business_task_evidence']}) e on e.signal_id=s.id "
                 "where e.task_id=? and s.id=? limit 1",
                 (business_task_id, source_signal_id),
             ).fetchone()
             if signal is None or signal["conversation_id"] != target_conversation_id:
                 raise ValueError("Task follow-up target must match linked source signal")
-            db.execute(
-                "insert or ignore into business_task_follow_ups "
-                "(business_task_id, source_signal_id, owner_user_id, owner_name, "
-                "target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key) "
-                "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (business_task_id, source_signal_id, owner_user_id, owner_name,
-                 target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key),
+            insert_sync_action(
+                db, "business_task_follow_ups", {
+                    "business_task_id": business_task_id,
+                    "source_signal_id": source_signal_id,
+                    "owner_user_id": owner_user_id,
+                    "owner_name": owner_name,
+                    "target_conversation_id": target_conversation_id,
+                    "target_kind": target_kind,
+                    "question_text": question_text,
+                    "scheduled_at": scheduled_at,
+                    "dedupe_key": dedupe_key,
+                }, ignore=True,
             )
             row = db.execute(
-                "select id from business_task_follow_ups where dedupe_key=?", (dedupe_key,)
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) "
+                "where dedupe_key=?", (dedupe_key,)
             ).fetchone()
             return int(row["id"])
 
@@ -25533,7 +24369,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if due_before is not None:
             clauses.append("datetime(scheduled_at)<=datetime(?)")
             args.append(due_before)
-        query = "select * from business_task_follow_ups"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']})"
         if clauses:
             query += " where " + " and ".join(clauses)
         query += " order by scheduled_at, id limit ? offset ?"
@@ -25546,7 +24382,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[sqlite3.Row]:
         with self._connect() as db:
             return list(db.execute(
-                "select * from business_task_follow_up_send_attempts "
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) "
                 "where draft_id=? order by id", (draft_id,)
             ))
 
@@ -25556,8 +24392,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Quarantine an expired in-flight send; its provider outcome is unknown."""
         with self._immediate_write_transaction() as db:
             rows = list(db.execute(
-                "select f.*, a.idempotency_uuid from business_task_follow_ups f "
-                "join business_task_follow_up_send_attempts a on a.draft_id=f.id "
+                f"select f.*, a.idempotency_uuid from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) f "
+                f"join ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) a on a.draft_id=f.id "
                 "and a.draft_revision=f.revision "
                 "where a.state='sending' and a.lease_until<=?",
                 (now,),
@@ -25567,17 +24403,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     {"error": "send lease expired; provider outcome unknown",
                      "idempotency_uuid": row["idempotency_uuid"]}, ensure_ascii=False,
                 )
-                db.execute(
-                    "update business_task_follow_up_send_attempts set state='unknown', "
-                    "result_json=?, lease_owner='', lease_until='', updated_at=? "
-                    "where draft_id=? and draft_revision=? and state='sending'",
-                    (result_json, now, row["id"], row["revision"]),
+                update_sync_action(
+                    db, "business_task_follow_up_send_attempts", row["id"], {
+                        "state": "unknown", "result_json": result_json,
+                        "lease_owner": "", "lease_until": "", "updated_at": now,
+                    }, where_sql="draft_id=? and draft_revision=? and state='sending'",
+                    parameters=(row["id"], row["revision"]),
                 )
-                db.execute(
-                    "update business_task_follow_ups set status='failed', "
-                    "send_result_json=?, updated_at=? where id=? and revision=? "
-                    "and status in ('draft','approved')",
-                    (result_json, now, row["id"], row["revision"]),
+                update_sync_action(
+                    db, "business_task_follow_ups", row["id"], {
+                        "status": "failed", "send_result_json": result_json,
+                        "updated_at": now,
+                    }, where_sql="revision=? and status in ('draft','approved')",
+                    parameters=(row["revision"],),
                 )
             return rows
 
@@ -25585,11 +24423,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, draft_id: int, revision: int, claim_token: str,
     ) -> bool:
         with self._immediate_write_transaction() as db:
-            return db.execute(
-                "update business_task_follow_up_send_attempts set state='sending', "
-                "updated_at=current_timestamp where draft_id=? and draft_revision=? "
-                "and claim_token=? and state='claimed'",
+            row = db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) "
+                "where draft_id=? and draft_revision=? and claim_token=? and state='claimed'",
                 (draft_id, revision, claim_token),
+            ).fetchone()
+            if row is None:
+                return False
+            return update_sync_action(
+                db, "business_task_follow_up_send_attempts", row["id"], {
+                    "state": "sending",
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                }, where_sql="draft_id=? and draft_revision=? and claim_token=? and state='claimed'",
+                parameters=(draft_id, revision, claim_token),
             ).rowcount == 1
 
     def finish_business_task_follow_up_send(
@@ -25599,21 +24445,38 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if status not in {"sent", "failed", "unknown"}:
             raise ValueError("business Task follow-up send terminal status is invalid")
         with self._immediate_write_transaction() as db:
-            changed = db.execute(
-                "update business_task_follow_up_send_attempts set state=?, result_json=?, "
-                "lease_owner='', lease_until='', updated_at=? where draft_id=? "
-                "and draft_revision=? and claim_token=? and state='sending'",
-                (status, result_json, now, draft_id, revision, claim_token),
-            ).rowcount
+            attempt = db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) "
+                "where draft_id=? and draft_revision=? and claim_token=? and state='sending'",
+                (draft_id, revision, claim_token),
+            ).fetchone()
+            changed = update_sync_action(
+                db, "business_task_follow_up_send_attempts", attempt["id"], {
+                    "state": status, "result_json": result_json,
+                    "lease_owner": "", "lease_until": "", "updated_at": now,
+                }, where_sql="draft_id=? and draft_revision=? and claim_token=? and state='sending'",
+                parameters=(draft_id, revision, claim_token),
+            ).rowcount if attempt is not None else 0
             if changed != 1:
                 return False
-            db.execute(
-                "update business_task_follow_ups set status=?, send_result_json=?, "
-                "sent_at=case when ?='sent' then ? else sent_at end, "
-                "updated_at=? where id=? and revision=? and status in ('draft','approved')",
-                (status if status != "unknown" else "failed", result_json,
-                 status, now, now, draft_id, revision),
-            )
+            follow_up = db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) "
+                "where id=? and revision=? and status in ('draft','approved')",
+                (draft_id, revision),
+            ).fetchone()
+            if follow_up is not None:
+                values = {
+                    "status": status if status != "unknown" else "failed",
+                    "send_result_json": result_json,
+                    "updated_at": now,
+                }
+                if status == "sent":
+                    values["sent_at"] = now
+                update_sync_action(
+                    db, "business_task_follow_ups", draft_id, values,
+                    where_sql="revision=? and status in ('draft','approved')",
+                    parameters=(revision,),
+                )
             return True
 
     def claim_business_task_follow_up_for_send(
@@ -25627,41 +24490,48 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         earlier attempt and its result stay as they were.
         """
         with self._immediate_write_transaction() as db:
-            db.execute(
-                "update business_task_follow_up_send_attempts set state='expired_before_send', "
-                "lease_owner='', updated_at=? where state='claimed' and lease_until<=?",
-                (now, now),
-            )
+            expired = list(db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) "
+                "where state='claimed' and lease_until<=?", (now,),
+            ))
+            for attempt in expired:
+                update_sync_action(
+                    db, "business_task_follow_up_send_attempts", attempt["id"], {
+                        "state": "expired_before_send", "lease_owner": "", "updated_at": now,
+                    }, where_sql="state='claimed' and lease_until<=?", parameters=(now,),
+                )
             row = db.execute(
-                "select f.* from business_task_follow_ups f "
+                f"select f.* from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) f "
                 f'join ({BUSINESS_PROJECTIONS["task"]}) t on t.id=f.business_task_id '
                 "where f.id=? and f.revision=? and f.status in ('draft','approved','failed') "
                 "and t.status in ('open','waiting') and not exists ("
-                "select 1 from business_task_follow_up_send_attempts a "
+                f"select 1 from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) a "
                 "where a.draft_id=f.id and a.state in ('claimed','sending'))",
                 (follow_up_id, expected_revision),
             ).fetchone()
             if row is None:
                 return None
             if db.execute(
-                "select 1 from business_task_follow_up_send_attempts "
+                f"select 1 from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) "
                 "where draft_id=? and draft_revision=? and state<>'expired_before_send'",
                 (follow_up_id, expected_revision),
             ).fetchone() is not None:
-                db.execute(
-                    "update business_task_follow_ups set status='draft', revision=revision+1, "
-                    "updated_at=? where id=?",
-                    (now, follow_up_id),
+                update_sync_action(
+                    db, "business_task_follow_ups", follow_up_id, {
+                        "status": "draft", "revision": row["revision"] + 1, "updated_at": now,
+                    },
                 )
                 row = db.execute(
-                    "select * from business_task_follow_ups where id=?", (follow_up_id,)
+                    f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) where id=?",
+                    (follow_up_id,),
                 ).fetchone()
-            db.execute(
-                "insert into business_task_follow_up_send_attempts "
-                "(draft_id, draft_revision, claim_token, idempotency_uuid, state, "
-                "lease_owner, claimed_at, lease_until) values (?, ?, ?, ?, 'claimed', ?, ?, ?)",
-                (row["id"], row["revision"], claim_token, idempotency_uuid,
-                 lease_owner, now, lease_until),
+            insert_sync_action(
+                db, "business_task_follow_up_send_attempts", {
+                    "draft_id": row["id"], "draft_revision": row["revision"],
+                    "claim_token": claim_token, "idempotency_uuid": idempotency_uuid,
+                    "state": "claimed", "lease_owner": lease_owner,
+                    "claimed_at": now, "lease_until": lease_until,
+                },
             )
             return row
 
@@ -25677,25 +24547,58 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         suggestion), and one that is being sent right now is left to finish.
         """
         with self._optional_connection(_db) as db:
-            return db.execute(
-                "update business_task_follow_ups set status='cancelled', "
-                "revision=revision+1, suppressed_reason=?, updated_at=current_timestamp "
-                "where business_task_id=? and source_signal_id<>? "
-                "and status in ('draft','approved','failed') and not exists ("
-                "select 1 from business_task_follow_up_send_attempts a "
-                "where a.draft_id=business_task_follow_ups.id "
-                "and a.state in ('claimed','sending'))",
-                (reason, business_task_id, keep_source_signal_id),
-            ).rowcount
+            rows = list(db.execute(
+                f"select f.id, f.revision from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) f "
+                "where f.business_task_id=? and f.source_signal_id<>? "
+                "and f.status in ('draft','approved','failed') and not exists ("
+                f"select 1 from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) a "
+                "where a.draft_id=f.id and a.state in ('claimed','sending'))",
+                (business_task_id, keep_source_signal_id),
+            ))
+            now = db.execute("select current_timestamp").fetchone()[0]
+            changed = 0
+            for row in rows:
+                changed += update_sync_action(
+                    db, "business_task_follow_ups", row["id"], {
+                        "status": "cancelled", "revision": row["revision"] + 1,
+                        "suppressed_reason": reason, "updated_at": now,
+                    }, where_sql="business_task_id=? and source_signal_id<>? "
+                    "and status in ('draft','approved','failed') and revision=?",
+                    parameters=(business_task_id, keep_source_signal_id, row["revision"]),
+                ).rowcount
+            return changed
+
+    def complete_business_task_follow_ups(
+        self, *, business_task_id: int, evidence_check_json: str,
+        suppressed_reason: str, _db: sqlite3.Connection | None = None,
+    ) -> int:
+        with self._optional_connection(_db) as db:
+            rows = list(db.execute(
+                f"select id, revision from ({SYNC_ACTION_PROJECTIONS['business_task_follow_ups']}) "
+                "where business_task_id=? and status in ('draft','approved','sent')",
+                (business_task_id,),
+            ))
+            now = db.execute("select current_timestamp").fetchone()[0]
+            return sum(update_sync_action(
+                db, "business_task_follow_ups", row["id"], {
+                    "status": "completed", "evidence_check_json": evidence_check_json,
+                    "suppressed_reason": suppressed_reason, "updated_at": now,
+                }, where_sql="business_task_id=? and status in ('draft','approved','sent') and revision=?",
+                parameters=(business_task_id, row["revision"]),
+            ).rowcount for row in rows)
 
     def get_business_task_dingtalk_link(self, link_id: int):
         with self._connect() as db:
-            return db.execute("select * from business_task_dingtalk_links where id=?", (link_id,)).fetchone()
+            return db.execute(
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) where id=?",
+                (link_id,),
+            ).fetchone()
 
     def list_business_task_dingtalk_links(
         self, *, business_task_id: int | None = None,
         statuses: tuple[str, ...] | None = None,
         limit: int = 200, offset: int = 0,
+        _db: sqlite3.Connection | None = None,
     ) -> list[sqlite3.Row]:
         if limit < 1 or offset < 0:
             raise ValueError("Task TODO link pagination must be non-negative and nonempty")
@@ -25707,25 +24610,44 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if statuses:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)
-        query = "select * from business_task_dingtalk_links"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']})"
         if clauses:
             query += " where " + " and ".join(clauses)
         query += " order by id limit ? offset ?"
         args.extend((limit, offset))
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             return list(db.execute(query, args))
+
+    def get_business_task_dingtalk_link_for_provider_task(
+        self, *, business_task_id: int, dingtalk_task_id: str,
+        statuses: tuple[str, ...], _db: sqlite3.Connection | None = None,
+    ) -> sqlite3.Row | None:
+        if not statuses:
+            return None
+        with self._optional_connection(_db) as db:
+            return db.execute(
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) where business_task_id=? "
+                "and dingtalk_task_id=? and status in (" +
+                ",".join("?" for _ in statuses) + ") order by id desc limit 1",
+                (business_task_id, dingtalk_task_id, *statuses),
+            ).fetchone()
 
     def get_active_business_task_dingtalk_link(self, business_task_id: int):
         with self._connect() as db:
-            return db.execute("select * from business_task_dingtalk_links where business_task_id=? and status in ('creating','active') order by id desc limit 1", (business_task_id,)).fetchone()
+            return db.execute(
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) "
+                "where business_task_id=? and status in ('creating','active') order by id desc limit 1",
+                (business_task_id,),
+            ).fetchone()
 
     def update_business_task_dingtalk_link(self, link_id: int, **values) -> None:
         allowed = {"dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count"}
         filtered = self._filter_allowed_values(values, allowed)
         if not filtered:
             return
-        with self._connect() as db:
-            db.execute(f"update business_task_dingtalk_links set {', '.join(f'{key}=?' for key in filtered)}, updated_at=current_timestamp where id=?", [*filtered.values(), link_id])
+        with self._immediate_write_transaction() as db:
+            filtered["updated_at"] = db.execute("select current_timestamp").fetchone()[0]
+            update_sync_action(db, "business_task_dingtalk_links", link_id, filtered)
 
     def enqueue_business_task_todo_sync_outbox(
         self,
@@ -25741,15 +24663,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         transaction = self._immediate_write_transaction() if _db is None else self._optional_connection(_db)
         with transaction as db:
             if operation == "create" and db.execute(
-                "select 1 from business_task_todo_sync_outbox where business_task_id=? "
+                f"select 1 from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) "
+                "where business_task_id=? "
                 "and operation='create' and status in ('queued','running','unknown','failed') limit 1",
                 (business_task_id,),
             ).fetchone() is not None:
                 return
-            db.execute(
-                "insert or ignore into business_task_todo_sync_outbox "
-                "(operation_key, business_task_id, operation, evidence_json) values (?, ?, ?, ?)",
-                (operation_key, business_task_id, operation, evidence_json),
+            insert_sync_action(
+                db,
+                "business_task_todo_sync_outbox",
+                {
+                    "operation_key": operation_key,
+                    "business_task_id": business_task_id,
+                    "operation": operation,
+                    "evidence_json": evidence_json,
+                },
+                ignore=True,
             )
 
     def list_unknown_business_task_todo_creates_with_receipts(
@@ -25758,8 +24687,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             return list(db.execute(
                 "select o.id as outbox_id, l.id as link_id, l.dingtalk_task_id "
-                "from business_task_todo_sync_outbox o "
-                "join business_task_dingtalk_links l on l.business_task_id=o.business_task_id "
+                f"from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) o "
+                f"join ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) l "
+                "on l.business_task_id=o.business_task_id "
                 "where o.operation='create' and o.status='unknown' "
                 "and l.status in ('creating','active') and trim(l.dingtalk_task_id)<>'' "
                 "order by o.id limit ?",
@@ -25777,38 +24707,52 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("provider read-back is required")
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select business_task_id from business_task_todo_sync_outbox "
+                f"select business_task_id from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) "
                 "where id=? and operation='create' and status='unknown'",
                 (outbox_id,),
             ).fetchone()
             if row is None:
                 return False
             link = db.execute(
-                "select id, dingtalk_task_id from business_task_dingtalk_links "
+                f"select id, dingtalk_task_id from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) "
                 "where business_task_id=? and status in ('creating','active') "
                 "and trim(dingtalk_task_id)<>'' order by id desc limit 1",
                 (row["business_task_id"],),
             ).fetchone()
             if link is None:
                 return False
-            db.execute(
-                "update business_task_dingtalk_links set status='active', last_error='', "
-                "last_dingtalk_done=?, last_dingtalk_payload_json=?, "
-                "last_pull_at=current_timestamp, updated_at=current_timestamp where id=?",
-                (readback.get("done") is True, provider_readback_json, link["id"]),
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            update_sync_action(
+                db, "business_task_dingtalk_links", link["id"], {
+                    "status": "active", "last_error": "",
+                    "last_dingtalk_done": readback.get("done") is True,
+                    "last_dingtalk_payload_json": provider_readback_json,
+                    "last_pull_at": timestamp, "updated_at": timestamp,
+                },
             )
-            return db.execute(
-                "update business_task_todo_sync_outbox set status='completed', error='', "
-                "receipt_json=?, lease_owner='', lease_expires_at='', "
-                "completed_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and status='unknown'",
-                (json.dumps({"link_id": link["id"], "dingtalk_task_id": link["dingtalk_task_id"]}, ensure_ascii=False), outbox_id),
+            return update_sync_action(
+                db,
+                "business_task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": "completed",
+                    "error": "",
+                    "receipt_json": json.dumps(
+                        {"link_id": link["id"], "dingtalk_task_id": link["dingtalk_task_id"]},
+                        ensure_ascii=False,
+                    ),
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "completed_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                where_sql="status='unknown'",
             ).rowcount == 1
 
     def list_business_task_todo_sync_outbox(
         self, *, statuses: tuple[str, ...] | None = None
     ) -> list[sqlite3.Row]:
-        query = "select * from business_task_todo_sync_outbox"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']})"
         args: list[str] = []
         if statuses:
             query += f" where status in ({','.join('?' for _ in statuses)})"
@@ -25819,7 +24763,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_business_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
         with self._connect() as db:
             return db.execute(
-                "select * from business_task_todo_sync_outbox where id=?", (outbox_id,)
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) where id=?",
+                (outbox_id,),
             ).fetchone()
 
     def claim_business_task_todo_sync_outbox(
@@ -25829,23 +24774,44 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=lease_seconds)
         ).strftime("%Y-%m-%d %H:%M:%S")
         with self._agent_run_write_transaction(now) as (db, _):
-            db.execute(
-                "update business_task_todo_sync_outbox set status='unknown', lease_owner='', "
-                "lease_expires_at='', error='receipt_reconciliation_required', updated_at=? "
-                "where status='running' and lease_expires_at<=?", (now, now)
-            )
+            expired = db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) "
+                "where status='running' and lease_expires_at<=?", (now,)
+            ).fetchall()
+            for expired_row in expired:
+                update_sync_action(
+                    db,
+                    "business_task_todo_sync_outbox",
+                    int(expired_row["id"]),
+                    {
+                        "status": "unknown",
+                        "lease_owner": "",
+                        "lease_expires_at": "",
+                        "error": "receipt_reconciliation_required",
+                        "updated_at": now,
+                    },
+                    where_sql="status='running' and lease_expires_at<=?",
+                    parameters=(now,),
+                )
             row = db.execute(
-                "select * from business_task_todo_sync_outbox where "
+                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) where "
                 "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
                 "order by id limit 1", (now,)
             ).fetchone()
             if row is None:
                 return None
-            changed = db.execute(
-                "update business_task_todo_sync_outbox set status='running', lease_owner=?, "
-                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
-                "where id=? and status in ('queued', 'failed')",
-                (owner, lease_until, now, row["id"]),
+            changed = update_sync_action(
+                db,
+                "business_task_todo_sync_outbox",
+                int(row["id"]),
+                {
+                    "status": "running",
+                    "lease_owner": owner,
+                    "lease_expires_at": lease_until,
+                    "attempt_count": int(row["attempt_count"]) + 1,
+                    "updated_at": now,
+                },
+                where_sql="status in ('queued','failed')",
             )
             return row if changed.rowcount == 1 else None
 
@@ -25856,11 +24822,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if status not in {"completed", "skipped", "failed", "unknown"}:
             raise ValueError("business task todo sync terminal status is invalid")
         with self._optional_connection(_db) as db:
-            changed = db.execute(
-                "update business_task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
-                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and status='running' and lease_owner=?",
-                (status, receipt_json, error, outbox_id, owner),
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            changed = update_sync_action(
+                db,
+                "business_task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": status,
+                    "receipt_json": receipt_json,
+                    "error": error,
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "completed_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                where_sql="status='running' and lease_owner=?",
+                parameters=(owner,),
             )
             if changed.rowcount != 1:
                 raise ValueError("business task todo sync receipt ownership lost")
@@ -25871,7 +24848,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> None:
         with self._optional_connection(_db) as db:
             row = db.execute(
-                "select attempt_count from business_task_todo_sync_outbox where id=?", (outbox_id,)
+                f"select attempt_count from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) where id=?",
+                (outbox_id,),
             ).fetchone()
             if row is None:
                 raise ValueError("business task todo sync outbox does not exist")
@@ -25880,11 +24858,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             next_attempt_at = "" if exhausted else (
                 datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
             ).strftime("%Y-%m-%d %H:%M:%S")
-            changed = db.execute(
-                "update business_task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
-                "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
-                ("failed", f"business_task_todo_sync_retry_exhausted:{error}" if exhausted else error,
-                 next_attempt_at, now, outbox_id, owner),
+            changed = update_sync_action(
+                db,
+                "business_task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": "failed",
+                    "error": f"business_task_todo_sync_retry_exhausted:{error}" if exhausted else error,
+                    "next_attempt_at": next_attempt_at,
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "updated_at": now,
+                },
+                where_sql="status='running' and lease_owner=?",
+                parameters=(owner,),
             )
             if changed.rowcount != 1:
                 raise ValueError("business task todo sync receipt ownership lost")
@@ -25897,20 +24884,38 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("provider evidence that the task is absent is required")
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select business_task_id, operation, status, evidence_json from business_task_todo_sync_outbox where id=?",
+                f"select business_task_id, operation, status, evidence_json from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) where id=?",
                 (outbox_id,),
             ).fetchone()
             if row is None or row["status"] != "unknown" or row["operation"] != "create":
                 return False
-            db.execute(
-                "update business_task_dingtalk_links set status='cancelled', last_error=?, updated_at=current_timestamp "
+            links = list(db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) "
                 "where business_task_id=? and status='creating' and trim(dingtalk_task_id)=''",
-                (f"reconciled_absent_after_unknown_create: {evidence}"[:500], row["business_task_id"]),
-            )
-            return db.execute(
-                "update business_task_todo_sync_outbox set status='queued', error='', lease_owner='', "
-                "lease_expires_at='', next_attempt_at='', updated_at=current_timestamp where id=? and status='unknown'",
-                (outbox_id,),
+                (row["business_task_id"],),
+            ))
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            for link in links:
+                update_sync_action(
+                    db, "business_task_dingtalk_links", link["id"], {
+                        "status": "cancelled",
+                        "last_error": f"reconciled_absent_after_unknown_create: {evidence}"[:500],
+                        "updated_at": timestamp,
+                    },
+                )
+            return update_sync_action(
+                db,
+                "business_task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": "queued",
+                    "error": "",
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "next_attempt_at": "",
+                    "updated_at": timestamp,
+                },
+                where_sql="status='unknown'",
             ).rowcount == 1
 
     def enqueue_task_todo_sync_outbox(
@@ -25925,16 +24930,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if operation not in {"create", "complete"}:
             raise ValueError("task todo sync operation is invalid")
         with self._optional_connection(_db) as db:
-            db.execute(
-                "insert or ignore into task_todo_sync_outbox "
-                "(operation_key, work_todo_id, operation, evidence_json) values (?, ?, ?, ?)",
-                (operation_key, work_todo_id, operation, evidence_json),
+            insert_sync_action(
+                db,
+                "task_todo_sync_outbox",
+                {
+                    "operation_key": operation_key,
+                    "work_todo_id": work_todo_id,
+                    "operation": operation,
+                    "evidence_json": evidence_json,
+                },
+                ignore=True,
             )
 
     def list_task_todo_sync_outbox(
         self, *, statuses: tuple[str, ...] | None = None
     ) -> list[sqlite3.Row]:
-        query = "select * from task_todo_sync_outbox"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']})"
         args: list[str] = []
         if statuses:
             query += f" where status in ({','.join('?' for _ in statuses)})"
@@ -25945,7 +24956,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
         with self._connect() as db:
             return db.execute(
-                "select * from task_todo_sync_outbox where id=?", (outbox_id,)
+                f"select * from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) where id=?",
+                (outbox_id,),
             ).fetchone()
 
     def claim_task_todo_sync_outbox(
@@ -25956,25 +24968,45 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             + timedelta(seconds=lease_seconds)
         ).strftime("%Y-%m-%d %H:%M:%S")
         with self._agent_run_write_transaction(now) as (db, _):
-            db.execute(
-                "update task_todo_sync_outbox set status='unknown', lease_owner='', "
-                "lease_expires_at='', error='receipt_reconciliation_required', updated_at=? "
-                "where status='running' and lease_expires_at<=?",
-                (now, now),
-            )
+            expired = db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) "
+                "where status='running' and lease_expires_at<=?", (now,)
+            ).fetchall()
+            for expired_row in expired:
+                update_sync_action(
+                    db,
+                    "task_todo_sync_outbox",
+                    int(expired_row["id"]),
+                    {
+                        "status": "unknown",
+                        "lease_owner": "",
+                        "lease_expires_at": "",
+                        "error": "receipt_reconciliation_required",
+                        "updated_at": now,
+                    },
+                    where_sql="status='running' and lease_expires_at<=?",
+                    parameters=(now,),
+                )
             row = db.execute(
-                "select * from task_todo_sync_outbox where "
+                f"select * from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) where "
                 "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
                 "order by id limit 1",
                 (now,),
             ).fetchone()
             if row is None:
                 return None
-            changed = db.execute(
-                "update task_todo_sync_outbox set status='running', lease_owner=?, "
-                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
-                "where id=? and status in ('queued', 'failed')",
-                (owner, lease_until, now, row["id"]),
+            changed = update_sync_action(
+                db,
+                "task_todo_sync_outbox",
+                int(row["id"]),
+                {
+                    "status": "running",
+                    "lease_owner": owner,
+                    "lease_expires_at": lease_until,
+                    "attempt_count": int(row["attempt_count"]) + 1,
+                    "updated_at": now,
+                },
+                where_sql="status in ('queued','failed')",
             )
             return row if changed.rowcount == 1 else None
 
@@ -25991,11 +25023,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if status not in {"completed", "skipped", "failed", "unknown"}:
             raise ValueError("task todo sync terminal status is invalid")
         with self._optional_connection(_db) as db:
-            changed = db.execute(
-                "update task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
-                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
-                "updated_at=current_timestamp where id=? and status='running' and lease_owner=?",
-                (status, receipt_json, error, outbox_id, owner),
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            changed = update_sync_action(
+                db,
+                "task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": status,
+                    "receipt_json": receipt_json,
+                    "error": error,
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "completed_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                where_sql="status='running' and lease_owner=?",
+                parameters=(owner,),
             )
             if changed.rowcount != 1:
                 raise ValueError("task todo sync receipt ownership lost")
@@ -26021,7 +25064,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 "select work_todo_id, operation, status, evidence_json "
-                "from task_todo_sync_outbox where id=?",
+                f"from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) where id=?",
                 (outbox_id,),
             ).fetchone()
             if row is None or row["status"] != "unknown" or row["operation"] != "create":
@@ -26035,18 +25078,34 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             recorded["provider_absent_reconciliation"] = evidence
             # The link is abandoned, not failed: the requeued create replaces it,
             # and a `failed` link would stay in History after that create lands.
-            db.execute(
-                "update work_todo_dingtalk_links set status='cancelled', last_error=?, "
-                "updated_at=current_timestamp where work_todo_id=? and status='creating' "
-                "and trim(dingtalk_task_id)=''",
-                (f"reconciled_absent_after_unknown_create: {evidence}"[:500], row["work_todo_id"]),
-            )
-            changed = db.execute(
-                "update task_todo_sync_outbox set status='queued', error='', "
-                "lease_owner='', lease_expires_at='', next_attempt_at='', "
-                "evidence_json=?, updated_at=current_timestamp "
-                "where id=? and status='unknown'",
-                (json.dumps(recorded, ensure_ascii=False, sort_keys=True), outbox_id),
+            links = list(db.execute(
+                f"select id from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) "
+                "where work_todo_id=? and status='creating' and trim(dingtalk_task_id)=''",
+                (row["work_todo_id"],),
+            ))
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            for link in links:
+                update_sync_action(
+                    db, "work_todo_dingtalk_links", link["id"], {
+                        "status": "cancelled",
+                        "last_error": f"reconciled_absent_after_unknown_create: {evidence}"[:500],
+                        "updated_at": timestamp,
+                    },
+                )
+            changed = update_sync_action(
+                db,
+                "task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": "queued",
+                    "error": "",
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "next_attempt_at": "",
+                    "evidence_json": json.dumps(recorded, ensure_ascii=False, sort_keys=True),
+                    "updated_at": timestamp,
+                },
+                where_sql="status='unknown'",
             )
             return changed.rowcount == 1
 
@@ -26071,36 +25130,44 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("provider read-back is required")
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                "select work_todo_id, operation, status from task_todo_sync_outbox where id=?",
+                f"select work_todo_id, operation, status from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) where id=?",
                 (outbox_id,),
             ).fetchone()
             if row is None or row["status"] != "unknown" or row["operation"] != "create":
                 return False
             link = db.execute(
-                "select id, dingtalk_task_id from work_todo_dingtalk_links "
+                f"select id, dingtalk_task_id from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) "
                 "where work_todo_id=? and status='creating' and trim(dingtalk_task_id)<>'' "
                 "order by id desc limit 1",
                 (row["work_todo_id"],),
             ).fetchone()
             if link is None:
                 return False
-            db.execute(
-                "update work_todo_dingtalk_links set status='active', last_error='', "
-                "last_dingtalk_payload_json=?, last_pull_at=current_timestamp, "
-                "updated_at=current_timestamp where id=?",
-                (json.dumps(readback, ensure_ascii=False), link["id"]),
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            update_sync_action(
+                db, "work_todo_dingtalk_links", link["id"], {
+                    "status": "active", "last_error": "",
+                    "last_dingtalk_payload_json": json.dumps(readback, ensure_ascii=False),
+                    "last_pull_at": timestamp, "updated_at": timestamp,
+                },
             )
-            changed = db.execute(
-                "update task_todo_sync_outbox set status='completed', error='', receipt_json=?, "
-                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
-                "updated_at=current_timestamp where id=? and status='unknown'",
-                (
-                    json.dumps(
+            changed = update_sync_action(
+                db,
+                "task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": "completed",
+                    "error": "",
+                    "receipt_json": json.dumps(
                         {"link_id": link["id"], "dingtalk_task_id": link["dingtalk_task_id"]},
                         ensure_ascii=False,
                     ),
-                    outbox_id,
-                ),
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "completed_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                where_sql="status='unknown'",
             )
             return changed.rowcount == 1
 
@@ -26114,7 +25181,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         _db: sqlite3.Connection | None = None,
     ) -> None:
         with self._optional_connection(_db) as db:
-            row = db.execute("select attempt_count from task_todo_sync_outbox where id=?", (outbox_id,)).fetchone()
+            row = db.execute(
+                f"select attempt_count from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) where id=?",
+                (outbox_id,),
+            ).fetchone()
             if row is None:
                 raise ValueError("task todo sync outbox does not exist")
             attempts = int(row["attempt_count"])
@@ -26122,10 +25192,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             next_attempt_at = "" if exhausted else (
                 datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
             ).strftime("%Y-%m-%d %H:%M:%S")
-            changed = db.execute(
-                "update task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
-                "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
-                ("failed", f"task_todo_sync_retry_exhausted:{error}" if exhausted else error, next_attempt_at, now, outbox_id, owner),
+            changed = update_sync_action(
+                db,
+                "task_todo_sync_outbox",
+                outbox_id,
+                {
+                    "status": "failed",
+                    "error": f"task_todo_sync_retry_exhausted:{error}" if exhausted else error,
+                    "next_attempt_at": next_attempt_at,
+                    "lease_owner": "",
+                    "lease_expires_at": "",
+                    "updated_at": now,
+                },
+                where_sql="status='running' and lease_owner=?",
+                parameters=(owner,),
             )
             if changed.rowcount != 1:
                 raise ValueError("task todo sync receipt ownership lost")
@@ -26143,23 +25223,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             "confidence",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
-        keys = list(filtered.keys())
-        columns = ", ".join(keys)
-        placeholders = ", ".join("?" for _ in keys)
         with self._optional_connection(_db) as db:
-            cursor = db.execute(
-                f"insert into work_updates ({columns}) values ({placeholders})",
-                [filtered[key] for key in keys],
-            )
-            db.execute(
-                """
-                update work_projects
-                set updated_at=current_timestamp,
-                    last_activity_at=current_timestamp
-                where id=?
-                """,
-                (filtered["project_id"],),
-            )
+            cursor = insert_sync_action(db, "work_updates", filtered)
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            update_business(db, "work_project", filtered["project_id"], {
+                "updated_at": timestamp,
+                "last_activity_at": timestamp,
+            })
             return int(cursor.lastrowid)
 
     def has_work_update(
@@ -26171,9 +25241,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> bool:
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select 1
-                from work_updates
+                from ({SYNC_ACTION_PROJECTIONS['work_updates']})
                 where project_id=?
                   and source_type=?
                   and source_ref=?
@@ -26186,9 +25256,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_work_updates(self, project_id: int, limit: int = 50) -> list[WorkUpdate]:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from work_updates
+                from ({SYNC_ACTION_PROJECTIONS['work_updates']})
                 where project_id=?
                 order by id desc
                 limit ?
@@ -26200,6 +25270,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     @staticmethod
     def _todo_evidence_candidate_row(row: sqlite3.Row) -> TodoEvidenceCandidate:
         return TodoEvidenceCandidate.model_validate(dict(row))
+
+    @contextmanager
+    def _todo_evidence_candidate_transaction(
+        self, db: sqlite3.Connection | None
+    ) -> Iterator[sqlite3.Connection]:
+        if db is None:
+            with self.business_task_transaction() as transaction:
+                yield transaction
+        else:
+            yield db
 
     @staticmethod
     def _todo_evidence_candidate_dedupe_key(
@@ -26243,58 +25323,49 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             source_type=normalized_source_type,
             source_ref=normalized_source_ref,
         )
-        with self._optional_connection(_db) as db:
-            db.execute(
-                """
-                insert into todo_evidence_candidates (
-                    project_id,
-                    todo_id,
-                    source_type,
-                    source_ref,
-                    source_created_at,
-                    evidence_text,
-                    reason,
-                    confidence,
-                    status,
-                    dedupe_key
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
-                on conflict(dedupe_key) do update set
-                    project_id=excluded.project_id,
-                    todo_id=excluded.todo_id,
-                    source_type=excluded.source_type,
-                    source_ref=excluded.source_ref,
-                    source_created_at=excluded.source_created_at,
-                    evidence_text=excluded.evidence_text,
-                    reason=excluded.reason,
-                    confidence=excluded.confidence,
-                    status=case
-                        when todo_evidence_candidates.status='error'
-                            then 'candidate'
-                        else todo_evidence_candidates.status
-                    end,
-                    updated_at=current_timestamp
-                """,
-                (
-                    project_id,
-                    todo_id,
-                    normalized_source_type,
-                    normalized_source_ref,
-                    source_created_at,
-                    evidence_text,
-                    reason,
-                    float(confidence),
-                    dedupe,
-                ),
-            )
+        with self._todo_evidence_candidate_transaction(_db) as db:
             row = db.execute(
-                """
-                select *
-                from todo_evidence_candidates
-                where dedupe_key=?
-                """,
+                f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
+                "where dedupe_key=?",
                 (dedupe,),
             ).fetchone()
+            if row is None:
+                insert_business(db, "todo_evidence_candidate", {
+                    "project_id": project_id,
+                    "todo_id": todo_id,
+                    "source_type": normalized_source_type,
+                    "source_ref": normalized_source_ref,
+                    "source_created_at": source_created_at,
+                    "evidence_text": evidence_text,
+                    "reason": reason,
+                    "confidence": float(confidence),
+                    "status": "candidate",
+                    "dedupe_key": dedupe,
+                })
+                row = db.execute(
+                    f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
+                    "where dedupe_key=?",
+                    (dedupe,),
+                ).fetchone()
+            else:
+                timestamp = db.execute("select current_timestamp").fetchone()[0]
+                update_business(db, "todo_evidence_candidate", row["id"], {
+                    "project_id": project_id,
+                    "todo_id": todo_id,
+                    "source_type": normalized_source_type,
+                    "source_ref": normalized_source_ref,
+                    "source_created_at": source_created_at,
+                    "evidence_text": evidence_text,
+                    "reason": reason,
+                    "confidence": float(confidence),
+                    "status": "candidate" if row["status"] == "error" else row["status"],
+                    "updated_at": timestamp,
+                })
+                row = db.execute(
+                    f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
+                    "where dedupe_key=?",
+                    (dedupe,),
+                ).fetchone()
             if row is None:
                 raise RuntimeError("todo evidence candidate upsert failed")
             return self._todo_evidence_candidate_row(row)
@@ -26309,7 +25380,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return None
         with self._optional_connection(_db) as db:
             row = db.execute(
-                "select * from todo_evidence_candidates where id=?",
+                f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) where id=?",
                 (candidate_id,),
             ).fetchone()
             return None if row is None else self._todo_evidence_candidate_row(row)
@@ -26324,13 +25395,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return None
         with self._optional_connection(_db) as db:
             row = db.execute(
-                """
-                select *
-                from todo_evidence_candidates
-                where work_summary_input_id=?
-                order by id desc
-                limit 1
-                """,
+                f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
+                "where work_summary_input_id=? order by id desc limit 1",
                 (work_summary_input_id,),
             ).fetchone()
             return None if row is None else self._todo_evidence_candidate_row(row)
@@ -26345,7 +25411,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[TodoEvidenceCandidate]:
         if limit <= 0:
             return []
-        query = "select * from todo_evidence_candidates"
+        query = f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']})"
         clauses: list[str] = []
         args: list[str | int] = []
         if project_id is not None:
@@ -26375,19 +25441,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         _db: sqlite3.Connection | None = None,
     ) -> bool:
-        with self._optional_connection(_db) as db:
-            cursor = db.execute(
-                """
-                update todo_evidence_candidates
-                set status='enqueued',
-                    work_summary_input_id=?,
-                    updated_at=current_timestamp
-                where id=?
-                  and status in ('candidate', 'enqueued', 'error')
-                """,
-                (work_summary_input_id, candidate_id),
-            )
-            return cursor.rowcount == 1
+        with self._todo_evidence_candidate_transaction(_db) as db:
+            row = db.execute(
+                f"select status from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) where id=?",
+                (candidate_id,),
+            ).fetchone()
+            if row is None or row["status"] not in ("candidate", "enqueued", "error"):
+                return False
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            return update_business(db, "todo_evidence_candidate", candidate_id, {
+                "status": "enqueued",
+                "work_summary_input_id": work_summary_input_id,
+                "updated_at": timestamp,
+            }) == 1
 
     def mark_todo_evidence_candidate(
         self,
@@ -26398,18 +25464,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         _db: sqlite3.Connection | None = None,
     ) -> bool:
         normalized_status = TodoEvidenceCandidateStatus(status).value
-        with self._optional_connection(_db) as db:
-            cursor = db.execute(
-                """
-                update todo_evidence_candidates
-                set status=?,
-                    decision_json=?,
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (normalized_status, decision_json or "{}", candidate_id),
-            )
-            return cursor.rowcount == 1
+        with self._todo_evidence_candidate_transaction(_db) as db:
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            return update_business(db, "todo_evidence_candidate", candidate_id, {
+                "status": normalized_status,
+                "decision_json": decision_json or "{}",
+                "updated_at": timestamp,
+            }) == 1
 
     def record_task_agent_run(
         self,
@@ -26913,15 +25974,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         filtered = self._filter_allowed_values(values, allowed_columns)
         filtered.setdefault("dedupe_key", self._follow_up_dedupe_key(filtered))
         keys = list(filtered.keys())
-        columns = ", ".join(keys)
-        placeholders = ", ".join("?" for _ in keys)
         with self._optional_connection(_db) as db:
             dedupe_key = str(filtered.get("dedupe_key") or "").strip()
             if dedupe_key:
                 existing = db.execute(
-                    """
-                    select id
-                    from follow_up_drafts
+                    f"""select id from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
                     where dedupe_key=?
                       and status in ('draft', 'approved', 'sent', 'completed', 'skipped', 'cancelled')
                     order by id desc
@@ -26931,9 +25988,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ).fetchone()
                 if existing is not None:
                     return int(existing["id"])
-            cursor = db.execute(
-                f"insert into follow_up_drafts ({columns}) values ({placeholders})",
-                [filtered[key] for key in keys],
+            cursor = insert_sync_action(
+                db, "follow_up_drafts", {key: filtered[key] for key in keys},
             )
             return int(cursor.lastrowid)
 
@@ -26971,38 +26027,39 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         filtered = self._filter_allowed_values(values, allowed_columns)
         if filtered.get("status") == "sent" and "sent_at" not in filtered:
             filtered["sent_at"] = "__CURRENT_TIMESTAMP__"
-        assignments = []
-        parameters = []
-        for key, value in filtered.items():
-            if key == "sent_at" and value == "__CURRENT_TIMESTAMP__":
-                assignments.append("sent_at=current_timestamp")
-                continue
-            assignments.append(f"{key}=?")
-            parameters.append(value)
         with self._optional_connection(_db) as db:
-            cursor = db.execute(
-                f"""
-                update follow_up_drafts
-                set {', '.join(assignments)},
-                    revision=revision+1,
-                    send_claim_revision=0,
-                    send_claim_token='',
-                    send_claim_idempotency_uuid='',
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                [*parameters, draft_id],
+            timestamp = db.execute("select current_timestamp").fetchone()[0]
+            filtered = {
+                key: timestamp if key == "sent_at" and value == "__CURRENT_TIMESTAMP__" else value
+                for key, value in filtered.items()
+            }
+            current = db.execute(
+                f"select revision from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where id=?",
+                (draft_id,),
+            ).fetchone()
+            if current is None:
+                return
+            cursor = update_sync_action(
+                db, "follow_up_drafts", draft_id, {
+                    **filtered,
+                    "revision": current["revision"] + 1,
+                    "send_claim_revision": 0,
+                    "send_claim_token": "",
+                    "send_claim_idempotency_uuid": "",
+                    "updated_at": timestamp,
+                },
             )
             if cursor.rowcount == 1:
-                db.execute(
-                    """
-                    update follow_up_send_attempts
-                    set state='invalidated', updated_at=current_timestamp
-                    where draft_id=?
-                      and state='claimed'
-                    """,
-                    (draft_id,),
-                )
+                attempts = list(db.execute(
+                    f"select id from ({SYNC_ACTION_PROJECTIONS['follow_up_send_attempts']}) "
+                    "where draft_id=? and state='claimed'", (draft_id,),
+                ))
+                for attempt in attempts:
+                    update_sync_action(
+                        db, "follow_up_send_attempts", attempt["id"],
+                        {"state": "invalidated", "updated_at": timestamp},
+                        where_sql="draft_id=? and state='claimed'", parameters=(draft_id,),
+                    )
 
     def get_follow_up_draft(
         self, draft_id: int, *, _db: sqlite3.Connection | None = None
@@ -27011,7 +26068,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return None
         with self._optional_connection(_db) as db:
             row = db.execute(
-                "select * from follow_up_drafts where id=?",
+                f"select * from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where id=?",
                 (draft_id,),
             ).fetchone()
             return None if row is None else FollowUpDraft.model_validate(dict(row))
@@ -27025,7 +26082,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         due_before: str | None = None,
         limit: int = 200,
     ) -> list[FollowUpDraft]:
-        query = "select * from follow_up_drafts"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})"
         clauses: list[str] = []
         args: list[str | int] = []
         if project_id is not None:
@@ -27057,7 +26114,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         statuses: tuple[str, ...] = ("draft", "approved"),
         _db: sqlite3.Connection | None = None,
     ) -> list[FollowUpDraft]:
-        query = "select * from follow_up_drafts where todo_id=?"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where todo_id=?"
         args: list[str | int] = [todo_id]
         if statuses:
             query = f"{query} and status in ({','.join('?' for _ in statuses)})"
@@ -27078,7 +26135,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not todo_ids:
             return {}
         placeholders = ",".join("?" for _ in todo_ids)
-        query = f"select * from follow_up_drafts where todo_id in ({placeholders})"
+        query = f"select * from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where todo_id in ({placeholders})"
         args: list[str | int] = list(todo_ids)
         if statuses:
             query = f"{query} and status in ({','.join('?' for _ in statuses)})"
@@ -27182,9 +26239,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     f.evidence_check_json,
                     f.risk_check_json,
                     f.send_result_json
-                from follow_up_drafts f
-                left join work_projects p on p.id=f.project_id
-                left join work_todos t on t.id=f.todo_id
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) f
+                left join ({BUSINESS_PROJECTIONS['work_project']}) p on p.id=f.project_id
+                left join ({BUSINESS_PROJECTIONS['work_todo']}) t on t.id=f.todo_id
                 where {' and '.join(clauses)}
                 order by
                     case
@@ -27227,9 +26284,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return 0
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select count(*) as count
-                from follow_up_drafts
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
                 where status='sent'
                   and owner_user_id=?
                   and sent_at != ''
@@ -27248,9 +26305,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return 0
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select count(*) as count
-                from follow_up_drafts
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
                 where status='sent'
                   and target_conversation_id=?
                   and sent_at != ''
@@ -27306,7 +26363,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select *
-                from follow_up_drafts
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
                 where {' and '.join(clauses)}
                 order by sent_at desc, id desc
                 limit ?
@@ -27323,9 +26380,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[FollowUpDraft]:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from follow_up_drafts
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
                 where status='sent'
                   and sent_at != ''
                   and datetime(sent_at) >= datetime(?)
@@ -27341,7 +26398,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
                 from (
                     select
@@ -27377,9 +26434,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         '' as target_conversation_id,
                         links.dingtalk_task_id as external_id,
                         links.last_error as detail
-                    from work_todo_dingtalk_links links
-                    left join work_todos todos on todos.id=links.work_todo_id
-                    left join work_projects projects on projects.id=todos.project_id
+                    from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) links
+                    left join ({BUSINESS_PROJECTIONS['work_todo']}) todos on todos.id=links.work_todo_id
+                    left join ({BUSINESS_PROJECTIONS['work_project']}) projects on projects.id=todos.project_id
                     where trim(coalesce(links.dingtalk_task_id, '')) != ''
                     union all
                     select
@@ -27407,9 +26464,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         drafts.target_conversation_id as target_conversation_id,
                         '' as external_id,
                         drafts.send_result_json as detail
-                    from follow_up_drafts drafts
-                    left join work_todos todos on todos.id=drafts.todo_id
-                    left join work_projects projects on projects.id=drafts.project_id
+                    from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) drafts
+                    left join ({BUSINESS_PROJECTIONS['work_todo']}) todos on todos.id=drafts.todo_id
+                    left join ({BUSINESS_PROJECTIONS['work_project']}) projects on projects.id=drafts.project_id
                     where drafts.status='sent'
                       and trim(coalesce(drafts.sent_at, '')) != ''
                 )
@@ -27456,8 +26513,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Whether an incident of this kind is already open for this source."""
         with self._connect() as db:
             row = db.execute(
-                """
-                select 1 from errors
+                f"""
+                select 1 from ({ERROR_SQL})
                 where conversation_id=? and kind=? and coalesce(resolved_at, '')=''
                 limit 1
                 """,
@@ -27514,21 +26571,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         detail: str,
     ) -> None:
         with self._immediate_write_transaction() as db:
-            db.execute(
-                """
-                insert into errors (conversation_id, message_id, kind, detail)
-                values (?, ?, ?, ?)
-                """,
-                (conversation_id, message_id, kind, detail),
-            )
+            insert_error_action(db, {"conversation_id": conversation_id,
+                                     "message_id": message_id, "kind": kind,
+                                     "detail": detail})
 
     def list_errors(
         self, limit: int | None = None, offset: int = 0
     ) -> list[ReplyError]:
         with self._connect() as db:
-            query = """
+            query = f"""
                 select *
-                from errors
+                from ({ERROR_SQL})
                 order by id desc
             """
             args: tuple[int, ...] = ()
@@ -27541,7 +26594,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_error(self, error_id: int) -> ReplyError | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from errors where id=?",
+                f"select * from ({ERROR_SQL}) where id=?",
                 (error_id,),
             ).fetchone()
             return None if row is None else ReplyError.model_validate(dict(row))
@@ -27549,9 +26602,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_errors_after(self, error_id: int) -> list[ReplyError]:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from errors
+                from ({ERROR_SQL})
                 where id > ?
                 order by id asc
                 """,
@@ -27570,11 +26623,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 f"""
-                update errors
-                set resolved_at=current_timestamp,
-                    resolution=?
-                where id in ({placeholders})
-                  and resolved_at=''
+                update actions
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and cast(legacy_key as integer) in ({placeholders})
+                  and error_resolved_at=''
                 """,
                 (resolution.strip(), *unique_ids),
             )
@@ -27591,8 +26643,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         cutoff = instant.astimezone(timezone.utc).replace(microsecond=0).isoformat()
         with self._connect() as db:
             eligible = db.execute(
-                """
-                select 1 from errors
+                f"""
+                select 1 from ({ERROR_SQL})
                 where kind=? and coalesce(resolved_at, '')=''
                   and julianday(created_at) < julianday(?) limit 1
                 """,
@@ -27602,10 +26654,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return 0
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                """
-                update errors
-                set resolved_at=current_timestamp, resolution=?
-                where kind=? and coalesce(resolved_at, '')=''
+                f"""
+                update actions
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and error_kind=? and coalesce(error_resolved_at, '')=''
                   and julianday(created_at) < julianday(?)
                 """,
                 (
@@ -27631,12 +26683,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("error resolution must be non-empty")
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                """
-                update errors
-                set resolved_at=current_timestamp,
-                    resolution=?
-                where replace(kind, '-', '_')=replace(?, '-', '_')
-                  and coalesce(resolved_at, '')=''
+                f"""
+                update actions
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and replace(error_kind, '-', '_')=replace(?, '-', '_')
+                  and coalesce(error_resolved_at, '')=''
                 """,
                 (normalized_resolution, normalized_kind),
             )
@@ -27661,13 +26712,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("error resolution must be non-empty")
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                """
-                update errors
-                set resolved_at=current_timestamp,
-                    resolution=?
-                where conversation_id=?
-                  and replace(kind, '-', '_')=replace(?, '-', '_')
-                  and coalesce(resolved_at, '')=''
+                f"""
+                update actions
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and error_conversation_id=?
+                  and replace(error_kind, '-', '_')=replace(?, '-', '_')
+                  and coalesce(error_resolved_at, '')=''
                 """,
                 (
                     normalized_resolution,
@@ -27687,14 +26737,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._connect() as db:
             cursor = db.execute(
-                """
-                update errors
-                set resolved_at=current_timestamp,
-                    resolution='recovered by successful WeChat reader cycle'
-                where coalesce(resolved_at, '')=''
-                  and conversation_id='wechat'
-                  and kind='wechat_reader_unavailable'
-                """
+                f"""
+                update actions
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(error_resolved_at, '')=''
+                  and error_conversation_id='wechat'
+                  and error_kind='wechat_reader_unavailable'
+                """,
+                ("recovered by successful WeChat reader cycle",),
             )
             return cursor.rowcount
 
@@ -27703,27 +26753,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 f"""
-                update errors as error_event
-                set resolved_at=current_timestamp,
-                    resolution='recovered by later successful scheduled service command'
-                where coalesce(error_event.resolved_at, '')=''
-                  and error_event.kind='scheduled_task_service_command_failed'
-                  and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
+                update actions as error_event
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(error_event.error_resolved_at, '')=''
+                  and error_event.error_kind='scheduled_task_service_command_failed'
+                  and coalesce(error_event.error_conversation_id, '') like 'scheduled-task:%'
                   and exists (
                       select 1
                       from ({SCHEDULED_RUN_SQL}) as run
                       where run.scheduled_task_id=cast(
-                            substr(error_event.conversation_id, length('scheduled-task:') + 1)
+                            substr(error_event.error_conversation_id, length('scheduled-task:') + 1)
                             as integer
                         )
-                        and error_event.conversation_id =
+                        and error_event.error_conversation_id =
                             'scheduled-task:' || cast(run.scheduled_task_id as text)
                         and run.dispatch_status='dispatched'
                         and run.execution_kind='service_command'
                         and coalesce(run.dispatched_at, '')<>''
                         and datetime(run.dispatched_at) >= datetime(error_event.created_at)
                   )
-                """
+                """,
+                ("recovered by later successful scheduled service command",),
             )
             return cursor.rowcount
 
@@ -27732,25 +26782,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 f"""
-                update errors as error_event
-                set resolved_at=current_timestamp,
-                    resolution='recovered by later successful scheduled reply task'
-                where coalesce(error_event.resolved_at, '')=''
-                  and error_event.kind='scheduled_task_execution_unavailable'
-                  and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
+                update actions as error_event
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(error_event.error_resolved_at, '')=''
+                  and error_event.error_kind='scheduled_task_execution_unavailable'
+                  and coalesce(error_event.error_conversation_id, '') like 'scheduled-task:%'
                   and exists (
                       select 1
                       from ({SCHEDULED_RUN_SQL}) as run
                       join ({REPLY_TASK_SQL}) as task
                         on run.execution_kind='reply_task'
                        and cast(run.execution_id as integer)=task.id
-                      where error_event.conversation_id =
+                      where error_event.error_conversation_id =
                             'scheduled-task:' || cast(run.scheduled_task_id as text)
                         and run.dispatch_status='dispatched'
                         and lower(task.status) in ('done', 'skipped')
                         and datetime(task.updated_at) >= datetime(error_event.created_at)
                   )
-                """
+                """,
+                ("recovered by later successful scheduled reply task",),
             )
             return cursor.rowcount
 
@@ -27758,13 +26808,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close startup seed incidents after a later full seed succeeds."""
         with self._connect() as db:
             cursor = db.execute(
-                """
-                update errors
-                set resolved_at=current_timestamp,
-                    resolution='recovered by later successful scheduled task seed'
-                where coalesce(resolved_at, '')=''
-                  and kind='scheduled_task_seed_failed'
-                """
+                f"""
+                update actions
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(error_resolved_at, '')=''
+                  and error_kind='scheduled_task_seed_failed'
+                """,
+                ("recovered by later successful scheduled task seed",),
             )
             return cursor.rowcount
 
@@ -27874,12 +26924,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("redacted detail and resolution must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
-                """
-                update errors
-                set detail=?,
-                    resolved_at=current_timestamp,
-                    resolution=?
-                where id=? and coalesce(resolved_at, '')=''
+                f"""
+                update actions
+                set {ERROR_REDACT_SET_SQL}
+                where record_type='errors' and cast(legacy_key as integer)=? and coalesce(error_resolved_at, '')=''
                 """,
                 (detail.strip(), resolution.strip(), error_id),
             )
@@ -27900,22 +26948,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 f"""
-                update errors as error_event
-                set resolved_at=current_timestamp,
-                    resolution='recovered by later terminal reply attempt'
-                where coalesce(error_event.resolved_at, '')=''
-                  and coalesce(error_event.conversation_id, '')<>''
-                  and coalesce(error_event.message_id, '')<>''
+                update actions as error_event
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(error_event.error_resolved_at, '')=''
+                  and coalesce(error_event.error_conversation_id, '')<>''
+                  and coalesce(error_event.error_message_id, '')<>''
                   and exists (
                     select 1
                     from ({REPLY_ATTEMPT_COMMON_SQL}) as recovery
-                    where recovery.conversation_id=error_event.conversation_id
-                      and recovery.trigger_message_id=error_event.message_id
+                    where recovery.conversation_id=error_event.error_conversation_id
+                      and recovery.trigger_message_id=error_event.error_message_id
                       and datetime(recovery.updated_at) >= datetime(error_event.created_at)
                       and lower(recovery.send_status) in ({placeholders})
                   )
                 """,
-                terminal_statuses,
+                ("recovered by later terminal reply attempt", *terminal_statuses),
             )
             return cursor.rowcount
 
@@ -27929,21 +26976,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 f"""
-                update errors as error_event
-                set resolved_at=current_timestamp,
-                    resolution='recovered by completed reply task'
-                where coalesce(error_event.resolved_at, '')=''
-                  and coalesce(error_event.conversation_id, '')<>''
-                  and coalesce(error_event.message_id, '')<>''
+                update actions as error_event
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(error_event.error_resolved_at, '')=''
+                  and coalesce(error_event.error_conversation_id, '')<>''
+                  and coalesce(error_event.error_message_id, '')<>''
                   and exists (
                     select 1
                     from ({REPLY_TASK_SQL}) task
-                    where task.conversation_id=error_event.conversation_id
-                      and task.trigger_message_id=error_event.message_id
+                    where task.conversation_id=error_event.error_conversation_id
+                      and task.trigger_message_id=error_event.error_message_id
                       and lower(task.status)='done'
                       and datetime(task.updated_at) >= datetime(error_event.created_at)
                   )
-                """
+                """,
+                ("recovered by completed reply task",),
             )
             return cursor.rowcount
 
@@ -27952,21 +26999,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 f"""
-                update errors as incident
-                set resolved_at=current_timestamp,
-                    resolution='recovered by terminal work summary input'
-                where coalesce(incident.resolved_at, '')=''
-                  and incident.kind='task_agent'
-                  and incident.conversation_id='work_summary_input'
+                update actions as incident
+                set {ERROR_RESOLVE_PARAM_SET_SQL}
+                where record_type='errors' and coalesce(incident.error_resolved_at, '')=''
+                  and incident.error_kind='task_agent'
+                  and incident.error_conversation_id='work_summary_input'
                   and exists (
                       select 1
                       from ({WORK_SUMMARY_INPUT_SQL}) as work_input
-                      where cast(work_input.id as text)=incident.message_id
+                      where cast(work_input.id as text)=incident.error_message_id
                         and lower(work_input.status) in ('done', 'skipped')
                         and datetime(work_input.updated_at) >=
                             datetime(incident.created_at)
                   )
-                """
+                """,
+                ("recovered by terminal work summary input",),
             )
             return cursor.rowcount
 
@@ -28034,13 +27081,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def max_error_id(self) -> int:
         with self._connect() as db:
             row = db.execute(
-                "select coalesce(max(id), 0) as max_id from errors"
+                f"select coalesce(max(id), 0) as max_id from ({ERROR_SQL})"
             ).fetchone()
             return int(row["max_id"])
 
     def count_errors(self) -> int:
         with self._connect() as db:
-            row = db.execute("select count(*) as count from errors").fetchone()
+            row = db.execute(f"select count(*) as count from ({ERROR_SQL})").fetchone()
             return int(row["count"])
 
     def list_operation_logs(
@@ -28209,15 +27256,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ),
             "todo_evidence_candidates": (
                 "select id as source_id, updated_at as occurred_at "
-                "from todo_evidence_candidates where status='failed'"
+                f"from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
+                "where status='failed'"
             ),
             "follow_up_drafts": (
                 "select id as source_id, coalesce(nullif(sent_at, ''), created_at) as occurred_at "
-                "from follow_up_drafts where status='failed'"
+                f"from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where status='failed'"
             ),
             "work_todo_dingtalk_links": (
                 "select id as source_id, updated_at as occurred_at "
-                "from work_todo_dingtalk_links where status='failed'"
+                f"from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) where status='failed'"
             ),
             "scheduled_task_runs": f"""
                 select runs.id as source_id,
@@ -28241,7 +27289,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 select actions.rowid as source_id,
                        coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at
                 from ({email_action_projection('email_actions', include_rowid=True)}) as actions
-                join email_classifications as messages
+                join ({email_classification_projection()}) as messages
                   on messages.id=actions.classification_id
                 where actions.status='failed'
                   and actions.action_plan_id=coalesce(messages.current_action_plan_id, '')
@@ -28408,7 +27456,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from errors
+                from ({ERROR_SQL})
                 union all
                 select
                     'reply-task:' || id as id,
@@ -28616,7 +27664,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- Only the latest delivery for this object and its
                         -- owning task generation supplies its send outcome.
                         when channel='wechat' and send_status='failed' and exists (
-                            select 1 from wechat_deliveries as delivery
+                            select 1 from ({WECHAT_DELIVERY_SQL}) as delivery
                             join ({REPLY_TASK_CURRENT_SQL}) as delivery_task
                               on delivery_task.id=delivery.reply_task_id
                             where delivery_task.channel=reply_attempts.channel
@@ -28626,7 +27674,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               and delivery.execution_generation=delivery_task.execution_generation
                               and delivery.status in ('failed', 'send_unknown')
                               and delivery.id=(
-                                  select max(current_delivery.id) from wechat_deliveries as current_delivery
+                                  select max(current_delivery.id) from ({WECHAT_DELIVERY_SQL}) as current_delivery
                                   where current_delivery.reply_task_id=delivery_task.id
                                     and current_delivery.execution_generation=delivery_task.execution_generation
                               )
@@ -28870,8 +27918,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updates.project_id as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from work_updates as updates
-                join work_projects as projects on projects.id=updates.project_id
+                from ({SYNC_ACTION_PROJECTIONS['work_updates']}) as updates
+                join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=updates.project_id
                 union all
                 select
                     'todo-evidence:' || candidates.id as id,
@@ -28891,9 +27939,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     candidates.project_id as project_id,
                     candidates.todo_id as todo_id,
                     0 as follow_up_id
-                from todo_evidence_candidates as candidates
-                join work_projects as projects on projects.id=candidates.project_id
-                left join work_todos as todos on todos.id=candidates.todo_id
+                from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) as candidates
+                join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=candidates.project_id
+                left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=candidates.todo_id
                 union all
                 select
                     'follow-up:' || drafts.id as id,
@@ -28913,9 +27961,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     drafts.project_id as project_id,
                     drafts.todo_id as todo_id,
                     drafts.id as follow_up_id
-                from follow_up_drafts as drafts
-                join work_projects as projects on projects.id=drafts.project_id
-                left join work_todos as todos on todos.id=drafts.todo_id
+                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) as drafts
+                join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=drafts.project_id
+                left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=drafts.todo_id
                 union all
                 select
                     'dingtalk-todo:' || links.id as id,
@@ -28935,9 +27983,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     coalesce(projects.id, 0) as project_id,
                     links.work_todo_id as todo_id,
                     0 as follow_up_id
-                from work_todo_dingtalk_links as links
-                left join work_todos as todos on todos.id=links.work_todo_id
-                left join work_projects as projects on projects.id=todos.project_id
+                from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) as links
+                left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=links.work_todo_id
+                left join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=todos.project_id
                 union all
                 select
                     'scheduled-run:' || runs.id as id,
@@ -29049,7 +28097,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from ({email_action_projection('email_actions', include_rowid=True)}) as actions
-                join email_classifications as messages
+                join ({email_classification_projection()}) as messages
                   on messages.id=actions.classification_id
             """
         if not source_tables:

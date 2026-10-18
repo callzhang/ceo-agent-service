@@ -14,7 +14,6 @@ from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import Message
-from email.parser import Parser
 from hashlib import sha256
 import json
 import logging
@@ -69,11 +68,22 @@ from app.email_category_config import (
     validate_category_descriptions,
 )
 from app.action_email_storage import finite_target_external_sql
+from app.action_email_history_storage import (
+    email_history_rows, insert_email_history, update_email_operation,
+)
+from app.email_canonical_storage import (
+    email_classification_projection as _canonical_classifications,
+    email_message_projection as _canonical_messages,
+    insert_email_classification, upsert_email_message,
+    update_email_classification,
+    update_email_paired_locator,
+)
+
 from app.action_email_schema_release import require_current_email_pair
 from app.provider_state_schema_release import provider_state_schema_is_current
 from app.task20_definitions import TASK20_NEW_KINDS
 from app.task20_current_schema import task20_schema_is_current
-from app.task8_storage import register_task8_functions
+from app.task8_storage import register_task8_functions, task8_set_parts
 from app.state_definitions import STATE_FIELDS, state_projection
 from app.runs11_definitions import run11_projection
 from app.runs11_storage import insert_run11_fact
@@ -85,8 +95,8 @@ from app.provider_state_storage import (
     update_important_signals, upsert_folder_generations, upsert_observations,
 )
 from app.email_current_schema import (
-    create_current_email_runtime_schema,
     create_current_email_migration_ledger,
+    current_canonical_email_parent_is_current,
 )
 from app.configs_definitions import CONFIG_FIELDS, config_projection
 from app.configs_storage import insert_config, update_config, delete_config
@@ -156,6 +166,8 @@ EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection(
 )
 
 EMAIL_SCHEMA_VERSION = 52
+EMAIL_CLASSIFICATION_SQL = _canonical_classifications()
+EMAIL_MESSAGE_SQL = _canonical_messages()
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -1447,12 +1459,8 @@ class EmailFeedbackApplication:
         return not self.applied
 
 
-class EmailTrainingInclusionConflict(RuntimeError):
-    """Authoritative training samples cannot be marked as one atomic batch."""
 
 
-class EmailTrainingConsistencyError(RuntimeError):
-    """Registry manifests could not be proven restored after a DB failure."""
 
 
 class EmailTrainingSnapshotConflict(RuntimeError):
@@ -3041,19 +3049,6 @@ def email_imap_configuration_snapshot(account: Mapping[str, object]) -> str:
     return _json_dump(values)
 
 
-def _training_sample_digest(sample: Mapping[str, object]) -> str:
-    stable_fields = (
-        sample.get("message_id"),
-        sample.get("label"),
-        sample.get("model_text"),
-        sample.get("confirmed_at"),
-        sample.get("classification_source"),
-        sample.get("status"),
-    )
-    payload = json.dumps(
-        stable_fields, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
-    return sha256(payload).hexdigest()
 
 
 class EmailStore:
@@ -3071,7 +3066,7 @@ class EmailStore:
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("begin")
                 if db.execute("select 1 from sqlite_schema where name='actions'").fetchone() and not any(
-                    email_action_auxiliary_objects_are_current(db, reply_variant=variant)
+                    email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True)
                     for variant in REPLY_VARIANTS
                 ):
                     raise EmailPersistenceCorruption("required Email29 action schema is missing or malformed")
@@ -3085,17 +3080,17 @@ class EmailStore:
             with self._connect() as db:
                 self._validate_durable_state(db)
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(self, *, foreign_keys: bool = True) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
         db.execute("pragma busy_timeout = 30000")
-        db.execute("pragma foreign_keys = on")
+        db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
         db.row_factory = sqlite3.Row
         register_task8_functions(db)
         return db
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = self._open_connection()
+    def _connect(self, *, foreign_keys: bool = True) -> Iterator[sqlite3.Connection]:
+        db = self._open_connection(foreign_keys=foreign_keys)
         started_at = monotonic()
         body_finished_at = started_at
         try:
@@ -3213,7 +3208,7 @@ class EmailStore:
         )
 
     def _initialize(self, *, validate_rows: bool = True) -> bool:
-        with self._connect() as db:
+        with self._connect(foreign_keys=False) as db:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
@@ -3227,16 +3222,8 @@ class EmailStore:
                 raise EmailPersistenceCorruption("unsupported Email source; paired schema release required")
             db.rollback()
             db.execute("begin immediate")
-            create_current_email_runtime_schema(db)
             create_current_email_migration_ledger(db)
             self._seed_current_fresh_state(db)
-            for name, sql in finite_target_external_sql().items():
-                if _REQUIRED_TRIGGER_TABLES.get(name) == "email_accounts":
-                    continue
-                if db.execute(
-                    "select 1 from sqlite_schema where type='trigger' and name=?", (name,)
-                ).fetchone() is None:
-                    db.execute(sql)
             db.execute("insert into email_schema_migrations(version,applied_at) values(?,?)", (EMAIL_SCHEMA_VERSION, self._now()))
             self._validate_durable_state(db)
             return True
@@ -7002,7 +6989,16 @@ class EmailStore:
             # Historical maps remain the source contract. Current validation
             # retains the original nonaction coverage and validates actions
             # against the exact accepted finite manifest separately.
-            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations", "email_classifier_runtime_samples"}
+            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS,
+                                     "email_training_snapshot_observations",
+                                     "email_classifier_runtime_samples",
+                                     "email_historical_classification_history",
+                                     "email_historical_operations",
+                                     "email_classifications", "email_messages"}
+            if not current_canonical_email_parent_is_current(db):
+                raise EmailPersistenceCorruption(
+                    "required canonical Email declaration is missing or malformed"
+                )
             required_tables = {
                 table: columns
                 for table, columns in _REQUIRED_TABLE_COLUMNS.items()
@@ -7029,7 +7025,18 @@ class EmailStore:
                 )
 
             if not any(
-                current_configs_schema_is_current(db, action_variant=variant)
+                current_configs_schema_is_current(
+                    db,
+                    action_variant=variant,
+                    include_followup_sync=True,
+                    include_business_sync=True,
+                    include_task_delivery=True,
+                    include_errors=True, include_feedback=True,
+                    include_business_actions=True,
+                    include_email_history=True,
+                    canonical_email=True,
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True,
+                )
                 for variant in REPLY_VARIANTS
             ):
                 raise EmailPersistenceCorruption(
@@ -7398,11 +7405,11 @@ class EmailStore:
 
         messages: dict[str, sqlite3.Row] = {}
         for row in db.execute(
-            """
+            f"""
             select stable_message_identity, account_id, folder, uidvalidity, uid,
                    rfc_message_id, thread_identity, recipients_json,
                    references_json, in_reply_to, attachment_metadata_json
-            from email_messages
+            from ({EMAIL_MESSAGE_SQL})
             """
         ):
             recipients = _json_load(
@@ -7464,7 +7471,7 @@ class EmailStore:
         classifications = {
             row["id"]: row
             for row in db.execute(
-                """
+                f"""
                 select id, account_id, folder, uidvalidity, uid, rfc_message_id,
                        thread_id, stable_message_identity, category,
                        predicted_category, confirmed_category, confidence,
@@ -7472,7 +7479,7 @@ class EmailStore:
                        classification_source, agent_result_json,
                        current_action_plan_id,
                        legacy_processed_without_plan
-                from email_classifications
+                from ({EMAIL_CLASSIFICATION_SQL})
                 """
             )
         }
@@ -8446,7 +8453,7 @@ class EmailStore:
         applied: bool,
     ) -> EmailFeedbackApplication:
         classification = db.execute(
-            "select * from email_classifications where id=?",
+            f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
             (request["classification_id"],),
         ).fetchone()
         plan_row = db.execute(
@@ -8490,7 +8497,7 @@ class EmailStore:
         classification: EmailClassification,
     ) -> sqlite3.Row | None:
         by_id = db.execute(
-            "select id, stable_message_identity from email_classifications where id=?",
+            f"select id, stable_message_identity from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
             (classification.classification_id,),
         ).fetchone()
         if by_id is not None and (
@@ -8501,7 +8508,7 @@ class EmailStore:
                 f"to {by_id['stable_message_identity']}"
             )
         by_identity = db.execute(
-            "select * from email_classifications where stable_message_identity=?",
+            f"select * from ({EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
             (classification.stable_message_identity,),
         ).fetchone()
         if by_identity is not None and (
@@ -8539,47 +8546,28 @@ class EmailStore:
         normalized_in_reply_to = _normalized_message_id(in_reply_to)
         normalized_references = _normalized_message_ids(references)
         locator = classification.provider_locator
-        db.execute(
-            """
-            insert into email_messages (
-                account_id, stable_message_identity, folder, uidvalidity, uid,
-                rfc_message_id, in_reply_to, references_json, thread_identity,
-                sender, recipients_json,
-                subject, normalized_text, preview, attachment_metadata_json,
-                received_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            on conflict(stable_message_identity) do update set
-                folder=excluded.folder,
-                uidvalidity=excluded.uidvalidity,
-                uid=excluded.uid,
-                in_reply_to=excluded.in_reply_to,
-                references_json=excluded.references_json,
-                thread_identity=excluded.thread_identity,
-                updated_at=excluded.updated_at
-            """,
-            (
-                locator.account_id,
-                classification.stable_message_identity,
-                locator.folder,
-                locator.uidvalidity,
-                locator.uid,
-                locator.rfc_message_id or "",
-                normalized_in_reply_to,
-                _json_dump(list(normalized_references)),
-                locator.thread_id or "",
-                sender,
-                _json_dump(list(recipients)),
-                subject,
-                normalized_text,
-                preview,
-                _json_dump(
-                    [item.model_dump(mode="json") for item in attachment_metadata]
-                ),
-                received_at,
-                now,
-                now,
+        upsert_email_message(db, {
+            "account_id": locator.account_id,
+            "stable_message_identity": classification.stable_message_identity,
+            "folder": locator.folder,
+            "uidvalidity": locator.uidvalidity,
+            "uid": locator.uid,
+            "rfc_message_id": locator.rfc_message_id or "",
+            "in_reply_to": normalized_in_reply_to,
+            "references_json": _json_dump(list(normalized_references)),
+            "thread_identity": locator.thread_id or "",
+            "sender": sender,
+            "recipients_json": _json_dump(list(recipients)),
+            "subject": subject,
+            "normalized_text": normalized_text,
+            "preview": preview,
+            "attachment_metadata_json": _json_dump(
+                [item.model_dump(mode="json") for item in attachment_metadata]
             ),
-        )
+            "received_at": received_at,
+            "created_at": now,
+            "updated_at": now,
+        })
 
     def _persist_action_plan(
         self,
@@ -8854,60 +8842,40 @@ class EmailStore:
                     if classification.status is EmailClassificationStatus.PROCESSED
                     else None
                 )
-                db.execute(
-                    """
-                    insert into email_classifications (
-                        id, account_id, folder, uidvalidity, uid, rfc_message_id,
-                        thread_id, stable_message_identity, sender, subject, preview,
-                        model_text, received_at, category, predicted_category,
-                        confirmed_category, confidence, margin, probabilities_json,
-                        model_id, config_version, status, classification_source,
-                        agent_result_json,
-                        current_action_plan_id, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?)
-                    """,
-                    (
-                        classification.classification_id,
-                        locator.account_id,
-                        locator.folder,
-                        locator.uidvalidity,
-                        locator.uid,
-                        locator.rfc_message_id,
-                        locator.thread_id,
-                        classification.stable_message_identity,
-                        sender,
-                        subject,
-                        preview,
-                        model_text,
-                        received_at,
-                        classification.category,
-                        classification.category,
-                        confirmed_category,
-                        classification.confidence,
-                        classification.margin,
-                        _json_dump(classification.probabilities),
-                        classification.model_id,
-                        classification.config_version,
-                        classification.status.value,
-                        classification.classification_source,
-                        agent_result_json,
-                        now,
-                    ),
-                )
+                insert_email_classification(db, {
+                    "id": classification.classification_id,
+                    "account_id": locator.account_id,
+                    "folder": locator.folder,
+                    "uidvalidity": locator.uidvalidity,
+                    "uid": locator.uid,
+                    "rfc_message_id": locator.rfc_message_id,
+                    "thread_id": locator.thread_id,
+                    "stable_message_identity": classification.stable_message_identity,
+                    "sender": sender,
+                    "subject": subject,
+                    "preview": preview,
+                    "model_text": model_text,
+                    "received_at": received_at,
+                    "category": classification.category,
+                    "predicted_category": classification.category,
+                    "confirmed_category": confirmed_category,
+                    "confidence": classification.confidence,
+                    "margin": classification.margin,
+                    "probabilities_json": _json_dump(classification.probabilities),
+                    "model_id": classification.model_id,
+                    "config_version": classification.config_version,
+                    "status": classification.status.value,
+                    "classification_source": classification.classification_source,
+                    "agent_result_json": agent_result_json,
+                    "current_action_plan_id": None,
+                    "updated_at": now,
+                })
                 if classification.action_plan is not None:
                     self._persist_action_plan(db, classification.action_plan, now=now)
-                    db.execute(
-                        """
-                        update email_classifications
-                        set current_action_plan_id=?,
-                            legacy_processed_without_plan=0
-                        where id=?
-                        """,
-                        (
-                            classification.action_plan.action_plan_id,
-                            classification.classification_id,
-                        ),
-                    )
+                    update_email_classification(db, classification.classification_id, {
+                        "current_action_plan_id": classification.action_plan.action_plan_id,
+                        "legacy_processed_without_plan": 0,
+                    })
             else:
                 if (
                     existing["classification_source"] == "agent"
@@ -8916,21 +8884,13 @@ class EmailStore:
                     raise EmailClassificationConflict(
                         "canonical Agent result diverges from retry"
                     )
-                db.execute(
-                    """
-                    update email_classifications
-                    set folder=?, uidvalidity=?, uid=?, thread_id=?, updated_at=?
-                    where id=?
-                    """,
-                    (
-                        locator.folder,
-                        locator.uidvalidity,
-                        locator.uid,
-                        locator.thread_id,
-                        now,
-                        classification.classification_id,
-                    ),
-                )
+                update_email_classification(db, classification.classification_id, {
+                    "folder": locator.folder,
+                    "uidvalidity": locator.uidvalidity,
+                    "uid": locator.uid,
+                    "thread_id": locator.thread_id,
+                    "updated_at": now,
+                })
             if cursor_uidvalidity is not None and cursor_last_seen_uid is not None:
                 self._advance_cursor(
                     db,
@@ -8943,7 +8903,7 @@ class EmailStore:
                     expected_uidvalidity=expected_cursor_uidvalidity,
                 )
             row = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification.classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [row] if row else [])
@@ -9028,31 +8988,20 @@ class EmailStore:
         created_at = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
-                """
-                insert or ignore into email_historical_classification_history (
-                    event_id, stable_message_identity, model_id,
-                    predicted_category, threshold, probability, important,
-                    action_outcome, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    stable_identity,
-                    model_id,
-                    predicted_category,
-                    threshold,
-                    probability,
-                    None if important_value is None else int(important_value),
-                    action_outcome,
-                    created_at,
-                ),
-            )
-            row = db.execute(
-                "select * from email_historical_classification_history "
-                "where event_id=?",
-                (event_id,),
-            ).fetchone()
+            insert_email_history(db, "email_historical_classification_history", {
+                "event_id": event_id,
+                "stable_message_identity": stable_identity,
+                "model_id": model_id,
+                "predicted_category": predicted_category,
+                "threshold": threshold,
+                "probability": probability,
+                "important": None if important_value is None else int(important_value),
+                "action_outcome": action_outcome,
+                "created_at": created_at,
+            }, ignore_public_duplicate=True)
+            rows = email_history_rows(db, "email_historical_classification_history",
+                                      where="event_id=?", parameters=(event_id,))
+            row = rows[0] if rows else None
         assert row is not None
         return _historical_outcome_row(row)
 
@@ -9221,10 +9170,8 @@ class EmailStore:
 
     def list_historical_classification_history(self) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute(
-                "select * from email_historical_classification_history "
-                "order by created_at, event_id"
-            ).fetchall()
+            rows = email_history_rows(db, "email_historical_classification_history",
+                                      order="created_at,event_id")
         return [_historical_outcome_row(row) for row in rows]
 
     def begin_historical_operation(
@@ -9260,21 +9207,16 @@ class EmailStore:
         )
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
-                """
-                insert or ignore into email_historical_operations (
-                    operation_id, account_id, stable_message_identity, model_id,
-                    classification_id, action_plan_id, action_ids_json,
-                    predicted_category, threshold, probability, important,
-                    status, action_outcome, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', '', ?, ?)
-                """,
-                (operation_id, *immutable, now, now),
-            )
-            row = db.execute(
-                "select * from email_historical_operations where operation_id=?",
-                (operation_id,),
-            ).fetchone()
+            insert_email_history(db, "email_historical_operations", dict(zip(
+                ("operation_id", "account_id", "stable_message_identity", "model_id",
+                 "classification_id", "action_plan_id", "action_ids_json",
+                 "predicted_category", "threshold", "probability", "important",
+                 "status", "action_outcome", "created_at", "updated_at"),
+                (operation_id, *immutable, "processing", "", now, now), strict=True,
+            )), ignore_public_duplicate=True)
+            rows = email_history_rows(db, "email_historical_operations",
+                                      where="operation_id=?", parameters=(operation_id,))
+            row = rows[0] if rows else None
         assert row is not None
         observed = (
             row["account_id"], row["stable_message_identity"], row["model_id"],
@@ -9288,38 +9230,28 @@ class EmailStore:
 
     def list_processing_historical_operations(self) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute(
-                "select * from email_historical_operations where status='processing' "
-                "order by created_at, operation_id"
-            ).fetchall()
+            rows = email_history_rows(db, "email_historical_operations",
+                                      where="status='processing'",
+                                      order="created_at,operation_id")
         return [self._historical_operation_row(row) for row in rows]
 
     def complete_historical_operation(self, outcome: object) -> None:
         stable_identity = str(getattr(outcome, "stable_message_identity"))
         model_id = str(getattr(outcome, "model_id"))
         with self._connect() as db:
-            db.execute(
-                """
-                update email_historical_operations
-                set status='terminal', action_outcome=?, updated_at=?
-                where model_id=? and stable_message_identity=? and status='processing'
-                """,
-                (
-                    str(getattr(outcome, "action_outcome")),
-                    self._now(), model_id, stable_identity,
-                ),
+            update_email_operation(
+                db, model_id=model_id, stable_message_identity=stable_identity,
+                outcome=str(getattr(outcome, "action_outcome")), updated_at=self._now(),
             )
 
     def touch_historical_operation(
         self, *, model_id: str, stable_message_identity: str
     ) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                update email_historical_operations set updated_at=?
-                where model_id=? and stable_message_identity=? and status='processing'
-                """,
-                (self._now(), model_id, stable_message_identity),
+            update_email_operation(
+                db, model_id=model_id,
+                stable_message_identity=stable_message_identity,
+                updated_at=self._now(),
             )
 
     @staticmethod
@@ -9429,8 +9361,8 @@ class EmailStore:
                     plans.action_plan_id as action_plan_id,
                     plans.action_plan_version as action_plan_version,
                     plans.actions_json as actions_json
-                from email_classifications as classifications
-                join email_messages as messages
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -9520,11 +9452,11 @@ class EmailStore:
                 f"""
                 select plans.actions_json, plans.action_plan_version,
                        messages.thread_identity
-                from email_classifications as classifications
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
                 join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=classifications.current_action_plan_id
                  and plans.classification_id=classifications.id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -9720,13 +9652,13 @@ class EmailStore:
                        accounts.email_address, accounts.updated_at as live_account_updated_at,
                        messages.thread_identity as live_thread_identity
                 from ({EMAIL_REPLY_CLAIM_SQL}) as claims
-                join email_classifications as classifications
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=claims.classification_id
                 join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=claims.action_plan_id
                 join ({config_projection('email_accounts')}) as accounts
                   on accounts.account_id=claims.account_id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=claims.account_id
                  and messages.stable_message_identity=claims.stable_message_identity
                 where claims.action_identity=? and claims.status='dispatching'
@@ -10251,11 +10183,11 @@ class EmailStore:
                        messages.account_id as message_account_id,
                        messages.thread_identity,
                        accounts.enabled, accounts.updated_at as account_updated_at
-                from email_classifications as classifications
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
                 join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=?
                  and plans.classification_id=classifications.id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.stable_message_identity=?
                 join ({config_projection('email_accounts')}) as accounts on accounts.account_id=?
                 {task_join}
@@ -10991,13 +10923,13 @@ class EmailStore:
             expected_audit_agent_run_id=expected_audit_agent_run_id,
         )
         classification = db.execute(
-            """
+            f"""
             select classifications.id, classifications.account_id,
                    classifications.stable_message_identity,
                    classifications.current_action_plan_id,
                    messages.thread_identity as message_thread_identity
-            from email_classifications as classifications
-            join email_messages as messages
+            from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+            join ({EMAIL_MESSAGE_SQL}) as messages
               on messages.account_id=classifications.account_id
              and messages.stable_message_identity=
                  classifications.stable_message_identity
@@ -12434,9 +12366,9 @@ class EmailStore:
                        messages.account_id as message_account_id,
                        messages.thread_identity as message_thread_identity
                 from ({EMAIL_PLAN_SQL}) as plans
-                join email_classifications as classifications
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=plans.classification_id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -13238,73 +13170,48 @@ class EmailStore:
             "updated_at": row["updated_at"],
         }
 
-    def list_classifications(
-        self,
-        *,
-        status: EmailClassificationStatus | None,
-        limit: int,
-        offset: int,
-        q: str = "",
-        category: str = "",
-        action_status: str = "",
-        source: str = "",
+    def classification_source_candidates(
+        self, *, status: EmailClassificationStatus | None,
+        limit: int | None = None, offset: int = 0, category: str = "",
+        action_status: str = "", source: str = "", unsubscribe: bool = False,
+        classification_id: int | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """One page of classifications, newest first, optionally filtered.
+        """Existing business eligibility/order without reading either input body."""
+        from app.email_canonical_definitions import CLASS_FIELDS
 
-        `status=None` lists everything the owner sees on the "all" tab: mail
-        that is processed and mail waiting for a label, as one ordered list.
-        """
-
+        if offset < 0 or (limit is not None and limit <= 0):
+            raise ValueError("classification pagination is invalid")
         with self._connect() as db:
-            search, search_params = self._classification_search(db, q)
-            filters, filter_params = self._classification_filters(
-                category=category, action_status=action_status, source=source
-            )
-            statuses = (
-                (EmailClassificationStatus.PROCESSED, EmailClassificationStatus.PENDING_FEEDBACK)
-                if status is None
-                else (status,)
-            )
-            where = (
-                "classifications.status in ("
-                + ",".join("?" for _ in statuses)
-                + ")"
-                + search
-                + filters
-            )
-            params = (*(item.value for item in statuses), *search_params, *filter_params)
-            total = int(
-                db.execute(
-                    "select count(*) from email_classifications as classifications where "
-                    + where,
-                    params,
-                ).fetchone()[0]
-            )
+            if classification_id is not None:
+                where, params = "classifications.id=?", (classification_id,)
+            elif unsubscribe:
+                where, params = self._unsubscribe_classification_membership(db), ()
+            else:
+                statuses = ((EmailClassificationStatus.PROCESSED, EmailClassificationStatus.PENDING_FEEDBACK)
+                            if status is None else (status,))
+                filters, filter_params = self._classification_filters(
+                    category=category, action_status=action_status, source=source,
+                )
+                where = "classifications.status in (" + ",".join("?" for _ in statuses) + ")" + filters
+                params = (*(item.value for item in statuses), *filter_params)
+            total = db.execute(
+                f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications where " + where,
+                params,
+            ).fetchone()[0]
+            fields = ",".join('classifications."' + name + '"' for name in CLASS_FIELDS if name != "model_text")
+            pagination = " limit ? offset ?" if limit is not None else ""
             rows = db.execute(
-                """
-                select classifications.*,
-                       messages.normalized_text as message_text,
-                       messages.attachment_metadata_json
-                           as message_attachment_metadata_json
-                from email_classifications as classifications
-                left join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where """ + where + """
-                order by classifications.updated_at desc, classifications.id desc
-                limit ? offset ?
-                """,
-                (*params, limit, offset),
+                f"select {fields}, messages.attachment_metadata_json as message_attachment_metadata_json "
+                f"from ({EMAIL_CLASSIFICATION_SQL}) as classifications "
+                f"left join ({EMAIL_MESSAGE_SQL}) as messages "
+                "on messages.account_id=classifications.account_id "
+                "and messages.stable_message_identity=classifications.stable_message_identity "
+                "where " + where + " order by classifications.updated_at desc,classifications.id desc" + pagination,
+                (*params, limit, offset) if limit is not None else params,
             ).fetchall()
-            plan_rows = self._current_action_plan_rows(db, rows)
-        items = []
-        for row in rows:
-            message = Parser().parsestr(row["message_text"] or "")
-            item = self._classification_evidence_row(row, plan_rows)
-            item["message_text"] = _display_message_body(message)
-            items.append(item)
-        return items, total
+            plans = self._current_action_plan_rows(db, rows)
+        return [self._classification_evidence_row(row, plans) for row in rows], int(total)
+
 
     # What "action status" means to the owner, mapped onto the stored states.
     _ACTION_STATUS_FILTERS: ClassVar[Mapping[str, tuple[str, ...]]] = {
@@ -13394,7 +13301,7 @@ class EmailStore:
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count+1) as explicit_retry_scheduled,
                        {_direct_retry_configuration_sql('actions')} as explicit_retry_configuration_matches
                 from ({EMAIL_DIRECT_ACTION_SQL}) as actions
-                join email_classifications as classifications
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=actions.classification_id
                  and classifications.current_action_plan_id=actions.action_plan_id
                 where actions.classification_id in ("""
@@ -13419,105 +13326,45 @@ class EmailStore:
             states[int(row["classification_id"])].append(state)
         return states
 
+
     @staticmethod
-    def _classification_search(db: sqlite3.Connection, q: str) -> tuple[str, tuple[str, ...]]:
-        query = q.strip().casefold()
-        if not query:
-            return "", ()
-        db.create_function("email_casefold", 1, lambda value: (value or "").casefold(), deterministic=True)
-        db.create_function("email_visible_body", 1, lambda value: _display_message_body(Parser().parsestr(value or "")).casefold(), deterministic=True)
-        return """
-            and (
-                instr(email_casefold(classifications.sender), ?) > 0
-                or instr(email_casefold(classifications.subject), ?) > 0
-                or exists (
-                    select 1 from email_messages as search_message
-                    where search_message.account_id=classifications.account_id
-                      and search_message.stable_message_identity=classifications.stable_message_identity
-                      and instr(email_visible_body(search_message.normalized_text), ?) > 0
-                )
-            )
-        """, (query, query, query)
-
-    def list_unsubscribe_classifications(
-        self, *, limit: int, offset: int, q: str = ""
-    ) -> tuple[list[dict[str, Any]], int]:
-        """List every email with a durable unsubscribe lifecycle record.
-
-        A claim exists once Audit has accepted an effect; a receipt exists for
-        a terminal outcome.  Queued email tasks are included when the shared
-        task tables are available, so the Console can expose work before Audit
-        reaches the browser phase.
-        """
-        if limit <= 0 or offset < 0:
-            raise ValueError("unsubscribe list pagination is invalid")
-        with self._connect() as db:
-            search, search_params = self._classification_search(db, q)
-            task_tables = {
-                str(row["name"])
-                for row in db.execute(
-                    "select name from sqlite_master where type='table' "
-                    "and name in ('tasks', 'runs')"
-                ).fetchall()
-            }
-            task_clause = ""
-            if task_tables == {"tasks", "runs"}:
-                task_clause = f"""
-                    or classifications.id in (
-                        select json_extract(
-                                   tasks.trigger_message_json,
-                                   '$.classification_id'
-                               )
-                        from ({REPLY_TASK_CURRENT_SQL}) as tasks
-                        where tasks.channel='email'
-                          and json_valid(tasks.trigger_message_json)
-                          and json_extract(
-                                tasks.trigger_message_json,
-                                '$.action_type'
-                              )='unsubscribe'
-                    )
-                """
-            where = f"""
-                classifications.id in (
-                    select claims.classification_id
-                    from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) as claims
-                )
-                or classifications.id in (
-                    select receipts.classification_id
-                    from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) as receipts
-                )
-            """ + task_clause
-            where = "(" + where + ")" + search
-            total = int(
-                db.execute(
-                    "select count(*) from email_classifications as classifications "
-                    f"where {where}", search_params
-                ).fetchone()[0]
-            )
-            rows = db.execute(
-                """
-                select classifications.*, messages.normalized_text as message_text,
-                       messages.attachment_metadata_json
-                           as message_attachment_metadata_json
-                from email_classifications as classifications
-                left join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where """ + where + """
-                order by classifications.updated_at desc, classifications.id desc
-                limit ? offset ?
-                """,
-                (*search_params, limit, offset),
+    def _unsubscribe_classification_membership(db: sqlite3.Connection) -> str:
+        task_tables = {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='table' "
+                "and name in ('tasks', 'runs')"
             ).fetchall()
-            plan_rows = self._current_action_plan_rows(db, rows)
-        items = []
-        for row in rows:
-            message = Parser().parsestr(row["message_text"] or "")
-            item = self._classification_evidence_row(row, plan_rows)
-            item["message_text"] = _display_message_body(message)
-            items.append(item)
-        return items, total
+        }
+        task_clause = ""
+        if task_tables == {"tasks", "runs"}:
+            task_clause = f"""
+                or classifications.id in (
+                    select json_extract(
+                               tasks.trigger_message_json,
+                               '$.classification_id'
+                           )
+                    from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                    where tasks.channel='email'
+                      and json_valid(tasks.trigger_message_json)
+                      and json_extract(
+                            tasks.trigger_message_json,
+                            '$.action_type'
+                          )='unsubscribe'
+                )
+            """
+        where = f"""
+            classifications.id in (
+                select claims.classification_id
+                from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) as claims
+            )
+            or classifications.id in (
+                select receipts.classification_id
+                from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) as receipts
+            )
+        """ + task_clause
+        return "(" + where + ")"
+
 
     @staticmethod
     def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -13538,7 +13385,6 @@ class EmailStore:
                 row["recipients_json"], field="recipients_json", expected_type=list
             ),
             "subject": row["subject"],
-            "normalized_text": row["normalized_text"],
             "attachment_metadata": _json_load(
                 row["attachment_metadata_json"],
                 field="attachment_metadata_json",
@@ -13553,15 +13399,27 @@ class EmailStore:
         account_id: str,
         stable_message_identity: str,
     ) -> list[dict[str, Any]]:
-        """Return the complete stored relation component for one message."""
+        """Return the complete relation component using only message metadata."""
 
         account_id = account_id.strip()
         stable_message_identity = stable_message_identity.strip()
         if not account_id or not stable_message_identity:
             raise ValueError("email context identity must be non-empty")
+        from app.email_canonical_definitions import canonical_column
+
+        fields = (
+            "id", "account_id", "stable_message_identity", "folder", "uidvalidity",
+            "uid", "rfc_message_id", "in_reply_to", "references_json", "thread_identity",
+            "sender", "recipients_json", "subject", "attachment_metadata_json", "received_at",
+        )
+        selected = ",".join(
+            f'{canonical_column("email_messages", field)} as "{field}"'
+            for field in fields
+        )
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_messages where account_id=? order by received_at, id",
+                f"select {selected} from main.emails where account_id=? "
+                "order by message_received_at, message_id",
                 (account_id,),
             ).fetchall()
         trigger = next(
@@ -13674,48 +13532,49 @@ class EmailStore:
         ]
 
     def get_classification(self, classification_id: int) -> dict[str, Any] | None:
+        """Return runtime identity, business state and recipient metadata only."""
+        from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
+
+        fields = ",".join(
+            f'{canonical_column("email_classifications", field)} as "{field}"'
+            for field in CLASS_FIELDS if field != "model_text"
+        )
         with self._connect() as db:
             row = db.execute(
-                """
-                select classifications.*, messages.normalized_text as message_text,
-                       messages.recipients_json as message_recipients_json,
-                       messages.attachment_metadata_json
-                           as message_attachment_metadata_json
-                from email_classifications as classifications
-                left join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where classifications.id=?
-                """,
+                f"select {fields}, message_recipients_json, message_attachment_metadata_json "
+                "from main.emails where classification_id=?",
                 (classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [row] if row else [])
         if row is None:
             return None
-        message = Parser().parsestr(row["message_text"] or "")
         return {
             **self._classification_evidence_row(row, plan_rows),
-            "message_text": _display_message_body(message),
-            "cc": message.get("Cc", ""),
-            # The stored body carries no header block for almost every message,
-            # so recipients read from its "To:" line came back empty and the
-            # console said 未提供 for mail whose recipients were saved.
             "recipients": _json_load(
                 row["message_recipients_json"] or "[]",
-                field="recipients_json",
-                expected_type=list,
+                field="recipients_json", expected_type=list,
             ),
         }
+
+    def count_unincluded_training_examples(self) -> int:
+        """Count the existing eligible owner-feedback set without loading inputs."""
+        with self._connect() as db:
+            return int(db.execute(
+                "select count(*) from main.emails "
+                "where classification_id is not null "
+                "and class_classification_source='user' and class_status='processed' "
+                "and class_confirmed_category is not null and class_confirmed_category<>'' "
+                "and trim(class_model_text)<>'' and class_included_in_model_id is null"
+            ).fetchone()[0])
 
     def owner_labelled_stamp(self) -> str:
         """Changes whenever the owner labels or relabels a message; cheap to read."""
 
         with self._connect() as db:
             count, latest = db.execute(
-                """
+                f"""
                 select count(*), coalesce(max(updated_at), '')
-                from email_classifications
+                from ({EMAIL_CLASSIFICATION_SQL})
                 where classification_source='user'
                   and coalesce(confirmed_category, '') != ''
                 """
@@ -13732,10 +13591,10 @@ class EmailStore:
         stamp = self.owner_labelled_stamp()
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select stable_message_identity, sender, subject, model_text,
                        confirmed_category
-                from email_classifications
+                from ({EMAIL_CLASSIFICATION_SQL})
                 where classification_source='user'
                   and coalesce(confirmed_category, '') != ''
                 order by id
@@ -13758,9 +13617,16 @@ class EmailStore:
     def get_classification_by_stable_identity(
         self, stable_message_identity: str
     ) -> dict[str, Any] | None:
+        from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
+
+        fields = ",".join(
+            f'{canonical_column("email_classifications", field)} as "{field}"'
+            for field in CLASS_FIELDS if field != "model_text"
+        )
         with self._connect() as db:
             row = db.execute(
-                "select * from email_classifications where stable_message_identity=?",
+                f"select {fields} from main.emails "
+                "where stable_message_identity=? and classification_id is not null",
                 (stable_message_identity,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [row] if row else [])
@@ -13776,7 +13642,7 @@ class EmailStore:
         """Check durable row presence without claiming its plan is valid."""
         with self._connect() as db:
             return db.execute(
-                "select 1 from email_classifications where stable_message_identity=?",
+                f"select 1 from ({EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
                 (stable_message_identity,),
             ).fetchone() is not None
 
@@ -13805,7 +13671,7 @@ class EmailStore:
                 chunk = normalized[start : start + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
                 rows = db.execute(
-                    "select stable_message_identity from email_classifications "
+                    f"select stable_message_identity from ({EMAIL_CLASSIFICATION_SQL}) "
                     f"where stable_message_identity in ({placeholders})",
                     chunk,
                 ).fetchall()
@@ -13872,13 +13738,13 @@ class EmailStore:
             if generic_tables != {"tasks", "runs"}:
                 return None
             classification = db.execute(
-                """
+                f"""
                 select classifications.id, classifications.account_id,
                        classifications.stable_message_identity,
                        classifications.current_action_plan_id,
                        messages.thread_identity as message_thread_identity
-                from email_classifications as classifications
-                join email_messages as messages
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -13920,8 +13786,8 @@ class EmailStore:
     ) -> frozenset[int]:
         with self._connect() as db:
             rows = db.execute(
-                """
-                select uid from email_classifications
+                f"""
+                select uid from ({EMAIL_CLASSIFICATION_SQL})
                 where account_id=? and folder=? and uidvalidity=?
                 """,
                 (account_id, folder, uidvalidity),
@@ -13935,9 +13801,9 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select uid, stable_message_identity, subject, sender
-                from email_classifications
+                from ({EMAIL_CLASSIFICATION_SQL})
                 where account_id=? and folder=? and uidvalidity=?
                 """,
                 (account_id, folder, uidvalidity),
@@ -13959,9 +13825,9 @@ class EmailStore:
         with self._connect() as db:
             if uidvalidity is None:
                 rows = db.execute(
-                    """
+                    f"""
                     select uid, folder, stable_message_identity, subject, sender
-                    from email_classifications
+                    from ({EMAIL_CLASSIFICATION_SQL})
                     where account_id=?
                     order by updated_at desc, id desc
                     limit 50
@@ -13970,9 +13836,9 @@ class EmailStore:
                 ).fetchall()
             else:
                 rows = db.execute(
-                    """
+                    f"""
                     select uid, folder, stable_message_identity, subject, sender
-                    from email_classifications
+                    from ({EMAIL_CLASSIFICATION_SQL})
                     where account_id=? and uidvalidity=?
                     order by updated_at desc, id desc
                     limit 50
@@ -14048,13 +13914,13 @@ class EmailStore:
         _require_positive_int(classification_id, field="classification_id")
         with self._connect_or_reuse(db) as db:
             classification = db.execute(
-                """
+                f"""
                 select classifications.id, classifications.account_id,
                        classifications.stable_message_identity,
                        classifications.current_action_plan_id,
                        messages.thread_identity as message_thread_identity
-                from email_classifications as classifications
-                join email_messages as messages
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -14316,72 +14182,23 @@ class EmailStore:
             event.pop("_sort_created_at", None)
         return events
 
-    def list_training_examples(
-        self, *, include_inclusion: bool = False
-    ) -> list[dict[str, Any]]:
-        """Return only user-confirmed, redacted texts for local retraining."""
 
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select id, account_id, stable_message_identity, model_text,
-                       confirmed_category as label, included_in_model_id,
-                       confirmed_at, classification_source, status
-                from email_classifications
-                where classification_source='user'
-                  and status='processed'
-                  and confirmed_category is not null
-                  and confirmed_category != ''
-                  and trim(model_text) != ''
-                order by id asc
-                """
-            ).fetchall()
-        result = []
-        for row in rows:
-            sample = {
-                "message_id": row["stable_message_identity"],
-                "model_text": row["model_text"],
-                "label": row["label"],
-                **(
-                    {
-                        "classification_id": row["id"],
-                        "account_id": row["account_id"],
-                        "included_in_model_id": row["included_in_model_id"],
-                        "confirmed_at": row["confirmed_at"],
-                        "classification_source": row["classification_source"],
-                        "status": row["status"],
-                    }
-                    if include_inclusion
-                    else {}
-                ),
-            }
-            if include_inclusion:
-                sample["sample_digest"] = _training_sample_digest(sample)
-            result.append(sample)
-        return result
-
-    def list_selected_training_records(self) -> list[dict[str, Any]]:
-        """Return the service-produced labels that can be frozen for training.
-
-        The caller decides which sources and categories participate.  This
-        method deliberately does not require a provider-folder snapshot: user
-        feedback and Agent labels are valid, independently selectable sources.
-        """
-
-        with self._connect() as db:
-            rows = db.execute(
-                """
+    @staticmethod
+    def _selected_training_rows(db: sqlite3.Connection, *, include_input: bool):
+        input_fields = (
+            ", messages.recipients_json, messages.subject, messages.normalized_text,"
+            " messages.attachment_metadata_json, messages.rfc_message_id,"
+            " messages.in_reply_to, messages.references_json" if include_input else ""
+        )
+        return db.execute(f"""
                 select classifications.id, classifications.account_id,
                        classifications.stable_message_identity,
                        classifications.thread_id, classifications.classification_source,
                        classifications.category, classifications.confirmed_category,
                        classifications.confirmed_at, classifications.updated_at,
-                       messages.sender, messages.recipients_json, messages.subject,
-                       messages.normalized_text, messages.attachment_metadata_json,
-                       messages.rfc_message_id, messages.in_reply_to,
-                       messages.references_json
-                from email_classifications as classifications
-                join email_messages as messages
+                       messages.sender, messages.updated_at as message_updated_at{input_fields}
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.stable_message_identity=classifications.stable_message_identity
                 where classifications.status='processed'
                   and classifications.classification_source in ('agent', 'user')
@@ -14394,9 +14211,83 @@ class EmailStore:
                         and classifications.confirmed_category != '')
                   )
                 order by classifications.id asc
-                """
-            ).fetchall()
+                """).fetchall()
+
+    @staticmethod
+    def _selected_training_label(row: sqlite3.Row) -> dict[str, Any]:
         from app.email_important import important_training_label
+
+        return {
+            "classification_id": int(row["id"]),
+            "account_id": str(row["account_id"]),
+            "stable_message_identity": str(row["stable_message_identity"]),
+            "provider_thread_id": str(row["thread_id"]) if row["thread_id"] else None,
+            "source": (
+                "agent_auto_label"
+                if row["classification_source"] == "agent"
+                else "user_feedback"
+            ),
+            "category_key": str(
+                row["category"]
+                if row["classification_source"] == "agent"
+                else row["confirmed_category"]
+            ),
+            "important": important_training_label(
+                category=str(
+                    row["category"]
+                    if row["classification_source"] == "agent"
+                    else row["confirmed_category"]
+                ),
+                sender=str(row["sender"] or ""),
+            ),
+            "label_recorded_at": str(
+                row["confirmed_at"] or row["updated_at"]
+            ),
+        }
+
+    def list_selected_training_labels(self) -> list[dict[str, Any]]:
+        """Existing selected source labels, without reading either input text."""
+        with self._connect() as db:
+            rows = self._selected_training_rows(db, include_input=False)
+        return [self._selected_training_label(row) for row in rows]
+
+    def list_selected_training_source_metadata(self) -> list[dict[str, Any]]:
+        """Current selected labels and existing update clocks, without input text."""
+        with self._connect() as db:
+            rows = self._selected_training_rows(db, include_input=False)
+        return [
+            {**self._selected_training_label(row),
+             "classification_updated_at": row["updated_at"],
+             "message_updated_at": row["message_updated_at"]}
+            for row in rows
+        ]
+
+    def latest_training_snapshot_reference(
+        self, snapshot_version: str,
+    ) -> dict[str, object] | None:
+        """Read an external frozen baseline's persisted identity, never its input."""
+        with self._connect() as db:
+            row = db.execute(
+                f"select snapshot_id,snapshot_version,snapshot_digest,description_version,"
+                "input_schema_version,seed,observed_at "
+                f"from ({config_projection('email_training_snapshots')}) "
+                "where frozen=1 and snapshot_version=? "
+                "and json_extract(manifest_json, '$.sample_count') is not null "
+                "order by observed_at desc,snapshot_id desc limit 1",
+                (snapshot_version,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def list_selected_training_records(self) -> list[dict[str, Any]]:
+        """Return the service-produced labels that can be frozen for training.
+
+        The caller decides which sources and categories participate.  This
+        method deliberately does not require a provider-folder snapshot: user
+        feedback and Agent labels are valid, independently selectable sources.
+        """
+
+        with self._connect() as db:
+            rows = self._selected_training_rows(db, include_input=True)
         from app.email_training_snapshot import canonical_model_input
 
         def stored_address(value: object) -> dict[str, str]:
@@ -14437,34 +14328,7 @@ class EmailStore:
                     "attachments": attachments,
                 }
             )
-            result.append({
-                "classification_id": int(row["id"]),
-                "account_id": str(row["account_id"]),
-                "stable_message_identity": str(row["stable_message_identity"]),
-                "provider_thread_id": str(row["thread_id"]) if row["thread_id"] else None,
-                "normalized_model_input": model_input,
-                "source": (
-                    "agent_auto_label"
-                    if row["classification_source"] == "agent"
-                    else "user_feedback"
-                ),
-                "category_key": str(
-                    row["category"]
-                    if row["classification_source"] == "agent"
-                    else row["confirmed_category"]
-                ),
-                "important": important_training_label(
-                    category=str(
-                        row["category"]
-                        if row["classification_source"] == "agent"
-                        else row["confirmed_category"]
-                    ),
-                    sender=str(row["sender"] or ""),
-                ),
-                "label_recorded_at": str(
-                    row["confirmed_at"] or row["updated_at"]
-                ),
-            })
+            result.append({**self._selected_training_label(row), "normalized_model_input": model_input})
         return result
 
     def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
@@ -14637,7 +14501,7 @@ class EmailStore:
                 (str(row["account_id"]), str(row["stable_message_identity"])): row["predicted_category"]
                 for row in db.execute(
                     "select account_id, stable_message_identity, predicted_category "
-                    "from email_classifications where predicted_category is not null"
+                    f"from ({EMAIL_CLASSIFICATION_SQL}) where predicted_category is not null"
                 )
             }
         result = []
@@ -15081,7 +14945,7 @@ class EmailStore:
             # whose current plan has one), not only within the 24 hours.
             actions["failed"] = int(
                 db.execute(
-                    "select count(*) from email_classifications as classifications "
+                    f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications "
                     f"where exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as failed_action "
                     "where failed_action.classification_id=classifications.id "
                     "and failed_action.action_plan_id="
@@ -15093,7 +14957,7 @@ class EmailStore:
             # again, so the bar can point at what still needs a person.
             actions["failed_retriable"] = int(
                 db.execute(
-                    "select count(*) from email_classifications as classifications "
+                    f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications "
                     f"where exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as failed_action "
                     "where failed_action.classification_id=classifications.id "
                     "and failed_action.action_plan_id="
@@ -15128,7 +14992,7 @@ class EmailStore:
             )
             waiting = int(
                 db.execute(
-                    "select count(*) from email_classifications "
+                    f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) "
                     "where status='pending_feedback'"
                 ).fetchone()[0]
             )
@@ -15190,12 +15054,92 @@ class EmailStore:
             return False
         with self._connect() as db:
             cursor = db.execute(
-                "update email_messages set recipients_json=? "
+                "update emails set message_recipients_json=? "
                 "where account_id=? and stable_message_identity=? "
-                "and recipients_json='[]'",
+                "and message_recipients_json='[]'",
                 (_json_dump(values), account_id, stable_message_identity),
             )
             return cursor.rowcount == 1
+
+    def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
+        """Retire one completed original with an exact source and no unfinished dependency."""
+        from app.email_body_source import locate_original
+        from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+        eligible = f"""class_status='processed' and message_source_reference_json is null
+            and typeof(message_normalized_text)='text' and message_normalized_text<>''
+            and not exists(select 1 from ({_EMAIL_CLASSIFICATION_SQL}) t
+                where t.stable_message_identity=emails.stable_message_identity and t.status<>'done')
+            and not exists(select 1 from ({REPLY_TASK_CURRENT_SQL}) t where t.channel='email'
+                and json_extract(t.trigger_message_json,'$.classification_id')=emails.classification_id
+                and t.status not in ('done','skipped'))
+            and not exists(select 1 from actions a where a.email_classification_id=emails.classification_id
+                and ((a.record_type='email_actions' and a.email_status not in ('done','skipped'))
+                  or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
+                      and a.email_status<>'done')))"""
+        with self._connect() as db:
+            row = db.execute("select id,account_id,stable_message_identity,message_normalized_text,"
+                "message_updated_at,class_updated_at,class_current_action_plan_id from emails "
+                "where classification_id=? and " + eligible, (classification_id,)).fetchone()
+            if row is None:
+                return False
+            original = dict(row)
+            attempts = db.execute(f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
+                f"from ({RUNTIME_ATTEMPT_SQL}) a join ({_EMAIL_CLASSIFICATION_SQL}) t "
+                "on a.workload_kind='email_classification' and a.workload_key=t.task_id "
+                "where t.stable_message_identity=? and a.status not in ('starting','running') order by a.id desc",
+                (original["stable_message_identity"],)).fetchall()
+        reference = locate_original(original["message_normalized_text"], attempts=attempts,
+            read_message=lambda: source_reader.read(original["account_id"], original["stable_message_identity"]))
+        if reference is None:
+            return False
+        with self._connect() as db:
+            cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=? "
+                "where id=? and message_normalized_text=? and message_updated_at is ? "
+                "and class_updated_at is ? and class_current_action_plan_id is ? and " + eligible,
+                (_json_dump(reference), original["id"], original["message_normalized_text"],
+                 original["message_updated_at"], original["class_updated_at"], original["class_current_action_plan_id"]))
+            return cursor.rowcount == 1
+
+    def get_email_source_location(
+        self, account_id: str, stable_message_identity: str,
+    ) -> dict[str, object] | None:
+        key = (account_id, stable_message_identity)
+        return self.get_email_source_locations([key]).get(key)
+
+    def get_email_source_locations(
+        self, identities: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], dict[str, object]]:
+        """Only source coordinates/current folder facts; never original content."""
+        if not identities:
+            return {}
+        with self._connect() as db:
+            rows = db.execute(
+                """with requested as (
+                    select json_extract(value, '$[0]') as account_id,
+                           json_extract(value, '$[1]') as stable_message_identity
+                    from json_each(?)
+                )
+                select messages.account_id, messages.stable_message_identity,
+                       messages.message_folder as folder, messages.uidvalidity, messages.uid,
+                       messages.message_rfc_message_id as rfc_message_id,
+                       messages.message_thread_identity as thread_identity,
+                       messages.message_updated_at as updated_at, messages.message_source_reference_json,
+                       observations.state, observations.provider_folder_name, observations.observed_at
+                from requested
+                join emails as messages
+                  on messages.account_id=requested.account_id
+                 and messages.stable_message_identity=requested.stable_message_identity
+                left join provider_state as observations
+                  on observations.record_type='observation'
+                 and observations.account_id=messages.account_id
+                 and observations.stable_message_identity=messages.stable_message_identity""",
+                (_json_dump(list(identities)),),
+            ).fetchall()
+        return {
+            (row["account_id"], row["stable_message_identity"]): dict(row)
+            for row in rows
+        }
 
     def get_stored_email_locator(
         self, classification_id: int
@@ -15205,10 +15149,10 @@ class EmailStore:
         _require_positive_int(classification_id, field="classification_id")
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select account_id, folder, uidvalidity, uid, rfc_message_id,
                        thread_id, stable_message_identity
-                from email_classifications where id=?
+                from ({EMAIL_CLASSIFICATION_SQL}) where id=?
                 """,
                 (classification_id,),
             ).fetchone()
@@ -15255,7 +15199,7 @@ class EmailStore:
         with self._connect() as db:
             classification = db.execute(
                 "select account_id, stable_message_identity "
-                "from email_classifications where id=?",
+                f"from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification_id,),
             ).fetchone()
             if classification is None:
@@ -15299,7 +15243,7 @@ class EmailStore:
         with self._connect() as db:
             for classification_id in classification_ids:
                 row = db.execute(
-                    """
+                    f"""
                     select observations.state, observations.category_key,
                            observations.important,
                            observations.important_signals_json,
@@ -15307,7 +15251,7 @@ class EmailStore:
                            observations.provider_folder_name,
                            coalesce(generations.observed_at, observations.observed_at)
                                as observed_at
-                    from email_classifications as classifications
+                    from ({EMAIL_CLASSIFICATION_SQL}) as classifications
                     left join provider_state as observations
                       on observations.record_type='observation'
                      and observations.account_id=classifications.account_id
@@ -15652,168 +15596,10 @@ class EmailStore:
         )
         return result
 
-    def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
-        return [
-            row
-            for row in self.list_training_examples(include_inclusion=True)
-            if row["included_in_model_id"] is None
-        ]
 
-    def mark_training_examples_included(
-        self, samples: Sequence[Mapping[str, object]], *, model_id: str
-    ) -> None:
-        self.commit_training_promotion(
-            samples,
-            model_id=model_id,
-            promote=lambda: None,
-            restore=lambda: None,
-        )
 
-    def commit_training_promotion(
-        self,
-        validation_snapshots: Sequence[Mapping[str, object]],
-        *,
-        inclusion_snapshots: Sequence[Mapping[str, object]] | None = None,
-        model_id: str,
-        promote: Callable[[], object],
-        restore: Callable[[], object],
-    ) -> None:
-        validation_by_identity = {
-            str(item.get("message_id", "")): item for item in validation_snapshots
-        }
-        inclusion_items = (
-            validation_snapshots if inclusion_snapshots is None else inclusion_snapshots
-        )
-        inclusion_by_identity = {
-            str(item.get("message_id", "")): item for item in inclusion_items
-        }
-        validation_identities = tuple(validation_by_identity)
-        inclusion_identities = tuple(inclusion_by_identity)
-        if (
-            not validation_identities
-            or not inclusion_identities
-            or not model_id.strip()
-        ):
-            raise ValueError("sample identities and model_id are required")
-        if len(validation_by_identity) != len(validation_snapshots) or len(
-            inclusion_by_identity
-        ) != len(inclusion_items):
-            raise ValueError("training sample identities must be unique")
-        if not set(inclusion_identities).issubset(validation_by_identity):
-            raise ValueError("inclusion snapshots must be part of validation snapshots")
-        for identity, inclusion_snapshot in inclusion_by_identity.items():
-            validation_snapshot = validation_by_identity[identity]
-            if (
-                inclusion_snapshot.get("sample_digest")
-                != validation_snapshot.get("sample_digest")
-                or inclusion_snapshot.get("included_in_model_id") is not None
-            ):
-                raise ValueError(
-                    "inclusion snapshots must match unincluded validation snapshots"
-                )
-        promotion_attempted = False
-        with self._connect() as db:
-            try:
-                db.execute("begin immediate")
-                self._verify_training_snapshots(
-                    db,
-                    validation_by_identity,
-                    validation_identities,
-                    inclusion_identities=inclusion_identities,
-                    model_id=model_id,
-                )
-                promotion_attempted = True
-                promote()
-                self._update_training_inclusion(
-                    db, inclusion_identities, model_id=model_id
-                )
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                if promotion_attempted:
-                    try:
-                        restore()
-                    except Exception as restore_exc:
-                        raise EmailTrainingConsistencyError(
-                            "training promotion manifest restore could not be proven"
-                        ) from restore_exc
-                raise exc
 
-    @staticmethod
-    def _verify_training_snapshots(
-        db,
-        snapshots,
-        identities,
-        *,
-        inclusion_identities,
-        model_id: str,
-    ) -> None:
-        placeholders = ",".join("?" for _ in identities)
-        rows = db.execute(
-            f"""
-                select id, account_id, stable_message_identity, model_text,
-                       confirmed_category as label, included_in_model_id,
-                       confirmed_at, classification_source, status
-                from email_classifications
-                where stable_message_identity in ({placeholders})
-                  and classification_source='user'
-                  and status='processed'
-                  and confirmed_category is not null
-                  and confirmed_category != ''
-                  and trim(model_text) != ''
-                """,
-            identities,
-        ).fetchall()
-        if {row["stable_message_identity"] for row in rows} != set(identities):
-            raise EmailTrainingInclusionConflict(
-                "training sample set changed before inclusion"
-            )
-        inclusion_identity_set = set(inclusion_identities)
-        for row in rows:
-            current = {
-                "message_id": row["stable_message_identity"],
-                "model_text": row["model_text"],
-                "label": row["label"],
-                "classification_id": row["id"],
-                "account_id": row["account_id"],
-                "included_in_model_id": row["included_in_model_id"],
-                "confirmed_at": row["confirmed_at"],
-                "classification_source": row["classification_source"],
-                "status": row["status"],
-            }
-            expected_digest = snapshots[row["stable_message_identity"]].get(
-                "sample_digest"
-            )
-            if expected_digest != _training_sample_digest(current):
-                raise EmailTrainingInclusionConflict(
-                    "training sample changed before inclusion"
-                )
-            expected_inclusion = snapshots[row["stable_message_identity"]].get(
-                "included_in_model_id"
-            )
-            current_inclusion = row["included_in_model_id"]
-            idempotent_inclusion = (
-                row["stable_message_identity"] in inclusion_identity_set
-                and expected_inclusion is None
-                and current_inclusion == model_id
-            )
-            if current_inclusion != expected_inclusion and not idempotent_inclusion:
-                raise EmailTrainingInclusionConflict(
-                    "training sample inclusion changed before promotion"
-                )
 
-    @staticmethod
-    def _update_training_inclusion(db, identities, *, model_id: str) -> None:
-        placeholders = ",".join("?" for _ in identities)
-        db.execute(
-            f"""
-            update email_classifications
-            set included_in_model_id=?
-            where stable_message_identity in ({placeholders})
-              and included_in_model_id is null
-            """,
-            (model_id, *identities),
-        )
 
     def confirm_classification(
         self,
@@ -15917,7 +15703,7 @@ class EmailStore:
                     )
                 return self._feedback_application(db, request, applied=False)
             row = db.execute(
-                "select * from email_classifications where id=?", (row_id,)
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?", (row_id,)
             ).fetchone()
             if row is None:
                 return None
@@ -15990,16 +15776,16 @@ class EmailStore:
             self._persist_action_plan(db, action_plan, now=applied_at)
             updated_count = db.execute(
                 """
-                update email_classifications
-                set category=?, confirmed_category=?, status=?,
-                    classification_source='user', config_version=?,
-                    current_action_plan_id=?,
-                    legacy_processed_without_plan=0,
-                    agent_result_json='null',
-                    confirmed_at=?, updated_at=?
-                where id=?
-                  and status=?
-                  and current_action_plan_id is ?
+                update emails
+                set class_category=?, class_confirmed_category=?, class_status=?,
+                    class_classification_source='user', class_config_version=?,
+                    class_current_action_plan_id=?,
+                    class_legacy_processed_without_plan=0,
+                    class_agent_result_json='null',
+                    class_confirmed_at=?, class_updated_at=?
+                where classification_id=?
+                  and class_status=?
+                  and class_current_action_plan_id is ?
                 """,
                 (
                     category,
@@ -16129,7 +15915,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_classifications where stable_message_identity=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
                 (stable_message_identity,),
             ).fetchone()
             if row is None:
@@ -16188,56 +15974,24 @@ class EmailStore:
                 created_at=plan_created_at,
             )
             self._assert_no_email_reply_dispatch_in_flight(db, int(row["id"]))
-            db.execute(
-                """
-                update email_classifications
-                set folder=?, uidvalidity=?, uid=?, thread_id=?, updated_at=?
-                where id=?
-                """,
-                (
-                    locator.folder,
-                    locator.uidvalidity,
-                    locator.uid,
-                    locator.thread_id,
-                    applied_at,
-                    int(row["id"]),
-                ),
-            )
-            # The stored message carries the same locator, and durable
-            # validation refuses a store where the two disagree.
-            db.execute(
-                """
-                update email_messages
-                set folder=?, uidvalidity=?, uid=?
-                where stable_message_identity=?
-                """,
-                (
-                    locator.folder,
-                    locator.uidvalidity,
-                    locator.uid,
-                    stable_message_identity,
-                ),
+            update_email_paired_locator(
+                db, classification_id=int(row["id"]),
+                account_id=str(row["account_id"]),
+                stable_message_identity=stable_message_identity,
+                class_folder=locator.folder, message_folder=locator.folder,
+                uidvalidity=locator.uidvalidity, uid=locator.uid,
+                class_thread_id=locator.thread_id,
+                class_updated_at=applied_at,
             )
             self._persist_action_plan(db, action_plan, now=applied_at)
-            db.execute(
-                """
-                update email_classifications
-                set current_action_plan_id=?,
-                    config_version=?, legacy_processed_without_plan=0,
-                    updated_at=?
-                where id=?
-                """,
-                (
-                    action_plan.action_plan_id,
-                    # The plan carries the category's current configuration, and
-                    # durable validation requires the row to say the same.
-                    config_version,
-                    applied_at,
-                    int(row["id"]),
-                ),
-            )
+            update_email_classification(db, int(row["id"]), {
+                "current_action_plan_id": action_plan.action_plan_id,
+                "config_version": config_version,
+                "legacy_processed_without_plan": 0,
+                "updated_at": applied_at,
+            })
             updated = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (int(row["id"]),),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
@@ -16267,7 +16021,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification_id,),
             ).fetchone()
             if row is None:
@@ -16290,33 +16044,22 @@ class EmailStore:
             now = self._now()
             self._persist_action_plan(db, action_plan, now=now)
             if row["current_action_plan_id"] != action_plan.action_plan_id:
-                db.execute(
-                    """
-                    update email_classifications
-                    set category=?, confirmed_category=?, status='processed',
-                        classification_source=?, confidence=?, model_id=?,
-                        config_version=?,
-                        current_action_plan_id=?, legacy_processed_without_plan=0,
-                        agent_result_json=?,
-                        confirmed_at=?, updated_at=?
-                    where id=?
-                    """,
-                    (
-                        action_plan.category,
-                        confirmed_category_value,
-                        action_plan.classification_source,
-                        action_plan.confidence,
-                        action_plan.model_id,
-                        action_plan.config_version,
-                        action_plan.action_plan_id,
-                        agent_result_json,
-                        now,
-                        now,
-                        classification_id,
-                    ),
-                )
+                update_email_classification(db, classification_id, {
+                    "category": action_plan.category,
+                    "confirmed_category": confirmed_category_value,
+                    "status": "processed",
+                    "classification_source": action_plan.classification_source,
+                    "confidence": action_plan.confidence,
+                    "model_id": action_plan.model_id,
+                    "config_version": action_plan.config_version,
+                    "current_action_plan_id": action_plan.action_plan_id,
+                    "legacy_processed_without_plan": 0,
+                    "agent_result_json": agent_result_json,
+                    "confirmed_at": now,
+                    "updated_at": now,
+                })
             updated = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
@@ -16557,7 +16300,7 @@ class EmailStore:
             f"""
             select distinct a.classification_id
             from ({EMAIL_DIRECT_ACTION_SQL}) as a
-            cross join email_classifications as c on c.id=a.classification_id
+            cross join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
             where a.status in ('pending', 'failed')
               and c.status='processed'
               and c.current_action_plan_id=a.action_plan_id
@@ -16573,7 +16316,7 @@ class EmailStore:
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
                 from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join email_classifications as c on c.id=a.classification_id
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.classification_id=?
                   and c.status='processed'
@@ -16705,7 +16448,7 @@ class EmailStore:
             identity_sql = f"""
                 select c.id, c.account_id, c.stable_message_identity,
                        p.action_plan_version
-                from email_classifications as c
+                from ({EMAIL_CLASSIFICATION_SQL}) as c
                 join ({EMAIL_PLAN_SQL}) as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
@@ -16752,7 +16495,7 @@ class EmailStore:
                 hydrated = db.execute(
                     f"""
                     select c.*, p.action_plan_version, p.actions_json
-                    from email_classifications as c
+                    from ({EMAIL_CLASSIFICATION_SQL}) as c
                     join ({EMAIL_PLAN_SQL}) as p
                       on p.action_plan_id=c.current_action_plan_id
                     where c.id in ({placeholders})
@@ -16815,10 +16558,14 @@ class EmailStore:
                     "decision_json": _json_dump(decision),
                 },
             )
+            parts = task8_set_parts("reply_tasks", {
+                "status": "skipped", "error": "email_unsubscribe_cancelled_by_principal",
+                "available_at": "", "locked_at": None, "updated_at": decision["recorded_at"],
+            })
             db.execute(
-                "update tasks set status='skipped', error='email_unsubscribe_cancelled_by_principal', "
-                "available_at='', locked_at=null, updated_at=? where record_type='reply_tasks' and id=?",
-                (decision["recorded_at"], task_id),
+                f"update tasks set {parts.sql} where record_type='reply_tasks' "
+                f"and {task20_column('reply_tasks', 'id')}=?",
+                (*parts.parameters, task_id),
             )
             return decision
 
@@ -16871,7 +16618,7 @@ class EmailStore:
         payload = _task_payload(typed_task)
         _validate_task_identity(typed_task, payload)
         source = db.execute(
-            f"select 1 from email_classifications c join ({EMAIL_PLAN_SQL}) p "
+            f"select 1 from ({EMAIL_CLASSIFICATION_SQL}) c join ({EMAIL_PLAN_SQL}) p "
             "on p.action_plan_id=c.current_action_plan_id where c.id=? and c.status='processed' "
             "and c.account_id=? and c.stable_message_identity=? "
             "and p.action_plan_id=? and p.action_plan_version=?",
@@ -16917,7 +16664,14 @@ class EmailStore:
                 f"""
                 select c.id, c.account_id, c.stable_message_identity,
                        p.action_plan_version
-                from email_classifications as c
+                from (
+                    select classification_id as id, account_id,
+                           stable_message_identity,
+                           class_current_action_plan_id as current_action_plan_id,
+                           class_status as status
+                    from main.emails
+                    where classification_id is not null
+                ) as c
                 join ({EMAIL_PLAN_SQL}) as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
@@ -16964,7 +16718,7 @@ class EmailStore:
                 classification = db.execute(
                     f"""
                     select c.*, p.action_plan_version, p.actions_json
-                    from email_classifications as c
+                    from ({EMAIL_CLASSIFICATION_SQL}) as c
                     join ({EMAIL_PLAN_SQL}) as p
                       on p.action_plan_id=c.current_action_plan_id
                     where c.id=? and c.status='processed'
@@ -16999,14 +16753,14 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (action_plan.classification_id,),
             ).fetchone()
             if row is None or row["current_action_plan_id"] != action_plan.action_plan_id:
                 raise EmailActionPlanConflict("model ActionPlan is not current")
             self._persist_action_plan(db, action_plan, now=self._now())
             updated = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (action_plan.classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
@@ -17032,7 +16786,7 @@ class EmailStore:
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
                 from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join email_classifications as c on c.id=a.classification_id
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and c.status='processed'
                 """,
@@ -17113,7 +16867,7 @@ class EmailStore:
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity
                 from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join email_classifications as c on c.id=a.classification_id
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.status='failed' and a.account_id=?
                   and a.action_type in ({placeholders})
                   and c.status='processed'
@@ -17166,7 +16920,7 @@ class EmailStore:
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity, p.actions_json,
                        p.action_plan_version
-                from ({EMAIL_DIRECT_ACTION_SQL}) a join email_classifications c
+                from ({EMAIL_DIRECT_ACTION_SQL}) a join ({EMAIL_CLASSIFICATION_SQL}) c
                   on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and a.status='failed' and c.status='processed'
@@ -17252,7 +17006,7 @@ class EmailStore:
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id
                 from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join email_classifications as c on c.id=a.classification_id
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.action_id=? and c.status='processed'
                 """,
                 (action_id,),
@@ -17486,7 +17240,7 @@ class EmailStore:
                        c.status as classification_status,
                        c.current_action_plan_id
                 from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join email_classifications as c on c.id=a.classification_id
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.action_id=?
                 """,
                 (action.action_id,),
@@ -17541,46 +17295,22 @@ class EmailStore:
                     f"direct action is no longer current for {action.action_id}"
                 )
             if updated_locator is not None:
-                classification_updated = db.execute(
-                    """
-                    update email_classifications
-                    set folder=?, uidvalidity=?, uid=?, updated_at=?
-                    where id=? and account_id=? and stable_message_identity=?
-                      and folder=? and uidvalidity=? and uid=?
-                    """,
-                    (
-                        updated_locator.folder,
-                        updated_locator.uidvalidity,
-                        updated_locator.uid,
-                        finished_at,
-                        action.classification_id,
-                        action.account_id,
-                        action.locator.stable_message_identity,
-                        action.locator.folder,
-                        action.locator.uidvalidity,
-                        action.locator.uid,
-                    ),
-                ).rowcount
-                message_updated = db.execute(
-                    """
-                    update email_messages
-                    set folder=?, uidvalidity=?, uid=?, updated_at=?
-                    where account_id=? and stable_message_identity=?
-                      and folder=? and uidvalidity=? and uid=?
-                    """,
-                    (
-                        updated_locator.folder,
-                        updated_locator.uidvalidity,
-                        updated_locator.uid,
-                        finished_at,
-                        action.account_id,
-                        action.locator.stable_message_identity,
-                        action.locator.folder,
-                        action.locator.uidvalidity,
-                        action.locator.uid,
-                    ),
-                ).rowcount
-                if classification_updated != 1 or message_updated != 1:
+                paired_updated = update_email_paired_locator(
+                    db, classification_id=action.classification_id,
+                    account_id=action.account_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                    class_folder=updated_locator.folder,
+                    message_folder=updated_locator.folder,
+                    uidvalidity=updated_locator.uidvalidity,
+                    uid=updated_locator.uid,
+                    class_updated_at=finished_at,
+                    message_updated_at=finished_at,
+                    expected_class_folder=action.locator.folder,
+                    expected_message_folder=action.locator.folder,
+                    expected_uidvalidity=action.locator.uidvalidity,
+                    expected_uid=action.locator.uid,
+                )
+                if paired_updated != 1:
                     raise EmailActionAttemptConflict(
                         f"provider locator changed for {action.action_id}"
                     )
@@ -17650,7 +17380,7 @@ class EmailStore:
                 f"""
                 select a.*, c.stable_message_identity
                 from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join email_classifications as c on c.id=a.classification_id
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.status='processing' and a.started_at < ?
                 order by a.action_id
                 """,
@@ -17716,7 +17446,7 @@ class EmailStore:
                        classifications.preview, classifications.category,
                        classifications.received_at, actions.finished_at
                 from ({EMAIL_DIRECT_ACTION_SQL}) as actions
-                join email_classifications as classifications
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=actions.classification_id
                 where actions.action_type='flag_important'
                   and actions.status='done'

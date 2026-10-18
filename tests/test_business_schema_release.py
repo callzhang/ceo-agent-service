@@ -1,4 +1,4 @@
-"""Finite four-kind Business schema release against native SQLite."""
+"""Finite seven-kind Business schema release against native SQLite."""
 
 from contextlib import closing
 import json
@@ -11,18 +11,25 @@ import pytest
 from app.business_storage import create_business_schema
 
 FRESH_DECLARATIONS = Path(__file__).parent / "fixtures/business_four_kind_fresh_declarations.json"
+WORK_SOURCE_DECLARATIONS = Path(__file__).parent / "fixtures/business_work_projects_source_declarations.json"
 SOURCE_ORACLE = (Path(__file__).parents[1] / "docs/superpowers/specs/"
                  "2026-10-15-database-redesign-business-core-native-source.json")
 
 
 def _source_declarations(variant):
     source = json.loads(FRESH_DECLARATIONS.read_text())
+    source["parents"].update(
+        json.loads(WORK_SOURCE_DECLARATIONS.read_text())["fresh"]["parents"]
+    )
+    work_source = json.loads(WORK_SOURCE_DECLARATIONS.read_text())[variant]
+    source["parents"].update(work_source["parents"])
     if variant == "actual":
         actual = json.loads(SOURCE_ORACLE.read_text())["actual"]
         for name in ("business_tasks", "business_projects", "business_attention_items"):
             section = "parents" if name in source["parents"] else "children"
             oracle_table = actual["tables"].get(name, actual["external_endpoint_tables"].get(name))
             source[section][name]["sql"] = oracle_table["sql"]
+        source["parents"].update(work_source["parents"])
         source["variant"] = "actual"
     return source
 
@@ -33,10 +40,18 @@ def _source_db(variant):
     db = sqlite3.connect(":memory:")
     db.execute("pragma foreign_keys=off")
     _recreate_source(db, _source_declarations(variant))
-    for name in ("business_task_signals", "business_work_clusters", "work_projects",
-                 "work_todos", "work_updates"):
+    for name in ("business_task_signals", "work_updates"):
         db.execute(f"create table {name}(id integer primary key)")
         db.execute(f"insert into {name}(id) values(-31)")
+    db.execute("insert into work_projects(id,title,memory_context_json) "
+               "values(-31,'source project','{\"query\":\"cache\",\"memories\":[]}')")
+    db.execute("insert into work_todos(id,project_id,title) values(-31,-31,'source todo one')")
+    db.execute("insert into work_todos(id,project_id,title,status,completed_at,"
+               "completion_evidence_json) values(-32,-31,'source todo two','done',"
+               "'2026-07-04 12:30:00','{\"source\":\"reply_attempt:7\"}')")
+    db.execute("insert into business_work_clusters(id,title) values(-31,'cluster')")
+    db.execute("insert into todo_evidence_candidates(id,project_id,todo_id,source_type,source_ref,"
+               "evidence_text,dedupe_key) values(-51,-31,-32,'minutes','source:1','evidence','seed')")
     db.commit()
     return db
 
@@ -56,6 +71,20 @@ def _seed_complete_source(db):
                "evidence_json) values(-11,-11,'{}','[]')")
     db.execute("insert into business_projects(id,canonical_anchor_id,title,registry_source) "
                "values(-21,-21,'project b','test')")
+    db.execute(
+        "insert into service_bugfix_candidates(id,feedback_event_key,feedback_token,attempt_id,"
+        "status,title,reason,feedback_comment,conversation_title,trigger_text) "
+        "values(-71,'feedback:source','token:source',19,'pending','candidate','reason',"
+        "'comment','conversation','trigger')"
+    )
+    db.execute(
+        "insert into service_bugfix_candidates(id,feedback_event_key,title,reason,feedback_comment) "
+        "values(171,'feedback:deleted','deleted','reason','comment')"
+    )
+    db.execute("delete from service_bugfix_candidates where id=171")
+    db.execute("insert into todo_evidence_candidates(id,project_id,todo_id,source_type,source_ref,"
+               "evidence_text,dedupe_key) values(172,-31,-32,'minutes','deleted','deleted','deleted')")
+    db.execute("delete from todo_evidence_candidates where id=172")
     db.execute("insert into business_attention_items(id,stable_key,category,title,"
                "why_attention,current_state,ceo_action,anchor_id,evidence_signal_id) "
                "values(-41,'attention','fyi','attention','why','state','action',-11,-31)")
@@ -95,20 +124,21 @@ def _seed_complete_source(db):
                "business_task_id,operation) values(-47,'operation',-11,'create')")
     db.execute("insert into business_task_anchor_links(id,task_id,anchor_id,"
                "evidence_signal_id) values(-48,-11,-11,-31)")
-    for record_id, column, value, work_column in (
-        (-51, "task_id", -11, "work_project_id"),
-        (-52, "anchor_id", -11, "work_todo_id"),
-        (-53, "project_id", -11, "work_update_id"),
+    for record_id, column, value, work_column, work_id in (
+        (-51, "task_id", -11, "work_project_id", -31),
+        (-52, "anchor_id", -11, "work_todo_id", -31),
+        (-53, "project_id", -11, "work_update_id", -31),
+        (-54, "cluster_id", -31, "work_todo_id", -32),
     ):
         db.execute(f"insert into business_legacy_links(id,{column},{work_column}) "
-                   "values(?,?,?)", (record_id, value, -31))
+                   "values(?,?,?)", (record_id, value, work_id))
     db.commit()
 
 
 @pytest.mark.parametrize(
     ("kind", "alias"),
     (("task", "task_public_id"), ("project", "project_public_id"),
-     ("anchor", "anchor_public_id")),
+     ("anchor", "anchor_public_id"), ("work_cluster", "work_cluster_public_id")),
 )
 def test_typed_public_parent_key(kind, alias):
     with closing(sqlite3.connect(":memory:")) as db:
@@ -132,14 +162,14 @@ def test_source_capture_fresh_is_declarations_only():
     with closing(_source_db("fresh")) as db:
         source = capture_business_source(db)
         assert source["variant"] == "fresh"
-        assert len(source["parents"]) == 4
+        assert len(source["parents"]) == 9
         assert len(source["children"]) == 15
         assert source["fk_findings"] == ()
         assert "rows" not in source
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
-def test_exact_19_child_endpoints_and_21_untouched_groups(variant):
+def test_exact_24_child_endpoints_and_16_untouched_groups(variant):
     from app.business_schema_release import (
         PUBLIC_ALIAS, RETAINED_CHILD_FKS, SOURCE_PARENTS,
         migrate_business_schema,
@@ -174,18 +204,18 @@ def test_exact_19_child_endpoints_and_21_untouched_groups(variant):
                     untouched_count += 1
             assert actual == tuple(expected), name
             assert tuple(tuple(row) for row in db.execute(f"pragma table_xinfo({name})")) == before_columns[name]
-        assert (translated_count, untouched_count) == (19, 21)
+        assert (translated_count, untouched_count) == (24, 16)
         db.rollback()
 
 
-def test_four_kind_deleted_high_waters_inverse_and_reforward():
+def test_nine_kind_deleted_high_waters_inverse_and_reforward():
     from app.business_schema_release import (
         SOURCE_PARENTS, _parent_waters, _recreate_source,
         business_schema_is_current, capture_business_source,
         migrate_business_schema, restore_business_schema,
     )
 
-    source = json.loads(FRESH_DECLARATIONS.read_text())
+    source = _source_declarations("fresh")
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=off")
         _recreate_source(db, source)
@@ -203,15 +233,31 @@ def test_four_kind_deleted_high_waters_inverse_and_reforward():
                    "values(115,114,'high','synthetic')")
         db.execute("insert into business_project_context_revisions("
                    "id,project_id,context_json,evidence_json) values(116,115,'{}','[]')")
+        db.execute("insert into service_bugfix_candidates(id,feedback_event_key,title,reason,"
+                   "feedback_comment) values(117,'feedback:high','high','reason','comment')")
+        db.execute("insert into business_work_clusters(id,title) values(-17,'kept cluster')")
+        db.execute("insert into business_work_clusters(id,title) values(118,'high cluster')")
+        db.execute("insert into todo_evidence_candidates(id,project_id,todo_id,source_type,source_ref,"
+                   "dedupe_key) values(-18,1,1,'minutes','kept','kept')")
+        db.execute("insert into todo_evidence_candidates(id,project_id,todo_id,source_type,source_ref,"
+                   "dedupe_key) values(119,1,1,'minutes','high','high')")
+        db.execute("insert into work_projects(id,title) values(120,'high project')")
+        db.execute("insert into work_todos(id,project_id,title) values(121,120,'high todo')")
         for kind, table in reversed(tuple(SOURCE_PARENTS.items())):
             db.execute(f"delete from {table} where id=?", ({
                 "task": 111, "anchor": 114, "project": 115,
-                "project_context_revision": 116,
+                "project_context_revision": 116, "service_bugfix_candidate": 117,
+                "work_cluster": 118, "todo_evidence_candidate": 119,
+                "work_project": 120, "work_todo": 121,
             }[kind],))
         source_waters = _parent_waters(db, target=False)
         assert source_waters == {
             "task": 111, "project": 115,
             "anchor": 114, "project_context_revision": 116,
+            "service_bugfix_candidate": 117,
+            "work_cluster": 118,
+            "todo_evidence_candidate": 119,
+            "work_project": 120, "work_todo": 121,
         }
         db.commit()
         db.execute("begin immediate")
@@ -233,8 +279,10 @@ def test_four_kind_deleted_high_waters_inverse_and_reforward():
         assert _parent_waters(db, target=True) == source_waters
         assert db.execute(
             "select count(*) from business where record_type in "
-            "('task','project','anchor','project_context_revision')"
-        ).fetchone() == (4,)
+            "('task','project','anchor','project_context_revision',"
+            "'service_bugfix_candidate','work_cluster','todo_evidence_candidate',"
+            "'work_project','work_todo')"
+        ).fetchone() == (6,)
         db.commit()
 
 
@@ -242,7 +290,7 @@ def test_four_kind_deleted_high_waters_inverse_and_reforward():
 def test_populated_actual_and_fresh_copy_preserves_all_facts_and_current_inverse(variant):
     from app.business_schema_release import (
         RETAINED_CHILD_FKS, SOURCE_PARENTS, _child_facts, _child_waters,
-        _parent_facts, _parent_waters, _projected_parent_facts,
+        _mapped_parent_facts, _parent_facts, _parent_waters, _projected_parent_facts,
         _source_fk_findings, business_schema_is_current, capture_business_source,
         migrate_business_schema, restore_business_schema,
     )
@@ -255,11 +303,11 @@ def test_populated_actual_and_fresh_copy_preserves_all_facts_and_current_inverse
         source_children = _child_facts(db)
         source_waters = (_parent_waters(db, target=False), _child_waters(db))
         assert source_waters[1]["business_task_follow_ups"] == 146
-        assert len(source_waters[0]) + len(source_waters[1]) == 13
+        assert len(source_waters[0]) + len(source_waters[1]) == 18
         source_declarations = capture_business_source(db)
         assert sum(len(item["indexes"]) for item in source_declarations["children"].values()) == 29
         assert sum(len(item["triggers"]) for item in source_declarations["children"].values()) == 3
-        assert len(source_parents) == len(SOURCE_PARENTS) == 4
+        assert len(source_parents) == len(SOURCE_PARENTS) == 9
         assert all(source_children[name]["rows"] for name in RETAINED_CHILD_FKS)
         assert ("real",) in tuple(
             (row[source_children["business_task_follow_ups"]["columns"].index("revision")],)
@@ -274,8 +322,8 @@ def test_populated_actual_and_fresh_copy_preserves_all_facts_and_current_inverse
         assert business_schema_is_current(db, variant)
         assert _parent_waters(db, target=True) == source_waters[0]
         assert _child_waters(db) == source_waters[1]
-        for kind in SOURCE_PARENTS:
-            assert _projected_parent_facts(db, kind, variant) == source_parents[kind]
+        for kind, mapped in _mapped_parent_facts(source_parents, variant).items():
+            assert _projected_parent_facts(db, kind, variant) == mapped
         assert _child_facts(db) == source_children
         assert db.execute("pragma quick_check").fetchone() == ("ok",)
         assert db.execute("pragma foreign_key_check").fetchall() == []
@@ -284,7 +332,7 @@ def test_populated_actual_and_fresh_copy_preserves_all_facts_and_current_inverse
                 "select record_type,public_id,id from business"
             )
         }
-        assert len(physical) == 7
+        assert len(physical) == 13
         assert all(value > 0 for value in physical.values())
         assert physical[("task", -11)] != physical[("project", -11)] != physical[("anchor", -11)]
         assert db.execute("select merged_task_ref from business where record_type='task' "
@@ -295,18 +343,61 @@ def test_populated_actual_and_fresh_copy_preserves_all_facts_and_current_inverse
         db.execute("begin immediate")
         restore_business_schema(db, inverse)
         assert capture_business_source(db)["variant"] == variant
-        assert _parent_facts(db) == source_parents
+        restored_parents = _parent_facts(db)
+        assert _mapped_parent_facts(restored_parents, variant) == _mapped_parent_facts(
+            source_parents, variant
+        )
+        cache_position = restored_parents["work_project"]["columns"].index("memory_context_json")
+        assert all(row[cache_position] == "{}" for row in restored_parents["work_project"]["rows"])
         assert _child_facts(db) == source_children
         assert _parent_waters(db, target=False) == source_waters[0]
         assert _child_waters(db) == source_waters[1]
         db.commit()
 
 
+def test_service_bugfix_candidate_written_after_forward_survives_inverse():
+    from app.business_schema_release import migrate_business_schema, restore_business_schema
+    from app.business_storage import insert_business
+
+    with closing(_source_db("fresh")) as db:
+        db.execute(
+            "insert into service_bugfix_candidates(id,feedback_event_key,title,reason,"
+            "feedback_comment) values(11,'feedback:before','before','reason','comment')"
+        )
+        db.commit()
+        db.execute("begin immediate")
+        inverse = migrate_business_schema(db)
+        db.commit()
+        db.execute("begin immediate")
+        inserted = insert_business(db, "service_bugfix_candidate", {
+            "feedback_event_key": "feedback:after",
+            "title": "after forward",
+            "reason": "new reason",
+            "feedback_comment": "new comment",
+        })
+        assert inserted.lastrowid == 12
+        db.commit()
+        db.execute("begin immediate")
+        restore_business_schema(db, inverse)
+        row = db.execute(
+            "select id,feedback_event_key,title,reason,feedback_comment,status "
+            "from service_bugfix_candidates where id=12"
+        ).fetchone()
+        assert row == (12, "feedback:after", "after forward", "new reason", "new comment", "pending")
+        assert db.execute(
+            "select seq from sqlite_sequence where name='service_bugfix_candidates'"
+        ).fetchone() == (12,)
+        db.commit()
+
+
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
-def test_all_19_translated_endpoints_enforce_native_kind_and_parent_mutation(variant):
+def test_all_24_translated_endpoints_enforce_native_kind_and_parent_mutation(variant):
     from app.business_schema_release import RETAINED_CHILD_FKS, migrate_business_schema
 
-    wrong_kind_id = {"task": -21, "project": -12, "anchor": -12}
+    wrong_kind_id = {
+        "task": -21, "project": -12, "anchor": -12, "work_cluster": -11,
+        "work_project": -11, "work_todo": -11,
+    }
     with closing(_source_db(variant)) as db:
         _seed_complete_source(db)
         db.execute("begin immediate")
@@ -340,13 +431,16 @@ def test_all_19_translated_endpoints_enforce_native_kind_and_parent_mutation(var
                         f"select {column} from {table} where rowid=?", (rowid,)
                     ).fetchone() == (original,)
                 tested += 1
-        assert tested == 19
-        for kind in ("task", "project", "anchor"):
+        assert tested == 24
+        for kind, public_id in (("task", -11), ("project", -11),
+                                ("anchor", -11), ("work_cluster", -31),
+                                ("work_project", -31), ("work_todo", -31)):
             with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
-                db.execute("delete from business where record_type=? and public_id=-11", (kind,))
+                db.execute("delete from business where record_type=? and public_id=?",
+                           (kind, public_id))
             with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
                 db.execute("update business set legacy_key='-99' "
-                           "where record_type=? and public_id=-11", (kind,))
+                           "where record_type=? and public_id=?", (kind, public_id))
         db.execute("update business set legacy_key='-22' "
                    "where record_type='project' and public_id=-21")
         assert db.execute("delete from business where record_type='project' "
@@ -584,6 +678,15 @@ def _isolated_parent_source(db):
     for project_id, anchor_id in ((-301, -202), (-303, -203)):
         db.execute("insert into business_projects(id,canonical_anchor_id,title,registry_source) "
                    "values(?,?,?,'test')", (project_id, anchor_id, f"project {project_id}"))
+    for cluster_id in (-401, -402, -403):
+        db.execute("insert into business_work_clusters(id,title) values(?,?)",
+                   (cluster_id, f"cluster {cluster_id}"))
+    for project_id in (-501, -502, -503):
+        db.execute("insert into work_projects(id,title) values(?,?)",
+                   (project_id, f"work project {project_id}"))
+    for todo_id, project_id in ((-601, -501), (-602, -502), (-603, -503)):
+        db.execute("insert into work_todos(id,project_id,title) values(?,?,?)",
+                   (todo_id, project_id, f"work todo {todo_id}"))
     db.commit()
 
 
@@ -605,10 +708,10 @@ def _isolated_child_values(table, column):
                                                business_task_id=-101, operation="create"),
         "business_task_relations": dict(from_task_id=-101, to_task_id=-102,
                                         relation_type="related_to", supporting_signal_id=-31),
-        "business_work_cluster_tasks": dict(cluster_id=-31, task_id=-101),
+        "business_work_cluster_tasks": dict(cluster_id=-401, task_id=-101),
         "business_task_anchor_links": dict(task_id=-101, anchor_id=-201,
                                            evidence_signal_id=-31),
-        "business_project_candidates": dict(cluster_id=-31, title="candidate", reason="reason",
+        "business_project_candidates": dict(cluster_id=-401, title="candidate", reason="reason",
                                             status="confirmed", confirmed_project_id=-301,
                                             confirmation_signal_id=-31),
         "business_attention_items": dict(id=-41, stable_key="isolated", category="fyi",
@@ -619,8 +722,13 @@ def _isolated_child_values(table, column):
         "business_attention_proposal_tasks": dict(attention_item_id=-41, task_id=-101),
     }
     if table == "business_legacy_links":
-        return {column: {"task_id": -101, "anchor_id": -201, "project_id": -301}[column],
-                "work_project_id": -31}
+        if column == "work_project_id":
+            return {"task_id": -101, "work_project_id": -501}
+        if column == "work_todo_id":
+            return {"task_id": -101, "work_todo_id": -601}
+        return {column: {"task_id": -101, "cluster_id": -401,
+                         "anchor_id": -201, "project_id": -301}[column],
+                "work_project_id": -501}
     return values[table]
 
 
@@ -651,8 +759,10 @@ def _isolated_endpoint_db(variant, table, column):
 def test_each_isolated_endpoint_blocks_its_own_parent_delete_and_public_id_update(variant):
     from app.business_schema_release import RETAINED_CHILD_FKS
 
-    parent_id = {"task": -101, "project": -301, "anchor": -201}
-    spare_id = {"task": -103, "project": -303, "anchor": -204}
+    parent_id = {"task": -101, "project": -301, "anchor": -201, "work_cluster": -401,
+                 "work_project": -501, "work_todo": -601}
+    spare_id = {"task": -103, "project": -303, "anchor": -204, "work_cluster": -403,
+                "work_project": -503, "work_todo": -603}
     checked = 0
     for table, endpoints in RETAINED_CHILD_FKS.items():
         for column, kind in endpoints.items():
@@ -679,7 +789,7 @@ def test_each_isolated_endpoint_blocks_its_own_parent_delete_and_public_id_updat
                 assert db.execute("pragma foreign_key_check").fetchall() == []
                 db.rollback()
             checked += 1
-    assert checked == 19
+    assert checked == 24
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh"))

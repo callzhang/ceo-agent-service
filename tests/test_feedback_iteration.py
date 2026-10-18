@@ -12,6 +12,7 @@ from app.feedback_processing import (
     validate_resolution_receipt,
 )
 from app.store import AutoReplyStore
+from app.task20_definitions import task20_column
 
 
 def _decision(*, feedback_key: str) -> FeedbackIterationDecision:
@@ -338,7 +339,12 @@ def test_persisted_decision_is_strict_and_append_only(tmp_path):
     assert store.list_feedback_iteration_decisions("batch-1") == (recorded,)
     with store._connect() as db:
         with pytest.raises(Exception, match="append-only"):
-            db.execute("update feedback_iteration_decisions set decision_json='{}' where id=?", (recorded.id,))
+            db.execute(
+                "update tasks set payload_json='{}' "
+                f"where record_type='feedback_iteration_decisions' "
+                f"and {task20_column('feedback_iteration_decisions', 'id')}=?",
+                (recorded.id,),
+            )
 
 
 def test_decision_rejects_forged_or_mixed_current_round_workbench_identity(tmp_path):

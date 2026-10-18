@@ -3,11 +3,13 @@ import sqlite3
 from types import SimpleNamespace
 
 from app.action_storage import email_action_projection
+from app.email_canonical_storage import email_classification_projection
 from app.email_classifier_agent import AgentClassificationResult
 from app.email_classifier_contracts import EmailProviderLocator
 from app.email_classifier_scan import AgentScanContext
 from app.email_store import EmailStore
 from app.email_training_labeler import LabelCandidate, label_candidate, select_candidates
+from app.task12_storage import task12_projection
 
 
 def _observation(identity, subject, folder="INBOX", sender="bill@vendor.example"):
@@ -149,7 +151,7 @@ def test_a_certain_label_is_persisted_without_any_mailbox_action(tmp_path):
             f"select count(*) from ({email_action_projection('email_actions')})"
         ).fetchone()[0] == 0
         assert db.execute(
-            "select count(*) from email_agent_classification_tasks"
+            f"select count(*) from ({task12_projection('email_agent_classification_tasks')})"
         ).fetchone()[0] == 0
     assert store.claim_next_direct_action(
         claimed_at="2026-09-07T12:00:01+00:00", account_ids=("account-1",)
@@ -177,7 +179,9 @@ def test_an_uncertain_result_is_not_kept(tmp_path):
 
     assert outcome["outcome"] == "not_certain"
     with sqlite3.connect(database) as db:
-        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({email_classification_projection()})"
+        ).fetchone()[0] == 0
 
 
 class _SearchSession:

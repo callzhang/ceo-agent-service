@@ -139,7 +139,7 @@ def test_updater_persists_using_actual_committed_schema(source, tmp_path, failur
     runner = updater.RepositoryUpdater(
         local, store, database_path=source, wait_for_quiet=lambda: None,
         stop=lambda: None, restart=lambda: None, health=lambda: True,
-        database_publication=lambda: Release(),
+        database_publication=lambda _backup: Release(),
     )
     if failure == "none":
         assert runner.execute(operation).status == "succeeded"

@@ -16,7 +16,6 @@ from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES
 from tests.runtime_route_env import claude_api_env
 from app.cli import (
     WorkerSettings,
-    backfill_task_memory_context_command,
     build_work_profile_command,
     build_parser,
     build_style_corpus,
@@ -165,6 +164,7 @@ def test_task_semantic_import_plan_cli_writes_manifest_without_database_changes(
     printed = json.loads(capsys.readouterr().out)
     assert printed["history_only"] == 1
     assert printed["formal_task"] == 0
+    assert "official_project_match" not in printed
     assert output.exists()
     assert db_path.read_bytes() == before_bytes
 
@@ -189,13 +189,15 @@ def test_task_semantic_import_apply_cli_uses_reviewed_fixture_manifest(
         "--manifest", str(manifest_path), "--limit", "1",
     ])
     cli.main()
-    assert json.loads(capsys.readouterr().out)["history_only"] == 1
+    first = json.loads(capsys.readouterr().out)
+    assert first["history_only"] == 1
+    assert "official_project_matches" not in first
     cli.main()
-    assert json.loads(capsys.readouterr().out)["history_only"] == 1
+    second = json.loads(capsys.readouterr().out)
+    assert second["history_only"] == 1
+    assert "official_project_matches" not in second
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "select work_project_id from business_legacy_links"
-        ).fetchone() is None
+        assert db.execute("select 1 from sqlite_schema where name='business_legacy_links'").fetchone() is None
 
 
 def enqueue_trigger_task(
@@ -1352,15 +1354,6 @@ def test_retry_work_summary_input_command_requeues_failed_input(tmp_path, capsys
 
     assert capsys.readouterr().out == f"work-summary-input requeued={input_id}\n"
     assert store.claim_work_summary_inputs(1)[0].id == input_id
-
-
-def test_parser_supports_backfill_task_memory_context():
-    args = build_parser().parse_args(
-        ["backfill-task-memory-context", "--max-batches", "2"]
-    )
-
-    assert args.command == "backfill-task-memory-context"
-    assert args.max_batches == 2
 
 
 def test_parser_supports_backfill_routine_process_todos():
@@ -3717,131 +3710,6 @@ def test_process_work_items_command_respects_zero_max_batches(
     assert processed == 0
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     assert len(AutoReplyStore(db_path).claim_work_summary_inputs(limit=1)) == 1
-
-
-def test_backfill_task_memory_context_command_updates_missing_context(
-    tmp_path,
-    monkeypatch,
-    capsys,
-):
-    class FakeProjectMemoryContextCodexRunner:
-        last_audit_tool_events = [{"tool": "memory_recall"}]
-
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def build(self, *, project, todos, updates):
-            assert project.title == "候选人筛选项目"
-            assert [todo.title for todo in todos] == ["确认候选人名单"]
-            assert [update.summary for update in updates] == ["新增候选人筛选待办"]
-            return {
-                "query": "候选人筛选项目 recruiting",
-                "summary": "memory_recall 显示候选人筛选和招聘项目相关。",
-                "memories": [
-                    {
-                        "source": "memory_recall",
-                        "uuid": "mem-candidate",
-                        "text": "历史记录提到候选人筛选项目。",
-                        "summary": "候选人筛选项目已有上下文。",
-                        "created_at": "2026-06-08",
-                    }
-                ],
-            }
-
-    monkeypatch.setattr(
-        cli,
-        "ProjectMemoryContextCodexRunner",
-        FakeProjectMemoryContextCodexRunner,
-    )
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="候选人筛选项目",
-        category="recruiting",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    store.create_work_project(
-        title="已有背景项目",
-        category="sales",
-        status="active",
-        priority="P2",
-        risk_level="low",
-        memory_context_json='{"query":"已有","summary":"已有背景","memories":[]}',
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认候选人名单",
-        owner_name="Derek",
-        priority="P1",
-    )
-    store.create_work_update(
-        project_id=project_id,
-        source_type="reply_attempt",
-        source_ref="1",
-        summary="新增候选人筛选待办",
-    )
-
-    updated = backfill_task_memory_context_command(
-        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
-    )
-
-    project = AutoReplyStore(db_path).get_work_project(project_id)
-    assert project is not None
-    context = json.loads(project.memory_context_json)
-    assert updated == 1
-    assert context["memories"][0]["uuid"] == "mem-candidate"
-    assert capsys.readouterr().out == (
-        "backfill-task-memory-context updated=1 failed=0\n"
-    )
-    assert [todo.id for todo in AutoReplyStore(db_path).list_work_todos()] == [todo_id]
-
-
-def test_backfill_task_memory_context_command_records_missing_memory_recall(
-    tmp_path,
-    monkeypatch,
-    capsys,
-):
-    class FakeProjectMemoryContextCodexRunner:
-        last_audit_tool_events = []
-
-        def __init__(self, **kwargs):
-            pass
-
-        def build(self, *, project, todos, updates):
-            return {
-                "query": "候选人筛选项目",
-                "summary": "缺少真实工具事件。",
-                "memories": [],
-            }
-
-    monkeypatch.setattr(
-        cli,
-        "ProjectMemoryContextCodexRunner",
-        FakeProjectMemoryContextCodexRunner,
-    )
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    store.create_work_project(
-        title="候选人筛选项目",
-        category="recruiting",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-
-    updated = backfill_task_memory_context_command(
-        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
-    )
-
-    assert updated == 0
-    assert capsys.readouterr().out == (
-        "backfill-task-memory-context updated=0 failed=1\n"
-    )
-    errors = AutoReplyStore(db_path).list_errors(limit=1)
-    assert errors[0].kind == "task_memory_backfill"
-    assert "memory_recall tool event" in errors[0].detail
 
 
 def test_backfill_routine_process_todos_dry_run_reports_without_writing(
@@ -8946,7 +8814,7 @@ def test_repair_exhausted_work_item_is_retried_then_bounded():
 
     exhausted = TaskDecisionRepairExhausted(
         "task decision repair exhausted after 2 rounds: "
-        "non-skip task decision requires project.memory_context"
+        "non-skip task decision requires persisted project evidence"
     )
     assert cli._should_retry_work_summary_input(exhausted, 1) is True
     assert (

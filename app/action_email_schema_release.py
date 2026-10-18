@@ -1,7 +1,7 @@
-"""Paired Email29 publication and its current-fact inverse."""
+"""Paired final Store/Email publication and its current-fact inverse."""
 
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from functools import lru_cache
@@ -21,6 +21,32 @@ from app.action_email_storage import (
     restore_email_action_schema,
 )
 from app.action_storage import action_schema_is_current, _encoded_sqlite_value
+from app.final_action_schema import migrate_final_actions, restore_final_actions, final_action_schema_is_current
+from app.final_source_migration import prepare_final_source_bindings, read_recovery_source_body
+from app.business_source_reader import SourceVersionBinding, RequestSourceReader
+from app.provenance_storage import signal_projection
+from app.provenance_definitions import SOURCE_FIELDS
+from app.deferral_receipt_storage import capture_native_receipts, migrate_native_receipts, restore_native_receipts
+from app.action_followup_sync_storage import (
+    SOURCE_TABLES as FOLLOWUP_SYNC_SOURCE_TABLES,
+    capture_followup_sync_source,
+    migrate_followup_sync_schema,
+    restore_followup_sync_schema,
+)
+from app.action_task_delivery_definitions import TASK_DELIVERY_KINDS
+from app.action_task_delivery_storage import (
+    capture_task_delivery_source, migrate_task_delivery_schema,
+    restore_task_delivery_schema,
+)
+from app.action_error_storage import (
+    capture_action_error_source, migrate_action_error_schema,
+    restore_action_error_schema,
+)
+from app.action_feedback_definitions import FEEDBACK_KINDS
+from app.action_feedback_storage import (
+    capture_action_feedback_source, migrate_action_feedback_schema,
+    restore_action_feedback_schema,
+)
 from app.state_definitions import state_projection
 from app.state_schema_release import (capture_state_source, migrate_state_schema,
     restore_state_schema, state_schema_is_current)
@@ -43,6 +69,29 @@ from app.business_schema_release import (
     migrate_business_schema,
     restore_business_schema,
 )
+from app.business_candidate_storage import (
+    capture_business_candidate_source, migrate_business_candidate_schema,
+    restore_business_candidate_schema,
+)
+from app.business_candidate_definitions import CANDIDATE_SOURCE_TABLES
+from app.action_business_definitions import BUSINESS_ACTION_KINDS
+from app.action_business_storage import (
+    capture_business_action_source, migrate_business_action_schema,
+    restore_business_action_schema,
+)
+from app.action_email_history_definitions import HISTORY_KINDS
+from app.action_email_history_storage import (
+    capture_email_history_source, migrate_email_history_schema,
+    restore_email_history_schema,
+)
+from app.email_canonical_storage import (
+    capture_email_canonical_source, migrate_email_canonical_schema,
+    restore_email_canonical_schema,
+)
+from app.business_legacy_owner_storage import (
+    capture_legacy_owner_source, migrate_legacy_owner, restore_legacy_owner,
+)
+from app.email_current_schema import current_canonical_email_parent_is_current
 from app.task_schema_release import _foreign_keys
 from app.provider_state_schema_release import (
     SOURCE_TABLES as PROVIDER_SOURCE_TABLES,
@@ -184,9 +233,28 @@ def state_current_or_known_dispatcher_index_repair(db: sqlite3.Connection) -> bo
     )
 
 
-def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, action_variant: str) -> bool:
+def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, action_variant: str,
+                                                include_business_actions: bool = False,
+                                                include_email_history: bool = False,
+                                                canonical_email: bool = False,
+                                                inline_legacy_owner: bool = False,
+                                                physical_provenance: bool = False,
+                                                compact_payload: bool = False) -> bool:
     """Exact target, allowing only Store's known missing Skill guard repair."""
-    if current_configs_schema_is_current(db, action_variant=action_variant):
+    if current_configs_schema_is_current(
+        db,
+        action_variant=action_variant,
+        include_followup_sync=True,
+        include_business_sync=True,
+        include_task_delivery=True,
+        include_errors=True,
+        include_feedback=True,
+        include_business_actions=include_business_actions,
+        include_email_history=include_email_history,
+        canonical_email=canonical_email,
+        inline_legacy_owner=inline_legacy_owner,
+        physical_provenance=physical_provenance, compact_payload=compact_payload,
+    ):
         return True
     target = _config_target_declarations()
     if not _current_table_with_known_missing_objects(
@@ -205,9 +273,17 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
     run_types = _canonical_run_object_types()
     return (action_schema_is_current(db, allow_missing_objects=True,
                                      include_reply=True, reply_variant=action_variant,
-                                     include_email=True, include_skill_config_receipts=True)
+                                     include_email=True, include_skill_config_receipts=True,
+                                     include_followup_sync=True, include_business_sync=True,
+                                     include_task_delivery=True,
+                                     include_errors=True, include_feedback=True,
+                                     include_business_actions=include_business_actions,
+                                     include_email_history=include_email_history,
+                                     canonical_email=canonical_email,
+                                     inline_legacy_owner=inline_legacy_owner,
+                                     physical_provenance=physical_provenance, compact_payload=compact_payload)
             and action_storage.email_action_auxiliary_objects_are_current(
-                db, reply_variant=action_variant)
+                db, reply_variant=action_variant, physical_provenance=physical_provenance, compact_payload=compact_payload)
             and current_run11_schema_is_current(db, allow_missing_objects=True)
             and actual_runs.get("runs") == expected_runs["runs"]
             and set(actual_runs) <= set(expected_runs)
@@ -241,22 +317,33 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
         store = marker[0] if marker is not None else None
         if (store, email) == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
             raise sqlite3.IntegrityError("Store19/Email51 requires the paired schema release before target constructors")
-        from app.email_current_schema import _CURRENT_TABLE_SQL
-        email_tables = {"email_classifications", "email_category_configs", "email_category_folder_bindings", *(name for name, _ in _CURRENT_TABLE_SQL), *SOURCE_TABLES, *PROVIDER_SOURCE_TABLES, PROVIDER_TARGET}
+        from app.email_current_schema import (
+            _CURRENT_TABLE_SQL, current_canonical_email_parent_is_current,
+        )
+        email_tables = {"emails", "email_classifications", "email_category_configs", "email_category_folder_bindings", *(name for name, _ in _CURRENT_TABLE_SQL), *SOURCE_TABLES, *PROVIDER_SOURCE_TABLES, PROVIDER_TARGET}
         if store is None and email is None and not email_tables.intersection(names):
             # The Store's existing bootstrap-source check separately owns core
             # collisions and partial unversioned bootstrap refusal.
             return
         if store == store_version:
             if email == email_version:
-                if state_current_or_known_dispatcher_index_repair(db) and provider_state_schema_is_current(db) and any(
-                    configs_current_or_known_skill_guard_repair(db, action_variant=variant)
+                if (current_canonical_email_parent_is_current(db)
+                        and state_current_or_known_dispatcher_index_repair(db)
+                        and provider_state_schema_is_current(db) and any(
+                    configs_current_or_known_skill_guard_repair(db, action_variant=variant,
+                                                               include_business_actions=True,
+                                                               include_email_history=True,
+                                                               canonical_email=True,
+                                                               inline_legacy_owner=True, physical_provenance=True, compact_payload=True)
                     for variant in ('actual_no_memory_fk', 'fresh_memory_fk')
-                ):
+                )):
                     return
                 raise sqlite3.IntegrityError("malformed current provider/config declaration")
-            if email is None and not (email_tables - {"email_classifications"}).intersection(names):
-                if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant)
+            if email is None and current_canonical_email_parent_is_current(db):
+                if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant,
+                                                                                  include_business_actions=True,
+                                                                                  include_email_history=True, canonical_email=True,
+                                                                                  inline_legacy_owner=True, physical_provenance=True, compact_payload=True)
                        for variant in ('actual_no_memory_fk', 'fresh_memory_fk')):
                     return  # Complete Store-first, before Email's fresh transaction.
                 raise sqlite3.IntegrityError("malformed current Store-first config declaration")
@@ -289,6 +376,7 @@ def _inverse_metadata(source):
         "provider": source["provider"],
         "configs": source["configs"],
         "state": source["state"],
+        "deferral_receipts": source["deferral_receipts"],
         "tasks": source["tasks"],
         "runs11": source["runs11"],
         "confirmation": source["confirmation"],
@@ -309,7 +397,7 @@ def _project_config_source(db, action_variant: str) -> dict:
     if _config_run_objects(db) != _config_run_declarations(mapped=False):
         raise ValueError('unsupported native runs declaration')
     observation = _source_declaration(db, _OBSERVATIONS)
-    if _fingerprint(observation) != _OBSERVATION_HASHES[original['variant']]:
+    if _fingerprint(observation) not in _OBSERVATION_HASHES.values():
         raise ValueError('unsupported observation source declaration')
     if db.execute(f'select 1 from main.{_OBSERVATIONS} limit 1').fetchone():
         raise ValueError('nonempty training observations cannot be retired')
@@ -346,13 +434,56 @@ def _migrate_pair(release: "ActionEmailSchemaRelease") -> None:
         "versions": [[version, _encoded_sqlite_value(stamp)] for version, stamp in release.versions],
         "source_schema": _inverse_metadata(release.source_schema), "source_fk": release.source_fk,
         "target_store_version": release.target_store_version, "target_email_version": release.target_email_version,
+        "source_bindings": {key: asdict(value) for key, value in release.source_bindings.items()},
+        "recovery_source_path": str(release.recovery_source_path) if release.recovery_source_path else None,
     }
-    subprocess.run(
-        [sys.executable, "-c", "from app.action_email_schema_release import _paired_initializer; _paired_initializer()"],
-        input=json.dumps(payload, ensure_ascii=False, allow_nan=False), text=True,
-        cwd=release.root, env={**os.environ, "PYTHONPATH": str(release.root)},
-        check=True, capture_output=True, timeout=300,
-    )
+    # The child emits the complete inverse before COMMIT. Thus every committed
+    # target has recoverable metadata even if verification/cold opening fails.
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", "from app.action_email_schema_release import _paired_initializer; _paired_initializer()"],
+            input=json.dumps(payload, ensure_ascii=False, allow_nan=False), text=True,
+            cwd=release.root, env={**os.environ, "PYTHONPATH": str(release.root)},
+            check=True, capture_output=True, timeout=15 * 60,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        _receive_pair_inverse(release, error.stdout, required=False)
+        raise
+    _receive_pair_inverse(release, completed.stdout, required=True)
+
+
+_PAIR_INVERSE = (
+    ("FOLLOWUP_SYNC", "followup_sync"), ("TASK_DELIVERY", "task_delivery"),
+    ("ERROR", "errors"), ("FEEDBACK", "feedback"),
+    ("BUSINESS_CANDIDATES", "business_candidates"), ("BUSINESS_ACTIONS", "business_actions"),
+    ("EMAIL_HISTORY", "email_history"), ("EMAIL_CANONICAL", "email_canonical"),
+    ("LEGACY_OWNER", "legacy_owner"), ("FINAL_ACTIONS", "final_actions"),
+)
+
+
+def _emit_pair_inverse(release):
+    for label, key in _PAIR_INVERSE:
+        print(label + "_INVERSE=" + json.dumps(
+            release.source_schema[key], ensure_ascii=False, allow_nan=False), flush=True)
+
+
+def _receive_pair_inverse(release, output, *, required):
+    if isinstance(output, bytes):
+        output = output[:output.rfind(b"\n") + 1].decode("utf-8")
+    # A timeout may interrupt an uncommitted child's write. Only full records
+    # count, and only a complete set is published into the parent's metadata.
+    lines = [line.rstrip("\n") for line in (output or "").splitlines(keepends=True)
+             if line.endswith("\n")]
+    received = {}
+    for label, key in _PAIR_INVERSE:
+        prefix = label + "_INVERSE="
+        value = next((line[len(prefix):] for line in reversed(lines) if line.startswith(prefix)), None)
+        if value is None:
+            if required:
+                raise ValueError("paired initializer omitted " + key + " inverse metadata")
+            return
+        received[key] = json.loads(value)
+    release.source_schema.update(received)
 
 
 @dataclass
@@ -366,6 +497,8 @@ class ActionEmailSchemaRelease:
     target_store_version: str
     target_email_version: int
     migrate: Callable[["ActionEmailSchemaRelease"], None] = _migrate_pair
+    source_bindings: dict[str, SourceVersionBinding] = field(default_factory=dict)
+    recovery_source_path: Path | None = None
 
     def _verify_integrity(self, db):
         if _foreign_keys(db) != self.source_fk or db.execute("pragma quick_check").fetchone()[0] != "ok":
@@ -381,6 +514,7 @@ class ActionEmailSchemaRelease:
         current["provider"] = capture_provider_state_source(db)
         current["configs"] = _project_config_source(db, current["action_variant"])
         current["state"] = capture_state_source(db)
+        current["deferral_receipts"] = capture_native_receipts(db)
         current["confirmation"] = capture_confirmation_source(db)
         current["tasks"] = capture_task20_source(db)
         current["runs11"] = capture_run11_source(db)
@@ -398,7 +532,13 @@ class ActionEmailSchemaRelease:
 
     def _verify_target(self, db):
         verify_confirmation_retired(db)
-        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db):
+        if capture_native_receipts(db) is not None:
+            raise ValueError("paired target retains native deferral receipt table")
+        if not final_action_schema_is_current(db):
+            raise ValueError("paired final Actions/provenance declaration mismatch")
+        if not current_canonical_email_parent_is_current(db):
+            raise ValueError("paired canonical Email target declaration mismatch")
+        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db, include_feedback=True):
             raise ValueError("paired Tasks20 target declaration mismatch")
         marker, versions = _markers(db, current=True)
         if marker is None or marker[0] != self.target_store_version or \
@@ -408,25 +548,57 @@ class ActionEmailSchemaRelease:
         if not action_schema_is_current(
             db, include_reply=True, reply_variant=self.source_schema["action_variant"],
             include_email=True, include_skill_config_receipts=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+            include_errors=True,
+            include_feedback=True,
+            include_business_actions=True,
+            include_email_history=True,
+            canonical_email=True,
+            inline_legacy_owner=True, physical_provenance=True, compact_payload=True,
         ) or db.execute(
             "select 1 from main.sqlite_schema where name in (" +
-            ",".join("?" for _ in SOURCE_TABLES) + ") limit 1", SOURCE_TABLES
+            ",".join("?" for _ in (*SOURCE_TABLES, *FOLLOWUP_SYNC_SOURCE_TABLES,
+                                   *TASK_DELIVERY_KINDS, "errors", *FEEDBACK_KINDS,
+                                   *CANDIDATE_SOURCE_TABLES.values(),
+                                   *BUSINESS_ACTION_KINDS, *HISTORY_KINDS)) + ") limit 1",
+            (*SOURCE_TABLES, *FOLLOWUP_SYNC_SOURCE_TABLES, *TASK_DELIVERY_KINDS,
+             "errors", *FEEDBACK_KINDS, *CANDIDATE_SOURCE_TABLES.values(),
+             *BUSINESS_ACTION_KINDS, *HISTORY_KINDS),
         ).fetchone():
             raise ValueError("Email paired target declaration mismatch")
         if not business_schema_is_current(
-            db, self.source_schema["business"]["variant"]
+            db,
+            self.source_schema["business"]["variant"],
+            include_followup_sync=True,
+            include_candidates=True,
+            include_business_actions=True,
+            inline_legacy_owner=True,
         ):
             raise ValueError("paired Business target declaration mismatch")
         if not provider_state_schema_is_current(db):
             raise ValueError("paired Provider target declaration mismatch")
         if not current_run11_schema_is_current(db):
             raise ValueError("paired Runs11 target declaration mismatch")
-        if not current_configs_schema_is_current(db, action_variant=self.source_schema["action_variant"]):
+        if not current_configs_schema_is_current(
+            db,
+            action_variant=self.source_schema["action_variant"],
+            include_followup_sync=True,
+            include_business_sync=True,
+            include_task_delivery=True,
+            include_errors=True,
+            include_feedback=True,
+            include_business_actions=True,
+            include_email_history=True,
+            canonical_email=True,
+            inline_legacy_owner=True, physical_provenance=True, compact_payload=True,
+        ):
             raise ValueError("paired Configs target declaration mismatch")
         account_names = {item['name'] for item in self.source_schema['configs']
                          ['configs']['tables']['email_accounts']['triggers']}
         expected = {name: sql for name, sql in _target_external_sql().items()
-                    if name not in account_names}
+                    if name not in account_names
+                    and " on main.email_accounts" in sql.lower()}
         triggers = tuple(db.execute(
             "select name,sql from main.sqlite_schema where type='trigger' and name in (" +
             ",".join("?" for _ in EXTERNAL_TRIGGER_NAMES) + ") order by name", EXTERNAL_TRIGGER_NAMES
@@ -439,7 +611,7 @@ class ActionEmailSchemaRelease:
         self.migrate(self)
         self.verify_loaded()
 
-    def apply(self):
+    def apply(self, *, on_prepared: Callable[[], None] | None = None):
         """Apply the same captured atomic protocol, including both markers."""
         with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
             db.execute("pragma foreign_keys=off")
@@ -462,9 +634,29 @@ class ActionEmailSchemaRelease:
                     raise ValueError("Config captured inverse declaration mismatch")
                 migrate_config_schema(db, config_inverse)
                 migrate_state_schema(db, self.source_schema["state"])
+                migrate_native_receipts(db)
                 migrate_task20_schema(db, self.source_schema["tasks"])
                 retire_confirmation_schema(db, self.source_schema["confirmation"])
                 migrate_run11_schema(db, self.source_schema["runs11"])
+                followup_source = capture_followup_sync_source(db)
+                followup_inverse = migrate_followup_sync_schema(db, followup_source)
+                delivery_source = capture_task_delivery_source(db)
+                delivery_inverse = migrate_task_delivery_schema(db, delivery_source)
+                error_source = capture_action_error_source(db)
+                error_inverse = migrate_action_error_schema(db, error_source)
+                feedback_source = capture_action_feedback_source(db)
+                feedback_inverse = migrate_action_feedback_schema(db, feedback_source)
+                candidate_inverse = capture_business_candidate_source(db)
+                migrate_business_candidate_schema(db, candidate_inverse)
+                business_action_inverse = capture_business_action_source(db)
+                migrate_business_action_schema(db, business_action_inverse)
+                history_inverse = capture_email_history_source(db)
+                migrate_email_history_schema(db, history_inverse)
+                canonical_inverse = capture_email_canonical_source(db)
+                migrate_email_canonical_schema(db, canonical_inverse)
+                legacy_owner_inverse = capture_legacy_owner_source(db)
+                migrate_legacy_owner(db, legacy_owner_inverse)
+                final_inverse = migrate_final_actions(db, bindings=self.source_bindings)
                 now = datetime.now(timezone.utc).isoformat()
                 update_state_rows(db, "service_state",
                     {"value": self.target_store_version, "updated_at": now},
@@ -474,6 +666,18 @@ class ActionEmailSchemaRelease:
                     (self.target_email_version, now),
                 )
                 self._verify_target(db)
+                self.source_schema["followup_sync"] = followup_inverse
+                self.source_schema["task_delivery"] = delivery_inverse
+                self.source_schema["errors"] = error_inverse
+                self.source_schema["feedback"] = feedback_inverse
+                self.source_schema["business_candidates"] = candidate_inverse
+                self.source_schema["business_actions"] = business_action_inverse
+                self.source_schema["email_history"] = history_inverse
+                self.source_schema["email_canonical"] = canonical_inverse
+                self.source_schema["legacy_owner"] = legacy_owner_inverse
+                self.source_schema["final_actions"] = final_inverse
+                if on_prepared is not None:
+                    on_prepared()
                 db.commit()
             except BaseException:
                 db.rollback()
@@ -486,6 +690,26 @@ class ActionEmailSchemaRelease:
             self._verify_target(db)
 
     def rollback(self):
+        original_deferral_source = self.source_schema["deferral_receipts"]
+        from app.email_body_source import prepare_recovery_originals
+
+        source_reader = None
+
+        def read_message(account_id, stable_message_identity):
+            nonlocal source_reader
+            if source_reader is None:
+                from app.email_store import EmailStore
+                from app.email_source_reader import build_email_source_reader
+                from app.config import effective_env_values
+
+                source_reader = build_email_source_reader(EmailStore(self.database_path),
+                    environment_factory=effective_env_values)
+            return source_reader.read(account_id, stable_message_identity)
+
+        # Originals are prepared before the inverse write lease. The backup
+        # supplies bytes only; it never restores earlier business facts.
+        email_originals = prepare_recovery_originals(self.database_path,
+            backup_path=self.recovery_source_path, read_message=read_message)
         with closing(sqlite3.connect(self.database_path, isolation_level=None)) as db:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -498,8 +722,34 @@ class ActionEmailSchemaRelease:
                     db.commit()
                     return
                 self._verify_target(db)
+                cursor = db.execute(signal_projection())
+                names = tuple(item[0] for item in cursor.description)
+                for row in cursor:
+                    values = dict(zip(names, row, strict=True))
+                    binding = SourceVersionBinding(**{name: values[name] for name in SOURCE_FIELDS})
+                    self.source_bindings[binding.identity_key] = binding
+                from app.dws_client import DwsClient
+                from app.business_console_source_reader import retained_console_sources
+                reader = RequestSourceReader(provider_reader=DwsClient(),
+                    console_lookup=lambda source_ref: retained_console_sources(db, source_ref))
+                restore_final_actions(db, self.source_schema["final_actions"], read_body=lambda binding:
+                    read_recovery_source_body(binding, backup_path=self.recovery_source_path, reader=reader))
+                restore_legacy_owner(db, self.source_schema["legacy_owner"])
+                restore_email_canonical_schema(db, self.source_schema["email_canonical"],
+                    read_body=lambda row, ref: email_originals[(row["account_id"], row["stable_message_identity"])])
+                restore_email_history_schema(db, self.source_schema["email_history"])
+                restore_business_action_schema(db, self.source_schema["business_actions"])
+                restore_business_candidate_schema(db, self.source_schema["business_candidates"])
+                restore_action_feedback_schema(db, self.source_schema["feedback"])
+                restore_action_error_schema(db, self.source_schema["errors"])
+                restore_task_delivery_schema(db, self.source_schema["task_delivery"])
+                restore_followup_sync_schema(
+                    db, self.source_schema["followup_sync"]
+                )
                 restore_confirmation_schema(db, self.source_schema["confirmation"])
                 restore_task20_schema(db, self.source_schema["tasks"])
+                self.source_schema["deferral_receipts"] = restore_native_receipts(
+                    db, preserve_empty=original_deferral_source is not None)
                 restore_state_schema(db, self.source_schema["state"])
                 restore_run11_schema(db, self.source_schema["runs11"])
                 restore_config_schema(db, self.source_schema["configs"])
@@ -517,6 +767,7 @@ class ActionEmailSchemaRelease:
                 self._verify_source(db)
                 db.commit()
             except BaseException:
+                self.source_schema["deferral_receipts"] = original_deferral_source
                 db.rollback()
                 raise
 
@@ -538,16 +789,22 @@ def _paired_initializer() -> None:
         tuple((version, _timestamp_from_pipe(stamp)) for version, stamp in payload["versions"]),
         payload["source_schema"], tuple(tuple(row) for row in payload["source_fk"]),
         payload["target_store_version"], payload["target_email_version"],
+        source_bindings={key: SourceVersionBinding(**value) for key, value in payload["source_bindings"].items()},
+        recovery_source_path=Path(payload["recovery_source_path"]) if payload["recovery_source_path"] else None,
     )
-    release.apply()
+    release.apply(on_prepared=lambda: _emit_pair_inverse(release))
     from app.store import AutoReplyStore
     from app.email_store import EmailStore
-    AutoReplyStore(release.database_path)
-    EmailStore(release.database_path)
+    from app.email_training_migration import refresh_current_selected_baseline
+    store = AutoReplyStore(release.database_path)
+    store.compact_terminal_meeting_consumer_inputs()
+    email_store = EmailStore(release.database_path)
+    refresh_current_selected_baseline(email_store)
 
 
 def prepare_action_email_schema_release(
-    root: Path, path: Path, *, target_store_version: str, target_email_version: int
+    root: Path, path: Path, *, target_store_version: str, target_email_version: int,
+    recovery_source_path: Path | None = None,
 ) -> ActionEmailSchemaRelease:
     """Capture the exact Store19/Email51 pair; callers must supply a target pair.
 
@@ -570,12 +827,15 @@ def prepare_action_email_schema_release(
         source["provider"] = capture_provider_state_source(db)
         source["configs"] = _project_config_source(db, source["action_variant"])
         source["state"] = capture_state_source(db)
+        source["deferral_receipts"] = capture_native_receipts(db)
         source["confirmation"] = capture_confirmation_source(db)
         source["tasks"] = capture_task20_source(db)
         source["runs11"] = capture_run11_source(db)
         release = ActionEmailSchemaRelease(
             root, path, version, versions, source, _foreign_keys(db),
             target_store_version, target_email_version,
+            source_bindings=prepare_final_source_bindings(db, root),
+            recovery_source_path=recovery_source_path,
         )
         release._verify_integrity(db)
         return release

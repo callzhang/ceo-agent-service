@@ -1,0 +1,150 @@
+{
+  "observed_at_utc": "2026-10-17T18:12:37.286841+00:00",
+  "scope": "Only previously listed but unattempted versions16/9/0 of one exact node; one earlier version16 shape-discovery read plus these measured reads, no write",
+  "source_database": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+  "source_access": "mode=ro/query_only read transaction",
+  "node_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+  "prior_probe": "2026-10-15-business-weekly-historical-source-probe.json",
+  "prior_probe_sha256": "7530ab9b4d240e14c01fa8ebe131ad96bfeeb847506959fa85bc4de026d472f6",
+  "profile_selection": {
+    "profile_count": 1,
+    "unique_org_current": true,
+    "same_explicit_profile_for_all_fetches": true,
+    "selector_sha256": "9c2fb2141207215fca588c4dd1cd50fd4ebbba62ac3268a5e27cd3200bae7628"
+  },
+  "source_document_ids": [
+    66,
+    68,
+    93
+  ],
+  "rows": [
+    {
+      "requested_version": 16,
+      "returncode": 0,
+      "complete": true,
+      "status": "success",
+      "content_success": true,
+      "returned_history_version": 16,
+      "returned_content_node_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "target_canonical_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "markdown_utf8_bytes": 19301,
+      "markdown_utf8_sha256": "a75021560a675aedff5399fedba6245684eaf117faa0a9242ce500bd261979c8",
+      "exact_requested_version_binding": true,
+      "exact_node_binding": true,
+      "per_source": {
+        "66": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+          "rebuilt_body_bytes": 20018,
+          "rebuilt_body_sha256": "27a5eab8ab3d788b6413894da8530e77f79f879c1f3f7ac9e61ede690b59f063"
+        },
+        "68": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+          "rebuilt_body_bytes": 20018,
+          "rebuilt_body_sha256": "27a5eab8ab3d788b6413894da8530e77f79f879c1f3f7ac9e61ede690b59f063"
+        },
+        "93": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "0bbb50ced42556ddd693e286869955caf2ac74814db3e09509e0434bb7a16186",
+          "rebuilt_body_bytes": 20018,
+          "rebuilt_body_sha256": "27a5eab8ab3d788b6413894da8530e77f79f879c1f3f7ac9e61ede690b59f063"
+        }
+      }
+    },
+    {
+      "requested_version": 9,
+      "returncode": 0,
+      "complete": true,
+      "status": "success",
+      "content_success": true,
+      "returned_history_version": 9,
+      "returned_content_node_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "target_canonical_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "markdown_utf8_bytes": 17703,
+      "markdown_utf8_sha256": "038068c73deb721b943425f31b0e9b243d5950903be8c4ea53ed3612dab51a3f",
+      "exact_requested_version_binding": true,
+      "exact_node_binding": true,
+      "per_source": {
+        "66": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+          "rebuilt_body_bytes": 18411,
+          "rebuilt_body_sha256": "8110ab8f53de064cf65799a37eaf619ca04a2b419151b9849dbf189b90f0a426"
+        },
+        "68": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+          "rebuilt_body_bytes": 18411,
+          "rebuilt_body_sha256": "8110ab8f53de064cf65799a37eaf619ca04a2b419151b9849dbf189b90f0a426"
+        },
+        "93": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "0bbb50ced42556ddd693e286869955caf2ac74814db3e09509e0434bb7a16186",
+          "rebuilt_body_bytes": 18411,
+          "rebuilt_body_sha256": "8110ab8f53de064cf65799a37eaf619ca04a2b419151b9849dbf189b90f0a426"
+        }
+      }
+    },
+    {
+      "requested_version": 0,
+      "returncode": 0,
+      "complete": true,
+      "status": "success",
+      "content_success": true,
+      "returned_history_version": 0,
+      "returned_content_node_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "target_canonical_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "markdown_utf8_bytes": 17928,
+      "markdown_utf8_sha256": "ebd2e8d8e138808270e338b2a6d0761e8450d73229dba6b2754faab64b6b22cb",
+      "exact_requested_version_binding": true,
+      "exact_node_binding": true,
+      "per_source": {
+        "66": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+          "rebuilt_body_bytes": 18636,
+          "rebuilt_body_sha256": "3b433fc3f31e1fc9da833ce5fae78133f72554891e223a39fb5f4f6a9fe22eca"
+        },
+        "68": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+          "rebuilt_body_bytes": 18636,
+          "rebuilt_body_sha256": "3b433fc3f31e1fc9da833ce5fae78133f72554891e223a39fb5f4f6a9fe22eca"
+        },
+        "93": {
+          "markdown_equal": false,
+          "whole_body_equal": false,
+          "expected_body_bytes": 63562,
+          "expected_body_sha256": "0bbb50ced42556ddd693e286869955caf2ac74814db3e09509e0434bb7a16186",
+          "rebuilt_body_bytes": 18636,
+          "rebuilt_body_sha256": "3b433fc3f31e1fc9da833ce5fae78133f72554891e223a39fb5f4f6a9fe22eca"
+        }
+      }
+    }
+  ],
+  "schema_discovery_requests": 1,
+  "measured_requests": 3,
+  "total_provider_requests_this_probe": 4,
+  "elapsed_seconds": 5.289,
+  "source_or_provider_mutations": false,
+  "outbound_sends": 0,
+  "raw_provider_or_source_bodies_persisted": false,
+  "limits": "Metadata-only finite historical check, not current availability proof for all130 prior Provider versions; any missing requested version/node binding blocks exact proof. No runtime canonical reader or retirement."
+}

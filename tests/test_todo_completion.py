@@ -69,7 +69,12 @@ def test_external_dingtalk_completion_closes_only_the_linked_business_task(tmp_p
     assert store.get_business_task(first).status.value == "done"
     assert store.get_business_task(sibling).status.value == "open"
     with store._connect() as db:
-        event = db.execute("select after_json from business_task_events where task_id=?", (first,)).fetchone()
+        from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+
+        event = db.execute(
+            f"select after_json from ({SYNC_ACTION_PROJECTIONS['business_task_events']}) where task_id=?",
+            (first,),
+        ).fetchone()
         signal = db.execute(
             "select s.source_ref from business_task_signals s "
             "join business_task_evidence e on e.signal_id=s.id "
@@ -154,6 +159,68 @@ def test_business_task_completion_recomputes_attention_membership(tmp_path):
     assert store.get_business_attention_item(attention_id).status.value == "active"
     assert store.get_business_attention_item(attention_id).category is AttentionCategory.PUSH
     assert store.get_business_attention_item(attention_id).current_state == "推进中"
+
+
+def test_store_completes_business_task_follow_ups_in_caller_transaction(tmp_path):
+    store = _store(tmp_path)
+    task_id, _ = _business_task_for_completion(store, with_follow_up=True)
+    before = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert len(before) == 1
+    evidence_json = json.dumps({"reason": "owner confirmed"}, ensure_ascii=False)
+
+    with store.business_task_transaction() as db:
+        changed = store.complete_business_task_follow_ups(
+            business_task_id=task_id,
+            evidence_check_json=evidence_json,
+            suppressed_reason="owner confirmed",
+            _db=db,
+        )
+
+    assert changed == 1
+    [follow_up] = store.list_business_task_follow_ups(
+        business_task_id=task_id, statuses=("completed",)
+    )
+    assert follow_up["evidence_check_json"] == evidence_json
+    assert follow_up["suppressed_reason"] == "owner confirmed"
+
+
+def test_business_task_link_list_can_reuse_caller_transaction(tmp_path):
+    store = _store(tmp_path)
+    task_id, _ = _business_task_for_completion(store)
+    link_id = store.create_business_task_dingtalk_link(
+        business_task_id=task_id, dingtalk_task_id="dt-1", status="active"
+    )
+
+    with store.business_task_transaction() as db:
+        links = store.list_business_task_dingtalk_links(
+            business_task_id=task_id,
+            statuses=("active",),
+            _db=db,
+        )
+
+    assert [link["id"] for link in links] == [link_id]
+
+
+def test_business_task_link_lookup_by_provider_task_returns_newest_match(tmp_path):
+    store = _store(tmp_path)
+    task_id, _ = _business_task_for_completion(store)
+    old_link_id = store.create_business_task_dingtalk_link(
+        business_task_id=task_id, dingtalk_task_id="dt-duplicate", status="done"
+    )
+    new_link_id = store.create_business_task_dingtalk_link(
+        business_task_id=task_id, dingtalk_task_id="dt-duplicate", status="active"
+    )
+
+    with store.business_task_transaction() as db:
+        link = store.get_business_task_dingtalk_link_for_provider_task(
+            business_task_id=task_id,
+            dingtalk_task_id="dt-duplicate",
+            statuses=("active", "done"),
+            _db=db,
+        )
+
+    assert link["id"] == new_link_id
+    assert link["id"] != old_link_id
 
 
 def test_close_todo_completion_evidence_completes_bound_follow_ups(tmp_path):

@@ -1,0 +1,94 @@
+{
+  "observed_at_utc": "2026-10-18T01:17:49.585512+00:00",
+  "scope": "Three exact UUID current-read body availability only, historical suffix producer lineage separate and unresolved",
+  "source_access": "URI mode=ro/query_only transaction, closed before provider reads",
+  "profile_selection": {
+    "profiles": 1,
+    "isOrgCurrent": true,
+    "isCurrent": true
+  },
+  "method": "existing native DwsClient atomic raw list/todos/transcription/summary for original payload shape; no source component reused in rebuilt body",
+  "list_pages": 1,
+  "list_scope_exhausted": true,
+  "executed_modules": {
+    "app/dws_client.py": "1d6c0b379a63138904311baaf47d7f637bf2100163c6d6d4b8f592cf2e20103e",
+    "app/task_scanners.py": "ba89132165de05d7d88ca7cc53095baca6bcb41b6588c9a6bd14472af354c610",
+    "app/minutes_todo_context.py": "3976ac3d7101dda3c531871d42c3fa37a638f5bebfcb02a0b9e84b26b5de228f",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290"
+  },
+  "documents": [
+    {
+      "source_document_id": 49,
+      "source_utf8_bytes": 25363,
+      "source_utf8_sha256": "06e3b12d8d429381bcb7b72a27bdc95fd535767c722106bb911bf234e9492a10",
+      "exact_uuid_distinct_record_count": 1,
+      "meeting_equal": true,
+      "todos_equal": true,
+      "excerpts_equal": true,
+      "summary_equal": true,
+      "whole_body_equal": true,
+      "reconstructed_utf8_bytes": 25363,
+      "reconstructed_utf8_sha256": "06e3b12d8d429381bcb7b72a27bdc95fd535767c722106bb911bf234e9492a10",
+      "stored_signal_identity_matches": true,
+      "signal_metadata_count": 1,
+      "matching_known_ref_formulas": {
+        "scanner": false,
+        "initial_backfill": false,
+        "revision2": false,
+        "revision3": false,
+        "revision4": false
+      },
+      "status": "exact_current_body_available_lineage_unexplained"
+    },
+    {
+      "source_document_id": 50,
+      "source_utf8_bytes": 19742,
+      "source_utf8_sha256": "eb6ec41e93585390856847faec192ce5efe17f8ae3546ade888d3926fb42f238",
+      "exact_uuid_distinct_record_count": 1,
+      "meeting_equal": true,
+      "todos_equal": true,
+      "excerpts_equal": true,
+      "summary_equal": true,
+      "whole_body_equal": true,
+      "reconstructed_utf8_bytes": 19742,
+      "reconstructed_utf8_sha256": "eb6ec41e93585390856847faec192ce5efe17f8ae3546ade888d3926fb42f238",
+      "stored_signal_identity_matches": true,
+      "signal_metadata_count": 1,
+      "matching_known_ref_formulas": {
+        "scanner": false,
+        "initial_backfill": false,
+        "revision2": false,
+        "revision3": false,
+        "revision4": false
+      },
+      "status": "exact_current_body_available_lineage_unexplained"
+    },
+    {
+      "source_document_id": 52,
+      "source_utf8_bytes": 48658,
+      "source_utf8_sha256": "dc0bf458552033321865986fb170db5b94790f9d792761f843ae714c765dc8f1",
+      "exact_uuid_distinct_record_count": 1,
+      "meeting_equal": true,
+      "todos_equal": true,
+      "excerpts_equal": true,
+      "summary_equal": true,
+      "whole_body_equal": true,
+      "reconstructed_utf8_bytes": 48658,
+      "reconstructed_utf8_sha256": "dc0bf458552033321865986fb170db5b94790f9d792761f843ae714c765dc8f1",
+      "stored_signal_identity_matches": true,
+      "signal_metadata_count": 1,
+      "matching_known_ref_formulas": {
+        "scanner": false,
+        "initial_backfill": false,
+        "revision2": false,
+        "revision3": false,
+        "revision4": false
+      },
+      "status": "exact_current_body_available_lineage_unexplained"
+    }
+  ],
+  "proof_promotion": false,
+  "body_retirement": false,
+  "database_write": false,
+  "elapsed_seconds": 20.105
+}

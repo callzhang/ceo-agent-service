@@ -1,3 +1,4 @@
+from tests.support.email_listing_oracle import StoredEmailListingOracle
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from tests.support.email_source import stored_email_source as _stored_email_source  # noqa: F401
 
 import app.email_store as email_store_module
 from app.audit_web import create_audit_app
@@ -54,12 +56,18 @@ from app.action_storage import (
     update_action,
     update_email_action,
 )
+from app.state_definitions import state_projection
+from app.state_storage import insert_state
+from app.configs_storage import insert_config
+
 from app.email_task_adapter import email_conversation_id
 from app.store import AgentRole, AutoReplyStore
 from app.agent_contracts import ConsumerAgentResult
 from app.web_api.email import _project_legacy_model_inventory, register_email_routes
 from tests.support.candidate_review import complete_synthetic_approval
 
+
+SERVICE_STATE_SQL = state_projection("service_state")
 
 _CANONICAL_EMBEDDING_MODEL_FIRST = build_embedding_model_id(
     trained_at=datetime(2026, 9, 8, 8, 0, tzinfo=timezone.utc),
@@ -310,13 +318,19 @@ def test_processing_progress_and_the_list_filter_split_failed_actions_by_whether
     assert not_retriable["meta"]["total"] == 0
 
 
-def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
+def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path, monkeypatch):
     store = EmailStore(tmp_path / "unsubscribe-filter.sqlite3")
-    store.list_unsubscribe_classifications = lambda *, limit, offset: ([{
+    view = SimpleNamespace()
+    view.list_unsubscribe_classifications = lambda *, limit, offset: ([{
         "id": 47, "category": "junk", "sender": "newsletter@example.com",
         "subject": "Weekly newsletter", "status": "processed",
         "classification_source": "agent", "updated_at": "2026-09-14T12:00:00+00:00",
     }], 1)
+    # This test substitutes the view query to isolate receipt projection.
+    monkeypatch.setattr(
+        "app.web_api.email.build_email_classification_reader",
+        lambda *_args, **_kwargs: view,
+    )
     app = FastAPI()
     register_email_routes(app, lambda: store)
 
@@ -337,9 +351,10 @@ def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
     }]
 
 
-def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp_path: Path):
+def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp_path: Path, monkeypatch):
     store = EmailStore(tmp_path / "unsubscribe-state.sqlite3")
-    store.list_unsubscribe_classifications = lambda *, limit, offset: ([
+    view = SimpleNamespace()
+    view.list_unsubscribe_classifications = lambda *, limit, offset: ([
         {"id": 47, "subject": "a"}, {"id": 48, "subject": "b"},
     ], 2)
     events = {
@@ -351,6 +366,11 @@ def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp
         48: [{"kind": "unsubscribe", "status": "processing"}],
     }
     store.list_email_classification_observability = lambda classification_id, **_: events[classification_id]
+    # This test substitutes the view query to isolate receipt projection.
+    monkeypatch.setattr(
+        "app.web_api.email.build_email_classification_reader",
+        lambda *_args, **_kwargs: view,
+    )
     app = FastAPI()
     register_email_routes(app, lambda: store)
 
@@ -366,11 +386,9 @@ def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp
 
 
 class _ZeroTimeoutEmailStore(EmailStore):
-    def _open_connection(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=0)
+    def _open_connection(self, *, foreign_keys=True) -> sqlite3.Connection:
+        db = super()._open_connection(foreign_keys=foreign_keys)
         db.execute("pragma busy_timeout = 0")
-        db.execute("pragma foreign_keys = on")
-        db.row_factory = sqlite3.Row
         return db
 
 
@@ -419,6 +437,38 @@ def _assert_email_endpoints_unavailable(client: TestClient) -> None:
     for response in responses:
         assert response.status_code == 503
         assert response.json() == expected
+
+
+def _assert_audit_app_rejects_shared_schema(
+    database: Path, tmp_path: Path, *, error_type=sqlite3.IntegrityError,
+    match="malformed current provider/config declaration",
+) -> None:
+    from contextlib import closing
+
+    with closing(sqlite3.connect(database)) as db:
+        assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
+        schema_before = db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema order by type,name"
+        ).fetchall()
+        ledger_before = db.execute("select * from email_schema_migrations").fetchall()
+        cookie_before = db.execute("pragma schema_version").fetchone()[0]
+    bytes_before = sha256(database.read_bytes()).hexdigest()
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index.html").write_text("", encoding="utf-8")
+    with pytest.raises(error_type, match=match):
+        create_audit_app(
+            database, workbench_asset_dir=assets, workbench_workspace=tmp_path,
+            workbench_executor=_NonExecutingExecutor(tmp_path),
+        )
+    with closing(sqlite3.connect(database)) as db:
+        assert db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema order by type,name"
+        ).fetchall() == schema_before
+        assert db.execute("select * from email_schema_migrations").fetchall() == ledger_before
+        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
+    assert sha256(database.read_bytes()).hexdigest() == bytes_before
+    assert not Path(f"{database}-wal").exists()
 
 
 def _assert_audit_app_email_unavailable(database: Path, tmp_path: Path) -> None:
@@ -934,8 +984,8 @@ def test_email_learning_registry_issues_never_echo_corrupt_model_id(
         def list_category_configs(self):
             return []
 
-        def list_unincluded_training_examples(self):
-            return []
+        def count_unincluded_training_examples(self):
+            return 0
 
         def list_configs(self):
             return []
@@ -1181,7 +1231,7 @@ def test_email_classification_display_projects_residual_html_without_links(
     assert "href=" not in response.text
 
 
-def test_email_training_preview_returns_unique_frozen_selection_without_writes() -> None:
+def test_email_training_preview_returns_unique_frozen_selection_without_writes(monkeypatch) -> None:
     class PreviewStore:
         writes: list[object] = []
 
@@ -1234,6 +1284,12 @@ def test_email_training_preview_returns_unique_frozen_selection_without_writes()
                 },
             ]
 
+    monkeypatch.setattr(
+        "app.email_selected_training_reader.build_selected_training_reader",
+        lambda store, **kwargs: SimpleNamespace(
+            list_selected_training_records=lambda *, sources: store.list_selected_training_records()
+        ),
+    )
     store = PreviewStore()
     app = FastAPI()
     register_email_routes(app, lambda: store)
@@ -1403,6 +1459,9 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
     }
 
     class DetailStore:
+        def classification_source_candidates(self, *, status, classification_id=None):
+            return ([classification], 1) if classification_id in (None, 41) else ([], 0)
+
         def get_classification(self, classification_id: int):
             return classification if classification_id == 41 else None
 
@@ -1685,8 +1744,8 @@ def test_email_learning_and_model_version_expose_safe_modern_evidence(tmp_path) 
         def list_category_configs(self):
             return []
 
-        def list_unincluded_training_examples(self):
-            return []
+        def count_unincluded_training_examples(self):
+            return 0
 
         def list_configs(self):
             return []
@@ -2631,9 +2690,11 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
     )
 
     with sqlite3.connect(fixture.database) as db:
+        from app.task8_storage import task8_set_parts
+        parts = task8_set_parts("reply_tasks", {"channel": "legacy-email"})
         db.execute(
-            "update tasks set channel='legacy-email' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (fixture.task.id,),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (*parts.parameters, fixture.task.id),
         )
     legacy_event = _audited_observability_event(fixture)
 
@@ -2804,16 +2865,18 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
         claim_source = email_action_projection("email_unsubscribe_claims", include_rowid=True)
         for (source_rowid,) in db.execute(f"select rowid from ({claim_source})").fetchall():
             delete_email_action(db, "email_unsubscribe_claims", source_rowid)
+        from app.task8_storage import task8_set_parts
+        parts = task8_set_parts("reply_tasks", {"status": "processing"})
         db.execute(
-            "update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (fixture.task.id,),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (*parts.parameters, fixture.task.id),
         )
         db.execute(
             "update runs set status='running', completed_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (fixture.audit.id,),
         )
 
-    rows, total = fixture.store.list_unsubscribe_classifications(limit=20, offset=0)
+    rows, total = StoredEmailListingOracle(fixture.store).list_unsubscribe_classifications(limit=20, offset=0)
     assert total == 1
     assert [row['id'] for row in rows] == [fixture.classification_id]
     assert fixture.store.email_processing_progress(now=datetime.now(timezone.utc))[
@@ -2867,9 +2930,11 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
         update_email_action(db, "email_unsubscribe_claims", source_rowid, {
             "status": "dispatching", "phase": "navigating",
         })
+        from app.task8_storage import task8_set_parts
+        parts = task8_set_parts("reply_tasks", {"status": "processing"})
         db.execute(
-            "update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (fixture.task.id,),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (*parts.parameters, fixture.task.id),
         )
         db.execute(
             "update runs set status='running', completed_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?",
@@ -2948,7 +3013,10 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
     mismatch: str,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    with sqlite3.connect(fixture.database) as db:
+    from app.task8_storage import task8_set_parts
+    from app.task20_definitions import task20_column
+
+    with fixture.task_store._connect() as db:
         if mismatch in {"account", "plan", "classification"}:
             payload = dict(fixture.task_payload)
             if mismatch == "account":
@@ -2959,19 +3027,26 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
                 payload["classification_id"] = fixture.classification_id + 1
             # This fixture is settled: retained source facts, rather than a
             # retired JSON cache, are the authoritative lineage binding.
-            db.execute(
-                "update tasks set input_provenance_json=json_set("
-                "input_provenance_json, '$.source.account_id', ?, "
-                "'$.source.action_plan_id', ?, '$.source.classification_id', ?) "
-                "where record_type='reply_task_inputs' and id=(select current_input_id "
+            source = db.execute(
+                "select id, " + task20_column("reply_task_inputs", "input_provenance_json") +
+                " as provenance from tasks where id=(select current_input_id "
                 "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-                (payload["account_id"], payload["action_plan_id"], payload["classification_id"], fixture.task.id),
-            )
-        elif mismatch == "conversation":
-            db.execute(
-                "update tasks set conversation_id='wrong-conversation' "
-                "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                 (fixture.task.id,),
+            ).fetchone()
+            provenance = json.loads(source["provenance"])
+            provenance["source"].update({
+                name: payload[name] for name in ("account_id", "action_plan_id", "classification_id")
+            })
+            parts = task8_set_parts("reply_task_inputs", {
+                "input_provenance_json": json.dumps(provenance),
+            })
+            db.execute(f"update tasks set {parts.sql} where id=?", (*parts.parameters, source["id"]))
+        elif mismatch == "conversation":
+            parts = task8_set_parts("reply_tasks", {"conversation_id": "wrong-conversation"})
+            db.execute(
+                f"update tasks set {parts.sql} "
+                "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+                (*parts.parameters, fixture.task.id),
             )
         elif mismatch == "generation":
             db.execute(
@@ -3067,7 +3142,7 @@ def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):
             "select version, applied_at from email_schema_migrations order by version"
         ).fetchall()
         marker_before = db.execute(
-            "select value, updated_at from service_state where key='store_schema_version'"
+            f"select value, updated_at from ({SERVICE_STATE_SQL}) where key='store_schema_version'"
         ).fetchone()
         cookie_before = db.execute("pragma schema_version").fetchone()[0]
     bytes_before = sha256(database.read_bytes()).hexdigest()
@@ -3108,7 +3183,7 @@ def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):
             "select version, applied_at from email_schema_migrations order by version"
         ).fetchall() == ledger_before
         assert db.execute(
-            "select value, updated_at from service_state where key='store_schema_version'"
+            f"select value, updated_at from ({SERVICE_STATE_SQL}) where key='store_schema_version'"
         ).fetchone() == marker_before
         assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
     assert sha256(database.read_bytes()).hexdigest() == bytes_before
@@ -3193,7 +3268,7 @@ def test_audit_app_rejects_unknown_future_email_pair_without_repair(tmp_path: Pa
             "select version, applied_at from email_schema_migrations order by version"
         ).fetchall()
         marker_before = db.execute(
-            "select value, updated_at from service_state where key='store_schema_version'"
+            f"select value, updated_at from ({SERVICE_STATE_SQL}) where key='store_schema_version'"
         ).fetchone()
         cookie_before = db.execute("pragma schema_version").fetchone()[0]
     bytes_before = sha256(database.read_bytes()).hexdigest()
@@ -3220,14 +3295,14 @@ def test_audit_app_rejects_unknown_future_email_pair_without_repair(tmp_path: Pa
             "select version, applied_at from email_schema_migrations order by version"
         ).fetchall() == ledger_before
         assert db.execute(
-            "select value, updated_at from service_state where key='store_schema_version'"
+            f"select value, updated_at from ({SERVICE_STATE_SQL}) where key='store_schema_version'"
         ).fetchone() == marker_before
         assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
     assert sha256(database.read_bytes()).hexdigest() == bytes_before
     assert not Path(f"{database}-wal").exists()
 
 
-def test_audit_app_starts_when_current_email_schema_is_missing_a_column(
+def test_audit_app_rejects_shared_email_schema_missing_a_column(
     tmp_path: Path,
 ):
     database = tmp_path / "audit-app-missing-email-column.sqlite3"
@@ -3235,12 +3310,13 @@ def test_audit_app_starts_when_current_email_schema_is_missing_a_column(
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
-        db.execute("alter table email_messages drop column normalized_text")
+        db.execute("alter table emails drop column message_normalized_text")
 
-    _assert_audit_app_email_unavailable(database, tmp_path)
+    db.close()
+    _assert_audit_app_rejects_shared_schema(database, tmp_path)
 
 
-def test_audit_app_isolates_non_text_email_schema_identifier(tmp_path: Path):
+def test_audit_app_rejects_non_text_shared_email_schema_identifier(tmp_path: Path):
     database = tmp_path / "audit-app-invalid-email-schema-name.sqlite3"
     AutoReplyStore(database)
     EmailStore(database)
@@ -3250,52 +3326,39 @@ def test_audit_app_isolates_non_text_email_schema_identifier(tmp_path: Path):
         db.execute("pragma writable_schema = on")
         db.execute(
             "update sqlite_master set name=? "
-            "where type='table' and name='email_messages'",
-            (sqlite3.Binary(b"email_messages"),),
+            "where type='table' and name='emails'",
+            (sqlite3.Binary(b"emails"),),
         )
         db.execute(f"pragma schema_version = {schema_version + 1}")
         db.commit()
         db.execute("pragma writable_schema = off")
 
-    _assert_audit_app_email_unavailable(database, tmp_path)
+    db.close()
+    _assert_audit_app_rejects_shared_schema(
+        database, tmp_path, error_type=email_store_module.EmailPersistenceCorruption,
+        match="invalid schema identifier metadata",
+    )
 
 
-def test_audit_app_isolates_non_text_foreign_key_on_delete_metadata(
+def test_audit_app_isolates_email_schema_validation_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    database = tmp_path / "audit-app-invalid-email-fk-on-delete.sqlite3"
+    database = tmp_path / "audit-app-email-schema-validation.sqlite3"
     AutoReplyStore(database)
     EmailStore(database)
-    original_open_connection = EmailStore._open_connection
 
-    class CorruptOnDeleteRow:
-        def __init__(self, row: sqlite3.Row):
-            self._row = row
+    def malformed(_cls, _db):
+        raise email_store_module.EmailPersistenceCorruption("malformed Email metadata")
 
-        def __getitem__(self, key: object):
-            if key == "on_delete":
-                return 7
-            return self._row[key]
-
-    def corrupting_open_connection(self: EmailStore) -> sqlite3.Connection:
-        db = original_open_connection(self)
-
-        def row_factory(cursor: sqlite3.Cursor, values: tuple[object, ...]):
-            row = sqlite3.Row(cursor, values)
-            if "on_delete" in row.keys():
-                return CorruptOnDeleteRow(row)
-            return row
-
-        db.row_factory = row_factory
-        return db
-
-    monkeypatch.setattr(EmailStore, "_open_connection", corrupting_open_connection)
-
+    # Final shared declarations are compared exactly before startup. A separate
+    # Email initialization failure still produces unavailable Email routes.
+    # Do not inject impossible PRAGMA values into a retired native-table reader.
+    monkeypatch.setattr(EmailStore, "_validate_schema_shape", classmethod(malformed))
     _assert_audit_app_email_unavailable(database, tmp_path)
 
 
-def test_audit_app_isolates_weakened_current_email_schema_declarations(
+def test_audit_app_rejects_weakened_shared_scan_cursor_declaration(
     tmp_path: Path,
 ):
     database = tmp_path / "audit-app-weakened-email-schema.sqlite3"
@@ -3303,23 +3366,19 @@ def test_audit_app_isolates_weakened_current_email_schema_declarations(
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            alter table email_scan_cursors rename to old_email_scan_cursors;
-            create table email_scan_cursors (
-                account_id text not null,
-                folder text not null,
-                uidvalidity text,
-                last_seen_uid text,
-                last_success_at text,
-                last_error text,
-                primary key (account_id, folder)
-            );
-            drop table old_email_scan_cursors;
-            """
-        )
+        schema = db.execute("select sql from sqlite_schema where name='state'").fetchone()[0]
+        assert "uidvalidity>0" in schema
+        version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema=on")
+        db.execute("update sqlite_schema set sql=? where name='state'", (
+            schema.replace("uidvalidity>0", "uidvalidity>=0"),
+        ))
+        db.execute(f"pragma schema_version={version + 1}")
+        db.execute("pragma writable_schema=off")
 
-    _assert_audit_app_email_unavailable(database, tmp_path)
+
+    db.close()
+    _assert_audit_app_rejects_shared_schema(database, tmp_path)
 
 
 def test_audit_app_starts_when_email_json_contains_invalid_utf8_blob(
@@ -3331,37 +3390,18 @@ def test_audit_app_starts_when_email_json_contains_invalid_utf8_blob(
     gc.collect()
     with sqlite3.connect(database) as db:
         db.execute("pragma ignore_check_constraints = on")
-        db.execute(
-            """
-            insert into email_accounts (
-                account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, smtp_host,
-                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
-                enabled, scan_folders_json, scan_interval_seconds, created_at,
-                updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "invalid-json-account",
-                "Invalid JSON",
-                "redacted@example.com",
-                "imap.example.com",
-                993,
-                1,
-                "redacted@example.com",
-                "IMAP_SECRET_REFERENCE",
-                "smtp.example.com",
-                465,
-                1,
-                "redacted@example.com",
-                "SMTP_SECRET_REFERENCE",
-                1,
-                sqlite3.Binary(b"\xff"),
-                60,
-                "2026-08-29T16:00:00+00:00",
-                "2026-08-29T16:00:00+00:00",
-            ),
-        )
+        db.execute("begin immediate")
+        insert_config(db, "email_accounts", {
+            "account_id": "invalid-json-account", "display_name": "Invalid JSON",
+            "email_address": "redacted@example.com", "imap_host": "imap.example.com",
+            "imap_port": 993, "imap_tls": 1, "imap_username": "redacted@example.com",
+            "imap_secret_reference": "IMAP_SECRET_REFERENCE", "smtp_host": "smtp.example.com",
+            "smtp_port": 465, "smtp_tls": 1, "smtp_username": "redacted@example.com",
+            "smtp_secret_reference": "SMTP_SECRET_REFERENCE", "enabled": 1,
+            "scan_folders_json": sqlite3.Binary(b"\xff"), "scan_interval_seconds": 60,
+            "created_at": "2026-08-29T16:00:00+00:00", "updated_at": "2026-08-29T16:00:00+00:00",
+        })
+
 
     _assert_audit_app_email_unavailable(database, tmp_path)
 
@@ -3382,15 +3422,10 @@ def test_paginated_get_does_not_compete_with_scanner_write_transaction(
     try:
         writer.execute("pragma journal_mode = wal")
         writer.execute("begin immediate")
-        writer.execute(
-            """
-            insert into email_scan_cursors (
-                account_id, folder, uidvalidity, last_seen_uid,
-                last_success_at, last_error
-            ) values (?, ?, ?, ?, ?, ?)
-            """,
-            ("dingtalk-account", "INBOX", 42, 7, "", ""),
-        )
+        insert_state(writer, "email_scan_cursors", {
+            "account_id": "dingtalk-account", "folder": "INBOX", "uidvalidity": 42,
+            "last_seen_uid": 7, "last_success_at": "", "last_error": "",
+        })
         app = FastAPI()
 
         @app.get("/healthz")

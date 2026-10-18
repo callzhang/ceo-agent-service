@@ -22,13 +22,16 @@ from app.meeting_memory_write import (
 import app.meeting_memory_write as meeting_memory_write
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.store import AutoReplyStore
-
+from app.action_storage import task_delivery_projection, task_delivery_set_parts
+from app.task20_definitions import task20_projection
 
 from app.memory_connector_client import (
     MemoryConnectorError,
     MemoryConnectorNotAuthorized,
     MemoryWriteReceipt,
 )
+
+MMW_SQL = task_delivery_projection("meeting_memory_write_events")
 
 
 class _FakeWriter:
@@ -303,7 +306,7 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
     assert enqueue_sent_meeting_memory_writes(store) == 0
     with store._connect() as db:
         event = db.execute(
-            "select * from meeting_memory_write_events where meeting_job_id=?", (job_id,)
+            f"select * from ({MMW_SQL}) where meeting_job_id=?", (job_id,)
         ).fetchone()
     assert event is not None
     assert event["status"] == "pending"
@@ -326,11 +329,11 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
     assert "本周先完成客户验证" in str(writer.calls[0]["data"])
     with store._connect() as db:
         written = db.execute(
-            "select status, memory_id from meeting_memory_write_events where id=?",
+            f"select status, memory_id from ({MMW_SQL}) where id=?",
             (event["id"],),
         ).fetchone()
         meeting = db.execute(
-            "select status from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?", (job_id,)
+            f"select status from ({task20_projection('meeting_alignment_jobs')}) where id=?", (job_id,)
         ).fetchone()
     assert dict(written) == {"status": "done", "memory_id": "meeting-memory-7"}
     assert meeting["status"] == "sent"
@@ -425,7 +428,7 @@ def test_meeting_memory_terminal_transition_requires_the_current_lease_owner(
     with store._connect() as db:
         row = db.execute(
             "select status, memory_id, lease_owner, lease_expires_at "
-            "from meeting_memory_write_events where id=?",
+            f"from ({MMW_SQL}) where id=?",
             (event.id,),
         ).fetchone()
     assert dict(row) == {
@@ -477,7 +480,7 @@ def test_expired_meeting_memory_owner_cannot_settle_an_event(
     assert not settled
     with store._connect() as db:
         row = db.execute(
-            "select status, lease_owner from meeting_memory_write_events where id=?",
+            f"select status, lease_owner from ({MMW_SQL}) where id=?",
             (event.id,),
         ).fetchone()
     assert dict(row) == {"status": "processing", "lease_owner": "expired-worker"}
@@ -691,7 +694,7 @@ def test_meeting_memory_worker_does_not_settle_after_lease_renewal_fails(
     assert outcome.lost_lease == 1
     with store._connect() as db:
         row = db.execute(
-            "select status, memory_id from meeting_memory_write_events"
+            f"select status, memory_id from ({MMW_SQL})"
         ).fetchone()
     assert dict(row) == {"status": "processing", "memory_id": ""}
 
@@ -706,10 +709,10 @@ def test_idle_meeting_memory_enqueue_does_not_mutate_rows_or_sequence(
     with store._connect() as db:
         before = db.execute(
             "select id, meeting_job_id, execution_generation, created_at, updated_at "
-            "from meeting_memory_write_events"
+            f"from ({MMW_SQL})"
         ).fetchall()
         sequence_before = db.execute(
-            "select seq from sqlite_sequence where name='meeting_memory_write_events'"
+            "select seq from sqlite_sequence where name='actions:meeting_memory_write_events'"
         ).fetchone()["seq"]
 
     assert enqueue_sent_meeting_memory_writes(store) == 0
@@ -717,10 +720,10 @@ def test_idle_meeting_memory_enqueue_does_not_mutate_rows_or_sequence(
     with store._connect() as db:
         after = db.execute(
             "select id, meeting_job_id, execution_generation, created_at, updated_at "
-            "from meeting_memory_write_events"
+            f"from ({MMW_SQL})"
         ).fetchall()
         sequence_after = db.execute(
-            "select seq from sqlite_sequence where name='meeting_memory_write_events'"
+            "select seq from sqlite_sequence where name='actions:meeting_memory_write_events'"
         ).fetchone()["seq"]
 
     assert [dict(row) for row in after] == [dict(row) for row in before]
@@ -786,10 +789,12 @@ def test_meeting_memory_enqueue_does_not_read_already_enqueued_bodies(
 
     monkeypatch.setattr(store, "_open_connection", recording_connection)
     assert store.enqueue_sent_meeting_memory_write_events() == 1
-    assert checked_bodies == ["new delivered conclusion", "new delivered conclusion"]
+    # The bounded allocator counts eligible rows under the writer lock before
+    # the single INSERT SELECT, so only the new body is inspected three times.
+    assert checked_bodies == ["new delivered conclusion"] * 3
     with store._connect() as db:
         assert db.execute(
-            "select meeting_job_id from meeting_memory_write_events order by id desc limit 1"
+            f"select meeting_job_id from ({MMW_SQL}) order by id desc limit 1"
         ).fetchone()[0] == physical_id
     events = store.list_due_meeting_memory_write_events(now="2099-01-01T00:00:00Z", limit=10)
     assert events[-1].meeting_job_id == missing_id + public_offset
@@ -812,9 +817,9 @@ def test_meeting_memory_enqueue_rechecks_competing_enqueue(
     monkeypatch.setattr(store, "_immediate_write_transaction", enqueue_before_transaction)
     assert store.enqueue_sent_meeting_memory_write_events() == 0
     with store._connect() as db:
-        assert db.execute("select count(*) from meeting_memory_write_events").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({MMW_SQL})").fetchone()[0] == 1
         assert db.execute(
-            "select seq from sqlite_sequence where name='meeting_memory_write_events'"
+            "select seq from sqlite_sequence where name='actions:meeting_memory_write_events'"
         ).fetchone()[0] == 1
 
 
@@ -906,7 +911,7 @@ def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
                     [
                         str(row["status"])
                         for row in db.execute(
-                            "select status from meeting_memory_write_events order by id"
+                            f"select status from ({MMW_SQL}) order by id"
                         )
                     ]
                 )
@@ -951,7 +956,7 @@ def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
                 with store._connect() as db:
                     self.second_wave_lease = str(
                         db.execute(
-                            "select lease_expires_at from meeting_memory_write_events "
+                            f"select lease_expires_at from ({MMW_SQL}) "
                             "where status='processing'"
                         ).fetchone()["lease_expires_at"]
                     )
@@ -1007,7 +1012,7 @@ def test_meeting_memory_retry_delay_starts_when_the_worker_finishes(
     with store._connect() as db:
         available_at = str(
             db.execute(
-                "select available_at from meeting_memory_write_events"
+                f"select available_at from ({MMW_SQL})"
             ).fetchone()["available_at"]
         )
     assert available_at == "2026-09-15T10:03:00+00:00"
@@ -1021,7 +1026,7 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     assert enqueue_sent_meeting_memory_writes(store) == 1
     with store._connect() as db:
         created_event = db.execute(
-            "select id, execution_generation from meeting_memory_write_events "
+            f"select id, execution_generation from ({MMW_SQL}) "
             "where meeting_job_id=?",
             (job_id,),
         ).fetchone()
@@ -1054,7 +1059,7 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     with store._connect() as db:
         event = db.execute(
             "select status, attempts, error, available_at, execution_generation "
-            "from meeting_memory_write_events where id=?",
+            f"from ({MMW_SQL}) where id=?",
             (event_id,),
         ).fetchone()
     assert event["status"] == "pending"
@@ -1080,7 +1085,7 @@ def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> Non
 
     with store._connect() as db:
         event = db.execute(
-            "select status, attempts, error, available_at from meeting_memory_write_events "
+            f"select status, attempts, error, available_at from ({MMW_SQL}) "
             "where meeting_job_id=?",
             (job_id,),
         ).fetchone()
@@ -1103,7 +1108,7 @@ def test_unsettled_meeting_memory_write_can_be_closed_from_verified_memory_readb
     with store._connect() as db:
         event_id = int(
             db.execute(
-                "select id from meeting_memory_write_events where meeting_job_id=?",
+                f"select id from ({MMW_SQL}) where meeting_job_id=?",
                 (job_id,),
             ).fetchone()["id"]
         )
@@ -1132,7 +1137,7 @@ def test_unsettled_meeting_memory_write_can_be_closed_from_verified_memory_readb
     )
     with store._connect() as db:
         event = db.execute(
-            "select status, attempts, error, memory_id from meeting_memory_write_events "
+            f"select status, attempts, error, memory_id from ({MMW_SQL}) "
             "where id=?",
             (event_id,),
         ).fetchone()
@@ -1152,9 +1157,13 @@ def test_a_retryable_dependency_that_never_recovers_stops_at_the_ceiling(
     _store_sent_job(store)
     assert enqueue_sent_meeting_memory_writes(store) == 1
     with store._connect() as db:
+        assignments, parameters = task_delivery_set_parts(
+            "meeting_memory_write_events",
+            {"attempts": meeting_memory_write.MEETING_MEMORY_WRITE_MAX_ATTEMPTS - 1},
+        )
         db.execute(
-            "update meeting_memory_write_events set attempts=?",
-            (meeting_memory_write.MEETING_MEMORY_WRITE_MAX_ATTEMPTS - 1,),
+            f"update actions set {assignments} where record_type='meeting_memory_write_events'",
+            parameters,
         )
 
     class _NeverRecoveringDependency:
@@ -1172,7 +1181,7 @@ def test_a_retryable_dependency_that_never_recovers_stops_at_the_ceiling(
     with store._connect() as db:
         row = db.execute(
             "select status, attempts, error, available_at "
-            "from meeting_memory_write_events"
+            f"from ({MMW_SQL})"
         ).fetchone()
     assert row["status"] == "failed"
     assert row["available_at"] == ""
@@ -1197,7 +1206,7 @@ def test_a_retryable_dependency_still_retries_below_the_ceiling(
     assert outcome.retried == 1
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts from meeting_memory_write_events"
+            f"select status, attempts from ({MMW_SQL})"
         ).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 1
@@ -1210,7 +1219,7 @@ def test_a_retry_after_a_turn_that_never_completed_keeps_its_operation(tmp_path:
     _store_sent_job(store)
     assert enqueue_sent_meeting_memory_writes(store) == 1
     with store._connect() as db:
-        generation = db.execute("select execution_generation from meeting_memory_write_events").fetchone()[0]
+        generation = db.execute(f"select execution_generation from ({MMW_SQL})").fetchone()[0]
 
     class _Deferred:
         def __call__(self, **kwargs):
@@ -1224,7 +1233,7 @@ def test_a_retry_after_a_turn_that_never_completed_keeps_its_operation(tmp_path:
     )
 
     with store._connect() as db:
-        assert db.execute("select execution_generation from meeting_memory_write_events").fetchone()[0] == generation
+        assert db.execute(f"select execution_generation from ({MMW_SQL})").fetchone()[0] == generation
 
 
 def test_a_memory_pass_is_not_capped_by_the_queue_batch_size(monkeypatch, tmp_path):
@@ -1287,7 +1296,7 @@ def test_a_missing_credential_fails_the_event_instead_of_retrying(tmp_path: Path
     assert outcome.failed == 1 and outcome.retried == 0
     with store._connect() as db:
         row = db.execute(
-            "select status, error from meeting_memory_write_events"
+            f"select status, error from ({MMW_SQL})"
         ).fetchone()
     assert row["status"] == "failed"
     assert row["error"].startswith("memory_connector_not_authorized:")
@@ -1326,7 +1335,7 @@ def test_a_write_without_an_injected_writer_is_refused_in_tests(tmp_path: Path):
     assert outcome.completed == 0
     with store._connect() as db:
         row = db.execute(
-            "select status, error from meeting_memory_write_events"
+            f"select status, error from ({MMW_SQL})"
         ).fetchone()
     assert row["status"] != "done"
     assert "reached the real memory writer" in str(row["error"])

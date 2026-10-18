@@ -1,0 +1,776 @@
+{
+  "aggregate": {
+    "additional_exact_document_count": 25,
+    "additional_exact_reader_rechecks": 25,
+    "additional_exact_utf8_bytes": 1030823,
+    "additional_signal_identity_key_matches": 85,
+    "current_combined_exact_native_lower_bound_documents": 55,
+    "current_combined_exact_native_lower_bound_utf8_bytes": 1703120,
+    "current_native_unproved_document_count": 158,
+    "current_native_unproved_utf8_bytes": 5314029,
+    "documents_with_multiple_matching_leaves": 25,
+    "matched_decoded_leaf_occurrences": 397,
+    "prior_exact_native_documents_rechecked_on_current_source": 30,
+    "prior_exact_native_utf8_bytes_rechecked_on_current_source": 672297,
+    "selected_distinct_native_lines": 12,
+    "unproved_means": "No exact native-file proof in these two bounded cohorts; does not establish source unavailability or authorize body retirement."
+  },
+  "code_sha256": {
+    "app/native_trajectory.py": "a5b76d0964097d9ae996c9413f464acfd7d17e11a99489346f4a459114ae6248",
+    "app/run_storage.py": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718",
+    "app/task20_definitions.py": "1000c4baeaaad66444b75ceeba1264d626239647e0186c8ee839dfc089b91784",
+    "app/task_agent.py": "f4384abea0a5da207182f1ea882bafa8d7c2cae3c37a19b35ebdc637a0b7a2cb",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290"
+  },
+  "documents": [
+    {
+      "matching_decoded_leaf_count": 10,
+      "native_provenance": {
+        "decoded_utf8_bytes": 33986,
+        "decoded_utf8_sha256": "62b9b3334302cb6dea55b6430a001a2cef819dc57913c350bff29b0383b5141c",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 246,
+        "line_number_one_based": 247,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 515948,
+        "raw_line_sha256": "8b99d5cdc7e011bd0f68464368d5a8ce95344dde702ce1ca596407c97a8d7fcf",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 250289,
+        "substring_start_character_zero_based": 233202
+      },
+      "source_document_id": 189,
+      "source_identity_key": "e5bf98ad1be9f8ee71cec654f9eded16a1408e65ba742812bdbdb66dc79ab381",
+      "source_utf8_bytes": 33986,
+      "source_utf8_sha256": "62b9b3334302cb6dea55b6430a001a2cef819dc57913c350bff29b0383b5141c"
+    },
+    {
+      "matching_decoded_leaf_count": 10,
+      "native_provenance": {
+        "decoded_utf8_bytes": 33986,
+        "decoded_utf8_sha256": "62b9b3334302cb6dea55b6430a001a2cef819dc57913c350bff29b0383b5141c",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 246,
+        "line_number_one_based": 247,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 515948,
+        "raw_line_sha256": "8b99d5cdc7e011bd0f68464368d5a8ce95344dde702ce1ca596407c97a8d7fcf",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 250289,
+        "substring_start_character_zero_based": 233202
+      },
+      "source_document_id": 190,
+      "source_identity_key": "8efa8dde740866e01254b48d842cbaa6f74a147a5363486b91f1f6f7c9d8100d",
+      "source_utf8_bytes": 33986,
+      "source_utf8_sha256": "62b9b3334302cb6dea55b6430a001a2cef819dc57913c350bff29b0383b5141c"
+    },
+    {
+      "matching_decoded_leaf_count": 10,
+      "native_provenance": {
+        "decoded_utf8_bytes": 33986,
+        "decoded_utf8_sha256": "62b9b3334302cb6dea55b6430a001a2cef819dc57913c350bff29b0383b5141c",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 246,
+        "line_number_one_based": 247,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 515948,
+        "raw_line_sha256": "8b99d5cdc7e011bd0f68464368d5a8ce95344dde702ce1ca596407c97a8d7fcf",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 250289,
+        "substring_start_character_zero_based": 233202
+      },
+      "source_document_id": 191,
+      "source_identity_key": "1a744c8f644b1138312a9d6851f49df0ea72ec2d03fcb35f212a69c7b79c35a1",
+      "source_utf8_bytes": 33986,
+      "source_utf8_sha256": "62b9b3334302cb6dea55b6430a001a2cef819dc57913c350bff29b0383b5141c"
+    },
+    {
+      "matching_decoded_leaf_count": 11,
+      "native_provenance": {
+        "decoded_utf8_bytes": 22190,
+        "decoded_utf8_sha256": "30794337097ffeb97d6064efa4d8edeac5f903922cc2f22b8618c9853a184055",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 276,
+        "line_number_one_based": 277,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 495328,
+        "raw_line_sha256": "20a0afaa292eb66f5f29ed3ed1cd00539add82705813a37103fca9791d0ffb1d",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 240991,
+        "substring_start_character_zero_based": 230156
+      },
+      "source_document_id": 192,
+      "source_identity_key": "17004bb8715b9416cdb4ab2583158e0b19d864f1c1d1e44b90930bb8f3a722a9",
+      "source_utf8_bytes": 22190,
+      "source_utf8_sha256": "30794337097ffeb97d6064efa4d8edeac5f903922cc2f22b8618c9853a184055"
+    },
+    {
+      "matching_decoded_leaf_count": 10,
+      "native_provenance": {
+        "decoded_utf8_bytes": 3044,
+        "decoded_utf8_sha256": "c60b96cfd9e0b1be8a68e10d8719d87d48b644c230a9ff0b914e49e87eb0a235",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 306,
+        "line_number_one_based": 307,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 520978,
+        "raw_line_sha256": "e4c18a7be3929b52050e6eadb753dddf195b3db9b19740b9d691f7724926ba0f",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 256204,
+        "substring_start_character_zero_based": 253983
+      },
+      "source_document_id": 193,
+      "source_identity_key": "cfb546532e264e7ac6474e9200465d4ab736e940cf7b87253d8936e87be89001",
+      "source_utf8_bytes": 3044,
+      "source_utf8_sha256": "c60b96cfd9e0b1be8a68e10d8719d87d48b644c230a9ff0b914e49e87eb0a235"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 27957,
+        "decoded_utf8_sha256": "5680535558561182d34f508e0e6ee323f45701086f05f1bbb9b7facd66915887",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 326,
+        "line_number_one_based": 327,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 502468,
+        "raw_line_sha256": "c99619321269d4efa851577ab3cd9515284940c3024f24828e46620c824e289d",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 243445,
+        "substring_start_character_zero_based": 230223
+      },
+      "source_document_id": 194,
+      "source_identity_key": "9aeaa810483b71ca468a6b7f460aa2673b7c50cea0214ca6efd7d17efabaf468",
+      "source_utf8_bytes": 27957,
+      "source_utf8_sha256": "5680535558561182d34f508e0e6ee323f45701086f05f1bbb9b7facd66915887"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 27957,
+        "decoded_utf8_sha256": "5680535558561182d34f508e0e6ee323f45701086f05f1bbb9b7facd66915887",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 326,
+        "line_number_one_based": 327,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 502468,
+        "raw_line_sha256": "c99619321269d4efa851577ab3cd9515284940c3024f24828e46620c824e289d",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 243445,
+        "substring_start_character_zero_based": 230223
+      },
+      "source_document_id": 195,
+      "source_identity_key": "20a27d2efaeec072b5c0588e3dad9d5ca539dbbfa6bdf3b3e8a6979c69f56c48",
+      "source_utf8_bytes": 27957,
+      "source_utf8_sha256": "5680535558561182d34f508e0e6ee323f45701086f05f1bbb9b7facd66915887"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 27957,
+        "decoded_utf8_sha256": "5680535558561182d34f508e0e6ee323f45701086f05f1bbb9b7facd66915887",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 326,
+        "line_number_one_based": 327,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 502468,
+        "raw_line_sha256": "c99619321269d4efa851577ab3cd9515284940c3024f24828e46620c824e289d",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 243445,
+        "substring_start_character_zero_based": 230223
+      },
+      "source_document_id": 196,
+      "source_identity_key": "245d9edc7f2403f4655c7cd666476eab7de68d6347f7c0132364631d043babf0",
+      "source_utf8_bytes": 27957,
+      "source_utf8_sha256": "5680535558561182d34f508e0e6ee323f45701086f05f1bbb9b7facd66915887"
+    },
+    {
+      "matching_decoded_leaf_count": 10,
+      "native_provenance": {
+        "decoded_utf8_bytes": 12103,
+        "decoded_utf8_sha256": "ccad82f1792702fe78032489d4a42d16454da0e77f033d55be72b0e79e2f3427",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 348,
+        "line_number_one_based": 349,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 497569,
+        "raw_line_sha256": "636b85a2805d6c3b81f14c9185b2b639d93c9c7617e751c99a7e1e77105accc5",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 243160,
+        "substring_start_character_zero_based": 235997
+      },
+      "source_document_id": 197,
+      "source_identity_key": "763c6fc336bcf8d4cd743112ed2768a41fdb5bc2ec063430603c52162bb29f08",
+      "source_utf8_bytes": 12103,
+      "source_utf8_sha256": "ccad82f1792702fe78032489d4a42d16454da0e77f033d55be72b0e79e2f3427"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 39239,
+        "decoded_utf8_sha256": "4bb6cf863a10f2dd99e0309f70a6fd7ad9df2b10a4a79bff64aaad4c011d8a34",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 388,
+        "line_number_one_based": 389,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 529701,
+        "raw_line_sha256": "93070119428813d160c8a95a9b721e5dc222f6ed9005e5efc0d68e1a5bcbe12e",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 256516,
+        "substring_start_character_zero_based": 236188
+      },
+      "source_document_id": 198,
+      "source_identity_key": "c428b3294b9237428de6e8109125d3caae58bec14e6fa82eaa0b300f64a34f39",
+      "source_utf8_bytes": 39239,
+      "source_utf8_sha256": "4bb6cf863a10f2dd99e0309f70a6fd7ad9df2b10a4a79bff64aaad4c011d8a34"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 24777,
+        "decoded_utf8_sha256": "889b223ab01c39a09b595acfeed5a5c512e60cd6f4646408b2622654e6da1a20",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 456,
+        "line_number_one_based": 457,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 505745,
+        "raw_line_sha256": "60f3d8c970a30635df87e2f64f599cada819f077128176dedcb4dd15129aeca2",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 245150,
+        "substring_start_character_zero_based": 233250
+      },
+      "source_document_id": 199,
+      "source_identity_key": "54c6d3faeef482601d137a93d9bdaaf420edd7828ccdef2b170978e4ce2781c3",
+      "source_utf8_bytes": 24777,
+      "source_utf8_sha256": "889b223ab01c39a09b595acfeed5a5c512e60cd6f4646408b2622654e6da1a20"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 24777,
+        "decoded_utf8_sha256": "889b223ab01c39a09b595acfeed5a5c512e60cd6f4646408b2622654e6da1a20",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 456,
+        "line_number_one_based": 457,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 505745,
+        "raw_line_sha256": "60f3d8c970a30635df87e2f64f599cada819f077128176dedcb4dd15129aeca2",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 245150,
+        "substring_start_character_zero_based": 233250
+      },
+      "source_document_id": 200,
+      "source_identity_key": "23dbdf392356e8282abe7863313ba46821ff453f6933b4e94c0060f0482c4393",
+      "source_utf8_bytes": 24777,
+      "source_utf8_sha256": "889b223ab01c39a09b595acfeed5a5c512e60cd6f4646408b2622654e6da1a20"
+    },
+    {
+      "matching_decoded_leaf_count": 9,
+      "native_provenance": {
+        "decoded_utf8_bytes": 24777,
+        "decoded_utf8_sha256": "889b223ab01c39a09b595acfeed5a5c512e60cd6f4646408b2622654e6da1a20",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 456,
+        "line_number_one_based": 457,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 505745,
+        "raw_line_sha256": "60f3d8c970a30635df87e2f64f599cada819f077128176dedcb4dd15129aeca2",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 245150,
+        "substring_start_character_zero_based": 233250
+      },
+      "source_document_id": 201,
+      "source_identity_key": "abdb5dc744e84e89ca5bf22ac6e7f162256e8081d15f5bf51bbab4bad763242d",
+      "source_utf8_bytes": 24777,
+      "source_utf8_sha256": "889b223ab01c39a09b595acfeed5a5c512e60cd6f4646408b2622654e6da1a20"
+    },
+    {
+      "matching_decoded_leaf_count": 60,
+      "native_provenance": {
+        "decoded_utf8_bytes": 68575,
+        "decoded_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 418,
+        "line_number_one_based": 419,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 550563,
+        "raw_line_sha256": "4c9efa8beb175005eabc2b8fe07b1ceeac54e674d9b99f9250523b960068acc5",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266602,
+        "substring_start_character_zero_based": 232955
+      },
+      "source_document_id": 202,
+      "source_identity_key": "68040e2ee3966b1348aa4cf1886955b24d578f5a328df3b5ee96015b82d01f4c",
+      "source_utf8_bytes": 68575,
+      "source_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6"
+    },
+    {
+      "matching_decoded_leaf_count": 60,
+      "native_provenance": {
+        "decoded_utf8_bytes": 68575,
+        "decoded_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 418,
+        "line_number_one_based": 419,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 550563,
+        "raw_line_sha256": "4c9efa8beb175005eabc2b8fe07b1ceeac54e674d9b99f9250523b960068acc5",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266602,
+        "substring_start_character_zero_based": 232955
+      },
+      "source_document_id": 203,
+      "source_identity_key": "6d2e8e536ed388f8a4d140b18d387b1e84895b0d2f4e5345e1133cf5a82d7c05",
+      "source_utf8_bytes": 68575,
+      "source_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6"
+    },
+    {
+      "matching_decoded_leaf_count": 60,
+      "native_provenance": {
+        "decoded_utf8_bytes": 68575,
+        "decoded_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 418,
+        "line_number_one_based": 419,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 550563,
+        "raw_line_sha256": "4c9efa8beb175005eabc2b8fe07b1ceeac54e674d9b99f9250523b960068acc5",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266602,
+        "substring_start_character_zero_based": 232955
+      },
+      "source_document_id": 204,
+      "source_identity_key": "fd27238cdc49b03e206ac32f5af53f9d5d8b2b799291357584d39e08417b93fd",
+      "source_utf8_bytes": 68575,
+      "source_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6"
+    },
+    {
+      "matching_decoded_leaf_count": 60,
+      "native_provenance": {
+        "decoded_utf8_bytes": 68575,
+        "decoded_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 418,
+        "line_number_one_based": 419,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 550563,
+        "raw_line_sha256": "4c9efa8beb175005eabc2b8fe07b1ceeac54e674d9b99f9250523b960068acc5",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266602,
+        "substring_start_character_zero_based": 232955
+      },
+      "source_document_id": 205,
+      "source_identity_key": "9028011e5a01280d0fa6feae9fafb1e4b0ec6e9e956b3313a6e40ef0bc5b5f81",
+      "source_utf8_bytes": 68575,
+      "source_utf8_sha256": "6e93f27370675ffcbedb9aa5e5bbd6dc9c04e55e229938e49c3026cbc642d4c6"
+    },
+    {
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "decoded_utf8_bytes": 48737,
+        "decoded_utf8_sha256": "4ce199a6e9ca62405cea81480d3cda6f40deb9201f54d5cb396ce9ed4e57dd5d",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 751,
+        "line_number_one_based": 752,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 559620,
+        "raw_line_sha256": "8faf743853da3cafb3d199ab107dc4fe089657fa9a435a516998e384237679c9",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266109,
+        "substring_start_character_zero_based": 244815
+      },
+      "source_document_id": 206,
+      "source_identity_key": "c652e8445773bf0f7c6b84ec4d5f29ce828dfd5f025e1d7fb9fa0246884eeb90",
+      "source_utf8_bytes": 48737,
+      "source_utf8_sha256": "4ce199a6e9ca62405cea81480d3cda6f40deb9201f54d5cb396ce9ed4e57dd5d"
+    },
+    {
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "decoded_utf8_bytes": 48737,
+        "decoded_utf8_sha256": "4ce199a6e9ca62405cea81480d3cda6f40deb9201f54d5cb396ce9ed4e57dd5d",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 751,
+        "line_number_one_based": 752,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 559620,
+        "raw_line_sha256": "8faf743853da3cafb3d199ab107dc4fe089657fa9a435a516998e384237679c9",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266109,
+        "substring_start_character_zero_based": 244815
+      },
+      "source_document_id": 207,
+      "source_identity_key": "7141fb35c63d668b6a2f332c2d40b89d32b3c36ff8c9b1833f0087d6d0574fbc",
+      "source_utf8_bytes": 48737,
+      "source_utf8_sha256": "4ce199a6e9ca62405cea81480d3cda6f40deb9201f54d5cb396ce9ed4e57dd5d"
+    },
+    {
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "decoded_utf8_bytes": 48737,
+        "decoded_utf8_sha256": "4ce199a6e9ca62405cea81480d3cda6f40deb9201f54d5cb396ce9ed4e57dd5d",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 751,
+        "line_number_one_based": 752,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 559620,
+        "raw_line_sha256": "8faf743853da3cafb3d199ab107dc4fe089657fa9a435a516998e384237679c9",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 266109,
+        "substring_start_character_zero_based": 244815
+      },
+      "source_document_id": 208,
+      "source_identity_key": "dba92cbc174320a9081aa5498a46c5889fad04d1d928c380d798693d6b24d61e",
+      "source_utf8_bytes": 48737,
+      "source_utf8_sha256": "4ce199a6e9ca62405cea81480d3cda6f40deb9201f54d5cb396ce9ed4e57dd5d"
+    },
+    {
+      "matching_decoded_leaf_count": 4,
+      "native_provenance": {
+        "decoded_utf8_bytes": 83002,
+        "decoded_utf8_sha256": "1d6385818d9ba1bfade5ad91a94e989146cbc7d64df01e090ea0219756d10951",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 775,
+        "line_number_one_based": 776,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 603066,
+        "raw_line_sha256": "abd6db8011a200718b3aaf603e0c9700369457afa27c272560dd63f6a8453b0e",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 288596,
+        "substring_start_character_zero_based": 247285
+      },
+      "source_document_id": 209,
+      "source_identity_key": "c58cd00b4038b29c0dbd70f60899d597103713d8abe98226aa9b6c1b73081b99",
+      "source_utf8_bytes": 83002,
+      "source_utf8_sha256": "1d6385818d9ba1bfade5ad91a94e989146cbc7d64df01e090ea0219756d10951"
+    },
+    {
+      "matching_decoded_leaf_count": 4,
+      "native_provenance": {
+        "decoded_utf8_bytes": 83002,
+        "decoded_utf8_sha256": "1d6385818d9ba1bfade5ad91a94e989146cbc7d64df01e090ea0219756d10951",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 775,
+        "line_number_one_based": 776,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 603066,
+        "raw_line_sha256": "abd6db8011a200718b3aaf603e0c9700369457afa27c272560dd63f6a8453b0e",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 288596,
+        "substring_start_character_zero_based": 247285
+      },
+      "source_document_id": 210,
+      "source_identity_key": "092f988e140720dd390b13d0eda3d326e6284e41bc3f4530e2416c70a0821a00",
+      "source_utf8_bytes": 83002,
+      "source_utf8_sha256": "1d6385818d9ba1bfade5ad91a94e989146cbc7d64df01e090ea0219756d10951"
+    },
+    {
+      "matching_decoded_leaf_count": 4,
+      "native_provenance": {
+        "decoded_utf8_bytes": 83002,
+        "decoded_utf8_sha256": "1d6385818d9ba1bfade5ad91a94e989146cbc7d64df01e090ea0219756d10951",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 775,
+        "line_number_one_based": 776,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 603066,
+        "raw_line_sha256": "abd6db8011a200718b3aaf603e0c9700369457afa27c272560dd63f6a8453b0e",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 288596,
+        "substring_start_character_zero_based": 247285
+      },
+      "source_document_id": 211,
+      "source_identity_key": "ab3ba192a4ed2909334b7a6a6958faa57a61086efbd0e55fcc4a329df4913790",
+      "source_utf8_bytes": 83002,
+      "source_utf8_sha256": "1d6385818d9ba1bfade5ad91a94e989146cbc7d64df01e090ea0219756d10951"
+    },
+    {
+      "matching_decoded_leaf_count": 4,
+      "native_provenance": {
+        "decoded_utf8_bytes": 13629,
+        "decoded_utf8_sha256": "c56c0e06a09f654447423695a8ef92e7a3226f2ce4e72dc75fe5da774b18df2b",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 843,
+        "line_number_one_based": 844,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 533130,
+        "raw_line_sha256": "4fed0f5c0306776fbae748895a069edaf9b25ab2bf1efc2cd26109ffe36772b1",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 256328,
+        "substring_start_character_zero_based": 249445
+      },
+      "source_document_id": 212,
+      "source_identity_key": "311f7075601ad70294400836680f60a869c971cbfbd8b59f4d7bcfb4f7616979",
+      "source_utf8_bytes": 13629,
+      "source_utf8_sha256": "c56c0e06a09f654447423695a8ef92e7a3226f2ce4e72dc75fe5da774b18df2b"
+    },
+    {
+      "matching_decoded_leaf_count": 2,
+      "native_provenance": {
+        "decoded_utf8_bytes": 10941,
+        "decoded_utf8_sha256": "70b10469855abcad555cc2f393aa7e3a802bc735c80990df688d311a9875fd33",
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "line_index_zero_based": 871,
+        "line_number_one_based": 872,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "raw_line_bytes": 563602,
+        "raw_line_sha256": "b829144344854c29568016e4b7cea92c15cc799f4064e5921fbe3be242b35356",
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "substring_end_character_exclusive": 270521,
+        "substring_start_character_zero_based": 264506
+      },
+      "source_document_id": 213,
+      "source_identity_key": "31298b517c0d5a329d310475382dc8c2d2870b5e0ebf212c2f9efcb5955f72b7",
+      "source_utf8_bytes": 10941,
+      "source_utf8_sha256": "70b10469855abcad555cc2f393aa7e3a802bc735c80990df688d311a9875fd33"
+    }
+  ],
+  "lineage": {
+    "completed_task_agent_runs_with_identified_session": 12,
+    "distinct_source_type_ref_pairs": 12,
+    "failed_task_agent_runs_without_session": 7,
+    "same_session_runtime_attempt_distinct_workload_keys": 31,
+    "same_session_runtime_attempt_parent_ids": "all NULL; no direct FK from these attempts to Task Agent runs",
+    "same_session_runtime_attempt_rows": 40,
+    "same_session_runtime_kind": "codex_cli",
+    "same_session_runtime_workload_kind": "task",
+    "scope": "Source type/ref to work-summary input to Task Agent run is candidate lineage. Same-session runtime attempts identify runtime kind only. Exact full-body and source identity matches supply recovery proof.",
+    "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+    "signal_rows": 85,
+    "source_type": "ai_minutes",
+    "typed_task_agent_run_rows": 19,
+    "typed_work_summary_input_rows": 12
+  },
+  "method": {
+    "candidate_scope": "Exactly the 25 current IDs absent from the older 188-document artifact.",
+    "chosen_coordinate_rule": "Earliest JSONL line in file order; then first string leaf in depth-first JSON insertion order; then leftmost exact literal substring.",
+    "literal_mode": "json_string_literal_utf8 in decoded JSONL string leaves; decoded literal compared with whole current source body.",
+    "occurrence_count_definition": "One match per decoded string leaf per document, using its first exact full-body JSON string literal substring.",
+    "stored_content": "Metadata only; no body, raw JSONL line, copied database, or derived source text.",
+    "version_checks": "Whole native file SHA-256 and per-selected raw-line SHA-256; existing read_native_source_body verified line, leaf, range, decoded body hash and bytes; source_document_key checked against stored identity_key."
+  },
+  "native_file": {
+    "invalid_json_lines": 0,
+    "line_count": 882,
+    "mtime_ns": 1792166829675980916,
+    "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+    "path_resolution": "One explicitly identified local file; no whole-home inventory or native file search.",
+    "runtime_kind": "codex_cli",
+    "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+    "sha256": "02dd8f68158e264ad5aa8066c129aead38eca59f435e86cb73351743b16dd4ec",
+    "size_bytes": 134811851
+  },
+  "observed_at_utc": "2026-10-17T11:34:19.271421+00:00",
+  "purpose": "Current production exact native-source recovery for only the 25 source documents absent from the older 188-document artifact; metadata evidence, no body or runtime implementation.",
+  "source_database": {
+    "access": "SQLite URI mode=ro; PRAGMA query_only=on; transaction snapshot; bodies held only in process memory",
+    "additional_document_ids": [
+      189,
+      190,
+      191,
+      192,
+      193,
+      194,
+      195,
+      196,
+      197,
+      198,
+      199,
+      200,
+      201,
+      202,
+      203,
+      204,
+      205,
+      206,
+      207,
+      208,
+      209,
+      210,
+      211,
+      212,
+      213
+    ],
+    "current_source_document_count": 213,
+    "current_utf8_body_bytes": 7017149,
+    "older_188_same_id_hash_and_bytes": 188,
+    "older_artifact": "docs/superpowers/specs/2026-10-15-database-redesign-business-native-source-recovery.json",
+    "older_artifact_sha256": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3"
+  },
+  "worktree_head": "8eae51e05af4a47032622680aaec2b689a6e13f8"
+}

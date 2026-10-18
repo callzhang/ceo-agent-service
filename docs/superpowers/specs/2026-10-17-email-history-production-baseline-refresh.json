@@ -1,0 +1,21 @@
+{
+  "observed_at": "2026-10-17T23:12:47.824052+00:00",
+  "reviewed_predecessor": "83c1d7f030bb16cb6ef1fc729efc322be409dda2",
+  "actual_predecessor": "4f3d52a0ef9ab20530707dcc9ca290496355b6f4",
+  "reviewed_freeze_sha256": "c68a4f96bab11fd27a74999bae93fa49d71d26ed3c6e0286d115aea8cb3bad73",
+  "changed_paths": [
+    "ci/consumer-system-contract-release.json",
+    "ci/shared-skills/stardust-oa-people-review/SKILL.md",
+    "docs/agent-claims.md"
+  ],
+  "unchanged_git_trees": {
+    "app": "9e7262840e73938e90b614c5e332638835fd75e2",
+    "docs/superpowers/specs": "f7f6355b58da66e5f20f641349f0d6c304369fde"
+  },
+  "preflight_attempt": {
+    "exit_code": 1,
+    "stage": "production HEAD equality",
+    "database_access_started": false
+  },
+  "scope": "Read-only Git comparison; exact app and source spec trees identical. Approval applies to unchanged migration runtime; actual source schema and rows still checked on fresh snapshot. No native CLI/model/provider/send."
+}

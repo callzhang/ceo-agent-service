@@ -99,8 +99,10 @@ def task20_schema_is_current(db, *, allow_missing_objects=False):
     return True
 
 
-def task20_feedback_child_is_current(db, *, allow_missing_objects=False):
+def task20_feedback_child_is_current(db, *, allow_missing_objects=False, include_feedback=False):
     """Recognize retained endpoints; missing auxiliaries keep the original repair mode."""
+    if include_feedback:
+        return not _schema_objects(db, "feedback_iteration_decision_items")
     actual = {obj["name"]:obj for obj in _schema_objects(db,"feedback_iteration_decision_items")}
     if not actual and allow_missing_objects:
         return True
@@ -112,8 +114,9 @@ def task20_feedback_child_is_current(db, *, allow_missing_objects=False):
     return True
 
 
-def task20_workbench_schema_is_current(db, *, allow_missing_objects=False):
+def task20_workbench_schema_is_current(db, *, allow_missing_objects=False, include_feedback=False):
     """Keep mapped runs and retained Workbench auxiliary recognition together."""
     return (current_run11_schema_is_current(db, allow_missing_objects=allow_missing_objects)
             and task20_schema_is_current(db, allow_missing_objects=allow_missing_objects)
-            and task20_feedback_child_is_current(db, allow_missing_objects=allow_missing_objects))
+            and task20_feedback_child_is_current(db, allow_missing_objects=allow_missing_objects,
+                                                 include_feedback=include_feedback))

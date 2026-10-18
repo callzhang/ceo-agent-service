@@ -1,3 +1,4 @@
+from tests.support.email_listing_oracle import StoredEmailListingOracle
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -2352,7 +2353,7 @@ def test_runtime_fallback_prediction_cannot_reuse_previous_source_eligibility(
 
     assert result.processed_count == 0
     assert result.pending_feedback_count == 1
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=10,
         offset=0,

@@ -1,0 +1,22 @@
+{
+  "status": "accepted_unselected_a2_component",
+  "freeze": "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-freeze-r2.json",
+  "freeze_sha256": "f773be42aa184f695ddc51b3cf51aca25add25fdb18dda244c22849a34f28f07",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-spec-review-r2.json",
+    "sha256": "7087bf22c9f0acbfe5a219e3716e07d2d7c58d59ccfa9684a8bd00f065155795"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-quality-review-r2.json",
+    "sha256": "180bfb8191649dc62185aa182748a351ef00bbaf83cabf1e2fff03e4cc18cdc6"
+  },
+  "scope": "Exact AI Minutes provider reconstruction from minimal canonical-component locator; complete body passes shared A1 validation, with normalized existing DwsClient pagination semantics.",
+  "remaining": [
+    "weekly/Console source adapters",
+    "actual source-availability refresh",
+    "Store/API and transactional/bundle/backfill integration",
+    "physical provenance and body retirement",
+    "capacity and release"
+  ],
+  "evidence_boundary": "No actual source-recovery, Store/API/schema/body retirement, copied-data migration, capacity or release acceptance."
+}

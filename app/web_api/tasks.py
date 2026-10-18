@@ -1,12 +1,14 @@
 """Task management DTOs and read-only console payload builders."""
 from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_candidate_definitions import candidate_projection
+from app.action_business_definitions import business_action_projection
 
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.task_progress import (
     task_progress_summary,
@@ -24,11 +26,18 @@ from app.task_semantic_models import (
     BusinessTaskEvent,
     BusinessTaskRelation,
     BusinessProjectEvidence,
-    BusinessTaskSignal,
+    BusinessActorKind,
+    JsonObject,
+    Nonblank,
     ProjectContext,
     ProjectCrmCustomerCandidate,
     ProjectResponsibility,
     TaskSuggestion,
+)
+from app.business_source_reader import (
+    BusinessTaskSignalFact, RequestSourceReader,
+    SourceUnavailableReason,
+    source_view,
 )
 from app.web_api.common import (
     ApiItemEnvelope,
@@ -156,7 +165,6 @@ class ConsoleProject(BaseModel):
     follow_up_mode: str = ""
     source_conversations: list[Any] = Field(default_factory=list)
     facts: list[ConsoleFact] = Field(default_factory=list)
-    memory_context: dict[str, Any] = Field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
     last_activity_at: str = ""
@@ -232,13 +240,6 @@ def _list_json(value: str) -> list[Any]:
 def _object_json(value: str) -> dict[str, Any]:
     parsed = _parse_json(value, {})
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _memory_context_payload(value: str) -> dict[str, Any]:
-    payload = json_safe(_object_json(value))
-    if isinstance(payload, dict) and "summary" in payload:
-        payload["summary"] = normalize_display_value(payload["summary"])
-    return payload
 
 
 def _todo_done(
@@ -432,7 +433,6 @@ def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
             "follow_up_mode": _enum_text(project.follow_up_mode),
             "source_conversations": json_safe(_list_json(project.source_conversations_json)),
             "facts": [_fact_payload(item) for item in _list_json(project.facts_json)],
-            "memory_context": _memory_context_payload(project.memory_context_json),
             "created_at": normalize_display_value(project.created_at),
             "updated_at": normalize_display_value(project.updated_at),
             "last_activity_at": normalize_display_value(project.last_activity_at),
@@ -798,12 +798,40 @@ class ConsoleBusinessProjectListEnvelope(ApiListEnvelope):
     candidate_meta: ApiListMeta
 
 
+class ConsoleBusinessTaskSignalView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    source_type: Nonblank
+    source_ref: Nonblank
+    source_time: str
+    conversation_id: str
+    conversation_title: str
+    author_user_id: str
+    author_name: str
+    author_kind: BusinessActorKind
+    context_json: JsonObject
+    dedupe_key: Nonblank
+    created_at: str
+    evidence_text: Nonblank | None
+    source_available: bool
+    source_unavailable_reason: SourceUnavailableReason | None
+
+    @model_validator(mode="after")
+    def validate_original_state(self):
+        if self.source_available:
+            if not self.evidence_text or self.source_unavailable_reason is not None:
+                raise ValueError("available original requires nonempty body and no reason")
+        elif self.evidence_text is not None or not self.source_unavailable_reason:
+            raise ValueError("unavailable original requires null body and a reason")
+        return self
+
+
 class ConsoleBusinessAttentionDetail(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: ConsoleBusinessAttentionSummary
     anchor: dict[str, Any]
     assessment: dict[str, Any]
-    evidence_signals: list[BusinessTaskSignal]
+    evidence_signals: list[ConsoleBusinessTaskSignalView]
     linked_tasks: list[ConsoleBusinessTaskSummary]
     events: list[BusinessAttentionEvent]
 
@@ -835,7 +863,7 @@ class ConsoleBusinessProjectDetail(BaseModel):
     context: ProjectContext | None
     responsibilities: list[ProjectResponsibility]
     suggestions: list[ConsoleBusinessTaskSummary]
-    evidence_signals: list[BusinessTaskSignal]
+    evidence_signals: list[ConsoleBusinessTaskSignalView]
     context_revisions: list[BusinessProjectContextRevision]
     evidence_meta: ApiListMeta
     context_revision_meta: ApiListMeta
@@ -858,7 +886,16 @@ class ConsoleBusinessProjectEvidenceListEnvelope(ApiListEnvelope):
 
 
 class ConsoleBusinessTaskSignalDetailEnvelope(ApiItemEnvelope):
-    item: BusinessTaskSignal
+    item: ConsoleBusinessTaskSignalView
+
+
+def business_signal_views(
+    store: Any, facts: list[BusinessTaskSignalFact], *, source_reader: RequestSourceReader | None = None
+) -> list[ConsoleBusinessTaskSignalView]:
+    reader = source_reader or store.business_source_reader()
+    return [ConsoleBusinessTaskSignalView.model_validate(
+        source_view(fact, reader.resolve(fact.source))
+    ) for fact in facts]
 
 
 def _page(items: list[Any], *, page: int, page_size: int) -> tuple[list[Any], ApiListMeta]:
@@ -990,7 +1027,7 @@ def _confirmed_project_ids_by_task(store: Any) -> dict[int, set[int]]:
     """Load active Task→Project membership once for summary projections."""
     with store._connect() as db:
         rows = db.execute(
-            f'\n            select link.task_id, project.id\n            from business_task_anchor_links link\n            join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=link.anchor_id\n            join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n            where link.status=\'confirmed\' and link.active=1 and anchor.active=1\n            '
+            f'\n            select link.task_id, project.id\n            from ({business_action_projection("business_task_anchor_links")}) link\n            join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=link.anchor_id\n            join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n            where link.status=\'confirmed\' and link.active=1 and anchor.active=1\n            '
         ).fetchall()
     result: dict[int, set[int]] = {}
     for row in rows:
@@ -1018,18 +1055,18 @@ def _project_summary_context_and_activity(
             (project_ids_json,),
         ).fetchall()
         evidence_rows = db.execute(
-            """
+            f"""
             select project_id, max(created_at) as created_at
-            from business_project_evidence
+            from ({business_action_projection('business_project_evidence')})
             where project_id in (select cast(value as integer) from json_each(?))
             group by project_id
             """,
             (project_ids_json,),
         ).fetchall()
         attention_rows = db.execute(
-            """
+            f"""
             select anchor_id, why_attention
-            from business_attention_items
+            from ({candidate_projection('attention_item')})
             where status='active'
               and anchor_id in (select cast(value as integer) from json_each(?))
             order by id
@@ -1075,9 +1112,9 @@ def _project_summary_payload(
         context = store.get_business_project_context(project.id)
         with store._connect() as db:
             revision_time = db.execute(f'select max(created_at) from ({BUSINESS_PROJECTIONS["project_context_revision"]}) where project_id=?', (project.id,)).fetchone()[0]
-            evidence_time = db.execute("select max(created_at) from business_project_evidence where project_id=?", (project.id,)).fetchone()[0]
+            evidence_time = db.execute(f"select max(created_at) from ({business_action_projection('business_project_evidence')}) where project_id=?", (project.id,)).fetchone()[0]
             attention_reasons = [row[0] for row in db.execute(
-                "select why_attention from business_attention_items where anchor_id=? and status='active' order by id", (project.canonical_anchor_id,)
+                f"select why_attention from ({candidate_projection('attention_item')}) where anchor_id=? and status='active' order by id", (project.canonical_anchor_id,)
             )]
     else:
         context, revision_time, evidence_time, attention_reasons = summary_context_and_activity
@@ -1152,19 +1189,19 @@ def business_project_list_response(store: Any, *, page: int, page_size: int, que
     with store._connect() as db:
         if needle:
             candidate_total = int(db.execute(
-                "select count(*) from business_project_candidates where status='proposed' and instr(lower(title), lower(?)) > 0",
+                f"select count(*) from ({candidate_projection('project_candidate')}) where status='proposed' and instr(lower(title), lower(?)) > 0",
                 (query.strip(),),
             ).fetchone()[0])
             candidate_rows = db.execute(
-                "select * from business_project_candidates where status='proposed' and instr(lower(title), lower(?)) > 0 order by id limit ? offset ?",
+                f"select * from ({candidate_projection('project_candidate')}) where status='proposed' and instr(lower(title), lower(?)) > 0 order by id limit ? offset ?",
                 (query.strip(), candidate_page_size, candidate_start),
             ).fetchall()
         else:
             candidate_total = int(db.execute(
-                "select count(*) from business_project_candidates where status='proposed'"
+                f"select count(*) from ({candidate_projection('project_candidate')}) where status='proposed'"
             ).fetchone()[0])
             candidate_rows = db.execute(
-                "select * from business_project_candidates where status='proposed' order by id limit ? offset ?",
+                f"select * from ({candidate_projection('project_candidate')}) where status='proposed' order by id limit ? offset ?",
                 (candidate_page_size, candidate_start),
             ).fetchall()
     candidates = [BusinessProjectCandidate.model_validate(dict(row)) for row in candidate_rows]
@@ -1184,7 +1221,8 @@ def business_project_list_response(store: Any, *, page: int, page_size: int, que
     )
 
 
-def business_attention_detail(store: Any, attention_id: int) -> ConsoleBusinessAttentionDetail | None:
+def business_attention_detail(store: Any, attention_id: int, *,
+                           source_reader: RequestSourceReader | None = None) -> ConsoleBusinessAttentionDetail | None:
     item = store.get_business_attention_item(attention_id)
     if item is None:
         return None
@@ -1197,25 +1235,34 @@ def business_attention_detail(store: Any, attention_id: int) -> ConsoleBusinessA
     evidence_ids.update(event.signal_id for event in events)
     assessment = _object_json(item.assessment_json)
     evidence_ids.update(evidence["signal_id"] for evidence in assessment.get("evidence", []))
+    facts = [signal for signal_id in sorted(evidence_ids)
+             if (signal := store.get_business_task_signal(signal_id)) is not None]
     return ConsoleBusinessAttentionDetail(
         summary=ConsoleBusinessAttentionSummary.model_validate(_attention_summary_payload(store, item, anchors)),
         anchor=json_safe(anchors[item.anchor_id]) if item.anchor_id in anchors else {},
         assessment=assessment,
-        evidence_signals=[signal for signal_id in sorted(evidence_ids) if (signal := store.get_business_task_signal(signal_id)) is not None],
+        evidence_signals=business_signal_views(store, facts, source_reader=source_reader),
         linked_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in linked if task is not None],
         events=events,
     )
 
 
-def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail | None:
+def business_task_detail(store: Any, task_id: int, *,
+                           source_reader: RequestSourceReader | None = None) -> ConsoleBusinessTaskDetail | None:
     task = store.get_business_task(task_id)
     if task is None:
         return None
     anchors = _anchors_by_id(store)
     evidence = []
+    signal_facts = []
     for link in store.list_business_task_evidence(task_id):
         signal = store.get_business_task_signal(link.signal_id)
-        evidence.append({"role": link.evidence_role.value, "signal": json_safe(signal) if signal else None})
+        if signal is not None:
+            signal_facts.append(signal)
+        evidence.append({"role": link.evidence_role.value, "signal_id": link.signal_id})
+    views = {view.id: view for view in business_signal_views(store, signal_facts, source_reader=source_reader)}
+    evidence = [{"role": item["role"], "signal": views.get(item["signal_id"])}
+                for item in evidence]
     cluster_links = []
     offset = 0
     while batch := store.list_business_work_cluster_tasks(task_id=task_id, limit=100, offset=offset):
@@ -1245,7 +1292,8 @@ def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail 
     )
 
 
-def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProjectDetail | None:
+def business_project_detail(store: Any, project_id: int, *,
+                           source_reader: RequestSourceReader | None = None) -> ConsoleBusinessProjectDetail | None:
     project = store.get_business_project(project_id)
     if project is None:
         return None
@@ -1262,11 +1310,13 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
     evidence = store.list_business_project_evidence(project_id, limit=20, pinned_signal_ids=proof_ids)
     revisions = store.list_business_project_context_revisions(project_id, limit=20)
     with store._connect() as db:
-        evidence_count = db.execute("select count(*) from business_project_evidence where project_id=?", (project_id,)).fetchone()[0]
+        evidence_count = db.execute(f"select count(*) from ({business_action_projection('business_project_evidence')}) where project_id=?", (project_id,)).fetchone()[0]
         revision_count = db.execute(f'select count(*) from ({BUSINESS_PROJECTIONS["project_context_revision"]}) where project_id=?', (project_id,)).fetchone()[0]
     def metadata(total: int, visible: int) -> ApiListMeta:
         return ApiListMeta(snapshot_at=snapshot_at(), page=1, page_size=20, total=total,
                            has_more=total > visible, next_cursor="")
+    facts = [signal for proof in evidence
+             if (signal := store.get_business_task_signal(proof.signal_id)) is not None]
     return ConsoleBusinessProjectDetail(
         summary=ConsoleBusinessProjectSummary.model_validate(
             _project_summary_payload(store, project, tasks, project_ids_by_task)
@@ -1276,7 +1326,7 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
         context=context,
         responsibilities=list(context.responsibilities) if context else [],
         suggestions=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if task.origin == "agent_suggestion" and task.stage.value == "candidate"],
-        evidence_signals=[signal for proof in evidence if (signal := store.get_business_task_signal(proof.signal_id)) is not None],
+        evidence_signals=business_signal_views(store, facts, source_reader=source_reader),
         context_revisions=list(revisions), evidence_meta=metadata(evidence_count, len(evidence)), context_revision_meta=metadata(revision_count, len(revisions)),
     )
 
@@ -1295,7 +1345,7 @@ def business_project_evidence_response(
     with store._connect() as db:
         total = int(
             db.execute(
-                "select count(*) from business_project_evidence where project_id=?",
+                f"select count(*) from ({business_action_projection('business_project_evidence')}) where project_id=?",
                 (project_id,),
             ).fetchone()[0]
         )

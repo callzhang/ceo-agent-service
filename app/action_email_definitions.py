@@ -584,6 +584,15 @@ EMAIL_COMPOSITE_KEYS = {
     "email_unsubscribe_effects": ("action_identity", "effect_digest"),
     "email_direct_retry_requests": ("action_id", "attempt_number"),
 }
+POSTFIX_ACTION_TYPES = (
+    "outbound_postfixes", "outbound_postfix_receipts", "native_reply_dispatches",
+)
+EMAIL_NUMERIC_SCOPE = (
+    "record_type<>'external_action_results' "
+    "and record_type not in (" + ",".join(repr(kind) for kind in POSTFIX_ACTION_TYPES) + ") "
+    "and record_type<>'sent_reply_observers' "
+    "and record_type not in (" + ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS) + ")"
+)
 EMAIL_PUBLIC_FIELDS = {kind: EMAIL_FIELDS[kind][0] for kind in EMAIL_ROWID_TYPES}
 EMAIL_TYPES_ORDER = tuple(EMAIL_FIELDS)
 EMAIL_CLAIM_FRESH_FIELDS = (
@@ -626,7 +635,7 @@ def _encoded_value_check(document, path):
             f"and ({blob} or {nonfinite} or {finite})),0) else 0 end")
 
 
-def email_schema_parts(reply_value_check):
+def email_schema_parts(reply_value_check, *, payloads=None):
     """Return only the finite Email additions to the existing actions declaration."""
     generated = []
     for field, affinity in EMAIL_TYPES.items():
@@ -644,7 +653,7 @@ def email_schema_parts(reply_value_check):
             )
             if payload_kinds:
                 scope = ",".join(repr(kind) for kind in payload_kinds)
-                cases.append(f"when record_type in ({scope}) then {_encoded_value('payload_json', '$.' + field)}")
+                cases.append(f"when record_type in ({scope}) then " + (payloads.field_value(field, payload_kinds) if payloads else _encoded_value("payload_json", "$." + field)))
             expr = "case " + " ".join(cases) + " end"
         generated.append(f"email_{field} {affinity} generated always as ({expr}) virtual")
     public_cases = " ".join(
@@ -664,8 +673,8 @@ def email_schema_parts(reply_value_check):
     for kind, fields in EMAIL_FIELDS.items():
         stored = tuple(field for field in fields if field != "id" and field not in EMAIL_COMPOSITE_KEYS.get(kind, ()))
         paths = ",".join(repr("$." + field) for field in stored)
-        values = [reply_value_check(field) for field in stored]
-        values.append(f"json_remove(payload_json,{paths})='{{}}'")
+        values = [payloads.check(kind, field) if payloads else reply_value_check(field) for field in stored]
+        values.append(payloads.shape(kind) if payloads else f"json_remove(payload_json,{paths})='{{}}'")
         values.extend(f"email_{field} is not null" for field in EMAIL_NOT_NULL[kind])
         values.extend(f"({expr})" for expr in EMAIL_CHECKS[kind])
         if kind in EMAIL_COMPOSITE_KEYS:

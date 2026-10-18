@@ -308,7 +308,7 @@ def test_latest_paired_publication_current_public_inverse_and_reforward(latest_f
     assert result["old_public_cold_writes"]
     assert result["current_fact_inverse"]
     assert result["reforward_current_facts"]
-    assert result["source_tables"] - result["target_tables"] == 17
+    assert result["target_tables"] == 46
     assert all(result["provider_current_public_writes"].values())
     assert all(result["provider_old_public_writes"].values())
     assert result["provider_final_summary"]["counts"]["email_provider_observations"] == (
@@ -316,8 +316,15 @@ def test_latest_paired_publication_current_public_inverse_and_reforward(latest_f
     )
     assert set(result["business_current_public_ids"]) == {
         "task", "anchor", "project", "project_context_revision",
+        "service_bugfix_candidate", "work_cluster", "todo_evidence_candidate",
+        "work_project", "work_todo",
     }
     assert result["business_old_public_ids"]["email_cold_read"]
+    assert {
+        "task_id", "anchor_id", "project_id", "context_id",
+        "service_bugfix_candidate_id", "work_cluster_id",
+        "todo_evidence_candidate_id", "work_project_id", "work_todo_id",
+    } <= set(result["business_old_public_ids"])
 
 
 def test_latest_paired_copy_requires_real_publication_before_default_constructors(
@@ -533,7 +540,7 @@ def test_final_production_head_change_keeps_all_completed_case_evidence(bounded_
         (repo / "tests/test_provider_state_source.py").read_bytes()
     ).hexdigest()
     assert proof.BINDING_RELATIVE in report["candidate_proof_sha256"]
-    assert report["scope"] == "combined Provider2/Business4/Email13 paired copy and three Email-only SQL-boundary cases"
+    assert report["scope"] == "combined Provider2/Business9/Email13 paired copy and three Email-only SQL-boundary cases"
     assert len(report["published_old_module_sha256"]) == 10
     assert report["cases"] == {
         "paired_actual_online_backup": {"paired": True},

@@ -36,6 +36,7 @@ from app.web_api.tasks import (
     ConsoleSentTodoListEnvelope,
     business_attention_detail,
     business_attention_list_response,
+    business_signal_views,
     business_project_detail,
     business_project_evidence_response,
     business_project_list_response,
@@ -97,6 +98,7 @@ def register_console_routes(
     history_chart_factory: Callable[[int], Any] | None = None,
     email_store_factory: Callable[[], Any] | None = None,
     email_learning_factory: Callable[[], Any] | None = None,
+    email_source_reader_factory: Callable[[], Any] | None = None,
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
     dws_factory: Callable[[], Any] | None = None,
@@ -108,6 +110,9 @@ def register_console_routes(
 ) -> None:
     feature_registry_factory = feature_registry_factory or FeatureRegistry
     skill_file_service_factory = skill_file_service_factory or SkillFileService
+
+    def source_reader(store):
+        return store.business_source_reader(provider_reader=dws_factory() if dws_factory else None)
 
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -327,6 +332,7 @@ def register_console_routes(
             app,
             email_store_factory,
             email_learning_factory=email_learning_factory,
+            email_source_reader_factory=email_source_reader_factory,
         )
 
     if scheduled_task_option_service_factory is not None:
@@ -427,7 +433,7 @@ def register_console_routes(
     def console_business_attention_detail(attention_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_attention_detail(store, attention_id)
+            item = business_attention_detail(store, attention_id, source_reader=source_reader(store))
         if item is None:
             raise HTTPException(status_code=404, detail="Attention item not found")
         return ConsoleBusinessAttentionDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -436,7 +442,7 @@ def register_console_routes(
     def console_business_task_detail(task_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_task_detail(store, task_id)
+            item = business_task_detail(store, task_id, source_reader=source_reader(store))
         if item is None:
             raise HTTPException(status_code=404, detail="Business task not found")
         return ConsoleBusinessTaskDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -532,7 +538,7 @@ def register_console_routes(
     def console_business_project_detail(project_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_project_detail(store, project_id)
+            item = business_project_detail(store, project_id, source_reader=source_reader(store))
         if item is None:
             raise HTTPException(status_code=404, detail="Business project not found")
         return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -569,7 +575,7 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business task signal not found")
         return ConsoleBusinessTaskSignalDetailEnvelope(
-            item=item,
+            item=business_signal_views(store, [item], source_reader=source_reader(store))[0],
             meta=ApiMeta(snapshot_at=snapshot_at()),
         )
 
@@ -611,7 +617,7 @@ def register_console_routes(
                 candidates=candidates,
                 _db=db,
             )
-        detail = business_project_detail(store, project_id)
+        detail = business_project_detail(store, project_id, source_reader=source_reader(store))
         assert detail is not None
         return command_result(
             item=detail.summary.model_dump(mode="json"),

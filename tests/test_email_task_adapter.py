@@ -24,7 +24,8 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
-from app.email_store import EmailPersistenceCorruption, EmailStore
+from app.email_store import EmailStore
+from app.email_canonical_storage import email_classification_projection, email_message_projection
 from app.email_imap_readonly import parse_rfc822_message
 from app.email_task_adapter import (
     EmailAgentTaskAdapter,
@@ -40,6 +41,8 @@ from app.email_task_adapter import (
     EmailClassificationTaskInput,
 )
 from app.email_task_producer import EmailActionTaskProducer
+from app.task12_storage import task12_set_parts
+from app.task20_definitions import task20_column
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
@@ -392,13 +395,11 @@ def test_classifier_queue_schema_is_owned_by_email_store_not_adapter(tmp_path: P
     with store._connect() as db:
         columns = {
             row["name"]
-            for row in db.execute("pragma table_info(email_agent_classification_tasks)")
+            for row in db.execute("pragma table_xinfo(tasks)")
         }
     assert {
-        "generation",
-        "attempt_count",
-        "lease_expires_at",
-        "available_at",
+        "email_agent_classification_tasks__" + field
+        for field in ("generation", "attempt_count", "lease_expires_at", "available_at")
     } <= columns
     assert (
         "create table"
@@ -410,24 +411,12 @@ def test_email_store_rejects_malformed_classifier_queue_schema(tmp_path: Path):
     database = tmp_path / "malformed-classifier.sqlite3"
     EmailStore(database)
     with sqlite3.connect(database) as db:
-        db.execute("drop index idx_email_agent_classification_tasks_status")
-
-    with pytest.raises(
-        EmailPersistenceCorruption, match="classifier.*index|idx_email_agent"
-    ):
+        db.execute("drop index idx_task20_native_1")
+        db.execute("create index idx_task20_native_1 on tasks(id)")
+    before = database.read_bytes()
+    with pytest.raises(sqlite3.IntegrityError, match="malformed Store source schema"):
         EmailStore(database)
-
-
-
-
-
-
-
-
-
-
-
-
+    assert database.read_bytes() == before
 
 
 @pytest.mark.parametrize("state", ["empty", "done", "delayed", "live"])
@@ -439,20 +428,20 @@ def test_ineligible_classification_poll_does_not_acquire_writer_lock(
     if state != "empty":
         task = adapter.ensure_task(_classification_input(uid=142))
         with store._connect() as db:
+            parts = task12_set_parts("email_agent_classification_tasks", {
+                "status": "pending" if state == "delayed" else "running" if state == "live" else "done",
+                "available_at": "2099-01-01 00:00:00" if state == "delayed" else "",
+                "lease_expires_at": "2099-01-01 00:00:00" if state == "live" else "",
+            })
             db.execute(
-                "update email_agent_classification_tasks set status=?, "
-                "available_at=?, lease_expires_at=? where task_id=?",
-                (
-                    "pending" if state == "delayed" else "running" if state == "live" else "done",
-                    "2099-01-01 00:00:00" if state == "delayed" else "",
-                    "2099-01-01 00:00:00" if state == "live" else "",
-                    task.task_id,
-                ),
+                f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                f"and {task20_column('email_agent_classification_tasks', 'task_id')}=?",
+                (*parts.parameters, task.task_id),
             )
     original_open = store._open_connection
 
-    def short_wait_connection():
-        db = original_open()
+    def short_wait_connection(**kwargs):
+        db = original_open(**kwargs)
         db.execute("pragma busy_timeout=20")
         return db
 
@@ -473,8 +462,8 @@ def test_classification_claim_rechecks_after_an_intervening_owner(tmp_path: Path
     original_open = store._open_connection
     claims = []
 
-    def competing_connection():
-        db = original_open()
+    def competing_connection(**kwargs):
+        db = original_open(**kwargs)
 
         def before_begin(statement):
             if statement.lower() == "begin immediate":
@@ -907,7 +896,7 @@ def test_task_producer_projects_html_only_unsubscribe_as_opaque_reference(
     )
     assert private_url not in route.task.trigger_message_json
     assert "html-only-private" not in route.task.trigger_message_json
-    assert private_url not in repr(route.context)
+    assert private_url not in repr(route)
     assert private_url.encode() not in (tmp_path / "email-agent.sqlite3").read_bytes()
 
 
@@ -1334,10 +1323,9 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
 ):
     plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
-    route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
-        plan, task_input
-    )[0]
-    context = route.context
+    adapter = _authorized_adapter(tmp_path, plan, task_input)
+    route = adapter.ensure_action_plan_tasks(plan, task_input)[0]
+    context = adapter.load_existing_task_context(route.task, task_input)
     rendered = context.render_business_context(current_time="2026-08-30T09:00:00+00:00")
 
     assert context.channel == "email"
@@ -1451,7 +1439,9 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
         lambda _identity: continuation,
     )
 
-    refreshed = adapter.ensure_action_plan_tasks(plan, task_input)[0].context
+    refreshed = adapter.load_existing_task_context(
+        adapter.ensure_action_plan_tasks(plan, task_input)[0].task, task_input
+    )
 
     continuation_receipts = [
         receipt
@@ -1569,7 +1559,7 @@ def test_refreshed_email_context_rejects_private_continuation_evidence(
     )
 
     with pytest.raises(EmailAgentTaskMetadataError):
-        adapter.ensure_action_plan_tasks(plan, task_input)
+        adapter.load_existing_task_context(first.task, task_input)
 
 
 def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
@@ -1601,7 +1591,9 @@ def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
         lambda _identity: None,
     )
 
-    refreshed = adapter.ensure_action_plan_tasks(plan, task_input)[0].context
+    refreshed = adapter.load_existing_task_context(
+        adapter.ensure_action_plan_tasks(plan, task_input)[0].task, task_input
+    )
 
     assert [
         receipt
@@ -1655,7 +1647,7 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
 
     def observed_authorization_read(db, classification_id: int):
         row = db.execute(
-            """
+                f"""
             select
                 classifications.id as classification_id,
                 classifications.account_id as account_id,
@@ -1664,8 +1656,8 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
                 messages.thread_identity as thread_identity,
                 classifications.current_action_plan_id
                     as current_action_plan_id
-            from email_classifications as classifications
-            join email_messages as messages
+                from ({email_classification_projection()}) as classifications
+                join ({email_message_projection()}) as messages
               on messages.account_id=classifications.account_id
              and messages.stable_message_identity=
                  classifications.stable_message_identity
@@ -1697,10 +1689,10 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
             assert authorization_checked.wait(timeout=1)
             competing_email_store = EmailStore(database)
 
-            def zero_timeout_open_connection() -> sqlite3.Connection:
+            def zero_timeout_open_connection(*, foreign_keys: bool = True) -> sqlite3.Connection:
                 connection = sqlite3.connect(database, timeout=0)
                 connection.execute("pragma busy_timeout = 0")
-                connection.execute("pragma foreign_keys = on")
+                connection.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
                 connection.row_factory = sqlite3.Row
                 return connection
 
@@ -1802,7 +1794,7 @@ def test_agent_action_identity_conflict_rolls_back_the_whole_plan(tmp_path: Path
     with sqlite3.connect(tmp_path / "email-agent.sqlite3") as db:
         assert (
             db.execute(
-                "select count(*) from tasks where record_type='reply_tasks' and trigger_message_id=?",
+                f"select count(*) from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'trigger_message_id')}=?",
                 (auto_reply_identity,),
             ).fetchone()[0]
             == 0
@@ -1937,4 +1929,20 @@ def test_thread_identity_is_normalized_once_for_identity_payload_and_context(
     assert json.loads(first.task.trigger_message_json)["thread_identity"] == (
         "thread-customer-41"
     )
-    assert first.context.conversation_id == replay.context.conversation_id
+    assert adapter.load_existing_task_context(first.task, spaced).conversation_id == (
+        adapter.load_existing_task_context(replay.task, _task_input()).conversation_id
+    )
+
+
+def test_enqueue_does_not_build_unused_execution_context(tmp_path, monkeypatch):
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = _task_input()
+    adapter = _authorized_adapter(tmp_path, plan, task_input)
+
+    def unexpected(**kwargs):
+        raise AssertionError("enqueue should not build execution context")
+
+    monkeypatch.setattr(adapter, "_build_context", unexpected)
+    [route] = adapter.ensure_action_plan_tasks(plan, task_input)
+    assert route.task.channel == "email"
+    assert not hasattr(route, "context")

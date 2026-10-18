@@ -4,6 +4,9 @@ import sqlite3
 
 from app.action_storage import insert_action, insert_email_action, update_email_action
 from app.audit_web import _email_action_queue_snapshot, _queue_attention_rows, _queue_status_snapshots
+from app.email_canonical_storage import (
+    insert_email_classification, insert_email_message, update_email_classification,
+)
 from app.email_store import EmailStore
 from app.email_publication_sources import current_email_actions_available
 from app.store import AutoReplyStore
@@ -15,12 +18,21 @@ def _two_failed_actions(path):
     store = AutoReplyStore(path)
     EmailStore(path)
     with store._connect() as db:
-        db.execute("""insert into email_classifications (
-            id,account_id,folder,uidvalidity,uid,stable_message_identity,
-            confidence,margin,probabilities_json,model_id,config_version,status,
-            classification_source,current_action_plan_id,sender,subject
-        ) values (11,'account','INBOX',1,1,'message',0.5,0.1,'{}','model',
-                  'config','processed','model','plan','Sender','Subject')""")
+        insert_email_message(db, dict(
+            account_id="account", stable_message_identity="message", folder="INBOX",
+            uidvalidity=1, uid=1, rfc_message_id="", in_reply_to="",
+            references_json="[]", thread_identity="", sender="Sender",
+            recipients_json="[]", subject="Subject", normalized_text="",
+            preview="", attachment_metadata_json="[]", received_at="",
+            created_at="", updated_at="",
+        ))
+        insert_email_classification(db, dict(
+            id=11, account_id="account", folder="INBOX", uidvalidity=1, uid=1,
+            stable_message_identity="message", confidence=0.5, margin=0.1,
+            probabilities_json="{}", model_id="model", config_version="config",
+            status="processed", classification_source="model",
+            current_action_plan_id="plan", sender="Sender", subject="Subject",
+        ))
         insert_email_action(db, "email_action_plans", dict(
             action_plan_id="plan", action_plan_version=1, classification_id=11,
             account_id="account", category="work", classification_source="model",
@@ -222,8 +234,8 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
     statements = []
     original_open = email._open_connection
 
-    def traced_connection():
-        db = original_open()
+    def traced_connection(*, foreign_keys=True):
+        db = original_open(foreign_keys=foreign_keys)
         db.set_trace_callback(statements.append)
         return db
 
@@ -244,7 +256,8 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
             assert len(db.execute(poll).fetchall()) == 1
         finally:
             db.set_progress_handler(None, 0)
-    assert any("idx_actions_email_public_key (record_type=?)" in step for step in plan), plan
+    assert any("idx_actions_postfix_identity (record_type=?)" in step for step in plan), plan
+    assert any("sqlite_autoindex_emails_1 (classification_id=?)" in step for step in plan), plan
     assert not any(step.startswith("SCAN c") for step in plan), plan
     assert steps < 300_000
     claimed = email.claim_next_direct_action(claimed_at="2026-10-14T12:01:00+00:00")
@@ -256,9 +269,7 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
     )
     email.persist_scan_result(other, model_text="synthetic")
     with email._connect() as db:
-        db.execute(
-            "update email_classifications set current_action_plan_id=null where id=302"
-        )
+        assert update_email_classification(db, 302, {"current_action_plan_id": None}) == 1
     assert email.claim_next_direct_action(claimed_at="2026-10-14T12:01:00+00:00") is None
 
 

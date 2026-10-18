@@ -54,6 +54,19 @@ describe("TaskDetailPage", () => {
     expect(screen.queryByText("Project details")).not.toBeInTheDocument();
   });
 
+  it("keeps saved evidence visible when its original is unavailable", async () => {
+    getBusinessTaskDetail.mockResolvedValue({ item: {
+      summary: { id: "44", title: "确认客户回款", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", deadline_type: "", business_relevance: "relevant", anchor_labels: [], updated_at: "2026-10-18", detail_url: "/tasks/item/44" },
+      suggestion: { reason: "已保存的责任依据", suggested_owner_user_id: "", suggested_owner_name: "王五", responsibility_evidence: [{ signal_id: 44, source_ref: "meeting-44", source_excerpt: "王五负责回款" }], basis_evidence: [] },
+      description: "", evidence: [{ role: "discovery", signal: { id: 44, source_type: "ai_minutes", source_ref: "meeting-44", source_time: "2026-10-18", evidence_text: null, source_available: false, source_unavailable_reason: "source_missing", context_json: "{}" } }],
+      date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+    }, meta: { snapshot_at: "2026-10-18" } });
+    render(<MemoryRouter><TaskDetailPage taskId="44" /></MemoryRouter>);
+    expect(await screen.findByText("原文不可用")).toBeInTheDocument();
+    expect(screen.getByText("王五负责回款")).toBeInTheDocument();
+    expect(screen.queryByText("查看原始记录")).not.toBeInTheDocument();
+  });
+
   it("sends a follow-up only when Derek clicks it, and shows a withdrawn one without a button", async () => {
     const detail = (followUps: Array<Record<string, unknown>>): Awaited<ReturnType<typeof getBusinessTaskDetail>> => ({ item: {
       summary: { id: "42", title: "交付报价首版", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "formal", status: "open", commitment_status: "accepted", owner: "王明", deadline_at: "", deadline_type: "", business_relevance: "relevant", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/42" },

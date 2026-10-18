@@ -1,0 +1,903 @@
+"""The four disabled task-delivery Action kinds preserve source contracts."""
+
+import sqlite3
+from contextlib import closing
+import json
+from pathlib import Path
+
+import pytest
+
+from app import action_storage
+from app.task_storage import insert_task
+from app.action_followup_sync_storage import LINK_TRIGGER_SQL
+from app.action_error_storage import SOURCE_TABLE_SQL as ERROR_SOURCE_TABLE_SQL, SOURCE_INDEX_SQL as ERROR_SOURCE_INDEX_SQL
+from app.action_error_definitions import error_projection
+from app.action_feedback_storage import SOURCE_SQL as FEEDBACK_SOURCE_SQL, SOURCE_INDEX_SQL as FEEDBACK_SOURCE_INDEX_SQL
+from app.action_feedback_definitions import feedback_projection
+import test_followup_sync_schema_release as followup_tests
+
+SOURCE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/"
+                     "2026-10-17-task-delivery-source-metadata.json").read_text())
+
+
+@pytest.fixture(params=("actual", "fresh_candidate"))
+def delivery_paired_source(tmp_path, request):
+    path = followup_tests.paired_source.__wrapped__(tmp_path, request)
+    variant = "actual" if request.param == "actual" else "fresh"
+    with closing(sqlite3.connect(path)) as db:
+        for definition in SOURCE[variant].values():
+            for obj in sorted(definition["objects"], key=lambda item: item[0] != "table"):
+                if obj[3]:
+                    db.execute(obj[3])
+        db.execute(ERROR_SOURCE_TABLE_SQL[0 if variant == "actual" else 1])
+        for sql in ERROR_SOURCE_INDEX_SQL:
+            db.execute(sql)
+        db.execute("insert into errors(id,conversation_id,message_id,kind,detail) "
+                   "values(7,'paired-chat','paired-message','worker','source failure')")
+        db.execute("insert into errors(id,conversation_id,message_id,kind,detail) "
+                   "values(12,'paired-chat','deleted','worker','deleted')")
+        db.execute("delete from errors where id=12")
+        for kind in ("feedback_events", "feedback_processing_transitions"):
+            db.execute(FEEDBACK_SOURCE_SQL[variant][kind])
+            for sql in FEEDBACK_SOURCE_INDEX_SQL[kind]:
+                db.execute(sql)
+        db.execute("insert into feedback_events(key,feedback_token,rating,rating_label) "
+                   "values('feedback-one','token-one','4','good')")
+        db.execute("insert into feedback_processing_transitions(feedback_key,to_status) "
+                   "values('feedback-one','pending')")
+        for physical, public in ((11, 700), (12, 800)):
+            insert_task(db, "meeting_alignment_jobs", {
+                "id": physical, "legacy_key": public,
+                "meeting_id": f"meeting-{physical}",
+            })
+        insert_task(db, "reply_tasks", {
+            "id": 22, "legacy_key": 22,
+            "conversation_id": "chat", "conversation_title": "Chat",
+            "single_chat": 1, "trigger_message_id": "message",
+            "trigger_create_time": "clock", "trigger_sender": "sender",
+        })
+        db.execute(
+            "insert into meeting_alignment_delivery_claims(job_id,claim_token) "
+            "values(11,'claim-one')"
+        )
+        db.execute(
+            "insert into meeting_memory_write_events "
+            "(id,meeting_job_id,execution_generation,payload_json,error) "
+            "values(40,11,'meeting-generation','{}','source-error')"
+        )
+        db.execute(
+            "insert into task_memory_write_events "
+            "(id,reply_task_id,execution_generation,memories_json) "
+            "values(50,22,'task-generation','[]')"
+        )
+        db.execute(
+            "insert into wechat_deliveries "
+            "(id,reply_task_id,account_id,target_type,target_id,reply_text) "
+            "values(60,22,'account','direct','contact','hello')"
+        )
+        db.commit()
+    return path
+
+
+def test_post_followup_release_four_family_conversion(delivery_paired_source):
+    release = followup_tests._prepare(delivery_paired_source)
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        prior_schema = tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name"))
+        prior_sequences = tuple(db.execute("select name,seq from sqlite_sequence order by name"))
+        source_facts = {
+            kind: tuple(dict(zip(
+                [item[0] for item in cursor.description], row, strict=True,
+            )) for row in cursor)
+            for kind in SOURCE["actual"]
+            for cursor in (db.execute(
+                f"select * from {kind} order by "
+                + ("job_id" if kind == "meeting_alignment_delivery_claims" else "id")),)
+        }
+    release.apply()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        source = release.source_schema["task_delivery"]
+        assert action_storage.validated_reply_variant(
+            db, include_email=True, include_followup_sync=True,
+            include_business_sync=True, include_skill_config_receipts=True,
+            include_task_delivery=True,
+            include_errors=True,
+            include_feedback=True,
+        ) == source["reply_variant"]
+        assert action_storage.action_schema_is_current(
+            db, include_reply=True, reply_variant=source["reply_variant"],
+            include_email=True, include_followup_sync=True,
+            include_business_sync=True, include_skill_config_receipts=True,
+            include_task_delivery=True,
+            include_errors=True,
+            include_feedback=True,
+        )
+        assert not db.execute(
+            "select 1 from sqlite_schema where type='table' and name in "
+            "('meeting_alignment_delivery_claims','meeting_memory_write_events',"
+            "'task_memory_write_events','wechat_deliveries')"
+        ).fetchall()
+        for kind in SOURCE["actual"]:
+            projection = action_storage.task_delivery_projection(kind)
+            cursor = db.execute(
+                f"select * from ({projection}) order by "
+                + ("job_id" if kind == "meeting_alignment_delivery_claims" else "id"))
+            rows = tuple(dict(zip(
+                [item[0] for item in cursor.description], row, strict=True,
+            )) for row in cursor)
+            assert rows == source_facts[kind]
+    release.rollback()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name")) == prior_schema
+        assert tuple(db.execute("select name,seq from sqlite_sequence order by name")) == prior_sequences
+        for kind in SOURCE["actual"]:
+            cursor = db.execute(
+                f"select * from {kind} order by "
+                + ("job_id" if kind == "meeting_alignment_delivery_claims" else "id"))
+            assert tuple(dict(zip(
+                [item[0] for item in cursor.description], row, strict=True,
+            )) for row in cursor) == source_facts[kind]
+
+
+def test_paired_errors_current_writes_inverse_and_reforward(delivery_paired_source):
+    release = followup_tests._prepare(delivery_paired_source)
+    release.apply()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        from app.task8_storage import register_task8_functions
+        register_task8_functions(db)
+        assert db.execute(f"select id,detail from ({error_projection()})").fetchone() == (7, "source failure")
+        inserted = action_storage.insert_error_action(db, {
+            "conversation_id": "paired-chat", "message_id": "new-message",
+            "kind": "worker", "detail": "new failure",
+        })
+        assert inserted.lastrowid == 13
+        assignment, arguments = action_storage.error_set_parts(
+            update_sql={"resolved_at": "current_timestamp", "resolution": "'recovered'"})
+        assert db.execute(
+            f"update actions set {assignment} where record_type='errors' "
+            "and cast(legacy_key as integer)=7", arguments,
+        ).rowcount == 1
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert db.execute("select id,detail,resolution from errors order by id").fetchall() == [
+            (7, "source failure", "recovered"), (13, "new failure", ""),
+        ]
+        assert db.execute("select seq from sqlite_sequence where name='errors'").fetchone() == (13,)
+    release.apply()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert db.execute(f"select id,detail,resolution from ({error_projection()}) order by id").fetchall() == [
+            (7, "source failure", "recovered"), (13, "new failure", ""),
+        ]
+
+
+def test_paired_feedback_current_public_writes_inverse_and_reforward(delivery_paired_source):
+    from app.store import AutoReplyStore
+    from app.feedback_processing import FeedbackIterationDecision
+    from contextvars import ContextVar
+
+    release = followup_tests._prepare(delivery_paired_source)
+    release.apply()
+    # The paired fixture uses sentinel version markers, so bind the real
+    # public DAO to its already released connection without constructor migration.
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = delivery_paired_source
+    store.busy_timeout_seconds = 30
+    store.busy_timeout_milliseconds = 30000
+    store._read_snapshot_connection = ContextVar("feedback_paired_snapshot", default=None)
+    store.upsert_feedback_event(key="feedback-new", feedback_token="token-new",
+                                rating="5", rating_label="excellent")
+    store.create_feedback_processing_batch(["feedback-new"], batch_id="batch-new")
+    claimed = store.claim_feedback_processing_items("batch-new", ["feedback-new"])
+    assert len(claimed) == 1
+    store.associate_feedback_processing_turn(
+        "feedback-new", expected_batch_id="batch-new",
+        workbench_task_id="task-new", workbench_turn_id="turn-new",
+        attempt_id=1, agent_run_id=2,
+    )
+    decision = store.record_feedback_iteration_decision(
+        "batch-new",
+        FeedbackIterationDecision(
+            scope="needs_human", root_cause="Needs human review",
+            feedback_keys=["feedback-new"], source_references=["synthetic fixture"],
+            why_not_code="No code change is prescribed",
+            acceptance={"scenario": "synthetic fixture", "expected_behavior": "Retain the decision",
+                        "verification": ["inverse readback"]},
+        ),
+        workbench_task_id="task-new", workbench_turn_id="turn-new",
+    )
+    assert store.list_feedback_iteration_decisions("batch-new") == (decision,)
+    release.rollback()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert db.execute("select rating,rating_label from feedback_events where key='feedback-new'").fetchone() == ("5", "excellent")
+        assert db.execute("select feedback_key,to_status from feedback_processing_transitions "
+                          "where feedback_key='feedback-new'").fetchall() == [("feedback-new", "processing")]
+        assert db.execute("select decision_id,feedback_key from feedback_iteration_decision_items "
+                          "where feedback_key='feedback-new'").fetchone() == (decision.id, "feedback-new")
+    release.apply()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert db.execute("select rating,rating_label from (" + feedback_projection("feedback_events") + ") "
+                          "where key='feedback-new'").fetchone() == ("5", "excellent")
+        assert db.execute("select decision_id,feedback_key from (" +
+                          feedback_projection("feedback_iteration_decision_items") + ") "
+                          "where feedback_key='feedback-new'").fetchone() == (decision.id, "feedback-new")
+
+
+def test_new_task_delivery_writes_survive_paired_inverse(delivery_paired_source):
+    release = followup_tests._prepare(delivery_paired_source)
+    release.apply()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert action_storage.insert_task_delivery_action(
+            db, "meeting_alignment_delivery_claims",
+            {"job_id": 12, "claim_token": "new-claim"},
+        ).rowcount == 1
+        assert action_storage.insert_task_delivery_action(
+            db, "meeting_memory_write_events", {
+                "meeting_job_id": 12, "execution_generation": "new-meeting",
+                "payload_json": "{}",
+            },
+        ).lastrowid == 41
+        assert action_storage.insert_task_delivery_action(
+            db, "task_memory_write_events", {
+                "reply_task_id": 22, "execution_generation": "new-task",
+            },
+        ).lastrowid == 51
+        assert action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries", {
+                "reply_task_id": 22, "account_id": "account",
+                "target_type": "direct", "target_id": "contact",
+                "reply_text": "new message",
+                "execution_generation": "next",
+            },
+        ).lastrowid == 61
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert db.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=12"
+        ).fetchone() == ("new-claim",)
+        assert db.execute(
+            "select meeting_job_id,execution_generation from "
+            "meeting_memory_write_events where id=41"
+        ).fetchone() == (12, "new-meeting")
+        assert db.execute(
+            "select reply_task_id,execution_generation from "
+            "task_memory_write_events where id=51"
+        ).fetchone() == (22, "new-task")
+        assert db.execute(
+            "select reply_task_id,reply_text from wechat_deliveries where id=61"
+        ).fetchone() == (22, "new message")
+
+
+def test_json_transport_inverse_round_trips_config_triggers_and_new_facts(
+    delivery_paired_source,
+):
+    release = followup_tests._prepare(delivery_paired_source)
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        source_schema = tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name"
+        ))
+    release.apply()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        current_triggers = tuple(db.execute(
+            "select name,sql from sqlite_schema where type='trigger' "
+            "and tbl_name='configs' order by name"
+        ))
+        assert current_triggers
+        # _migrate_pair receives both metadata blocks through JSON subprocess
+        # stdout. Preserve every value and change only their transport shape.
+        release.source_schema["task_delivery"] = json.loads(json.dumps(
+            release.source_schema["task_delivery"]
+        ))
+        release.source_schema["followup_sync"] = json.loads(json.dumps(
+            release.source_schema["followup_sync"]
+        ))
+        assert all(type(pair) is list and len(pair) == 2
+                   for pair in release.source_schema["task_delivery"]["configs_triggers"])
+        assert all(type(pair) is list and len(pair) == 2
+                   for pair in release.source_schema["followup_sync"]["external"]["configs_triggers"])
+        assert current_triggers == tuple(map(tuple,
+            release.source_schema["task_delivery"]["configs_triggers"]))
+        assert action_storage.insert_task_delivery_action(
+            db, "meeting_alignment_delivery_claims",
+            {"job_id": 12, "claim_token": "transport-claim"},
+        ).rowcount == 1
+        assert action_storage.insert_task_delivery_action(
+            db, "meeting_memory_write_events", {
+                "meeting_job_id": 12, "execution_generation": "transport-meeting",
+                "payload_json": "{}",
+            },
+        ).lastrowid == 41
+        assert action_storage.insert_task_delivery_action(
+            db, "task_memory_write_events", {
+                "reply_task_id": 22, "execution_generation": "transport-task",
+            },
+        ).lastrowid == 51
+        assert action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries", {
+                "reply_task_id": 22, "account_id": "account",
+                "target_type": "direct", "target_id": "contact",
+                "reply_text": "transport message", "execution_generation": "next",
+            },
+        ).lastrowid == 61
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(delivery_paired_source)) as db:
+        assert tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name"
+        )) == source_schema
+        assert db.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=12"
+        ).fetchone() == ("transport-claim",)
+        assert db.execute(
+            "select meeting_job_id,execution_generation from "
+            "meeting_memory_write_events where id=41"
+        ).fetchone() == (12, "transport-meeting")
+        assert db.execute(
+            "select reply_task_id,execution_generation from "
+            "task_memory_write_events where id=51"
+        ).fetchone() == (22, "transport-task")
+        assert db.execute(
+            "select reply_task_id,reply_text from wechat_deliveries where id=61"
+        ).fetchone() == (22, "transport message")
+        assert tuple(db.execute(
+            "select name,seq from sqlite_sequence where name in "
+            "('meeting_memory_write_events','task_memory_write_events',"
+            "'wechat_deliveries') order by name"
+        )) == (("meeting_memory_write_events", 41),
+               ("task_memory_write_events", 51),
+               ("wechat_deliveries", 61))
+
+
+def test_fresh_task_delivery_conversion_failure_does_not_publish_current(tmp_path, monkeypatch):
+    from app import store as store_module
+
+    path = tmp_path / "fresh.sqlite3"
+    def fail_conversion(_db, _source):
+        raise RuntimeError("conversion interrupted")
+
+    monkeypatch.setattr(store_module, "migrate_task_delivery_schema", fail_conversion)
+    with pytest.raises(RuntimeError, match="conversion interrupted"):
+        store_module.AutoReplyStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute(
+            "select name from sqlite_schema where type='table' and name in "
+            "('meeting_alignment_delivery_claims','meeting_memory_write_events',"
+            "'task_memory_write_events','wechat_deliveries')"
+        ).fetchall() == []
+        assert db.execute(
+            "select 1 from state where record_type='service_state' "
+            "and legacy_key='store_schema_version'"
+        ).fetchone() is None
+
+
+@pytest.mark.parametrize("first", ("store", "email"))
+def test_fresh_paired_constructors_publish_only_twenty_eight_tables(tmp_path, first):
+    from app.store import AutoReplyStore
+    from app.email_store import EmailStore
+
+    path = tmp_path / "fresh.sqlite3"
+    constructors = {
+        "store": AutoReplyStore,
+        "email": EmailStore,
+    }
+    constructors[first](path)
+    constructors["email" if first == "store" else "store"](path)
+    store = AutoReplyStore(path)
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from sqlite_schema where type='table' "
+            "and name not like 'sqlite_%'"
+        ).fetchone()[0] == 28
+        assert not db.execute(
+            "select name from sqlite_schema where type='table' and name in "
+            "('meeting_alignment_delivery_claims','meeting_memory_write_events',"
+            "'task_memory_write_events','wechat_deliveries','errors',"
+            "'feedback_events','feedback_processing_transitions',"
+            "'feedback_iteration_decision_items')"
+        ).fetchall()
+        assert store._schema_manifest_is_current_in_connection(
+            db, include_run_snapshots=True,
+        )
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+def test_task_delivery_schema_has_four_typed_kinds_and_source_constraints(variant):
+    assert hasattr(action_storage, "task_delivery_projection")
+    assert hasattr(action_storage, "TASK_DELIVERY_FIELDS")
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(1,'meeting_alignment_jobs'),(2,'reply_tasks')")
+        action_storage.create_action_schema(db, include_reply=True, reply_variant=variant,
+                             include_email=True, include_followup_sync=True,
+                             include_business_sync=True, include_task_delivery=True)
+        assert set(action_storage.TASK_DELIVERY_FIELDS) == {
+            "meeting_alignment_delivery_claims", "meeting_memory_write_events",
+            "task_memory_write_events", "wechat_deliveries",
+        }
+        projection = action_storage.task_delivery_projection("wechat_deliveries")
+        assert "reply_task_id" in projection
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("insert into actions(record_type,legacy_key,payload_json) "
+                       "values('meeting_memory_write_events','8','{}')")
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+def test_task_delivery_set_parts_uses_original_row_values_and_statement_clock(variant):
+    from app.task8_storage import register_task8_functions
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        register_task8_functions(db)
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(1,'meeting_alignment_jobs')")
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant=variant, include_email=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        event = action_storage.insert_task_delivery_action(
+            db, "meeting_memory_write_events", {
+                "meeting_job_id": 1, "payload_json": "{}", "execution_generation": "g1",
+            },
+        )
+        parts, parameters = action_storage.task_delivery_set_parts(
+            "meeting_memory_write_events", {"status": "failed"},
+            update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
+        )
+        db.execute(
+            "update actions set " + parts + " where record_type='meeting_memory_write_events' "
+            "and cast(legacy_key as integer)=?", (*parameters, event.lastrowid),
+        )
+        row = db.execute(
+            "select status,attempts,updated_at from (" +
+            action_storage.task_delivery_projection("meeting_memory_write_events") +
+            ") where id=?", (event.lastrowid,),
+        ).fetchone()
+        assert row == ("failed", 1, db.execute("select current_timestamp").fetchone()[0])
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+def test_wechat_allocator_uses_main_sequence_with_unrelated_temp_autoincrement(variant):
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(5,'reply_tasks')")
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant=variant, include_email=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        values = {"reply_task_id": 5, "account_id": "a", "target_type": "contact",
+                  "target_id": "t", "reply_text": "text", "execution_generation": "first"}
+        assert action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries", {"id": 80, **values},
+        ).lastrowid == 80
+        ignored = action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries", {"id": 80, **values}, ignore=True,
+        )
+        assert ignored.rowcount == 0
+        assert action_storage.delete_task_delivery_action(
+            db, "wechat_deliveries", 80,
+        ).rowcount == 1
+        assert db.execute("select seq from main.sqlite_sequence where name='actions:wechat_deliveries'").fetchone() == (80,)
+        db.execute("create temp table unrelated_temp(id integer primary key autoincrement)")
+        db.execute("insert into unrelated_temp default values")
+        db.execute("delete from unrelated_temp")
+        assert db.execute("select seq from temp.sqlite_sequence where name='unrelated_temp'").fetchone() == (1,)
+        db.commit()
+        db.execute("begin")
+        inserted = action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries", {**values, "execution_generation": "later"},
+        )
+        assert inserted.lastrowid == 81
+        assert inserted.rowcount == 1
+        assert db.in_transaction
+        assert db.execute("select seq from main.sqlite_sequence where name='actions:wechat_deliveries'").fetchone() == (81,)
+        assert db.execute("select seq from temp.sqlite_sequence where name='unrelated_temp'").fetchone() == (1,)
+        db.rollback()
+        assert db.execute("select seq from main.sqlite_sequence where name='actions:wechat_deliveries'").fetchone() == (80,)
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+def test_unmatched_wechat_update_does_not_evaluate_invalid_primary_key(variant):
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant=variant, include_email=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        result = action_storage.update_task_delivery_action(
+            db, "wechat_deliveries", 999, {"id": None},
+        )
+        assert result.rowcount == 0
+        assert db.execute("select count(*) from actions where record_type='wechat_deliveries'").fetchone() == (0,)
+
+
+@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+@pytest.mark.parametrize("job_id", (None, "absent"))
+def test_claim_writer_requires_explicit_non_null_job_id(variant, job_id):
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(1,'reply_tasks')")
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant=variant, include_email=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        values = {"claim_token": "token"}
+        if job_id != "absent":
+            values["job_id"] = job_id
+        with pytest.raises(ValueError, match="explicit non-NULL job_id"):
+            action_storage.insert_task_delivery_action(
+                db, "meeting_alignment_delivery_claims", values,
+            )
+        assert db.execute("select count(*) from actions where record_type='meeting_alignment_delivery_claims'").fetchone() == (0,)
+
+
+def test_fresh_task_delivery_rejects_unowned_reply_attempt_reference_for_all_kinds():
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(1,'meeting_alignment_jobs'),(2,'reply_tasks')")
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        facts = (
+            ("meeting_alignment_delivery_claims", {"job_id": 1, "claim_token": "token"}),
+            ("meeting_memory_write_events", {"id": 10, "meeting_job_id": 1,
+                                             "execution_generation": "first", "payload_json": "{}"}),
+            ("task_memory_write_events", {"id": 11, "reply_task_id": 2,
+                                          "execution_generation": "first"}),
+            ("wechat_deliveries", {"id": 12, "reply_task_id": 2, "account_id": "a",
+                                   "target_type": "contact", "target_id": "t",
+                                   "reply_text": "text"}),
+        )
+        for kind, values in facts:
+            action_storage.insert_task_delivery_action(db, kind, values)
+        parent_id = db.execute("select id from actions where record_type='meeting_alignment_delivery_claims'").fetchone()[0]
+        for kind, _ in facts:
+            with pytest.raises(sqlite3.IntegrityError):
+                db.execute("update actions set memory_attempt_ref=? where record_type=?",
+                           (parent_id, kind))
+            assert db.execute("select count(*) from actions where record_type=? and memory_attempt_ref is not null",
+                              (kind,)).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+@pytest.mark.parametrize("kind,values", (
+    ("meeting_memory_write_events", {"meeting_job_id": 1, "execution_generation": "g",
+                                     "payload_json": "{}"}),
+    ("task_memory_write_events", {"reply_task_id": 2, "execution_generation": "g"}),
+    ("wechat_deliveries", {"reply_task_id": 2, "account_id": "a", "target_type": "contact",
+                           "target_id": "t", "reply_text": "text"}),
+))
+@pytest.mark.parametrize("explicit_transaction", (False, True))
+def test_auto_id_full_preserves_source_and_target_caller_transaction(
+    variant, kind, values, explicit_transaction,
+):
+    maximum = 2**63 - 1
+    with closing(sqlite3.connect(":memory:")) as source, closing(sqlite3.connect(":memory:")) as target:
+        for db in (source, target):
+            db.execute("create table tasks(id integer primary key,record_type text not null)")
+            db.execute("create table runs(id integer primary key,record_type text not null)")
+            db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+            db.execute("create table witness(id integer primary key)")
+            db.execute("insert into tasks values(1,'meeting_alignment_jobs'),(2,'reply_tasks')")
+        for obj in sorted(SOURCE[variant][kind]["objects"], key=lambda item: item[0] != "table"):
+            if obj[3]:
+                source.execute(obj[3])
+        target_variant = "actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk"
+        action_storage.create_action_schema(
+            target, include_reply=True, reply_variant=target_variant, include_email=True,
+            include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        columns = ("id", *values)
+        source.execute(
+            f"insert into {kind}({','.join(columns)}) values({','.join('?' for _ in columns)})",
+            (maximum, *values.values()),
+        )
+        source.execute(f"delete from {kind} where id=?", (maximum,))
+        action_storage.insert_task_delivery_action(target, kind, {"id": maximum, **values})
+        action_storage.delete_task_delivery_action(target, kind, maximum)
+        for db in (source, target):
+            db.commit()
+            if explicit_transaction:
+                db.execute("begin")
+            db.execute("insert into witness values(1)")
+            if explicit_transaction:
+                db.execute("savepoint caller_nested")
+        with pytest.raises(sqlite3.OperationalError, match="database or disk is full"):
+            source.execute(
+                f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
+                tuple(values.values()),
+            )
+        with pytest.raises(sqlite3.OperationalError, match="database or disk is full"):
+            action_storage.insert_task_delivery_action(target, kind, values)
+        for db in (source, target):
+            assert db.in_transaction
+            assert db.execute("select id from witness").fetchall() == [(1,)]
+            if explicit_transaction:
+                db.execute("rollback to caller_nested")
+                db.execute("release caller_nested")
+            assert db.execute("select id from witness").fetchall() == [(1,)]
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+@pytest.mark.parametrize("kind,values,parent", (
+    ("meeting_memory_write_events", {"meeting_job_id": 1, "execution_generation": "g",
+                                     "payload_json": "{}"}, "meeting_job_id"),
+    ("task_memory_write_events", {"reply_task_id": 2, "execution_generation": "g"},
+     "reply_task_id"),
+    ("wechat_deliveries", {"reply_task_id": 2, "account_id": "a", "target_type": "contact",
+                           "target_id": "t", "reply_text": "text"}, "reply_task_id"),
+))
+@pytest.mark.parametrize("ignore", (False, True))
+@pytest.mark.parametrize("temp_shadow", (False, True))
+def test_wrong_parent_kind_precedes_full_auto_id_as_in_source(
+    variant, kind, values, parent, ignore, temp_shadow,
+):
+    maximum = 2**63 - 1
+    with closing(sqlite3.connect(":memory:")) as source, closing(sqlite3.connect(":memory:")) as target:
+        for db in (source, target):
+            db.execute("create table tasks(id integer primary key,record_type text not null)")
+            db.execute("create table runs(id integer primary key,record_type text not null)")
+            db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+            db.execute("create table witness(id integer primary key)")
+            db.execute("insert into tasks values(1,'meeting_alignment_jobs'),(2,'reply_tasks')")
+        for obj in sorted(SOURCE[variant][kind]["objects"], key=lambda item: item[0] != "table"):
+            if obj[3]:
+                source.execute(obj[3])
+        action_storage.create_action_schema(
+            target, include_reply=True,
+            reply_variant="actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk",
+            include_email=True, include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        columns = ("id", *values)
+        source.execute(
+            f"insert into {kind}({','.join(columns)}) values({','.join('?' for _ in columns)})",
+            (maximum, *values.values()),
+        )
+        source.execute(f"delete from {kind} where id=?", (maximum,))
+        action_storage.insert_task_delivery_action(target, kind, {"id": maximum, **values})
+        action_storage.delete_task_delivery_action(target, kind, maximum)
+        wrong = {**values, parent: 2 if parent == "meeting_job_id" else 1}
+        if temp_shadow:
+            expected = "meeting_alignment_jobs" if parent == "meeting_job_id" else "reply_tasks"
+            for db in (source, target):
+                db.execute("create temp table tasks(id integer primary key,record_type text not null)")
+                db.execute("insert into temp.tasks values(?,?)", (wrong[parent], expected))
+        for db in (source, target):
+            db.commit()
+            db.execute("begin")
+            db.execute("insert into witness values(1)")
+            db.execute("savepoint caller_nested")
+        with pytest.raises(sqlite3.IntegrityError) as native_error:
+            source.execute(
+                f"insert {'or ignore ' if ignore else ''}into {kind}({','.join(wrong)}) "
+                f"values({','.join('?' for _ in wrong)})", tuple(wrong.values()),
+            )
+        with pytest.raises(sqlite3.IntegrityError) as target_error:
+            action_storage.insert_task_delivery_action(target, kind, wrong, ignore=ignore)
+        assert str(target_error.value) == str(native_error.value)
+        for db, table, sequence_name in ((source, kind, kind), (target, "actions", "actions:" + kind)):
+            predicate = "" if db is source else " where record_type='" + kind + "'"
+            assert db.execute(f"select count(*) from {table}{predicate}").fetchone() == (0,)
+            assert db.execute("select seq from main.sqlite_sequence where name=?",
+                              (sequence_name,)).fetchone() == (maximum,)
+        for db in (source, target):
+            assert db.in_transaction
+            assert db.execute("select id from witness").fetchall() == [(1,)]
+            if temp_shadow:
+                assert db.execute("select record_type from main.tasks where id=?",
+                                  (wrong[parent],)).fetchone() == (
+                                      "reply_tasks" if parent == "meeting_job_id" else "meeting_alignment_jobs",
+                                  )
+                assert db.execute("select record_type from temp.tasks where id=?",
+                                  (wrong[parent],)).fetchone() == (
+                                      "meeting_alignment_jobs" if parent == "meeting_job_id" else "reply_tasks",
+                                  )
+            db.execute("rollback to caller_nested")
+            db.execute("release caller_nested")
+            assert db.execute("select id from witness").fetchall() == [(1,)]
+
+
+def test_source_capture_requires_exact_actual_or_fresh_declaration():
+    import importlib.util
+    assert importlib.util.find_spec("app.action_task_delivery_storage") is not None
+    from app import action_task_delivery_storage as delivery
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        for definition in SOURCE["fresh"].values():
+            for obj in sorted(definition["objects"], key=lambda item: item[0] != "table"):
+                if obj[3]:
+                    db.execute(obj[3])
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant="fresh_memory_fk",
+            include_email=True, include_followup_sync=True,
+            include_business_sync=True,
+        )
+        for sql in LINK_TRIGGER_SQL[:2]:
+            db.execute(sql)
+        capture = delivery.capture_task_delivery_source(db)
+        assert capture["source_variant"] == "fresh"
+        db.execute("alter table wechat_deliveries add column unwanted text")
+        unchanged = tuple(db.execute("select type,name,sql from sqlite_schema order by type,name"))
+        with pytest.raises(ValueError, match="source declaration"):
+            delivery.capture_task_delivery_source(db)
+        db.execute("begin")
+        with pytest.raises(ValueError, match="source declaration"):
+            delivery.migrate_task_delivery_schema(db, capture)
+        assert tuple(db.execute("select type,name,sql from sqlite_schema order by type,name")) == unchanged
+
+
+def test_task_delivery_parent_kind_and_claim_cascade():
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=on")
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business(task_public_id integer unique)")
+        db.execute("create table business_task_signals(id integer primary key)")
+        db.execute("create table email_classifications(id integer primary key)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(44,'meeting_alignment_jobs'),(55,'reply_tasks'),"
+                   "(66,'meeting_alignment_jobs')")
+        action_storage.create_action_schema(
+            db, include_reply=True, reply_variant="actual_no_memory_fk",
+            include_email=True, include_followup_sync=True, include_business_sync=True,
+            include_task_delivery=True,
+        )
+        assert action_storage.insert_task_delivery_action(
+            db, "meeting_alignment_delivery_claims", {"job_id": 44, "claim_token": "token"},
+        ).lastrowid == 44
+        structural_id = db.execute("select id from actions where record_type='meeting_alignment_delivery_claims'").fetchone()[0]
+        assert action_storage.update_task_delivery_action(
+            db, "meeting_alignment_delivery_claims", 44, {"job_id": 66},
+        ).rowcount == 1
+        assert db.execute("select id,legacy_key,td_claim_job_id,td_claim_token from actions "
+                          "where record_type='meeting_alignment_delivery_claims'").fetchone() == (
+                              structural_id, "66", 66, "token",
+                          )
+        with pytest.raises(sqlite3.IntegrityError, match="task parent must be a meeting job"):
+            action_storage.insert_task_delivery_action(
+                db, "meeting_memory_write_events",
+                {"meeting_job_id": 55, "execution_generation": "one", "payload_json": "{}"},
+            )
+        db.execute("delete from tasks where id=66")
+        assert db.execute("select 1 from actions where record_type='meeting_alignment_delivery_claims'").fetchone() is None
+
+
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+def test_four_families_round_trip_current_facts_and_allocator(variant):
+    from app import action_task_delivery_storage as delivery
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(4,'meeting_alignment_jobs'),(5,'reply_tasks')")
+        for definition in SOURCE[variant].values():
+            for obj in sorted(definition["objects"], key=lambda item: item[0] != "table"):
+                if obj[3]:
+                    db.execute(obj[3])
+        action_storage.create_action_schema(
+            db, include_reply=True,
+            reply_variant="actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk",
+            include_email=True, include_followup_sync=True, include_business_sync=True,
+        )
+        for sql in LINK_TRIGGER_SQL[:2]:
+            db.execute(sql)
+        db.execute("insert into actions(record_type,legacy_key,payload_json) "
+                   "values('native_reply_dispatches','[\"dingtalk\",\"old\"]',"
+                   "'{\"created_at\":\"2026-10-17\"}')")
+        existing_action = db.execute(
+            "select id,record_type,legacy_key,payload_json from actions"
+        ).fetchone()
+        db.execute("insert into meeting_alignment_delivery_claims values(4,'claim-a')")
+        db.execute("insert into meeting_memory_write_events(id,meeting_job_id,execution_generation,payload_json,status) "
+                   "values(7,4,'',?,'unrecognized')", (sqlite3.Binary(b'raw-payload'),))
+        db.execute("insert into task_memory_write_events(id,reply_task_id,execution_generation,memories_json) "
+                   "values(7,5,'one',?)", (sqlite3.Binary(b'raw-memories'),))
+        db.execute("insert into wechat_deliveries(id,reply_task_id,account_id,target_type,target_id,reply_text,evidence_json) "
+                   "values(7,5,'a','contact','t','text',?)", (sqlite3.Binary(b'raw-evidence'),))
+        db.execute("update sqlite_sequence set seq=31 where name='wechat_deliveries'")
+        baseline = {name: delivery._source_declaration(db, name)
+                    for name in delivery.TASK_DELIVERY_KINDS}
+        old_rows = {name: db.execute(f"select * from {name}").fetchall()
+                    for name in delivery.TASK_DELIVERY_KINDS}
+        old_seq = dict(db.execute("select name,seq from sqlite_sequence"))
+        old_schema = tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name"))
+        db.commit()
+        db.execute("begin")
+        source = delivery.capture_task_delivery_source(db)
+        state = delivery.migrate_task_delivery_schema(db, source)
+        assert all(db.execute("select 1 from sqlite_schema where name=?", (name,)).fetchone() is None
+                   for name in delivery.TASK_DELIVERY_KINDS)
+        assert db.execute("select count(*) from actions where record_type in (?,?,?,?)",
+                          delivery.TASK_DELIVERY_KINDS).fetchone()[0] == 4
+        action_storage.insert_action(db, "native_reply_dispatches", {
+            "channel": "dingtalk", "delivery_key": "new", "created_at": "2026-10-17",
+        })
+        assert action_storage.update_action(
+            db, "native_reply_dispatches", ("dingtalk", "new"),
+            {"created_at": "2026-10-18"},
+        ).rowcount == 1
+        assert db.execute("select id,record_type,legacy_key,payload_json from actions "
+                          "where record_type='native_reply_dispatches' and legacy_key='[\"dingtalk\",\"old\"]'").fetchone() == existing_action
+        assert db.execute("select count(*) from actions where record_type='native_reply_dispatches'").fetchone()[0] == 2
+        inserted = action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries",
+            {"reply_task_id": 5, "account_id": "a", "target_type": "contact",
+             "target_id": "t", "reply_text": "second", "execution_generation": "two"},
+        )
+        assert inserted.lastrowid == 32
+        assert action_storage.update_task_delivery_action(
+            db, "wechat_deliveries", 32, {"status": "unrecognized-later"},
+            where_sql="status='ready_to_send'",
+        ).rowcount == 1
+        duplicate_generation = {
+            "id": 33, "reply_task_id": 5, "account_id": "a", "target_type": "contact",
+            "target_id": "t", "reply_text": "third", "execution_generation": "initial",
+        }
+        if variant == "actual":
+            with pytest.raises(sqlite3.IntegrityError):
+                action_storage.insert_task_delivery_action(
+                    db, "wechat_deliveries", duplicate_generation)
+        else:
+            action_storage.insert_task_delivery_action(db, "wechat_deliveries", duplicate_generation)
+            assert action_storage.delete_task_delivery_action(
+                db, "wechat_deliveries", 33).rowcount == 1
+        db.execute("update actions set payload_json=json_set(payload_json,'$.status','sent') "
+                   "where record_type='wechat_deliveries' and legacy_key='7'")
+        delivery.restore_task_delivery_schema(db, state)
+        assert tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name")) == old_schema
+        assert db.execute("select id,record_type,legacy_key,payload_json from actions "
+                          "where record_type='native_reply_dispatches' and legacy_key='[\"dingtalk\",\"old\"]'").fetchone() == existing_action
+        assert db.execute("select count(*) from actions where record_type='native_reply_dispatches'").fetchone()[0] == 2
+        assert {name: delivery._source_declaration(db, name)
+                for name in delivery.TASK_DELIVERY_KINDS} == baseline
+        assert db.execute("select status from wechat_deliveries where id=7").fetchone()[0] == "sent"
+        assert db.execute("select status from wechat_deliveries where id=32").fetchone()[0] == "unrecognized-later"
+        assert {name: db.execute(f"select * from {name}").fetchall()
+                for name in delivery.TASK_DELIVERY_KINDS if name != "wechat_deliveries"} == {
+                    name: old_rows[name] for name in delivery.TASK_DELIVERY_KINDS if name != "wechat_deliveries"
+                }
+        assert dict(db.execute("select name,seq from sqlite_sequence")) == {
+            **old_seq, "wechat_deliveries": 32 if variant == "actual" else 33,
+        }
+        reforward = delivery.capture_task_delivery_source(db)
+        delivery.migrate_task_delivery_schema(db, reforward)
+        assert db.execute("select count(*) from actions where record_type='wechat_deliveries'").fetchone()[0] == 2
+        assert db.execute("select seq from sqlite_sequence where name='actions:wechat_deliveries'").fetchone()[0] == (32 if variant == "actual" else 33)
+        assert action_storage.delete_action(
+            db, "native_reply_dispatches", ("dingtalk", "new"),
+        ).rowcount == 1
+        db.rollback()

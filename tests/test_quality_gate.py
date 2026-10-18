@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from app.run_storage import insert_run
 from app.runs11_storage import insert_run11_fact
 from app.state_storage import insert_state
-from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, insert_action, update_action
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, insert_action, update_action, update_sync_action, insert_error_action, error_set_parts
 from app.task8_storage import task8_insert_parts, task8_set_parts
 from app.task12_storage import insert_task12
 from app.task20_definitions import task20_column, task20_projection
@@ -18,10 +18,29 @@ from app.quality_gate import (
 from app.cli import WorkerSettings, quality_check_command
 from app.email_store import EmailStore
 from app.store import AgentRole, AutoReplyStore
+from app.action_feedback_storage import resolve_feedback_events
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
 REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+
+def test_feedback_quality_reads_selected_actions_and_resolution(tmp_path):
+    from app.quality_gate import _check_feedback
+
+    store = AutoReplyStore(tmp_path / "feedback-quality.sqlite3")
+    store.upsert_feedback_event(key="unresolved", feedback_token="token-one")
+    store.upsert_feedback_event(key="resolved", feedback_token="token-two")
+    with store._connect() as db:
+        assert resolve_feedback_events(db, ["resolved"], "2026-10-17 00:00:00") == 1
+        violations = []
+        _check_feedback(db, violations)
+    assert [(item.source, item.code, item.count) for item in violations] == [
+        ("feedback_events", "unresolved", 1),
+    ]
+    report = scan_hourly_quality(store.path, now=NOW)
+    assert "feedback_events" in report.checked_sources
+    assert "feedback_events" not in report.missing_sources
 
 
 def _insert_task(db, kind, values):
@@ -356,14 +375,11 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
             'input_json': '{}', 'error': 'invalid classification input',
             'updated_at': stale,
         })
-        db.execute(
-            """insert into errors (
-                   conversation_id, message_id, kind, detail, created_at
-               ) values (
-                   'conversation', 'message', 'producer', 'temporary failure',
-                   '2026-08-07 00:59:00'
-               )"""
-        )
+        insert_error_action(db, {
+            "conversation_id": "conversation", "message_id": "message",
+            "kind": "producer", "detail": "temporary failure",
+            "created_at": "2026-08-07 00:59:00",
+        })
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -413,12 +429,11 @@ def test_quality_gate_accepts_explicit_terminal_failures(tmp_path):
 def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into errors (
-                conversation_id, message_id, kind, detail, created_at
-            ) values ('conversation', 'message', 'consumer', 'temporary failure',
-                '2026-08-07 00:30:00')"""
-        )
+        insert_error_action(db, {
+            "conversation_id": "conversation", "message_id": "message",
+            "kind": "consumer", "detail": "temporary failure",
+            "created_at": "2026-08-07 00:30:00",
+        })
         insert_action(db, "reply_attempts", {
             "conversation_id": "conversation", "conversation_title": "group",
             "trigger_message_id": "message", "trigger_sender": "sender",
@@ -460,10 +475,11 @@ def test_quality_gate_includes_open_global_service_error(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     store.record_error(None, None, "read_robot_direct_messages", "temporary DWS failure")
     with store._connect() as db:
-        db.execute(
-            "update errors set created_at=? where kind='read_robot_direct_messages'",
-            ((NOW - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),),
-        )
+        assignment, args = error_set_parts({
+            "created_at": (NOW - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        db.execute(f"update actions set {assignment} where record_type='errors' "
+                   "and error_kind='read_robot_direct_messages'", args)
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -621,15 +637,13 @@ def test_quality_gate_ignores_legacy_follow_up_drafts(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     overdue = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
-    with store._connect() as db:
-        for status, scheduled_at in (
-            ("draft", overdue), ("approved", future), ("failed", overdue),
-        ):
-            db.execute(
-                """insert into follow_up_drafts (project_id, status, scheduled_at)
-                   values (1, ?, ?)""",
-                (status, scheduled_at),
-            )
+    for status, scheduled_at in (
+        ("draft", overdue), ("approved", future), ("failed", overdue),
+    ):
+        store.create_follow_up_draft(
+            project_id=1, status=status, scheduled_at=scheduled_at,
+            dedupe_key=f"quality-gate:{status}",
+        )
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1160,30 +1174,17 @@ def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path)
 
 def test_quality_gate_deduplicates_failed_todo_link_after_later_active_link(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    with store._connect() as db:
-        cursor = db.execute(
-            """insert into work_projects (title, status)
-               values ('project', 'active')"""
-        )
-        project_id = cursor.lastrowid
-        cursor = db.execute(
-            """insert into work_todos (
-                project_id, title, owner_user_id, status, deadline_at
-            ) values (?, 'follow up', 'owner', 'open', '2026-08-08 12:00:00')""",
-            (project_id,),
-        )
-        todo_id = cursor.lastrowid
-        db.execute(
-            """insert into work_todo_dingtalk_links (work_todo_id, status, last_error)
-               values (?, 'failed', 'transient create error')""",
-            (todo_id,),
-        )
-        db.execute(
-            """insert into work_todo_dingtalk_links (
-                work_todo_id, dingtalk_task_id, status
-            ) values (?, 'external-task', 'active')""",
-            (todo_id,),
-        )
+    project_id = store.create_work_project(title="project", status="active")
+    todo_id = store.create_work_todo(
+        project_id=project_id, title="follow up", owner_user_id="owner",
+        status="open", deadline_at="2026-08-08 12:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id, status="failed", last_error="transient create error"
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id, dingtalk_task_id="external-task", status="active"
+    )
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -1250,12 +1251,14 @@ def test_quality_gate_fails_when_a_live_channel_is_not_ready(tmp_path):
 
 
 def _outbox_row(store: AutoReplyStore, *, key: str, status: str, attempts: int) -> None:
-    with store._connect() as db:
-        db.execute(
-            "insert into task_todo_sync_outbox "
-            "(operation_key, work_todo_id, operation, status, attempt_count) "
-            "values (?, 1, 'create', ?, ?)",
-            (key, status, attempts),
+    store.enqueue_task_todo_sync_outbox(
+        operation_key=key, work_todo_id=1, operation="create"
+    )
+    row = store.list_task_todo_sync_outbox()[-1]
+    with store._immediate_write_transaction() as db:
+        update_sync_action(
+            db, "task_todo_sync_outbox", int(row["id"]),
+            {"status": status, "attempt_count": attempts},
         )
 
 

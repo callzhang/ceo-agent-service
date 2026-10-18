@@ -1,0 +1,31 @@
+{
+  "recorded_at": "2026-10-17T17:39:52.087692+00:00",
+  "scope": "Unselected Business3 component only; default current28 unchanged; not caller25/copy/final11/release acceptance",
+  "files": {
+    "app/business_candidate_definitions.py": "77bf14dc2f6fc728cbc49499aff6198e5c103ca095016b2c78d869664f7aa085",
+    "app/business_candidate_storage.py": "9731d5c1aa2e6d41e4dea994abd486b7f7a0f958caddc9140b8c29ad99732902",
+    "app/business_definitions.py": "53006512c814b22d25037c04b400efcc607cd75505e544446cb9f217ee8390dc",
+    "tests/test_business_candidate_storage.py": "b32f18c4d55a5bbce40724fa79adc1543875b1267fc7fbc6e1a7c94828ad903c",
+    "docs/architecture.md": "8d5435eb4de04cb989ca1cf354b72387baf95d4ea078d7210240c4c89cf0942a",
+    "docs/runtime-mechanism.md": "a5db4eaf0d200020d1b44e856cddbbedbb2f2772d7cefe451d47e132ceae5489",
+    "app/business_storage.py": "5f28ed253623ebc11319de92b0ac83d222f6355c1d1a131c067d55c69b21abfa",
+    "app/business_schema_release.py": "0f540277f9dafb590e3e4631d6c11c18e3f3c7a22a89e7a63370e3e9bc9e9747",
+    "app/action_storage.py": "278fd95aa17c42a5d5e8527e75424f91d5395ca304528988bc20c1fea747f533",
+    "app/action_followup_sync_storage.py": "718f152fb59f1be841c58ea9f370e6375badcc433037d7eea9f43e763f40473a",
+    "tests/test_business_storage.py": "1ef3ee0033f86268c686521070c7c50714c69688d2d238c987df62f58df746b3",
+    "tests/test_business_schema_release.py": "57b1957e79a521cb682ca0f09704eeb420c1604cb9b2dd163e081fc4bb5297b9",
+    "tests/test_business_core_source.py": "05bfc2cec1482eaef701457530cfd1800a9b371d6899b7665938c286b1d76767",
+    "tests/test_business_legacy_schema.py": "1022debb8472defe297df551ce0096f2550ba50af6b12e04b0402795526ce764",
+    "docs/superpowers/plans/2026-10-17-business-candidates-component-plan.md": "587540e0a400006d1bb09649f9d6d0f5ff9cbab6dbc2e315e119b807d38b4ce8",
+    "docs/superpowers/specs/2026-10-17-business-three-current-source-metadata.json": "922f03417c477b17b0df1bf1541eb5c89d36799ce80ca4e2134c73ddb10c5cd1",
+    "docs/superpowers/specs/2026-10-11-database-redesign-field-map.csv": "888fcf45f6e6bcdfd533c9deec26a681b7c3c992465a4eb23b7fdcb5684ba8b5"
+  },
+  "author_validation": {
+    "scoped_tests": "737 passed in 42.17s",
+    "default_business_tuple_sha256": "91fedd3da844ec56624767b78fac27210d342414de7b79c01f02de5f038d9d91",
+    "temporary_roots_removed": true
+  },
+  "source_metadata_sha256": "922f03417c477b17b0df1bf1541eb5c89d36799ce80ca4e2134c73ddb10c5cd1",
+  "supersedes": "first freeze13f04c42 QUALITY rejection remains historical evidence",
+  "revision_scope": "Fix exactSQLite case-insensitive MAIN names and existing SQLite parser external-dependency preflight; no activation"
+}

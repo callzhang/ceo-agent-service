@@ -281,20 +281,6 @@ class WorkItem(BaseModel):
     scheduled_consumer: dict[str, object] = Field(default_factory=dict)
 
 
-class ProjectMemoryContextItem(StrictTaskModel):
-    source: str = "memory_recall"
-    uuid: str = ""
-    text: str = ""
-    summary: str = ""
-    created_at: str = ""
-
-
-class ProjectMemoryContext(StrictTaskModel):
-    query: str = ""
-    summary: str = ""
-    memories: list[ProjectMemoryContextItem] = Field(default_factory=list)
-
-
 class TaskDateEvidence(StrictTaskModel):
     kind: Literal[
         "assigned_at",
@@ -1173,7 +1159,6 @@ class WorkProject(BaseModel):
     next_follow_up_at: str = ""
     follow_up_mode: FollowUpMode = FollowUpMode.NONE
     source_conversations_json: str = "[]"
-    memory_context_json: str = "{}"
     created_at: str
     updated_at: str
     last_activity_at: str = ""

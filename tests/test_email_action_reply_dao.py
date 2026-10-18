@@ -18,6 +18,7 @@ def reply_pair(tmp_path, request):
     import sys
     import tarfile
     from app.action_email_storage import migrate_email_action_schema
+    from app.configs_schema_release import capture_config_source, migrate_config_schema
     from app.provider_state_schema_release import (
         apply_provider_state_migration,
         capture_provider_state_source,
@@ -111,6 +112,9 @@ if sys.argv[4] in ('receipt','noncanonical_receipt'):
         provider_source = capture_provider_state_source(db)
         migrate_email_action_schema(db)
         apply_provider_state_migration(db, provider_source)
+        # Current account readers/writers use Configs. Keep this explicit
+        # converted-copy fixture on that same prerequisite schema.
+        migrate_config_schema(db, capture_config_source(db))
         db.commit()
     store = object.__new__(EmailStore)
     store.path = target
@@ -485,7 +489,10 @@ def test_receipt_completion_replay_enrichment_conflicts_and_shared_readbacks(
     _assert_native_facts(reply_pair)
 
 
-def _unique_and_authorization_cycle(store, classification):
+def _unique_and_authorization_cycle(
+    store, classification, *,
+    account_update_sql="update email_accounts set imap_host='changed' where account_id=?",
+):
     import sqlite3
 
     args, owner = _reply_arguments(store, classification)
@@ -508,7 +515,7 @@ def _unique_and_authorization_cycle(store, classification):
     assert store.get_email_reply_dispatch_claim(second["action_identity"]) is None
     for statement, params in (
         (
-            "update email_accounts set imap_host='changed' where account_id=?",
+            account_update_sql,
             (args["account_id"],),
         ),
         (
@@ -549,7 +556,13 @@ def _unique_and_authorization_cycle(store, classification):
 
 def test_outgoing_uniqueness_authorization_and_native_parent_blockers(reply_pair):
     expected = _old_result(reply_pair, _unique_and_authorization_cycle)
-    assert _normalized(_unique_and_authorization_cycle(*reply_pair[:2])) == expected
+    assert _normalized(_unique_and_authorization_cycle(
+        *reply_pair[:2],
+        account_update_sql=(
+            "update configs set payload_json=json_set(payload_json,'$.imap_host','changed') "
+            "where record_type='email_accounts' and public_key=?"
+        ),
+    )) == expected
     _assert_native_facts(reply_pair)
 
 

@@ -9,17 +9,23 @@ from pathlib import Path
 import pytest
 from app.action_storage import insert_action
 from app.state_storage import insert_state
+from app.deferral_receipt_storage import find_receipt
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
+from app.task8_storage import register_task8_functions, task8_set_parts
+
 from app.reply_task_deferral import apply_deferral, main, preview_deferral, resume_deferral
 from app.store import AgentRole, AutoReplyStore
+
+REPLY_TASK_SQL = task20_projection("reply_tasks")
+
 
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 
 
-def ready(tmp_path: Path):
-    path = tmp_path / 'source.sqlite3'
+def ready(tmp_path: Path, *, path=None):
+    path = path if path is not None else tmp_path / 'source.sqlite3'
     store = AutoReplyStore(path)
     store.enqueue_reply_task(
         conversation_id='cid-deferral', conversation_title='Test', single_chat=True,
@@ -32,11 +38,25 @@ def ready(tmp_path: Path):
         parent_agent_run_id=None, operation_id='', owner='agent')
     store.fail_agent_run(claim.run.id, {'code': 'origin_validation_failed', 'retryable': False}, owner='agent')
     with store._connect() as db:
-        db.execute("update tasks set status='pending', locked_at=null where record_type='reply_tasks' and id=?", (task.id,))
+        register_task8_functions(db)
+        parts = task8_set_parts("reply_tasks", {"status": "pending", "locked_at": None})
+        db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
     backup = tmp_path / 'verified-backup.sqlite3'
     with sqlite3.connect(path) as source, sqlite3.connect(backup) as destination:
         source.backup(destination)
     return path, task.id, backup
+
+
+def set_reply_fields(db, task_id, **fields):
+    register_task8_functions(db)
+    parts = task8_set_parts("reply_tasks", fields)
+    db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and id=?",
+               (*parts.parameters, task_id))
+
+
+def increment_input_version(db, task_id):
+    version = db.execute(f"select input_version from ({REPLY_TASK_SQL}) where id=?", (task_id,)).fetchone()[0]
+    set_reply_fields(db, task_id, input_version=version+1)
 
 
 def native_events(path, task_id, monkeypatch, item, *, missing=False):
@@ -247,7 +267,7 @@ def test_native_sent_reply_after_pause_blocks_resume_without_overwrite(tmp_path)
         resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)
     with sqlite3.connect(path) as db:
         assert db.execute(f'select available_at from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()[0] == receipt['deferred_until']
-        assert db.execute('select status from reply_task_deferral_receipts where id=?', (receipt['id'],)).fetchone()[0] == 'paused'
+        assert find_receipt(db, receipt_id=receipt['id'])['status'] == 'paused'
 
 
 def test_active_deferral_previews_blocked_and_distinct_apply_is_explicit_conflict(tmp_path):
@@ -261,8 +281,8 @@ def test_active_deferral_previews_blocked_and_distinct_apply_is_explicit_conflic
 
 
 @pytest.mark.parametrize('mutation', [
-    "update tasks set input_version=input_version+1",
-    "update tasks set execution_generation='new-gen'",
+    increment_input_version,
+    lambda db, task_id: set_reply_fields(db, task_id, execution_generation="new-gen"),
     "update runs set structured_error_json='changed' where record_type='agent_runs'",
     "update runs set status='running' where record_type='agent_runs'",
     "candidate_selection",
@@ -271,7 +291,9 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
     path, task_id, backup = ready(tmp_path)
     preview = preview_deferral(path, task_id, now=NOW)
     with sqlite3.connect(path) as db:
-        if mutation == 'candidate_selection':
+        if callable(mutation):
+            mutation(db, task_id)
+        elif mutation == 'candidate_selection':
             run = db.execute(f"select id,execution_generation from ({AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)).fetchone()
             insert_action(db, 'review_candidates', {
                 'id': 1, 'task_id': task_id, 'execution_generation': run[1],
@@ -377,7 +399,7 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
     with pytest.raises(ValueError, match='separate'):
         apply_ready(path, task_id, path)
     with sqlite3.connect(backup) as db:
-        db.execute("update tasks set business_object_key='changed' where record_type='reply_tasks' and id=?", (task_id,))
+        set_reply_fields(db, task_id, business_object_key="changed")
     with pytest.raises(ValueError, match='exact'):
         apply_ready(path, task_id, backup)
     backup.write_bytes(b'not a sqlite database')
@@ -386,8 +408,8 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
 
 
 @pytest.mark.parametrize('change', [
-    "update tasks set input_version=input_version+1",
-    "update tasks set available_at='2026-10-05 15:00:00'",
+    increment_input_version,
+    lambda db, task_id: set_reply_fields(db, task_id, available_at="2026-10-05 15:00:00"),
     "update runs set structured_error_json='changed' where record_type='agent_runs'",
     lambda db, task_id: insert_state(db, "dispatcher_claim_leases", {
         "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
@@ -409,7 +431,7 @@ def test_resume_refuses_intervening_change(tmp_path, change):
     with pytest.raises(ValueError):
         resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)
     with sqlite3.connect(path) as db:
-        assert db.execute('select status from reply_task_deferral_receipts where id=?', (receipt['id'],)).fetchone()[0] == 'paused'
+        assert find_receipt(db, receipt_id=receipt['id'])['status'] == 'paused'
 
 
 def test_dispatcher_claim_committed_before_deferral_lock_wins(tmp_path):

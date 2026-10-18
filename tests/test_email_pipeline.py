@@ -466,7 +466,7 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     assert authorization["authorization_source"] == "user_confirmation"
     assert authorization["source_model_id"] == MODEL_ID
     assert authorization["config_version"] == "junk-v3"
-    assert store.list_training_examples()[0]["label"] == "junk"
+    assert store.owner_labelled_examples()[0][0]["category"] == "junk"
     with sqlite3.connect(store.path) as db:
         table_names = {
             row[0]
@@ -522,7 +522,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
     assert corrected["action_plan"]["action_plan_version"] == 2
     assert corrected["action_plan"]["model_id"] == MODEL_ID
     assert corrected["action_plan"]["config_version"] == "personal-v4"
-    assert store.list_training_examples()[0]["label"] == "personal"
+    assert store.owner_labelled_examples()[0][0]["category"] == "personal"
 
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
@@ -600,22 +600,15 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
 
     correction_begin_attempted = Event()
 
-    class SignalingConnection(sqlite3.Connection):
-        def execute(self, sql, parameters=(), /):
-            if " ".join(sql.lower().split()) == "begin immediate":
-                correction_begin_attempted.set()
-            return super().execute(sql, parameters)
-
     class SignalingStore(EmailStore):
-        def _open_connection(self):
-            db = sqlite3.connect(
-                self.path,
-                timeout=30,
-                factory=SignalingConnection,
-            )
-            db.execute("pragma busy_timeout = 30000")
-            db.execute("pragma foreign_keys = on")
-            db.row_factory = sqlite3.Row
+        def _open_connection(self, **kwargs):
+            db = super()._open_connection(**kwargs)
+
+            def observe(statement):
+                if " ".join(statement.lower().split()) == "begin immediate":
+                    correction_begin_attempted.set()
+
+            db.set_trace_callback(observe)
             return db
 
     correction_store = SignalingStore(database)
@@ -676,10 +669,10 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
         current_plan_and_action = db.execute(
             f"""
             select p.config_version, a.config_version
-            from email_classifications c
-            join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=c.current_action_plan_id
+            from emails c
+            join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=c.class_current_action_plan_id
             join ({EMAIL_DIRECT_ACTION_SQL}) a on a.action_plan_id=p.action_plan_id
-            where c.id=? and a.action_type='move'
+            where c.classification_id=? and a.action_type='move'
             """,
             (processed["id"],),
         ).fetchone()

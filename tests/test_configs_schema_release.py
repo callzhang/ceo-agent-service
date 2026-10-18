@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from app.action_reply_storage import _source_declaration
+from app.action_reply_storage import _fingerprint, _source_declaration
 from app.action_skill_config_storage import insert_skill_receipt
 from app.action_storage import _objects, create_action_schema, insert_action, _current_objects
 from app.configs_schema_release import (
@@ -49,10 +49,11 @@ def install_observations(db, variant):
 
 
 @contextmanager
-def source(variant='actual_email52', action_variant='actual_no_memory_fk'):
+def source(variant='actual_email52', action_variant='actual_no_memory_fk',
+           observation_variant=None):
     with native(variant) as db:
         base = variant.split('_')[0]
-        install_observations(db, base)
+        install_observations(db, observation_variant or base)
         create_task_schema(db, include_workbench=True)
         create_run_schema(db, include_workbench=True)
         create_current_email_classifications(db)
@@ -84,6 +85,24 @@ def test_release_entry_points_exist():
     assert callable(capture_config_source)
     assert callable(migrate_config_schema)
     assert callable(restore_config_schema)
+
+
+@pytest.mark.parametrize('config_variant', ('actual_email52', 'fresh_email52'))
+@pytest.mark.parametrize('observation_variant', ('actual', 'fresh'))
+def test_observation_declaration_is_independent_of_config_layout(
+    config_variant, observation_variant
+):
+    with source(config_variant, observation_variant=observation_variant) as db:
+        captured = capture_config_source(db)
+        assert captured['configs']['variant'] == config_variant
+        assert _fingerprint(captured['observations']) == _fingerprint(
+            _source_declaration(db, OBS)
+        )
+        migrate_config_schema(db, captured)
+        restore_config_schema(db, captured)
+        assert _fingerprint(_source_declaration(db, OBS)) == _fingerprint(
+            captured['observations']
+        )
 
 
 @pytest.mark.parametrize('variant', ('actual', 'fresh'))
@@ -180,7 +199,7 @@ def test_midcopy_failure_requires_caller_rollback(monkeypatch):
         metadata = capture_config_source(db)
         before = {name: _source_declaration(db, name) for name in (*SOURCE_TABLES, OBS)}
         db.execute('savepoint release_attempt')
-        monkeypatch.setattr(transfer, 'insert_skill_receipt',
+        monkeypatch.setattr(transfer, '_copy_skill_receipt_row',
                             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                                 sqlite3.IntegrityError('synthetic interruption')))
         with pytest.raises(sqlite3.IntegrityError, match='interruption'):

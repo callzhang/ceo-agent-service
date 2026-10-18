@@ -2,9 +2,9 @@ from app.action_email_definitions import _encoded_value, _encoded_value_check
 
 SKILL_RECEIPT_KINDS = ("managed_skill_export_receipts", "runtime_skill_load_receipts")
 
-def skill_receipt_schema_parts():
+def skill_receipt_schema_parts(*, payloads=None):
     def value(field):
-        return _encoded_value("payload_json", "$." + field)
+        return payloads.field_value(field, SKILL_RECEIPT_KINDS) if payloads else _encoded_value("payload_json", "$." + field)
     generated = (
         f"skill_revision_id integer generated always as (case when record_type='managed_skill_export_receipts' then {value('revision_id')} end) virtual",
         f"skill_sha256 text generated always as (case when record_type='managed_skill_export_receipts' then {value('sha256')} end) virtual",
@@ -19,9 +19,13 @@ def skill_receipt_schema_parts():
         "skill_config_public_key text generated always as (cast(skill_config_id as text)) virtual",
     )
     physical = ("skill_revision_ref integer", "runtime_config_ref integer")
+    export_shape = (payloads.shape("managed_skill_export_receipts") if payloads else
+                    "json_remove(payload_json,'$.revision_id','$.sha256','$.path','$.created_at')='{}'")
+    load_shape = (payloads.shape("runtime_skill_load_receipts") if payloads else
+                  "json_remove(payload_json,'$.config_id','$.pid','$.error','$.created_at')='{}'")
     checks = (
-        "check(record_type<>'managed_skill_export_receipts' or (skill_revision_ref is not null and skill_revision_id is not null and skill_sha256 is not null and skill_path is not null and skill_created_at is not null and json_remove(payload_json,'$.revision_id','$.sha256','$.path','$.created_at')='{}'))",
-        "check(record_type<>'runtime_skill_load_receipts' or (runtime_config_ref is not null and skill_config_id is not null and skill_pid>0 and skill_error is not null and skill_created_at is not null and json_remove(payload_json,'$.config_id','$.pid','$.error','$.created_at')='{}'))",
+        "check(record_type<>'managed_skill_export_receipts' or (skill_revision_ref is not null and skill_revision_id is not null and skill_sha256 is not null and skill_path is not null and skill_created_at is not null and " + export_shape + "))",
+        "check(record_type<>'runtime_skill_load_receipts' or (runtime_config_ref is not null and skill_config_id is not null and skill_pid>0 and skill_error is not null and skill_created_at is not null and " + load_shape + "))",
         "check(record_type in ('managed_skill_export_receipts','runtime_skill_load_receipts') or (skill_revision_ref is null and runtime_config_ref is null))",
         "check(record_type<>'managed_skill_export_receipts' or runtime_config_ref is null)",
         "check(record_type<>'runtime_skill_load_receipts' or skill_revision_ref is null)",
@@ -29,7 +33,7 @@ def skill_receipt_schema_parts():
         "foreign key(runtime_config_ref,skill_config_kind,skill_config_public_key) references configs(id,record_type,public_key)",
     )
     checks += tuple(
-        f"check(record_type<>'{kind}' or {_encoded_value_check('payload_json', '$.' + field)})"
+        f"check(record_type<>'{kind}' or " + (payloads.check(kind, field) if payloads else _encoded_value_check("payload_json", "$." + field)) + ")"
         for kind, fields in (
             ("managed_skill_export_receipts", ("revision_id", "sha256", "path", "created_at")),
             ("runtime_skill_load_receipts", ("config_id", "pid", "error", "created_at")),

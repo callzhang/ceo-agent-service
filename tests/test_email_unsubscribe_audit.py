@@ -11,6 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.task8_storage import task8_set_parts
+from app.task20_definitions import task20_column
+
 import app.agent_cli as agent_cli
 from app.action_storage import insert_action, update_action, update_email_action
 from app.agent_contracts import ProposedAction
@@ -1474,10 +1477,14 @@ def test_accepted_entry_can_be_one_of_multiple_projected_entries(
         }
     )
     with sqlite3.connect(fixture.email_store.path) as db:
+        parts = task8_set_parts("reply_task_inputs", {
+            "trigger_message_json": json.dumps(payload, sort_keys=True),
+        })
         db.execute(
-            "update tasks set trigger_message_json=? "
-            "where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-            (json.dumps(payload, sort_keys=True), fixture.task.id),
+            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
+            f"and id=(select current_input_id from tasks where record_type='reply_tasks' "
+            f"and {task20_column('reply_tasks', 'id')}=?)",
+            (*parts.parameters, fixture.task.id),
         )
 
     result = fixture.operation.execute(
@@ -1773,10 +1780,14 @@ def test_identity_tampering_is_rejected_before_browser_execution(
         else:
             payload["action_plan_id"] = "email-action-plan:tampered"
         with sqlite3.connect(fixture.email_store.path) as db:
+            parts = task8_set_parts("reply_task_inputs", {
+                "trigger_message_json": json.dumps(payload, sort_keys=True),
+            })
             db.execute(
-                "update tasks set trigger_message_json=? "
-                "where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-                (json.dumps(payload, sort_keys=True), fixture.task.id),
+                f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
+                f"and id=(select current_input_id from tasks where record_type='reply_tasks' "
+                f"and {task20_column('reply_tasks', 'id')}=?)",
+                (*parts.parameters, fixture.task.id),
             )
     else:
         action["action_identity"] = "email-action:" + "0" * 64

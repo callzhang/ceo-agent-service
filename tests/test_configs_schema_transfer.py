@@ -180,7 +180,7 @@ def test_mid_copy_failure_leaves_rollback_to_caller(target, monkeypatch):
         baseline = facts(source, metadata)
         def fail_receipt(*args, **kwargs):
             raise sqlite3.IntegrityError('copy interruption')
-        monkeypatch.setattr(transfer, 'insert_skill_receipt', fail_receipt)
+        monkeypatch.setattr(transfer, '_copy_skill_receipt_row', fail_receipt)
         with pytest.raises(sqlite3.IntegrityError, match='interruption'):
             copy_config_rows(source, target, metadata)
         assert target.in_transaction

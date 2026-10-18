@@ -2,6 +2,7 @@
 
 import sqlite3
 
+
 from app.email_classification_schema import create_current_email_classifications
 from app.provider_state_definitions import PROVIDER_STATE_DDL, PROVIDER_STATE_INDEXES
 from app.email_category_config import (
@@ -430,7 +431,9 @@ def create_current_email_runtime_schema(db: sqlite3.Connection) -> None:
     from app.email_store import _REQUIRED_TRIGGER_SQL, _REQUIRED_TRIGGER_TABLES
     from app.provider_state_storage import create_provider_state_schema
 
-    retired = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, *RUN11_NEW_KINDS, "email_training_snapshot_observations"}
+    retired = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, *RUN11_NEW_KINDS,
+               "email_training_snapshot_observations",
+               "email_historical_classification_history", "email_historical_operations"}
     create_current_email_classifications(db)
     for name, sql in _CURRENT_TABLE_SQL:
         if name not in retired:
@@ -453,3 +456,21 @@ def create_current_email_runtime_schema(db: sqlite3.Connection) -> None:
 def create_current_email_migration_ledger(db: sqlite3.Connection) -> None:
     """Create an empty ledger declaration; release coordination owns rows."""
     _create_missing(db, "table", "email_schema_migrations", _LEDGER_SQL)
+
+
+def current_canonical_email_parent_is_current(db: sqlite3.Connection) -> bool:
+    """Accept only the selected physical Email parent and its exact auxiliaries."""
+    from app.action_task_delivery_storage import _hash, _source_declaration
+    from app.email_canonical_storage import _target_hash
+    from app.email_store import _schema_identifier
+    declaration = _source_declaration(db, "emails")
+    for _, name, owner, _ in declaration["objects"]:
+        _schema_identifier(name, field="sqlite_master object name")
+        _schema_identifier(owner, field="sqlite_master object owner")
+    return (
+        _hash(declaration) == _target_hash()
+        and db.execute(
+            "select 1 from main.sqlite_schema where name in "
+            "('email_classifications','email_messages') limit 1"
+        ).fetchone() is None
+    )

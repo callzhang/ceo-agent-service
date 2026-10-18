@@ -17,6 +17,7 @@ from app.task8_storage import (
 from app.task20_definitions import (
     create_task20_schema,
     task20_column,
+    TASK20_LAYOUTS,
     task20_projection,
 )
 from tests.test_task20_definitions import insert as seed_target, payload
@@ -658,7 +659,7 @@ def test_work_summary_upsert_copies_business_leaf_not_container(pair):
     target_insert(target, kind, revised, tail=tail, parameters=parts.parameters)
     row = compare(native, target, kind)[0]
     assert row["payload_json"] == '{"new":"body"}'
-    outer = json.loads(
-        target.execute("select payload_json from tasks where id=1").fetchone()[0]
+    outer = TASK20_LAYOUTS[kind].unpack(
+        target.execute("select json(payload_json) from tasks where id=1").fetchone()[0]
     )
     assert outer["payload_json"] == '{"new":"body"}'

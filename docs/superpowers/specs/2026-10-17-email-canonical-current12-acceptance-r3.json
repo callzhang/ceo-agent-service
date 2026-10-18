@@ -1,0 +1,14 @@
+{
+  "recorded_at": "2026-10-18T03:20:58.907634+00:00",
+  "status": "local_frozen_caller_accepted",
+  "freeze_sha256": "cde6ccbbaa887f79be2212738424ba8b2ffd78e7672390485f6119ee7160ca4b",
+  "acceptance_basis": "R2caller SPEC/QUALITY +freshtest-only SPEC/QUALITY +freshscopedruntime SPEC/QUALITY with independent5case execution; exact scope and unchanged input verification",
+  "prior_caller_acceptance_sha256": "a8ead92db26ddb4898112314d0f5288340585d76828f1d4426a21ceb803c2c69",
+  "test_only_acceptance_sha256": "7ad95cd3a5693e7851d1cfbf5b8a868b7531c716bd75a3d369a767e8852c363d",
+  "runtime_acceptance_sha256": "f0d03da6faaa891ebf0662f800a6245fe9a274e5bc82174dc371d89b8ee648e6",
+  "runtime_independent_passed": 5,
+  "whole_file_green": false,
+  "actual_copy_accepted": false,
+  "capacity_accepted": false,
+  "deployed": false
+}

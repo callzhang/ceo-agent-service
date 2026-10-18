@@ -9,6 +9,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import closing
+from itertools import islice
 
 from app import action_storage as storage
 from app.action_reply_storage import _source_declaration
@@ -239,8 +240,22 @@ def _set_sequence(db, name, value):
 
 
 def _insert_rows(db, table, columns, rows):
-    db.executemany(f"insert into main.{_quote(table)}({','.join(map(_quote, columns))}) "
-                   f"values({','.join('?' for _ in columns)})", rows)
+    """Copy complete stored rows in native-limit batches, in the caller's txn.
+
+    Rebuilding the typed Actions graph per row resets SQLite's constant IN
+    subqueries and temporary cursors. A VALUES batch reuses them without changing
+    bound source values, row order or transaction ownership. This is migration
+    transfer only; queue/native point writers retain their own statement rules.
+    """
+    prefix = f"insert into main.{_quote(table)}({','.join(map(_quote, columns))}) values"
+    group = "(" + ",".join("?" for _ in columns) + ")"
+    # Retain native preparation/implicit-BEGIN behavior even for an empty copy.
+    db.executemany(prefix + group, ())
+    limit = max(1, db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) // len(columns))
+    source = iter(rows)
+    while batch := tuple(islice(source, limit)):
+        values = tuple(value for row in batch for _, value in zip(columns, row, strict=True))
+        db.execute(prefix + ",".join(group for _ in batch), values)
 
 
 def _target_external_sql():

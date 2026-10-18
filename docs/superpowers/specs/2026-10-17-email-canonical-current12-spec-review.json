@@ -1,0 +1,31 @@
+{
+  "recorded_at": "2026-10-18T01:56:37.346127+00:00",
+  "status": "spec_approved_quality_pending",
+  "freeze": "docs/superpowers/specs/2026-10-17-email-canonical-current12-freeze.json",
+  "freeze_sha256": "9067d11e97e22b951b9cfb7bbbd11fae155c08c1edd5724ee4e2cf0db85b396f",
+  "reviewer": "/root/email_canonical_current12_spec",
+  "review_result": "APPROVE",
+  "focused_synthetic_tests": {
+    "passed": 5,
+    "elapsed_seconds": 179.17,
+    "coverage": [
+      "mixed-parent refusal before mutation",
+      "rescan preserves business snapshot",
+      "direct action transaction rollback",
+      "classification without message refusal for both source fixture variants"
+    ]
+  },
+  "reviewer_before_after_pins": {
+    "delivery": 20,
+    "requirements": 32,
+    "python_runtime": 373,
+    "json_assets": 12,
+    "all_unchanged": true
+  },
+  "root_reverified": true,
+  "quality_reviewer": "/root/email_canonical_current12_quality",
+  "actual_data_copy_accepted": false,
+  "capacity_accepted": false,
+  "deployed": false,
+  "scope": "Frozen local caller integration SPEC only; quality, actual copy, capacity, latest-main integration and deployment remain separate."
+}

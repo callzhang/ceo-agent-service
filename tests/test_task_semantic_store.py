@@ -319,6 +319,7 @@ def insert_row(db, table, values):
         "business_projects": "project",
         "business_anchors": "anchor",
         "business_project_context_revisions": "project_context_revision",
+        "business_work_clusters": "work_cluster",
     }.get(table)
     if kind is not None:
         if not db.in_transaction:
@@ -343,6 +344,7 @@ def read_record_row(db, table):
         "business_projects": "project",
         "business_anchors": "anchor",
         "business_project_context_revisions": "project_context_revision",
+        "business_work_clusters": "work_cluster",
     }.get(table)
     relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None else table
     row = db.execute(f"select * from {relation} limit 1").fetchone()
@@ -379,6 +381,7 @@ def current_rows(db, table):
         "business_projects": "project",
         "business_anchors": "anchor",
         "business_project_context_revisions": "project_context_revision",
+        "business_work_clusters": "work_cluster",
     }.get(table)
     relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None else table
     ordering = "id" if kind is not None else "rowid"
@@ -576,7 +579,7 @@ def test_nonblank_text_preserves_surrounding_whitespace(store, table, column, co
         assert model_for(table).model_validate(dict(row)) == expected
 
 
-@pytest.mark.parametrize("table", ROWS)
+@pytest.mark.parametrize("table", (name for name in ROWS if name != "business_legacy_links"))
 def test_schema_manifest_and_complete_record_columns(store, table):
     expected = set(ROWS[table][1])
     if table == "business_task_signals":
@@ -590,12 +593,16 @@ def test_schema_manifest_and_complete_record_columns(store, table):
             "business_tasks": "task",
             "business_projects": "project",
             "business_anchors": "anchor",
+            "business_work_clusters": "work_cluster",
         }.get(table)
         if kind is not None:
             actual = {column[0] for column in db.execute(
                 f"select * from ({BUSINESS_PROJECTIONS[kind]}) limit 0"
             ).description}
-            assert business_schema_is_current(db)
+            assert business_schema_is_current(
+                db, include_followup_sync=True, include_candidates=True,
+                include_business_actions=True, inline_legacy_owner=True,
+            )
         else:
             actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected
@@ -618,7 +625,7 @@ def test_every_table_has_a_frozen_extra_forbid_record(table):
         cls.model_validate(dict(values, unexpected="silent data loss"))
 
 
-@pytest.mark.parametrize("table", ROWS)
+@pytest.mark.parametrize("table", (name for name in ROWS if name != "business_legacy_links"))
 def test_sqlite_rows_round_trip_through_their_records(store, table):
     with store._connect() as db:
         seed_references(db)
@@ -690,6 +697,7 @@ def test_approved_enum_vocabulary(name, values):
 
 
 def test_signal_preserves_original_evidence_and_provenance(store):
+    from app.business_source_reader import AvailableSource
     values = dict(ROWS["business_task_signals"][1])
     values.pop("id")
     values.pop("created_at")
@@ -698,9 +706,14 @@ def test_signal_preserves_original_evidence_and_provenance(store):
     signal_id = store.create_business_task_signal(**values, now=NOW)
     signal = store.get_business_task_signal(signal_id)
     assert signal is not None
-    assert signal.model_dump(mode="json") == dict(
-        values, id=signal_id, source_document_id=signal.source_document_id, created_at=STAMP
-    )
+    assert "evidence_text" not in vars(signal)
+    assert signal.id == signal_id and signal.created_at == STAMP
+    assert all(getattr(signal, key) == value for key, value in values.items()
+               if key != "evidence_text")
+    original = store.business_source_reader().resolve(signal.source)
+    assert isinstance(original, AvailableSource)
+    assert original.body == values["evidence_text"]
+    assert signal.source.body_utf8_bytes == len(original.body.encode("utf-8"))
     assert store.get_business_task_signal(signal.id) == signal
     assert store.get_business_task_signal(999) is None
     with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
@@ -965,7 +978,8 @@ def test_record_rejects_invalid_domain_states(table, changes):
         model_for(table).model_validate(dict(ROWS[table][1], **changes))
 
 
-@pytest.mark.parametrize(("table", "changes"), INVALID_ROWS)
+@pytest.mark.parametrize(("table", "changes"),
+                         (item for item in INVALID_ROWS if item[0] != "business_legacy_links"))
 def test_sqlite_rejects_invalid_domain_states(store, table, changes):
     # FKs are tested separately so a dangling reference cannot conceal a missing
     # CHECK constraint and make an invalid-state test pass for the wrong reason.
@@ -1039,7 +1053,7 @@ FOREIGN_KEYS = {
 }
 
 
-@pytest.mark.parametrize("table", FOREIGN_KEYS)
+@pytest.mark.parametrize("table", (name for name in FOREIGN_KEYS if name != "business_legacy_links"))
 def test_every_semantic_reference_has_a_foreign_key(store, table):
     with store._connect() as db:
         if table in {"business_tasks", "business_projects"}:
@@ -1065,7 +1079,8 @@ def test_every_semantic_reference_has_a_foreign_key(store, table):
         }
     expected = {
         column: "business" if parent in {
-            "business_tasks", "business_projects", "business_anchors"
+            "business_tasks", "business_projects", "business_anchors",
+            "business_work_clusters",
         } else parent
         for column, parent in FOREIGN_KEYS[table].items()
     }
@@ -1076,7 +1091,7 @@ def test_every_semantic_reference_has_a_foreign_key(store, table):
     ("table", "column"),
     [
         (table, column)
-        for table, columns in FOREIGN_KEYS.items()
+        for table, columns in FOREIGN_KEYS.items() if table != "business_legacy_links"
         for column in columns
         if column != "anchor_type"
     ],
@@ -1085,19 +1100,6 @@ def test_foreign_keys_reject_dangling_references(store, table, column):
     values = dict(ROWS[table][1])
     if "id" in values:
         values["id"] = 3
-    if table == "business_legacy_links":
-        endpoints = ("work_project_id", "work_todo_id", "work_update_id")
-        if column not in endpoints:
-            endpoints = (
-                "signal_id",
-                "task_id",
-                "cluster_id",
-                "anchor_id",
-                "project_id",
-                "project_candidate_id",
-                "attention_item_id",
-            )
-        values.update({key: None for key in endpoints})
     if column == "merged_into_task_id":
         values["status"] = "merged"
     if column in {"confirmed_project_id", "confirmation_signal_id"}:
@@ -1115,6 +1117,21 @@ def test_foreign_keys_reject_dangling_references(store, table, column):
         seed_references(db)
         with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
             insert_row(db, table, values)
+
+
+def test_inline_work_todo_import_owner_has_typed_task_fk(store):
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=on")
+        insert_business(db, "task", {"id": 31, "title": "formal", "stage": "candidate"})
+        insert_business(db, "work_project", {"id": 7, "title": "legacy project"})
+        insert_business(db, "work_todo", {"id": 11, "project_id": 7, "title": "legacy todo"})
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            db.execute("update business set import_task_id=999 where record_type='work_todo' and public_id=11")
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            db.execute("update business set import_task_id=31 where record_type='work_project' and public_id=7")
+        db.execute("update business set import_task_id=31 where record_type='work_todo' and public_id=11")
+        assert db.execute("select import_task_id from business where record_type='work_todo' "
+                          "and public_id=11").fetchone()[0] == 31
 
 
 def test_official_project_requires_an_existing_project_anchor(store):
@@ -1137,7 +1154,6 @@ def test_official_project_requires_an_existing_project_anchor(store):
         "business_task_anchor_links",
         "business_attention_tasks",
         "business_attention_proposal_tasks",
-        "business_legacy_links",
     ],
 )
 def test_membership_and_provenance_links_are_unique(store, table):
@@ -1194,7 +1210,6 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
         "idx_business_attention_tasks_task",
         "idx_business_attention_proposal_tasks_task",
         "idx_business_attention_events_item",
-        "idx_business_legacy_links_task",
     }
     with store._connect() as db:
         actual = {
@@ -1231,6 +1246,7 @@ def signal_input(**changes):
 
 
 def test_distinct_task_signals_share_one_exact_source_body(store):
+    from app.business_source_reader import AvailableSource
     first_id = store.create_business_task_signal(**signal_input(), now=NOW)
     with store.business_task_transaction() as db:
         second_id = store.create_business_task_signal_in_transaction(
@@ -1250,7 +1266,11 @@ def test_distinct_task_signals_share_one_exact_source_body(store):
     assert first.dedupe_key != second.dedupe_key
     assert second.conversation_title == "另一任务的标题"
     assert second.context_json == '{ "task_context": "另一项任务" }'
-    assert first.evidence_text == second.evidence_text == signal_input()["evidence_text"]
+    assert "evidence_text" not in vars(first) and "evidence_text" not in vars(second)
+    assert first.source == second.source
+    original = store.business_source_reader().resolve(first.source)
+    assert isinstance(original, AvailableSource)
+    assert original.body == signal_input()["evidence_text"]
     assert store.list_business_task_signals() == (first, second)
     with store.business_task_transaction() as db:
         assert store.get_business_task_signal_by_dedupe_key(dedupe_key=second.dedupe_key, _db=db) == second
@@ -1258,7 +1278,7 @@ def test_distinct_task_signals_share_one_exact_source_body(store):
             task_id=second_task, source_ref=second.source_ref, _db=db,
         ) == second
         assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 1
-        assert db.execute("select body from business_source_documents").fetchone()[0] == first.evidence_text
+        assert db.execute("select body from business_source_documents").fetchone()[0] == original.body
         assert "evidence_text" not in {r["name"] for r in db.execute("pragma table_info(business_task_signals)")}
         assert db.execute("pragma foreign_key_check").fetchall() == []
     assert [(r.signal_id, r.evidence_role.value) for r in store.list_business_task_evidence(first_task)] == [(first_id, "assignment")]
@@ -1274,7 +1294,9 @@ def test_cited_provenance_does_not_share_observed_source_body(store, source_type
     cited = store.get_business_task_signal(cited_id)
     observed = store.get_business_task_signal(observed_id)
     assert cited.source_ref == observed.source_ref
-    assert cited.evidence_text == observed.evidence_text
+    assert cited.source.body_sha256 == observed.source.body_sha256
+    assert cited.source.body_utf8_bytes == observed.source.body_utf8_bytes
+    assert "evidence_text" not in vars(cited) and "evidence_text" not in vars(observed)
     assert cited.source_document_id != observed.source_document_id
     assert cited.source_type == source_type
     with store._connect() as db:

@@ -534,7 +534,7 @@ class RepositoryUpdater:
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
         publication: Callable[[], UpgradePublication] | None = None,
-        database_publication: Callable[[], UpgradePublication | None] | None = None,
+        database_publication: Callable[[Path | None], UpgradePublication | None] | None = None,
         pre_checkout_cleanup: Callable[[], None] | None = None,
     ) -> None:
         self.repository = GitRepository(repository_root)
@@ -586,7 +586,7 @@ class RepositoryUpdater:
                     category="upgrade_merge",
                 )
                 if self.database_publication is not None:
-                    database_release = self.database_publication()
+                    database_release = self.database_publication(backup_path)
                 self._persist(operation, "verifying", backup_path=backup_path)
                 self.dependency_sync()
                 if database_release is not None:
@@ -840,7 +840,7 @@ def main() -> int:
         wait_for_quiet=lambda: wait_until_quiet(Path(args.db)),
         stop=_default_stop,
         restart=_default_start,
-        database_publication=lambda: prepare_database_schema_release(repository_root, Path(args.db)),
+        database_publication=lambda backup: prepare_database_schema_release(repository_root, Path(args.db), recovery_source_path=backup),
         dependency_sync=lambda: build_frontend(repository_root, changed_paths()),
         verification=lambda: verify_imports(repository_root),
         health=lambda: wait_for_health(),

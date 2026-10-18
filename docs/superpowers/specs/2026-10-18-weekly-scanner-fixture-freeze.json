@@ -1,0 +1,20 @@
+{
+  "status": "test_fixture_awaiting_spec_then_quality",
+  "files": {
+    "tests/test_task_report_scanner.py": "c9afddd399cc5dc428666ccbe7ddc7589cc05143e3a0b0b73337193032d1ed36",
+    "docs/database-redesign-weekly-scanner-fixture-validation-20261018.md": "5018be27882611be78339afda584d46fc895d481e081ae74be5cf1c330a8c13a"
+  },
+  "requirement_pins": {
+    "app/task20_definitions.py": "1000c4baeaaad66444b75ceeba1264d626239647e0186c8ee839dfc089b91784",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/store.py": "ee189ee1b44316695aa9e3dc5ef0c948e4145b291c40f50ede7b7ce02c96e222",
+    "app/task_report_scanner.py": "470f4014322d5acbc6110042effd1ed0e40f2350f4fd2f5a909f799362864026"
+  },
+  "requirements": [
+    "test-only currentStore fixture uses same task20_projection work_summary_inputs as currentStore",
+    "alloriginalidempotency/pagecount/sourcekind/ref/title/payload/stateasserts preserved",
+    "no runtime/schema/sourcevalidationrelaxation or testskip",
+    "exact node RED source t.source_type then GREEN; failed intermediate task12 candidate recorded nothidden"
+  ],
+  "evidence_boundary": "Author exactnode1PASS42.69s, not independent QA or broader suite."
+}

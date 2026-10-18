@@ -3,7 +3,7 @@
 Frozen metadata is compiled here; runtime never reads source capture files.
 """
 
-from app.action_email_definitions import _encoded_value, _encoded_value_check
+from app.action_email_definitions import EMAIL_NUMERIC_SCOPE, _encoded_value, _encoded_value_check
 
 SYNC_FIELDS = {'work_updates': ('id',
                   'project_id',
@@ -675,9 +675,47 @@ SYNC_FRESH_FIELDS = {
     "work_todo_dingtalk_links": ("id", "work_todo_id", "dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count", "created_at", "updated_at"),
 }
 SYNC_EXTERNAL_FKS = {"business_task_id": "business_tasks", "source_signal_id": "business_task_signals"}
+SYNC_BUSINESS_PUBLIC_ID_FKS = {
+    "business_task_id": ("business", "task_public_id"),
+    "task_id": ("business", "task_public_id"),
+}
 
-def sync_schema_parts(existing_references, reply_variant):
-    """Return nine-family generated columns, checks, FKs, indexes and triggers."""
+# Task Events are an exact extension of the reviewed source set. The default
+# schema stays on the Email scaffold; paired releases can opt into Business
+# public-ID parent keys after migrating the Business parent table.
+SYNC_FIELDS["business_task_events"] = (
+    "id", "task_id", "event_type", "signal_id", "before_json", "after_json", "reason", "created_at",
+)
+SYNC_TYPES.update({
+    "task_id": "integer", "event_type": "text", "signal_id": "integer",
+    "before_json": "text", "after_json": "text", "reason": "text",
+})
+SYNC_REQUIRED["business_task_events"] = (
+    "task_id", "event_type", "before_json", "after_json", "reason", "created_at",
+)
+SYNC_SOURCE_CHECKS["business_task_events"] = (
+    "sync_event_type in ('created','promoted','commitment_changed','owner_changed',"
+    "'deadline_changed','date_evidence_recorded','status_changed','relevance_changed',"
+    "'details_changed','fields_changed','merged')",
+    "json_valid(sync_before_json) and json_type(sync_before_json)='object'",
+    "json_valid(sync_after_json) and json_type(sync_after_json)='object'",
+    "trim(sync_reason, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288))<>''",
+)
+SYNC_SOURCE_INDEXES["business_task_events"] = (
+    (False, (("task_id", False), ("created_at", False), ("id", False)), None),
+)
+SYNC_SOURCE_FKS["business_task_events"] = (
+    ("task_id", "business_tasks"), ("signal_id", "business_task_signals"),
+)
+for _source_variant in ("actual", "fresh_candidate"):
+    SYNC_DEFAULTS[_source_variant]["business_task_events"] = {"created_at": "current_timestamp"}
+SYNC_FRESH_FIELDS["business_task_events"] = SYNC_FIELDS["business_task_events"]
+SYNC_EXTERNAL_FKS.update({"task_id": "business_tasks", "signal_id": "business_task_signals"})
+SYNC_TYPES_ORDER = tuple(SYNC_FIELDS)
+
+def sync_schema_parts(existing_references, reply_variant, *, business_public_ids=False,
+                      business_action_signals=False, inline_legacy_owner=False, payloads=None):
+    """Return generated columns, checks, FKs, indexes and triggers for sync actions."""
     generated = []
     for field, affinity in SYNC_TYPES.items():
         if field == "draft_id":
@@ -688,7 +726,8 @@ def sync_schema_parts(existing_references, reply_variant):
         scope = ",".join(repr(kind) for kind in kinds)
         generated.append(
             f"sync_{field} {affinity} generated always as "
-            f"(case when record_type in ({scope}) then {_encoded_value('payload_json', '$.' + field)} end) virtual"
+            f"(case when record_type in ({scope}) then "
+            + (payloads.field_value(field, kinds) if payloads else _encoded_value("payload_json", "$." + field)) + " end) virtual"
         )
     generated.append("sync_draft_action_id integer references actions(id)")
     checks = []
@@ -696,8 +735,8 @@ def sync_schema_parts(existing_references, reply_variant):
         stored = tuple(field for field in fields if field != "id" and
                        not (kind == "business_task_follow_up_send_attempts" and field == "draft_id"))
         paths = ",".join(repr("$." + field) for field in stored)
-        parts = [_encoded_value_check("payload_json", "$." + field) for field in stored]
-        parts += [f"json_remove(payload_json,{paths})='{{}}'"]
+        parts = [payloads.check(kind, field) if payloads else _encoded_value_check("payload_json", "$." + field) for field in stored]
+        parts += [payloads.shape(kind) if payloads else f"json_remove(payload_json,{paths})='{{}}'"]
         parts += [f"sync_{field} is not null" for field in SYNC_REQUIRED[kind]
                   if not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")]
         if kind == "business_task_follow_up_send_attempts":
@@ -717,8 +756,15 @@ def sync_schema_parts(existing_references, reply_variant):
                   "sync_draft_action_id is not null)")
     checks.append("check(record_type='business_task_follow_up_send_attempts' or "
                   "sync_draft_action_id is null)")
-    fks = [f"foreign key(sync_{field}) references {parent}(id)"
-           for field, parent in SYNC_EXTERNAL_FKS.items()]
+    fks = []
+    for field, parent in SYNC_EXTERNAL_FKS.items():
+        target = (SYNC_BUSINESS_PUBLIC_ID_FKS.get(field)
+                  if business_public_ids else None)
+        if business_action_signals and field in ("source_signal_id", "signal_id"):
+            target = ("actions", "business_signal_public_id")
+        if target is None:
+            target = (parent, "id")
+        fks.append(f"foreign key(sync_{field}) references {target[0]}({target[1]})")
     indexes = []
     for kind, source_indexes in SYNC_SOURCE_INDEXES.items():
         for ordinal, (unique, keys, predicate) in enumerate(source_indexes):
@@ -748,10 +794,17 @@ def sync_schema_parts(existing_references, reply_variant):
         "and exists(select 1 from actions c where c.record_type='business_task_follow_up_send_attempts' "
         "and c.sync_draft_action_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
     ]
+    if business_public_ids and not inline_legacy_owner:
+        triggers.append(
+            "create trigger trg_sync_legacy_update_public_id before update of legacy_key on actions "
+            "when old.record_type='work_updates' and new.legacy_key<>old.legacy_key and "
+            "exists(select 1 from business_legacy_links l where l.work_update_id=old.id) "
+            "begin select raise(abort,'FOREIGN KEY constraint failed'); end"
+        )
     return generated, checks, fks, indexes, triggers
 
 
-def sync_action_projection(kind, *, source_variant="actual"):
+def sync_action_projection(kind, *, source_variant="actual", indexed_public_id=False):
     if kind not in SYNC_FIELDS:
         raise ValueError(f"unsupported follow-up/Todo kind: {kind}")
     if source_variant not in ("actual", "fresh_candidate"):
@@ -765,7 +818,9 @@ def sync_action_projection(kind, *, source_variant="actual"):
         columns.append(f"{expression} as {field}")
     join = ("join actions p on p.id=a.sync_draft_action_id "
             "and p.record_type='business_task_follow_ups'" if kind == "business_task_follow_up_send_attempts" else "")
-    return f"select {','.join(columns)} from actions a {join} where a.record_type='{kind}'"
+    source = (f"(select * from actions where {EMAIL_NUMERIC_SCOPE})"
+              if indexed_public_id else "actions")
+    return f"select {','.join(columns)} from {source} a {join} where a.record_type='{kind}'"
 
 
 SYNC_ACTION_PROJECTIONS = {kind: sync_action_projection(kind) for kind in SYNC_FIELDS}

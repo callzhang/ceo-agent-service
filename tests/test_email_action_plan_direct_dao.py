@@ -675,12 +675,18 @@ def test_completion_rechecks_cas_after_insert_and_rolls_back_entire_transaction(
 
 
 def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
-    converted_pair,
+    converted_pair, tmp_path,
 ):
     import json
+    from app.email_store import EmailStore
+    from tests.test_email_store import _persist_scan, _task2_account_values
 
-    store, classification, _, _, _ = converted_pair
+    _, classification, _, _, _ = converted_pair
     expected = _genuine_old_result(converted_pair, _retired_current_poll)
+    store = EmailStore(tmp_path / "selected-current12.sqlite3")
+    store._now = lambda: "2026-10-14T10:00:00+00:00"
+    _persist_scan(store, classification)
+    store.create_account(_task2_account_values("dingtalk-account", enabled=False))
     current = _normalized(_retired_current_poll(store, classification))
     assert current == expected
 

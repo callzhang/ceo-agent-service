@@ -1,0 +1,16 @@
+{
+  "status": "harness_syntax_regression_passed",
+  "raw_old_child_reproduces_indentation_failure": true,
+  "dedented_children_compile": [
+    "old_program",
+    "program"
+  ],
+  "child_AST_matches_v13": [
+    "old_program",
+    "program"
+  ],
+  "database_access": false,
+  "runtime_edits": false,
+  "full_copy_accepted": false,
+  "next_draft": "email_canonical_actual_copy_UNEXECUTABLE_v16"
+}

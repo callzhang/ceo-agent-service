@@ -12,6 +12,7 @@ from app.business_definitions import (
     BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_FIELDS, BUSINESS_INDEX_DDL,
     BUSINESS_PROJECTIONS, BUSINESS_REFERENCES, BUSINESS_TABLE_DDL,
     BUSINESS_TRIGGER_DDL, business_payload_fields,
+    _definitions,
 )
 
 
@@ -21,9 +22,11 @@ class BusinessWriteResult:
     rowcount: int
 
 
-def create_business_schema(db: sqlite3.Connection):
+def create_business_schema(db: sqlite3.Connection, *, include_candidates: bool = False):
     """Install declarations only; caller owns BEGIN/commit/rollback."""
-    for sql in (BUSINESS_TABLE_DDL, *BUSINESS_INDEX_DDL, *BUSINESS_TRIGGER_DDL):
+    table, indexes, triggers = (_definitions(include_candidates=True) if include_candidates else
+                                (BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL))
+    for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 

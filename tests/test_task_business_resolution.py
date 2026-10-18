@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.action_business_definitions import business_action_projection
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import (
@@ -205,7 +206,8 @@ def test_anchor_proposals_return_their_persisted_link_ids(resolver):
 
     with resolver.store._connect() as db:
         rows = db.execute(
-            "select id, anchor_id from business_task_anchor_links where task_id=? order by id",
+            f"select id, anchor_id from ({business_action_projection('business_task_anchor_links')}) "
+            "where task_id=? order by id",
             (task_id,),
         ).fetchall()
     assert first_link_id != second_link_id
@@ -326,9 +328,9 @@ def test_relation_proposal_can_be_confirmed_and_replayed_without_changing_identi
 
     with resolver.store._connect() as db:
         row = db.execute(
-            """select rowid, status, supporting_signal_id, reason
-               from business_task_relations
-               where from_task_id=? and to_task_id=? and relation_type=?""",
+            "select _source_rowid as rowid, status, supporting_signal_id, reason "
+            f"from ({business_action_projection('business_task_relations', include_rowid=True)}) "
+            "where from_task_id=? and to_task_id=? and relation_type=?",
             (first, second, BusinessRelationType.RELATED_TO.value),
         ).fetchone()
     assert row is not None
@@ -417,7 +419,8 @@ def test_confirm_anchor_match_rolls_back_link_relevance_and_event_together(
     assert resolver.store.list_business_task_events(task_id) == events_before
     with resolver.store._connect() as db:
         assert db.execute(
-            "select count(*) from business_task_anchor_links where task_id=? and anchor_id=?",
+            f"select count(*) from ({business_action_projection('business_task_anchor_links')}) "
+            "where task_id=? and anchor_id=?",
             (task_id, anchor_id),
         ).fetchone()[0] == 0
 

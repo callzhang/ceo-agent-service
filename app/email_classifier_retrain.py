@@ -835,32 +835,6 @@ def evaluate_retrain(
     return RetrainDecision(True, "label_change_threshold", pending)
 
 
-def retrain_if_due(
-    store: EmailStore,
-    state: RetrainState,
-    active_path: str | Path,
-    previous_path: str | Path,
-    *,
-    now: datetime,
-    model_version: str,
-    policy: RetrainPolicy = RetrainPolicy(),
-    c: float = 0.25,
-    minimum_examples: int = 5,
-    minimum_per_category: int = 2,
-) -> AutoRetrainResult:
-    """Deprecated path-based promotion entry point; Task 9 never activates models."""
-    feedback_count = len(store.list_training_examples())
-    decision = evaluate_retrain(
-        state,
-        feedback_count=feedback_count,
-        now=now,
-        policy=policy,
-    )
-    if decision.due:
-        decision = RetrainDecision(
-            False, "legacy_promotion_disabled", decision.pending_examples
-        )
-    return AutoRetrainResult(decision, state, None)
 
 
 def _format_timestamp(value: datetime) -> str:

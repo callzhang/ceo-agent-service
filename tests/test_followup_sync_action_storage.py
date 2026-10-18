@@ -27,12 +27,16 @@ def test_disabled_manifest_and_exact_field_projections(variant):
         snapshot = SOURCE["actual"] if variant == "actual_no_memory_fk" else SOURCE["fresh_production_constructor"]["snapshot"]
         actual = snapshot["tables"]
         source_variant = "actual" if variant == "actual_no_memory_fk" else "fresh_candidate"
-        assert SYNC_DEFAULTS[source_variant] == {
+        expected_defaults = {
             kind: {c["name"]: c["dflt_value"] for c in table["columns"] if c["dflt_value"] is not None}
             for kind, table in actual.items()
         }
+        expected_defaults["business_task_events"] = {"created_at": "current_timestamp"}
+        assert SYNC_DEFAULTS[source_variant] == expected_defaults
         if variant == "actual_no_memory_fk":
-            assert {kind: tuple(c["name"] for c in table["columns"]) for kind, table in actual.items()} == SYNC_FIELDS
+            assert {kind: tuple(c["name"] for c in table["columns"]) for kind, table in actual.items()} == {
+                kind: fields for kind, fields in SYNC_FIELDS.items() if kind in actual
+            }
         columns = {r[1] for r in db.execute("pragma table_xinfo(actions)")}
         assert {"sync_" + field for fields in SYNC_FIELDS.values() for field in fields if field != "id"} - {"sync_draft_id"} <= columns
         assert "sync_draft_action_id" in columns

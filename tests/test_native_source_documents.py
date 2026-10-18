@@ -232,3 +232,49 @@ def test_valid_but_partial_body_cannot_pass_full_body_digest(source):
     })
     with pytest.raises(LookupError, match="native source body version changed"):
         native_trajectory.read_native_source_body(provenance)
+
+
+@pytest.mark.parametrize("runtime", ["codex_cli", "claude_cli"])
+def test_locator_finds_existing_full_literal_only_in_recorded_turn(source, runtime):
+    path, expected = source(runtime)
+    before = path.read_bytes()
+    locator = native_trajectory.locate_native_source_body(
+        BODY, runtime_kind=runtime, session_uuid=SESSION, start_line=1, end_line=2,
+    )
+    assert native_trajectory.read_native_source_body(locator) == BODY
+    for name in ("leaf_path", "raw_line_sha256", "raw_line_bytes", "decoded_utf8_sha256",
+                 "decoded_utf8_bytes", "substring_start_character_zero_based",
+                 "substring_end_character_exclusive", "line_index_zero_based"):
+        assert locator[name] == expected[name]
+    assert BODY not in locator.values()
+    assert path.read_bytes() == before
+
+
+def test_locator_missing_full_body_does_not_accept_a_partial_quote(source):
+    path, _ = source(body="only a quote")
+    before = path.read_bytes()
+    with pytest.raises(native_trajectory.NativeSourceMissing):
+        native_trajectory.locate_native_source_body(
+            "only a quote plus more original", runtime_kind="codex_cli",
+            session_uuid=SESSION, start_line=1, end_line=2,
+        )
+    assert path.read_bytes() == before
+
+
+def test_locator_cannot_reuse_matching_body_outside_current_turn(source):
+    path, _ = source()
+    before, selected, _ = path.read_bytes().splitlines(keepends=True)
+    path.write_bytes(before + b'{"payload":{"content":[{"text":"different"}]}}\n' + selected)
+    with pytest.raises(native_trajectory.NativeSourceMissing):
+        native_trajectory.locate_native_source_body(
+            BODY, runtime_kind="codex_cli", session_uuid=SESSION, start_line=1, end_line=2,
+        )
+
+
+@pytest.mark.parametrize("start,end", [(True, 2), (-1, 2), (1, 1), (2, 1), (1, 2.0)])
+def test_locator_rejects_invalid_turn_bounds(source, start, end):
+    source()
+    with pytest.raises(ValueError):
+        native_trajectory.locate_native_source_body(
+            BODY, runtime_kind="codex_cli", session_uuid=SESSION, start_line=start, end_line=end,
+        )

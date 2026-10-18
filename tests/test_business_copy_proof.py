@@ -1,4 +1,4 @@
-"""Synthetic combined-copy proof for four Business kinds and retained children."""
+"""Synthetic combined-copy proof for nine Business kinds and retained children."""
 
 from contextlib import closing
 
@@ -15,9 +15,9 @@ def test_business_image_tracks_current_facts_through_inverse_and_reforward(varia
     with closing(_source_db(variant)) as db:
         _seed_complete_source(db)
         source = proof._business_source_image(db)
-        assert len(source["parents"]) == 4
+        assert len(source["parents"]) == 9
         assert len(source["children"]) == 15
-        assert len(source["parent_waters"]) + len(source["child_waters"]) == 13
+        assert len(source["parent_waters"]) + len(source["child_waters"]) == 18
         db.execute("begin immediate")
         inverse = migrate_business_schema(db)
         target = proof._business_target_image(db, variant)
@@ -86,7 +86,7 @@ def test_business_image_summary_exposes_counts_and_digest_only():
         source = proof._business_source_image(db)
         summary = proof._business_image_summary(source)
         assert summary["variant"] == "fresh"
-        assert len(summary["parent_counts"]) == 4
+        assert len(summary["parent_counts"]) == 9
         assert len(summary["child_counts"]) == 15
         assert len(summary["facts_sha256"]) == 64
         assert "rows" not in str(summary)

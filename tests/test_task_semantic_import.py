@@ -7,9 +7,13 @@ from dataclasses import replace
 import pytest
 
 import app.task_semantic_import as semantic_import
+from app.provenance_storage import signal_projection
+from app.action_business_definitions import business_action_projection
 from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
+from app.action_storage import update_sync_action
 from app.store import AutoReplyStore
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, task_physical_id
+from app.task8_storage import task8_set_parts
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_import import (
     apply_task_semantic_import_manifest,
@@ -25,8 +29,22 @@ def _rows(path, table):
             "business_tasks": "task", "business_projects": "project",
             "business_anchors": "anchor",
         }.get(table)
-        relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind else table
+        relation = (f"({BUSINESS_PROJECTIONS[kind]})" if kind else
+                    f"({signal_projection()})" if table == "business_task_signals" else table)
         return db.execute(f"select * from {relation} order by id").fetchall()
+
+
+def _mapping_rows(path):
+    with sqlite3.connect(path) as db:
+        return db.execute("select public_id,import_task_id from business "
+                          "where record_type='work_todo' and import_task_id is not null "
+                          "order by public_id").fetchall()
+
+
+def _update_business(path, kind, public_id, values):
+    with sqlite3.connect(path) as db:
+        db.execute("begin immediate")
+        update_business(db, kind, public_id, values)
 
 
 def _legacy_store(tmp_path):
@@ -38,6 +56,32 @@ def _legacy_store(tmp_path):
         summary="会议讨论了客户推进", changes_json="{}",
     )
     return store, project_id, todo_id, update_id
+
+
+def test_current_import_owner_is_inline_and_legacy_container_is_absent(tmp_path):
+    store = AutoReplyStore(tmp_path / "inline-owner.sqlite3")
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select 1 from sqlite_schema where name='business_legacy_links'"
+        ).fetchone() is None
+        assert "import_task_id" in {
+            row[1] for row in db.execute("pragma table_xinfo(business)")
+        }
+        assert "import_task_id" not in {
+            column[0] for column in db.execute(
+                f"select * from ({BUSINESS_PROJECTIONS['work_todo']}) limit 0"
+            ).description
+        }
+
+
+def test_reader_rejects_old_manifest_version_before_item_decode(tmp_path):
+    path = tmp_path / "old-manifest.json"
+    path.write_text(json.dumps({
+        "version": 2, "manifest_id": "old", "database_fingerprint": "old",
+        "created_at": "old", "items": [{"old_shape": True}],
+    }))
+    with pytest.raises(ValueError, match="unsupported task semantic import manifest version"):
+        read_task_semantic_import_manifest(path)
 
 
 def _source_backed_todo(store, *, basis, source_type, author_user_id,
@@ -96,21 +140,33 @@ def test_ambiguous_legacy_project_stays_unresolved_and_readable(tmp_path):
     assert item.legacy_todo_ids == (todo_id,)
     assert item.disposition == "history_only"
     assert item.semantic_task is None
-    assert item.official_project_registry_key == ""
     assert {item.legacy_kind for item in manifest.items} == {
         "work_projects", "work_todos", "work_updates"
     }
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
 
     result = apply_task_semantic_import_manifest(store.path, manifest)
     assert result.created == 0
     assert result.history_only == 3
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
     assert len(_rows(store.path, "business_task_signals")) == 0
     assert len(_rows(store.path, "business_tasks")) == 0
     assert store.get_work_project(project_id) is not None
     assert store.get_work_todo(todo_id) is not None
     assert store.list_work_updates(project_id)[0].id == update_id
+
+
+def test_history_only_work_update_never_reads_import_owner(tmp_path, monkeypatch):
+    store, _project_id, todo_id, update_id = _legacy_store(tmp_path)
+    assert todo_id == update_id  # Distinct source kinds share this public ID.
+    manifest = build_task_semantic_import_manifest(store.path)
+
+    def unexpected_owner_lookup(*_args):
+        raise AssertionError("history-only item queried the import owner")
+
+    monkeypatch.setattr(semantic_import, "read_import_task", unexpected_owner_lookup)
+    result = apply_task_semantic_import_manifest(store.path, manifest)
+    assert result.history_only == len(manifest.items)
 
 
 @pytest.mark.parametrize(
@@ -150,14 +206,16 @@ def test_formal_import_requires_exact_source_backed_basis(
         task = db.execute(
             f"select * from ({BUSINESS_PROJECTIONS['task']})"
         ).fetchone()
-        link = db.execute(
-            "select * from business_legacy_links where work_todo_id=?", (todo_id,)
+        owner = db.execute(
+            "select import_task_id from business where record_type='work_todo' and public_id=?",
+            (todo_id,),
         ).fetchone()
         assert task["stage"] == "formal"
         assert task["formal_basis"] == basis
-        assert link["task_id"] == task["id"]
+        assert owner["import_task_id"] == task["id"]
         assert db.execute(
-            "select count(*) from business_task_evidence where task_id=?", (task["id"],)
+            f"select count(*) from ({business_action_projection('business_task_evidence')}) "
+            "where task_id=?", (task["id"],)
         ).fetchone()[0] == 1
 
 
@@ -197,7 +255,9 @@ def test_compacted_source_is_explicitly_unavailable_for_semantic_import(tmp_path
     assert next(item for item in before.items if item.legacy_row_id == todo_id
                 and item.legacy_kind == "work_todos").disposition == "formal_task"
     with store._connect() as db:
-        input_id = db.execute(f"select id from ({WORK_SUMMARY_INPUT_SQL})").fetchone()["id"]
+        input_id = db.execute(
+            f"select id from ({semantic_import.WORK_SUMMARY_INPUT_SQL})"
+        ).fetchone()["id"]
     store.mark_work_summary_input_done(input_id)
     after = build_task_semantic_import_manifest(store.path)
     item = next(item for item in after.items if item.legacy_row_id == todo_id
@@ -236,35 +296,30 @@ def test_candidate_evidence_is_retained_in_history_not_promoted(tmp_path):
         assert db.execute(
             f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
         ).fetchone()[0] == 0
-        assert db.execute("select count(*) from business_task_signals").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({signal_projection()})"
+        ).fetchone()[0] == 0
 
 
-def test_official_project_requires_exact_pre_registered_registry_key(tmp_path):
+def test_cancelled_project_cache_does_not_create_official_registry_match(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
     resolution = BusinessResolutionService(store)
     anchor_id = resolution.register_anchor(
         anchor_type="project", anchor_ref="registry:quote", title="正式报价项目"
     )
-    official_id = resolution.register_official_project(
+    resolution.register_official_project(
         anchor_id=anchor_id, registry_source="registry"
     )
-    matched = store.create_work_project(
-        title="旧项目名称", memory_context_json=json.dumps(
-            {"official_project_registry_key": "registry:quote"}
-        ),
-    )
+    cached_only = store.create_work_project(title="旧项目名称")
     same_title = store.create_work_project(title="正式报价项目")
     manifest = build_task_semantic_import_manifest(store.path)
     by_id = {item.legacy_row_id: item for item in manifest.items}
-    assert by_id[matched].disposition == "official_project_match"
+    assert by_id[cached_only].disposition == "history_only"
     assert by_id[same_title].disposition == "history_only"
 
     apply_task_semantic_import_manifest(store.path, manifest)
     with sqlite3.connect(store.path) as db:
-        assert db.execute(
-            "select project_id from business_legacy_links where work_project_id=?",
-            (matched,),
-        ).fetchone()[0] == official_id
+        assert _mapping_rows(store.path) == []
         assert db.execute(
             f"select count(*) from ({BUSINESS_PROJECTIONS['project']})"
         ).fetchone()[0] == 1
@@ -276,7 +331,7 @@ def test_changed_source_fingerprint_rejects_before_first_write(tmp_path):
     store.update_work_todo(todo_id, title="被更改的任务")
     with pytest.raises(ValueError, match="fingerprint"):
         apply_task_semantic_import_manifest(store.path, manifest)
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
 
 
 def test_manifest_tampering_rejects_before_first_write(tmp_path):
@@ -286,7 +341,7 @@ def test_manifest_tampering_rejects_before_first_write(tmp_path):
     bad_manifest = replace(manifest, items=(bad_item, *manifest.items[1:]))
     with pytest.raises(ValueError, match="manifest|digest"):
         apply_task_semantic_import_manifest(store.path, bad_manifest)
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
 
 
 def test_limited_apply_reports_history_only_without_creating_links(tmp_path):
@@ -298,22 +353,17 @@ def test_limited_apply_reports_history_only_without_creating_links(tmp_path):
     rest = apply_task_semantic_import_manifest(store.path, manifest)
     assert rest.created == 0
     assert rest.history_only == len(manifest.items)
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
 
 
 def test_plan_limit_selects_recent_legacy_rows_first(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
     old_id = store.create_work_project(title="旧工作")
     new_id = store.create_work_project(title="近期工作")
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update work_projects set last_activity_at='2026-01-01 00:00:00' where id=?",
-            (old_id,),
-        )
-        db.execute(
-            "update work_projects set last_activity_at='2026-09-24 00:00:00' where id=?",
-            (new_id,),
-        )
+    _update_business(store.path, "work_project", old_id,
+                     {"last_activity_at": "2026-01-01 00:00:00"})
+    _update_business(store.path, "work_project", new_id,
+                     {"last_activity_at": "2026-09-24 00:00:00"})
     manifest = build_task_semantic_import_manifest(store.path, limit=1)
     assert manifest.items[0].legacy_row_id == new_id
 
@@ -326,7 +376,7 @@ def test_manifest_for_one_database_rejects_another_copy(tmp_path):
     manifest = build_task_semantic_import_manifest(source.path)
     with pytest.raises(ValueError, match="fingerprint"):
         apply_task_semantic_import_manifest(target.path, manifest)
-    assert len(_rows(target.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(target.path)) == 0
 
 
 def test_existing_link_to_different_semantic_object_is_not_idempotent(tmp_path):
@@ -343,11 +393,11 @@ def test_existing_link_to_different_semantic_object_is_not_idempotent(tmp_path):
     apply_task_semantic_import_manifest(store.path, manifest)
     with sqlite3.connect(store.path) as db:
         second_task_id = db.execute(
-            "select task_id from business_legacy_links where work_todo_id=?",
+            "select import_task_id from business where record_type='work_todo' and public_id=?",
             (second_todo_id,),
         ).fetchone()[0]
         db.execute(
-            "update business_legacy_links set task_id=? where work_todo_id=?",
+            "update business set import_task_id=? where record_type='work_todo' and public_id=?",
             (second_task_id, first_todo_id),
         )
     with pytest.raises(ValueError, match="conflicting legacy link"):
@@ -370,6 +420,60 @@ def test_bounded_apply_fingerprints_corpus_only_once(tmp_path, monkeypatch):
     assert calls == 1
 
 
+def test_apply_rechecks_each_source_by_point_lookup_after_preflight(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "legacy.sqlite3")
+    _source_backed_todo(
+        store, basis="explicit_assignment", source_type="reply_attempt",
+        author_user_id="assigner",
+    )
+    manifest = build_task_semantic_import_manifest(store.path)
+    original = semantic_import._rows
+
+    def refuse_whole_kind_read_in_writer(db, table):
+        if db.execute("pragma query_only").fetchone()[0] == 0:
+            raise AssertionError(f"whole-kind {table} materialized in writer")
+        return original(db, table)
+
+    monkeypatch.setattr(semantic_import, "_rows", refuse_whole_kind_read_in_writer)
+    result = apply_task_semantic_import_manifest(store.path, manifest)
+    assert result.created == 1
+    assert result.history_only == 2
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        statements = []
+        points = []
+        db.set_trace_callback(statements.append)
+        for item in manifest.items:
+            points.append(semantic_import._source_row(db, item.legacy_kind, item.legacy_row_id))
+        db.set_trace_callback(None)
+        for item, point in zip(manifest.items, points, strict=True):
+            corpus = next(row for row in original(db, item.legacy_kind)
+                          if row["id"] == item.legacy_row_id)
+            assert point == corpus
+            assert semantic_import._digest(point) == semantic_import._digest(corpus)
+            if item.legacy_kind == "work_updates":
+                # The full source projection returns JSON integer 0 here,
+                # although an unsorted indexed generated-REAL point read is 0.0.
+                assert type(point["confidence"]) is int
+        assert len(statements) == len(manifest.items)
+        for item, statement in zip(manifest.items, statements, strict=True):
+            steps = [row[3] for row in db.execute("explain query plan " + statement)]
+            index = ("idx_actions_public_id" if item.legacy_kind == "work_updates" else
+                     "idx_business_public_id")
+            assert any("SEARCH" in step and index in step for step in steps), (item.legacy_kind, steps)
+            if item.legacy_kind == "work_updates":
+                assert any("<expr>=?" in step for step in steps), steps
+                assert any("USE TEMP B-TREE FOR ORDER BY" in step for step in steps), steps
+        db.execute("begin immediate")
+        update_sync_action(db, "work_updates", 1, {"confidence": 0.375})
+        db.commit()
+        point = semantic_import._source_row(db, "work_updates", 1)
+        corpus = original(db, "work_updates")[0]
+        assert type(point["confidence"]) is float
+        assert point == corpus
+        assert semantic_import._digest(point) == semantic_import._digest(corpus)
+
+
 @pytest.mark.parametrize("changed_source", ["work_updates", "work_summary_inputs"])
 def test_per_item_transaction_rechecks_supporting_source_before_write(
     tmp_path, monkeypatch, changed_source
@@ -379,10 +483,15 @@ def test_per_item_transaction_rechecks_supporting_source_before_write(
         store, basis="explicit_assignment", source_type="reply_attempt",
         author_user_id="assigner",
     )
+    for project in store.list_work_projects():
+        _update_business(store.path, "work_project", project.id,
+                         {"last_activity_at": "2026-01-01 00:00:00"})
     with sqlite3.connect(store.path) as db:
-        db.execute("update work_projects set last_activity_at='2026-01-01 00:00:00'")
-        db.execute("update work_updates set created_at='2026-01-01 00:00:00'")
-        db.execute("update work_todos set updated_at='2026-12-01 00:00:00'")
+        db.execute("begin immediate")
+        update_sync_action(db, "work_updates", 1, {"created_at": "2026-01-01 00:00:00"})
+    for todo in store.list_work_todos():
+        _update_business(store.path, "work_todo", todo.id,
+                         {"updated_at": "2026-12-01 00:00:00"})
     manifest = build_task_semantic_import_manifest(store.path)
     assert manifest.items[0].legacy_kind == "work_todos"
     original_check = semantic_import._check_manifest
@@ -390,18 +499,20 @@ def test_per_item_transaction_rechecks_supporting_source_before_write(
     def change_source_after_preflight(path, checked_manifest):
         original_check(path, checked_manifest)
         with sqlite3.connect(path) as db:
+            db.execute("begin immediate")
             if changed_source == "work_updates":
-                db.execute("update work_updates set summary='changed' where id=1")
+                update_sync_action(db, "work_updates", 1, {"summary": "changed"})
             else:
+                parts = task8_set_parts("work_summary_inputs", {"source_ref": "changed"})
                 db.execute(
-                    "update tasks set payload_json='{}' where id=?",
-                    (task_physical_id(db, "work_summary_inputs", 1),),
+                    f"update tasks set {parts.sql} where record_type='work_summary_inputs' and legacy_key=?",
+                    (*parts.parameters, "1"),
                 )
 
     monkeypatch.setattr(semantic_import, "_check_manifest", change_source_after_preflight)
     with pytest.raises(ValueError, match="supporting source digest"):
         apply_task_semantic_import_manifest(store.path, manifest, limit=1)
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
 
 
 def test_manifest_roundtrip_and_version_validation(tmp_path):
@@ -410,40 +521,23 @@ def test_manifest_roundtrip_and_version_validation(tmp_path):
     path = tmp_path / "manifest.json"
     write_task_semantic_import_manifest(manifest, path)
     assert read_task_semantic_import_manifest(path) == manifest
+    old_payload = json.loads(path.read_text())
+    old_payload["version"] = 2
+    old_payload["items"][0]["official_project_registry_key"] = ""
+    path.write_text(json.dumps(old_payload))
+    with pytest.raises(ValueError, match="unsupported task semantic import manifest version"):
+        read_task_semantic_import_manifest(path)
     with pytest.raises(ValueError, match="version"):
         apply_task_semantic_import_manifest(store.path, replace(manifest, version=999))
-    assert len(_rows(store.path, "business_legacy_links")) == 0
+    assert len(_mapping_rows(store.path)) == 0
 
 
-def test_plan_reads_pre_cutover_database_without_semantic_tables(tmp_path):
-    db_path = tmp_path / "old.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript("""
-            create table work_projects (
-                id integer primary key, title text, memory_context_json text,
-                created_at text
-            );
-            create table work_todos (
-                id integer primary key, project_id integer, title text,
-                created_from_update_id integer, description text, owner_user_id text,
-                owner_name text, created_at text
-            );
-            create table work_updates (
-                id integer primary key, project_id integer, source_type text,
-                source_ref text, summary text, changes_json text, created_at text
-            );
-            insert into work_projects values (1, '旧项目', '{}', '2026-01-01');
-        """)
-        create_task_schema(db)
-        before = tuple(db.iterdump())
-    manifest = build_task_semantic_import_manifest(db_path, limit=100)
+def test_plan_reads_current_business_source_without_creating_semantic_tasks(tmp_path):
+    store = AutoReplyStore(tmp_path / "current.sqlite3")
+    project_id = store.create_work_project(title="旧项目")
+    manifest = build_task_semantic_import_manifest(store.path, limit=100)
     assert len(manifest.items) == 1
     assert manifest.items[0].disposition == "history_only"
-    with sqlite3.connect(db_path) as db:
-        assert tuple(db.iterdump()) == before
-        assert db.execute(
-            "select count(*) from sqlite_master where name='business_projects'"
-        ).fetchone()[0] == 0
-        assert db.execute(
-            "select count(*) from sqlite_master where type='table' and name glob 'business_*'"
-        ).fetchone()[0] == 0
+    assert manifest.items[0].legacy_row_id == project_id
+    assert _rows(store.path, "business_tasks") == []
+    assert _mapping_rows(store.path) == []

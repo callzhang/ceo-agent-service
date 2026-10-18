@@ -12,6 +12,7 @@ from app.memory_connector_client import MemoryConnectorError, MemoryWriteReceipt
 from app import store as store_module
 from app.store import AutoReplyStore
 from app.dispatcher.adapters import TaskMemoryWriteQueueAdapter
+from app.action_storage import task_delivery_projection, task_delivery_set_parts
 from app.task_memory_write import (
     TASK_MEMORY_WRITE_MAX_ATTEMPTS,
     memory_write_arguments,
@@ -99,7 +100,8 @@ def _dispatch(store: AutoReplyStore, *, now: datetime, writer) -> str | None:
 
 def _rows(store: AutoReplyStore):
     with store._connect() as db:
-        return [dict(row) for row in db.execute("select * from task_memory_write_events")]
+        return [dict(row) for row in db.execute(
+            f"select * from ({task_delivery_projection('task_memory_write_events')})")]
 
 
 class _Writer:
@@ -192,9 +194,13 @@ def test_a_write_that_keeps_failing_becomes_visible(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
     _finished_task(store, [MEMORY])
     with store._connect() as db:
+        assignments, parameters = task_delivery_set_parts(
+            "task_memory_write_events",
+            {"attempts": TASK_MEMORY_WRITE_MAX_ATTEMPTS - 1},
+        )
         db.execute(
-            "update task_memory_write_events set attempts=?",
-            (TASK_MEMORY_WRITE_MAX_ATTEMPTS - 1,),
+            f"update actions set {assignments} where record_type='task_memory_write_events'",
+            parameters,
         )
 
     assert _dispatch(store, now=NOW, writer=_Writer(fail_after=0)) == "failed"
@@ -202,24 +208,21 @@ def test_a_write_that_keeps_failing_becomes_visible(tmp_path: Path):
     assert failed.error == "connector unavailable"
 
 
-def test_the_retired_never_written_queue_shape_is_rebuilt(tmp_path: Path):
+def test_current_store_reopens_without_retired_task_memory_queue(tmp_path: Path):
     path = tmp_path / "memory.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("drop table task_memory_write_events")
-        db.execute(
-            "create table task_memory_write_events (id integer primary key, "
-            "reply_task_id integer not null unique, execution_generation text not null, "
-            "memory_id text not null default '')"
-        )
+        assert db.execute(
+            "select name from sqlite_schema where type='table' "
+            "and name='task_memory_write_events'"
+        ).fetchone() is None
     store_module._INITIALIZED_STORE_PATHS.clear()
-
     AutoReplyStore(path)
-
     with sqlite3.connect(path) as db:
-        columns = {row[1] for row in db.execute("pragma table_info(task_memory_write_events)")}
-    assert {"memories_json", "written_memory_ids_json"} <= columns
-    assert "memory_id" not in columns
+        assert db.execute(
+            "select name from sqlite_schema where type='table' "
+            "and name='task_memory_write_events'"
+        ).fetchone() is None
 
 
 def test_memory_write_arguments_leave_out_an_absent_subject(tmp_path: Path):

@@ -56,7 +56,35 @@ def current_run11_schema_is_current(db: sqlite3.Connection, *, allow_missing_obj
                else actual.get(name) == sql for name, sql in expected.items())
 
 
-def current_configs_schema_is_current(db: sqlite3.Connection, *, action_variant):
+def current_configs_schema_is_current(
+    db: sqlite3.Connection,
+    *,
+    action_variant,
+    include_followup_sync: bool = False,
+    include_business_sync: bool = False,
+    include_task_delivery: bool = False,
+    include_errors: bool = False,
+    include_feedback: bool = False,
+    include_business_actions: bool = False,
+    include_email_history: bool = False,
+    canonical_email: bool = False,
+    inline_legacy_owner: bool = False,
+    physical_provenance: bool = False,
+    compact_payload: bool = False,
+):
     """Use unchanged config/action facts with the one current Runs11 binding."""
-    return (configs_content_schema_is_current(db, action_variant=action_variant)
+    return (configs_content_schema_is_current(
+                db,
+                action_variant=action_variant,
+                include_followup_sync=include_followup_sync,
+                include_business_sync=include_business_sync,
+                include_task_delivery=include_task_delivery,
+                include_errors=include_errors,
+                include_feedback=include_feedback,
+                include_business_actions=include_business_actions,
+                include_email_history=include_email_history,
+                canonical_email=canonical_email,
+                inline_legacy_owner=inline_legacy_owner,
+                physical_provenance=physical_provenance, compact_payload=compact_payload,
+            )
             and current_run11_schema_is_current(db))

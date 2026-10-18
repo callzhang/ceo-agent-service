@@ -513,14 +513,85 @@ class ImapReadonlyAdapter:
             attempted_max_uid=max((int(uid) for uid in uids), default=None),
         )
 
-    def _fetch_one_message(
-        self, uid: bytes, *, mailbox: str, uidvalidity: int
+    def locate_message(
+        self, locator: EmailProviderLocator, *, folder: str,
+    ) -> EmailProviderLocator:
+        """Locate one exact Message-ID in an explicitly observed current folder."""
+        if locator.account_id != self.account_id:
+            raise ValueError("email source account mismatch")
+        if locator.rfc_message_id is None:
+            raise LookupError("email source has no Message-ID for moved lookup")
+        mailbox = encode_imap_mailbox_argument(folder)
+        status, _ = self.session.select(mailbox, readonly=True)
+        _require_ok(status, "IMAP readonly select failed")
+        generation = _uidvalidity(self.session.response("UIDVALIDITY"))
+        status, data = self.session.uid("SEARCH", None, "HEADER", "Message-ID", locator.rfc_message_id)
+        _require_ok(status, "IMAP Message-ID search failed")
+        matches = []
+        for uid in _search_uids(data):
+            status, header_data = self.session.uid("FETCH", uid, _HEADER_FETCH)
+            _require_ok(status, "IMAP header fetch failed")
+            _require_exact_fetch_uid(header_data, uid)
+            headers = email.message_from_bytes(_fetch_payload(header_data), policy=email.policy.default)
+            observed = EmailProviderLocator(
+                account_id=self.account_id, folder=folder, uidvalidity=generation, uid=int(uid),
+                rfc_message_id=_decode_header(headers.get("Message-ID", "")),
+                thread_id=locator.thread_id,
+            )
+            if observed.rfc_message_id == locator.rfc_message_id:
+                matches.append(observed)
+        if len(matches) != 1:
+            raise LookupError("email source Message-ID is missing or ambiguous")
+        status, _ = self.session.select(mailbox, readonly=True)
+        _require_ok(status, "IMAP readonly select failed")
+        if _uidvalidity(self.session.response("UIDVALIDITY")) != generation:
+            raise LookupError("email source generation changed")
+        return matches[0]
+
+    def fetch_message(
+        self, locator: EmailProviderLocator, *, stable_message_identity: str,
     ) -> dict[str, object]:
-        status, structure_data = self.session.uid("FETCH", uid, "(BODYSTRUCTURE)")
-        _require_ok(status, "IMAP BODYSTRUCTURE fetch failed")
+        """Read the full selected body at exact coordinates; never search or write."""
+        if locator.account_id != self.account_id:
+            raise ValueError("email source account mismatch")
+        mailbox = encode_imap_mailbox_argument(locator.folder)
+
+        def select_generation():
+            status, _ = self.session.select(mailbox, readonly=True)
+            _require_ok(status, "IMAP readonly select failed")
+            if _uidvalidity(self.session.response("UIDVALIDITY")) != locator.uidvalidity:
+                raise LookupError("email source generation changed")
+
+        select_generation()
+        message = self._fetch_one_message(
+            str(locator.uid).encode("ascii"), mailbox=locator.folder,
+            uidvalidity=locator.uidvalidity, complete=True,
+        )
+        observed = EmailProviderLocator(
+            account_id=self.account_id, folder=locator.folder,
+            uidvalidity=locator.uidvalidity, uid=locator.uid,
+            rfc_message_id=message["messageId"],
+        )
+        if (message["stableMessageIdentity"] != stable_message_identity
+            or (locator.rfc_message_id is not None
+                and observed.rfc_message_id != locator.rfc_message_id)):
+            raise LookupError("email source identity mismatch")
+        select_generation()
+        return message
+
+    def _fetch_one_message(
+        self, uid: bytes, *, mailbox: str, uidvalidity: int, complete: bool = False
+    ) -> dict[str, object]:
+        def fetch(query, error):
+            status, data = self.session.uid("FETCH", uid, query)
+            _require_ok(status, error)
+            if complete:
+                _require_exact_fetch_uid(data, uid)
+            return data
+
+        structure_data = fetch("(BODYSTRUCTURE)", "IMAP BODYSTRUCTURE fetch failed")
         structure = _parse_bodystructure(structure_data)
-        status, header_data = self.session.uid("FETCH", uid, _HEADER_FETCH)
-        _require_ok(status, "IMAP header fetch failed")
+        header_data = fetch(_HEADER_FETCH, "IMAP header fetch failed")
         headers = email.message_from_bytes(
             _fetch_payload(header_data), policy=email.policy.default
         )
@@ -543,16 +614,15 @@ class ImapReadonlyAdapter:
             )
         }
         for part in selected_parts.values():
-            if remaining <= 0:
+            if not complete and remaining <= 0:
                 break
-            status, body_data = self.session.uid(
-                "FETCH",
-                uid,
-                f"(BODY.PEEK[{part.section}]<0.{remaining}>)",
-            )
-            _require_ok(status, "IMAP text section fetch failed")
-            payload = _fetch_payload(body_data)[:remaining]
-            remaining -= len(payload)
+            query = (f"(BODY.PEEK[{part.section}])" if complete
+                     else f"(BODY.PEEK[{part.section}]<0.{remaining}>)")
+            body_data = fetch(query, "IMAP text section fetch failed")
+            payload = _fetch_payload(body_data)
+            if not complete:
+                payload = payload[:remaining]
+                remaining -= len(payload)
             decoded = _decode_fetched_content(payload, part)
             if part.mime_type == "text/html" and decoded.strip():
                 html_parts.append(decoded)
@@ -1403,6 +1473,31 @@ def _search_uids(data: object) -> list[bytes]:
         return []
     values = {int(uid) for uid in data[0].split() if uid.isdigit() and int(uid) > 0}
     return [str(uid).encode("ascii") for uid in sorted(values)]
+
+
+def _require_exact_fetch_uid(data: object, expected: bytes) -> None:
+    # FETCH literal bodies are never interpreted as response metadata.
+    if not isinstance(data, (list, tuple)):
+        raise LookupError("email source UID is unavailable")
+    observed = []
+    for item in data:
+        metadata = item[0] if isinstance(item, tuple) and item else item
+        if not isinstance(metadata, bytes):
+            continue
+        start = metadata.find(b"(")
+        if start < 0:
+            continue
+        try:
+            # Literal metadata ends before its closing parenthesis. The body
+            # bytes themselves are never parsed; each record binds its own UID.
+            attributes, _ = _parse_imap_value(metadata+b")", start)
+        except (IndexError, ValueError) as exc:
+            raise LookupError("email source FETCH metadata is invalid") from exc
+        uids = [attributes[index+1] for index, token in enumerate(attributes[:-1])
+                if isinstance(token, str) and token.upper() == "UID"]
+        observed.append(uids)
+    if not observed or any(uids != [int(expected)] for uids in observed):
+        raise LookupError("email source UID is missing or mismatched")
 
 
 def _fetch_payload(data: object) -> bytes:

@@ -866,7 +866,7 @@ def test_actual_updater_pair_lifecycle_preserves_receipt_before_genuine_old_rest
     receipts = []
     replacement_started = False
 
-    def prepare():
+    def prepare(_recovery_source_path):
         events.append("prepare")
         release = prepare_database_schema_release(ROOT, source)
         publish, inverse, verify = (

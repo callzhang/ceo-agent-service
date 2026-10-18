@@ -5,6 +5,8 @@ Source ROWIDs/public keys and global physical Tasks ids are distinct; no API her
 commits, migrates or calls a provider.
 """
 
+from app.storage_payload import TASK_RECORD_TYPES
+
 from contextlib import closing
 from dataclasses import dataclass
 import sqlite3
@@ -12,11 +14,9 @@ import sqlite3
 from app.action_storage import (
     _encoded_native_sqlite_value,
     _native_integer_primary_key,
-    _native_payload,
     _raise_autoincrement_full,
     _source_bound_null,
 )
-from app.state_storage import _json_assignments
 from app.task8_storage import _scalar_json
 from app.task20_definitions import (
     TASK12_AUTOINCREMENT_KINDS,
@@ -26,6 +26,7 @@ from app.task20_definitions import (
     TASK20_FIELDS,
     TASK20_NEW_KINDS,
     TASK20_PAYLOAD_FIELDS,
+    TASK20_LAYOUTS,
     TASK20_PARENTS,
     task20_column,
     task20_projection_barrier,
@@ -89,7 +90,7 @@ def task12_set_parts(
     if not assignments:
         raise ValueError("native Tasks SET requires fields")
     return Task12SetParts(
-        "payload_json=" + _json_assignments(payload_source, assignments),
+        "payload_json=" + TASK20_LAYOUTS[kind].assignments_sql(payload_source, assignments),
         (*(_scalar_json(value) for value in values.values()), *update_parameters),
     )
 
@@ -209,16 +210,13 @@ def _payload(db, kind, values, replace, *, insert_sql=None):
         + ")"
         for field, sql in expressions.items()
     }
-    expression = "?"
-    if missing:
-        expression = (
-            "json_set(?,"
-            + ",".join(
-                "'$." + f + "',json(" + value + ")" for f, value in missing.items()
-            )
-            + ")"
-        )
-    return expression, _native_payload(bound)
+    layout = TASK20_LAYOUTS[kind]
+    expression = layout.assignments_sql("?", missing)
+    packed = layout.pack(
+        {field: bound.get(field) for field in layout.fields},
+        scalar_codec=_encoded_native_sqlite_value,
+    )
+    return expression, packed
 
 
 def _parent(db, kind, values):
@@ -321,11 +319,11 @@ def task12_insert_parts(
     return Task12InsertParts(
         "insert "
         + mode
-        + "into tasks(id,record_type,legacy_key,parent_id,payload_json) "
+        + "into tasks(id,_kind,legacy_key,parent_id,payload_json) "
         "values(?,?,?,?," + expression + ")",
         (
             physical,
-            kind,
+            TASK_RECORD_TYPES.code(kind),
             str(identity),
             _parent(db, kind, values),
             payload,

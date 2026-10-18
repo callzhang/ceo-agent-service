@@ -543,7 +543,7 @@ def _validate_actions(db, *, include_receipts):
             raise ValueError(f'invalid current action parent type: {field}')
     observed = 0
     for kind in kinds:
-        rows = db.execute(storage.ACTION_PROJECTIONS[kind]).fetchall()
+        rows = db.execute(storage._projection(kind)).fetchall()
         for row in rows:
             storage._check_fields(kind, dict(zip(storage.SOURCE_COLUMNS[kind], row, strict=True)))
         observed += len(rows)
@@ -643,7 +643,7 @@ def restore_action_receipt_schema(db, state):
     _validate_actions(db, include_receipts=True)
     sequences = {kind: _sequence(db, name) for kind, name in storage.ACTION_SEQUENCE_NAMES.items()}
     columns, candidates = _stored_candidate_rows(db)
-    receipts = {kind: [tuple(row) for row in db.execute(storage.ACTION_PROJECTIONS[kind])]
+    receipts = {kind: [tuple(row) for row in db.execute(storage._projection(kind))]
                 for kind in storage.RECEIPT_ACTION_TYPES}
     db.execute('drop table actions')
     storage._create_action_objects(db, False)

@@ -98,7 +98,7 @@ def test_inverse_reads_current_target_and_reforward_reads_current_source(variant
         db.execute("update main.provider_state set state='unavailable', observed_at=? "
                    "where record_type='observation' and stable_message_identity='message-a' "
                    "and account_id='account-a'", (T2,))
-        db.execute("update main.provider_state set payload_json=json_set(payload_json,'$.category_key','new') "
+        db.execute("update main.provider_state set category_key='new' "
                    "where record_type='observation' and stable_message_identity='MESSAGE-A'")
         db.execute("delete from main.provider_state where record_type='observation' and account_id='account-b'")
         db.execute("update main.provider_state set observed_at=? where record_type='folder_generation' "
@@ -110,8 +110,8 @@ def test_inverse_reads_current_target_and_reforward_reads_current_source(variant
             "provider_folder_id": "inbox", "provider_folder_name": None, "category_key": "9",
             "important": 1, "important_signals_json": "42", "observed_at": T1,
         })
-        db.execute("insert into main.provider_state(record_type,account_id,provider_folder_id,observed_at,payload_json) "
-                   "values('folder_generation','account-c','inbox',?,'{}')", (T1,))
+        db.execute("insert into main.provider_state(record_type,account_id,provider_folder_id,observed_at) "
+                   "values('folder_generation','account-c','inbox',?)", (T1,))
         rollback_provider_state_migration(db, metadata)
         assert db.execute(f"select state,observed_at from main.{OBS} where account_id='account-a' "
                           "and stable_message_identity='message-a'").fetchone() == ("unavailable", T2)
@@ -215,6 +215,18 @@ def test_malformed_target_and_inverse_metadata_refused_without_ddl():
         db.execute("create index main.unknown_target_index on provider_state(account_id)")
         before = _schema(db)
         with pytest.raises(ValueError):
+            rollback_provider_state_migration(db, metadata)
+        assert _schema(db) == before
+
+
+def test_inverse_rejects_extra_writable_target_column_before_source_ddl():
+    with source_db("fresh") as db:
+        metadata = capture_provider_state_source(db)
+        db.execute("BEGIN")
+        apply_provider_state_migration(db, metadata)
+        db.execute("ALTER TABLE provider_state ADD COLUMN unexpected TEXT")
+        before = _schema(db)
+        with pytest.raises(ValueError, match="target declaration"):
             rollback_provider_state_migration(db, metadata)
         assert _schema(db) == before
 

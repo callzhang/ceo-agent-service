@@ -4,15 +4,16 @@ The paired release selects this component. Only declarations and allocator-prese
 bits survive as inverse metadata; restoration always reads current task facts.
 """
 import sqlite3
+from app.storage_payload import TASK_RECORD_TYPES
 
 from app.action_reply_storage import _fingerprint, _source_declaration
-from app.action_storage import _native_payload
+from app.action_storage import _encoded_native_sqlite_value
 from app.task_storage import COLUMN_MAP, WORKBENCH_TASK_COLUMN_MAP
 from app.task8_storage import TASK8_KINDS
 from app.task12_storage import insert_task12, task12_projection
 from app.task20_definitions import (
     TASK12_AUTOINCREMENT_KINDS, TASK20_NEW_KINDS,
-    TASK20_PAYLOAD_FIELDS, create_task20_schema, initialize_task8_sequence,
+    TASK20_PAYLOAD_FIELDS, TASK20_LAYOUTS, create_task20_schema, initialize_task8_sequence,
     task20_column,
 )
 
@@ -21,7 +22,7 @@ SOURCE_TABLES = ("tasks", *TASK20_NEW_KINDS, CHILD)
 SOURCE_COUNTERS = ("tasks", *TASK12_AUTOINCREMENT_KINDS)
 # Frozen exact actual/fresh declarations, independent of index enumeration order.
 SOURCE_HASHES = {'actual': '928065cc65749194e5411af25bff547fa54b1209dcfd4608250b074aa27c4e7f', 'fresh': 'bef04f8f21d824003714e8ec06a30ce2ce40690fdec947fd86a38db2414cc4bb'}
-TARGET_TASKS_HASH = '1afb0380b4280bc061eea303bfbfc43262c0768aad47ead8f5e2d60dbc2da9ff'
+TARGET_TASKS_HASH = '00fc3b8a83df0f6410854381b7ea7b176ca3220e9529c1420e3e1f1a55676c71'
 FK_REPLACEMENTS = (
     ("references feedback_iteration_decisions(id)",
      'references tasks("feedback_iteration_decisions__id")'),
@@ -206,8 +207,8 @@ def migrate_task20_schema(db, metadata):
         kind = values["record_type"]
         mapping = WORKBENCH_TASK_COLUMN_MAP if kind.startswith("workbench_") else COLUMN_MAP
         payload = {field: values[mapping.get(field, field)] for field in TASK20_PAYLOAD_FIELDS[kind]}
-        db.execute("insert into main.tasks(id,record_type,legacy_key,parent_id,current_input_id,claimed_input_id,payload_json) values(?,?,?,?,?,?,?)",
-                   (*(values[field] for field in ("id", "record_type", "legacy_key", "parent_id", "current_input_id", "claimed_input_id")), _native_payload(payload)))
+        db.execute("insert into main.tasks(id,_kind,legacy_key,parent_id,current_input_id,claimed_input_id,payload_json) values(?,?,?,?,?,?,jsonb(?))",
+                   (values["id"], TASK_RECORD_TYPES.code(kind), *(values[field] for field in ("legacy_key", "parent_id", "current_input_id", "claimed_input_id")), TASK20_LAYOUTS[kind].pack(payload, scalar_codec=_encoded_native_sqlite_value)))
     _same(db, "select * from temp." + _quote(staged["tasks"]), _raw_task8(raw_fields), raw_fields)
     counts["tasks"] = db.execute("select count(*) from main.tasks").fetchone()[0]
     # Preserve deleted-high source water before allocating any new-kind IDs.

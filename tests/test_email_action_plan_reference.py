@@ -1,10 +1,11 @@
+from tests.support.email_listing_oracle import StoredEmailListingOracle
 import sqlite3
 from contextlib import contextmanager
 
 import pytest
 
 from app.email_classifier_contracts import EmailClassificationStatus
-from app.email_store import EMAIL_PLAN_SQL, EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore  # noqa: F401 - historical fixture import retained
+from app.email_store import EMAIL_CLASSIFICATION_SQL, EMAIL_PLAN_SQL, EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore  # noqa: F401 - historical fixture import retained
 from app.action_storage import email_action_projection, update_email_action
 from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 from tests.test_email_store import _classification, _persist_scan
@@ -89,7 +90,7 @@ def test_list_hydrates_canonical_plans_in_one_query_and_connection(tmp_path, mon
             yield db
 
     monkeypatch.setattr(store, '_connect', traced)
-    items, total = store.list_classifications(status=None, limit=20, offset=0)
+    items, total = StoredEmailListingOracle(store).list_classifications(status=None, limit=20, offset=0)
     assert total == len(items) == 20
     assert len(connections) == 1
     _assert_single_batch_plan_query(queries)
@@ -103,7 +104,7 @@ def test_plan_query_guard_rejects_batch_plus_point_hydration(tmp_path):
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         db.set_trace_callback(queries.append)
-        rows = db.execute('select * from email_classifications where id=1').fetchall()
+        rows = db.execute(f'select * from ({EMAIL_CLASSIFICATION_SQL}) where id=1').fetchall()
         assert len(EmailStore._current_action_plan_rows(db, rows)) == 1
         assert db.execute(
             f'select action_plan_id from ({EMAIL_PLAN_SQL}) where action_plan_id=?',
@@ -159,10 +160,10 @@ def test_current_read_and_full_validation_reject_invalid_reference(tmp_path, poi
     store = seed(path)
     with sqlite3.connect(path) as db:
         if pointer == 'missing':
-            db.execute("update email_classifications set current_action_plan_id='missing' where id=1")
+            db.execute("update emails set class_current_action_plan_id='missing' where classification_id=1")
             target = 1
         else:
-            db.execute('update email_classifications set current_action_plan_id=(select current_action_plan_id from email_classifications where id=1) where id=2')
+            db.execute('update emails set class_current_action_plan_id=(select class_current_action_plan_id from emails where classification_id=1) where classification_id=2')
             target = 2
     with pytest.raises(EmailPersistenceCorruption, match='current ActionPlan'):
         store.get_classification(target)

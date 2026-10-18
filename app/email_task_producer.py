@@ -148,11 +148,6 @@ class EmailActionTaskProducer:
             trigger_row,
             message=message,
         )
-        thread_messages = tuple(
-            self._thread_message(str(row["stable_message_identity"]), row)
-            for row in rows
-            if row.get("stable_message_identity") != stable_identity
-        )
         attachment_values = (
             message.get("attachments") or trigger_row.get("attachment_metadata") or ()
         )
@@ -184,7 +179,6 @@ class EmailActionTaskProducer:
             thread_identity=thread_identity,
             subject=str(message.get("subject") or trigger_row.get("subject") or ""),
             trigger=trigger,
-            thread_messages=thread_messages,
             attachments=attachments,
             list_unsubscribe=str(message.get("listUnsubscribe") or ""),
             list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
@@ -198,7 +192,7 @@ class EmailActionTaskProducer:
         stable_identity: str,
         row: Mapping[str, object],
         *,
-        message: Mapping[str, object] | None = None,
+        message: Mapping[str, object],
     ) -> EmailThreadMessage:
         sender = str(
             (
@@ -212,7 +206,6 @@ class EmailActionTaskProducer:
         text = str(
             (message or {}).get("markdownBody")
             or (message or {}).get("textBody")
-            or row.get("normalized_text")
             or ""
         )
         create_time = str(row.get("received_at") or "").strip()

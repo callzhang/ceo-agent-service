@@ -7,12 +7,14 @@ import sqlite3
 
 import pytest
 
-from app.action_storage import _native_payload
+from app.action_storage import _encoded_native_sqlite_value
+from app.storage_payload import TASK_RECORD_TYPES
 from app.task20_definitions import (
     TASK20_COLUMNS,
     TASK20_DEFAULTS,
     TASK20_FIELDS,
     TASK20_PAYLOAD_FIELDS,
+    TASK20_LAYOUTS,
     create_task20_schema,
     task20_column,
     task20_projection,
@@ -161,13 +163,13 @@ def insert(
 ):
     return db.execute(
         verb
-        + " into tasks(id,record_type,legacy_key,parent_id,payload_json) values(?,?,?,?,?)",
+        + " into tasks(id,_kind,legacy_key,parent_id,payload_json) values(?,?,?,?,jsonb(?))",
         (
             physical_id,
-            kind,
+            TASK_RECORD_TYPES.code(kind),
             legacy_key,
             parent_id,
-            _native_payload(payload(db, kind) if values is None else values),
+            TASK20_LAYOUTS[kind].pack(payload(db, kind) if values is None else values, scalar_codec=_encoded_native_sqlite_value),
         ),
     )
 
@@ -201,7 +203,7 @@ def test_exact_field_map_and_only_seven_writable_columns(db):
         r["name"] for r in db.execute("pragma table_xinfo(tasks)") if r["hidden"] == 0
     } == {
         "id",
-        "record_type",
+        "_kind",
         "legacy_key",
         "payload_json",
         "parent_id",
@@ -243,7 +245,7 @@ def test_all_twenty_source_shaped_projections(db, kind):
 
 
 @pytest.mark.parametrize("kind", tuple(TASK20_COLUMNS))
-def test_unknown_payload_field_rejected(db, kind):
+def test_extra_payload_slot_rejected(db, kind):
     parent = {
         "reply_task_inputs": -11,
         "business_object_tasks": -11,
@@ -266,10 +268,12 @@ def test_unknown_payload_field_rejected(db, kind):
     insert(db, kind, physical_id=-15, legacy_key="-15", parent_id=parent, values=values)
     db.execute("rollback to exact_shape")
     db.execute("release exact_shape")
-    values["unknown_source_field"] = "forbidden"
+    encoded = json.loads(TASK20_LAYOUTS[kind].pack(values, scalar_codec=_encoded_native_sqlite_value))
+    encoded.append("forbidden")
     with pytest.raises(sqlite3.IntegrityError):
-        insert(
-            db, kind, physical_id=-15, legacy_key="-15", parent_id=parent, values=values
+        db.execute(
+            "insert into tasks(id,_kind,legacy_key,parent_id,payload_json) values(?,?,?,?,jsonb(?))",
+            (-15, TASK_RECORD_TYPES.code(kind), "-15", parent, json.dumps(encoded)),
         )
 
 
@@ -407,10 +411,11 @@ def test_batch_public_key_no_action_and_decision_immutability(db):
     ).lastrowid
     with pytest.raises(sqlite3.IntegrityError):
         db.execute(
-            "update tasks set payload_json=? where id=-14",
+            "update tasks set payload_json=jsonb(?) where id=-14",
             (
-                _native_payload(
-                    payload(db, "feedback_processing_batches", batch_id="renamed")
+                TASK20_LAYOUTS["feedback_processing_batches"].pack(
+                    payload(db, "feedback_processing_batches", batch_id="renamed"),
+                    scalar_codec=_encoded_native_sqlite_value,
                 ),
             ),
         )
@@ -588,3 +593,26 @@ def test_every_retained_source_not_null_has_independent_success_control(
         insert(
             db, kind, physical_id=-15, legacy_key="-15", parent_id=parent, values=values
         )
+
+
+@pytest.mark.parametrize(("public_id", "expected"), [(-11, [-11]), (-12, [])])
+def test_reply_task_public_id_lookup_uses_numeric_identity_index(db, public_id, expected):
+    query = "select id from (" + task20_projection("reply_tasks") + ") where id=?"
+    assert [row[0] for row in db.execute(query, (public_id,))] == expected
+    plan = [row[3] for row in db.execute("explain query plan " + query, (public_id,))]
+    assert any("SEARCH tasks USING INDEX idx_task20_numeric_identity" in step for step in plan), plan
+    assert not any(step.startswith("SCAN tasks") for step in plan), plan
+
+
+def test_reply_task_nullable_legacy_key_keeps_null_public_identity(db):
+    db.execute("update tasks set legacy_key=null where id=-11")
+    assert db.execute(task20_projection("reply_tasks")).fetchone()["id"] is None
+
+
+def test_stored_task_type_change_preserves_existing_immutability(db):
+    with pytest.raises(sqlite3.IntegrityError, match="task record type is immutable"):
+        db.execute("update tasks set _kind=?,payload_json=jsonb(?) where id=-11",
+                   (TASK_RECORD_TYPES.code("work_summary_inputs"),
+                    TASK20_LAYOUTS["work_summary_inputs"].pack(
+                        payload(db, "work_summary_inputs"),
+                        scalar_codec=_encoded_native_sqlite_value)))

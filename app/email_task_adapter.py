@@ -1008,7 +1008,6 @@ class EmailAgentTaskInput:
 class EmailAgentTaskRoute:
     action_type: EmailAction
     task: ReplyTask
-    context: AgentTaskContext
 
 
 def _digest_identity(prefix: str, payload: Mapping[str, object]) -> str:
@@ -1707,11 +1706,6 @@ class EmailAgentTaskAdapter:
                 EmailAgentTaskRoute(
                     action_type=action_type,
                     task=task,
-                    context=self._build_context(
-                        task=task,
-                        payload=payload,
-                        task_input=task_input,
-                    ),
                 )
                 for (action_type, payload, _), task in zip(
                     prepared, existing_tasks, strict=True
@@ -1741,11 +1735,6 @@ class EmailAgentTaskAdapter:
                 EmailAgentTaskRoute(
                     action_type=action_type,
                     task=task,
-                    context=self._build_context(
-                        task=task,
-                        payload=payload,
-                        task_input=task_input,
-                    ),
                 )
             )
         return tuple(routes)

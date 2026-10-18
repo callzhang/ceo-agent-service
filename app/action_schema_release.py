@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
+from app.final_action_schema import final_action_schema_is_current
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     action_schema_is_current,
@@ -39,7 +40,7 @@ def publication_candidate_source(db: sqlite3.Connection) -> str:
         return REVIEW_CANDIDATE_SQL
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return REVIEW_CANDIDATE_SQL
-    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
+    if version == "2026-10-14.1" and final_action_schema_is_current(db):
         return REVIEW_CANDIDATE_SQL
     raise ValueError("unknown or mixed action publication source schema")
 

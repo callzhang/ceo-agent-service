@@ -606,17 +606,8 @@ def test_independent_project_suggests_from_historical_role_then_human_promotes_s
         store, summary_input_id=3, work_item=item, decision=decision, record_run=False
     )
     assert repeated.task_ids == (task_id,)
-    with store._connect() as db:
-        assert (
-            db.execute(
-                "select count(*) from business_task_todo_sync_outbox"
-            ).fetchone()[0]
-            == 0
-        )
-        assert (
-            db.execute("select count(*) from business_task_follow_ups").fetchone()[0]
-            == 0
-        )
+    assert store.list_business_task_todo_sync_outbox() == []
+    assert store.list_business_task_follow_ups() == []
 
     assigned_item = item.model_copy(
         update={
@@ -797,17 +788,8 @@ def test_independent_project_link_preserves_all_original_proofs(
     events = store.list_business_task_events(old.task_id)
     details = [event for event in events if event.event_type.value == "details_changed"]
     assert len(details) == int(change_description)
-    with store._connect() as db:
-        assert (
-            db.execute("select count(*) from business_task_follow_ups").fetchone()[0]
-            == 0
-        )
-        assert (
-            db.execute(
-                "select count(*) from business_task_todo_sync_outbox"
-            ).fetchone()[0]
-            == 0
-        )
+    assert store.list_business_task_follow_ups() == []
+    assert store.list_business_task_todo_sync_outbox() == []
 
 
 def test_independent_project_suggestion_reason_update_preserves_omitted_description(
@@ -1816,9 +1798,11 @@ def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
     )
 
     from app.task_source_documents import source_bundle
+    from app.business_source_reader import PreparedSources, RequestSourceReader
 
     prompt = build_task_agent_prompt(
-        item, json.dumps(source_bundle((), current_work_item=item), ensure_ascii=False)
+        item, json.dumps(source_bundle((), prepared_sources=PreparedSources(RequestSourceReader()),
+                                current_work_item=item), ensure_ascii=False)
     )
 
     assert "xiaoqing_interview" not in prompt
@@ -5375,7 +5359,8 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
 def test_attention_projection_runs_after_outer_domain_transaction_commit(
     tmp_path, monkeypatch
 ):
-    from app.task_agent import BusinessAttentionProjection
+    from app.action_business_definitions import business_action_projection
+    from app.task_agent import BusinessAttentionProjection, _prepare_decision_sources
     from app.task_semantic_service import TaskDateInput
 
     store = AutoReplyStore(tmp_path / "attention-after-commit.sqlite3")
@@ -5488,31 +5473,35 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(
     seen = []
     original_upsert = BusinessAttentionProjection.upsert
 
-    def check_committed(self, proposal):
+    def check_committed(self, proposal, *, _db=None):
+        assert _db is not None
         with store._connect() as other:
             task = other.execute(
                 f"select business_relevance from ({BUSINESS_PROJECTIONS['task']}) where id=?",
                 (seed.task_id,),
             ).fetchone()
             linked = other.execute(
-                "select count(*) from business_task_evidence where task_id=? and signal_id=?",
+                f"select count(*) from ({business_action_projection('business_task_evidence')}) "
+                "where task_id=? and signal_id=?",
                 (seed.task_id, proposal.evidence_signal_id),
             ).fetchone()[0]
             confirmed = other.execute(
-                "select count(*) from business_task_anchor_links where task_id=? and anchor_id=? "
+                f"select count(*) from ({business_action_projection('business_task_anchor_links')}) "
+                "where task_id=? and anchor_id=? "
                 "and status='confirmed' and active=1",
                 (seed.task_id, anchor_id),
             ).fetchone()[0]
             project_linked = other.execute(
-                "select count(*) from business_project_evidence evidence "
+                f"select count(*) from ({business_action_projection('business_project_evidence')}) evidence "
                 f"join ({BUSINESS_PROJECTIONS['project']}) project on project.id=evidence.project_id "
                 "where project.canonical_anchor_id=? and evidence.signal_id=?",
                 (anchor_id, proposal.evidence_signal_id),
             ).fetchone()[0]
         seen.append((task[0], linked, confirmed, project_linked))
-        return original_upsert(self, proposal)
+        return original_upsert(self, proposal, _db=_db)
 
     monkeypatch.setattr(BusinessAttentionProjection, "upsert", check_committed)
+    prepared = _prepare_decision_sources(store, decision)
     with store.task_agent_domain_apply_transaction() as db:
         result = apply_task_agent_decision(
             store,
@@ -5521,6 +5510,7 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(
             decision=decision,
             record_run=False,
             _db=db,
+            prepared_sources=prepared,
         )
         assert seen == []
     from app.task_agent import _project_task_attention
@@ -5530,6 +5520,7 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(
         result.attention_proposals,
         result.affected_task_ids,
         receipt=result.projection_receipt,
+        prepared_sources=prepared,
     )
 
     assert seen == [("relevant", 0, 1, 1)]
@@ -6865,7 +6856,9 @@ def test_unparseable_relative_date_stays_only_in_linked_source_evidence(tmp_path
     assert store.list_business_task_date_evidence(task_id) == ()
     (evidence,) = store.list_business_task_evidence(task_id)
     signal = store.get_business_task_signal(evidence.signal_id)
-    assert "下周五前" in signal.evidence_text
+    from app.business_source_reader import AvailableSource
+    original = store.business_source_reader().resolve(signal.source)
+    assert isinstance(original, AvailableSource) and "下周五前" in original.body
 
 
 def test_estimate_keeps_source_speaker_and_rejects_model_attribution_override(tmp_path):
@@ -7414,8 +7407,10 @@ def test_earlier_or_remembered_evidence_can_refine_a_task_and_is_kept_as_its_own
         for row in store.list_business_task_evidence(task.task_id)
         if signals[row.signal_id].source_type == "memory_provenance"
     ]
-    assert [(s.source_ref, s.evidence_text) for s in cited] == [
-        ("meeting:2026-09-10#todos-sha256=abc", "Zoey：我来负责访谈问题清单。")
+    import hashlib
+    assert [(s.source_ref, s.source.body_sha256) for s in cited] == [
+        ("meeting:2026-09-10#todos-sha256=abc",
+         hashlib.sha256("Zoey：我来负责访谈问题清单。".encode()).hexdigest())
     ]
     assert json.loads(cited[0].context_json) == {
         "evidence_origin": "memory",
@@ -8661,10 +8656,10 @@ def test_unknown_current_project_clue_saves_source_without_fake_business_objects
     }
     assert store.list_business_tasks() == ()
     assert len(store.list_business_task_signals()) == 1
-    assert (
-        store.get_business_task_signal(result.current_signal_id).evidence_text
-        == item.summary
-    )
+    from app.business_source_reader import AvailableSource
+    signal = store.get_business_task_signal(result.current_signal_id)
+    original = store.business_source_reader().resolve(signal.source)
+    assert isinstance(original, AvailableSource) and original.body == item.summary
     assert store.list_business_projects() == []
     assert store.list_business_attention_items() == ()
 
@@ -10228,3 +10223,272 @@ def test_new_project_accepts_existing_task_only_when_matching_current_decision_l
         store.list_business_task_anchor_links(task_id=existing.task_id)[0].anchor_id
         == project.canonical_anchor_id
     )
+
+
+def test_prepared_historical_task_link_role_change_is_rejected_before_writer_mutation():
+    from types import SimpleNamespace
+    from app.business_source_reader import PreparedSources, RequestSourceReader
+    from app.task_agent import _assert_prepared_relationships
+
+    prepared = PreparedSources(RequestSourceReader())
+    prepared.task_evidence_links[4] = (frozenset({7}), ((7, "assignment"),))
+
+    class FakeStore:
+        def list_business_task_evidence_in_transaction(self, *, task_id, _db):
+            assert task_id == 4
+            return (SimpleNamespace(signal_id=7, evidence_role=SimpleNamespace(value="discovery")),)
+
+    with pytest.raises(ValueError, match="Task evidence link changed"):
+        _assert_prepared_relationships(FakeStore(), prepared, object())
+
+
+def test_prepared_existing_attention_membership_change_is_rejected_before_writer_mutation():
+    from types import SimpleNamespace
+    from app.business_source_reader import PreparedSources, RequestSourceReader
+    from app.task_agent import _assert_prepared_relationships
+
+    card = SimpleNamespace(id=8, assessment_json='{"evidence":[]}', evidence_signal_id=7)
+    prepared = PreparedSources(RequestSourceReader())
+    prepared.attention_cards[8] = (card, (4,))
+
+    class FakeStore:
+        def get_business_attention_item_in_transaction(self, *, item_id, _db):
+            assert item_id == 8
+            return card
+
+        def list_business_attention_tasks_in_transaction(self, *, attention_item_id, _db):
+            assert attention_item_id == 8
+            return (SimpleNamespace(task_id=5),)
+
+    with pytest.raises(ValueError, match="Attention evidence or membership changed"):
+        _assert_prepared_relationships(FakeStore(), prepared, object())
+
+
+def test_prepared_existing_project_proof_link_removal_is_rejected_before_writer_mutation():
+    from app.business_source_reader import PreparedSources, RequestSourceReader
+    from app.task_agent import _assert_prepared_relationships
+
+    prepared = PreparedSources(RequestSourceReader())
+    prepared.project_evidence_links[3] = frozenset({7})
+
+    class FakeDb:
+        def execute(self, sql, args):
+            assert args == (3,) and "business_project_evidence" in sql
+            return self
+
+        def fetchall(self):
+            return []
+
+    with pytest.raises(ValueError, match="Project evidence link changed"):
+        _assert_prepared_relationships(object(), prepared, FakeDb())
+
+
+def test_metadata_only_identity_uses_prepared_facts_even_when_original_unavailable():
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from app.business_source_reader import (
+        BusinessTaskSignalFact, PreparedSources, RequestSourceReader, SourceVersionBinding,
+    )
+    from app.task_agent import _validate_identity_proposal
+    from app.task_semantic_models import BusinessTaskSignal
+
+    def make_fact(signal_id):
+        source = BusinessTaskSignal(
+            id=signal_id, source_type="message",
+            source_ref=f"source:{signal_id}", source_time="", conversation_id="group:one",
+            conversation_title="", author_user_id="", author_name="", author_kind="human",
+            evidence_text="Exact original", context_json='{"external_task_id":"same"}',
+            dedupe_key=f"signal:{signal_id}", created_at="2026-10-18",
+        )
+        return BusinessTaskSignalFact.from_signal(
+            source, binding=SourceVersionBinding.from_signal(source)
+        )
+
+    live = {7: make_fact(7), 8: make_fact(8)}
+    prepared = PreparedSources(RequestSourceReader())
+    for fact in live.values():
+        prepared.add(fact)
+
+    class FakeStore:
+        def get_business_task_in_transaction(self, *, task_id, _db):
+            return SimpleNamespace(id=task_id, title="same task", owner_name="")
+
+        def list_business_task_evidence_in_transaction(self, *, task_id, _db):
+            return (SimpleNamespace(signal_id={1: 7, 2: 8}[task_id]),)
+
+        def get_business_task_signal_in_transaction(self, *, signal_id, _db):
+            return live.get(signal_id)
+
+    proposal = SimpleNamespace(
+        source_task_id=1, target_task_id=2,
+        identity_evidence=SimpleNamespace(
+            source_signal_id=7, target_signal_id=8, basis="same_external_task_id"
+        ),
+    )
+    _validate_identity_proposal(FakeStore(), proposal, db=object(), prepared_sources=prepared)
+    live[8] = replace(live[8], context_json='{"external_task_id":"same","changed":true}')
+    with pytest.raises(ValueError, match="changed"):
+        _validate_identity_proposal(FakeStore(), proposal, db=object(), prepared_sources=prepared)
+
+
+def test_post_commit_attention_rejects_changed_prepared_card_before_upsert(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import app.task_agent as module
+    from app.business_source_reader import PreparedSources, RequestSourceReader
+
+    card = SimpleNamespace(id=9, assessment_json='{"evidence":[]}', evidence_signal_id=7)
+    prepared = PreparedSources(RequestSourceReader())
+    prepared.attention_cards[9] = (card, (4,))
+    prepared.task_evidence_links[4] = (frozenset({7}), ((7, "discovery"),))
+    calls = []
+    members = [5]
+
+    class FakeStore:
+        @contextmanager
+        def business_task_transaction(self):
+            db = object()
+            calls.append(("begin", db))
+            yield db
+
+        def get_business_attention_item_in_transaction(self, *, item_id, _db):
+            assert item_id == 9
+            return card
+
+        def list_business_attention_tasks_in_transaction(self, *, attention_item_id, _db):
+            return (SimpleNamespace(task_id=members[0]),)
+
+        def get_business_attention_item_by_stable_key_in_transaction(self, *, stable_key, _db):
+            return card
+
+        def list_business_project_evidence_in_transaction(self, **kwargs):
+            return ()
+
+    class FakeProjection:
+        def __init__(self, store):
+            pass
+
+        def _current_eligible_task_ids(self, *, task_ids, anchor_id, db):
+            return tuple(task_ids)
+
+        def upsert(self, proposal, *, _db=None):
+            calls.append(("upsert", _db))
+            return 9
+
+        def recompute_for_tasks(self, task_ids):
+            pass
+
+    monkeypatch.setattr(module, "BusinessAttentionProjection", FakeProjection)
+    monkeypatch.setattr(module, "_official_project", lambda store, anchor_id, *, db: SimpleNamespace(id=3))
+    proposal = SimpleNamespace(
+        evidence=[], category="watch", title="风险", why_attention="风险存在",
+        current_state="跟进", ceo_action="关注", assessment_basis="current_observation",
+        material_trigger="material_change",
+    )
+    applied = module.AppliedTaskAttention(
+        assessment_index=0, assessment=SimpleNamespace(attention_proposal=proposal, existing_attention_id=9),
+        task_ids=(), signal_id=7, anchor_id=3,
+    )
+    receipt = SimpleNamespace(outcomes=[], applied_count=0, recompute_error="", proposal_count=1, status="pending")
+    result = module._project_task_attention(
+        FakeStore(), (applied,), (), receipt=receipt, prepared_sources=prepared
+    )
+    assert result.outcomes[0].status == "rejected"
+    assert "Attention evidence or membership changed" in result.outcomes[0].reason
+    assert not any(name == "upsert" for name, _ in calls)
+    members[0] = 4
+    receipt = SimpleNamespace(outcomes=[], applied_count=0, recompute_error="", proposal_count=1, status="pending")
+    result = module._project_task_attention(
+        FakeStore(), (applied,), (), receipt=receipt, prepared_sources=prepared
+    )
+    assert result.outcomes[0].status == "applied"
+    assert calls[-1] == ("upsert", calls[-2][1])
+
+
+def test_post_commit_distinct_attention_cards_do_not_recheck_own_prior_upsert(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import app.task_agent as module
+    from app.business_source_reader import PreparedSources, RequestSourceReader
+
+    cards = {
+        9: SimpleNamespace(id=9, assessment_json='{"evidence":[]}', evidence_signal_id=7),
+        10: SimpleNamespace(id=10, assessment_json='{"evidence":[]}', evidence_signal_id=8),
+    }
+    members = {9: 4, 10: 5}
+    prepared = PreparedSources(RequestSourceReader())
+    prepared.attention_cards = {9: (cards[9], (4,)), 10: (cards[10], (5,))}
+
+    class FakeStore:
+        @contextmanager
+        def business_task_transaction(self):
+            yield object()
+
+        def get_business_attention_item_in_transaction(self, *, item_id, _db):
+            return cards[item_id]
+
+        def list_business_attention_tasks_in_transaction(self, *, attention_item_id, _db):
+            return (SimpleNamespace(task_id=members[attention_item_id]),)
+
+        def get_business_attention_item_by_stable_key_in_transaction(self, *, stable_key, _db):
+            return cards[int(stable_key.split(":")[1]) + 6]
+
+        def list_business_project_evidence_in_transaction(self, **kwargs):
+            return ()
+
+    class FakeProjection:
+        def __init__(self, store):
+            pass
+
+        def _current_eligible_task_ids(self, *, task_ids, anchor_id, db):
+            return tuple(task_ids)
+
+        def upsert(self, proposal, *, _db):
+            assert _db is not None
+            if proposal.anchor_id == 3:
+                members[9] = 6  # The first proposal's own card write.
+                return 9
+            return 10
+
+        def recompute_for_tasks(self, task_ids):
+            pass
+
+    monkeypatch.setattr(module, "BusinessAttentionProjection", FakeProjection)
+    monkeypatch.setattr(module, "_official_project", lambda store, anchor_id, *, db: SimpleNamespace(id=anchor_id))
+    proposal = SimpleNamespace(
+        evidence=[], category="watch", title="风险", why_attention="风险存在",
+        current_state="跟进", ceo_action="关注", assessment_basis="current_observation",
+        material_trigger="material_change",
+    )
+    applied = tuple(module.AppliedTaskAttention(
+        assessment_index=index,
+        assessment=SimpleNamespace(attention_proposal=proposal, existing_attention_id=card_id),
+        task_ids=(), signal_id=signal_id, anchor_id=anchor_id,
+    ) for index, (anchor_id, card_id, signal_id) in enumerate(((3, 9, 7), (4, 10, 8))))
+    receipt = SimpleNamespace(outcomes=[], applied_count=0, recompute_error="", proposal_count=2, status="pending")
+    result = module._project_task_attention(
+        FakeStore(), applied, (), receipt=receipt, prepared_sources=prepared
+    )
+    assert [outcome.status for outcome in result.outcomes] == ["applied", "applied"]
+    assert result.status == "completed"
+
+
+def test_post_commit_rechecks_only_current_projects_prepared_proof_links():
+    from app.business_source_reader import PreparedSources, RequestSourceReader
+    from app.task_agent import _assert_prepared_attention_relationships
+
+    prepared = PreparedSources(RequestSourceReader())
+    prepared.project_evidence_links = {3: frozenset({7}), 4: frozenset({8})}
+
+    class FakeDb:
+        def execute(self, sql, args):
+            assert args == (3,) and "business_project_evidence" in sql
+            return self
+
+        def fetchall(self):
+            return []
+
+    with pytest.raises(ValueError, match="Project evidence link changed"):
+        _assert_prepared_attention_relationships(
+            object(), prepared, FakeDb(), card_ids=frozenset(), project_ids=frozenset({3})
+        )
