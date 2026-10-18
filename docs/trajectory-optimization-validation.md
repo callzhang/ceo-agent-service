@@ -1179,3 +1179,23 @@ stage-0/null pair on resume with every other JSON field identical and no tool
 calls; the receipt is
 `evals/trajectory_optimization/consumer_stage_diagnostic_native.v1.json`.
 This is controlled correction evidence, not a real post-release business turn.
+
+### Release readback
+
+PR #135 merged as `3ab4f2fe` after independent review found no issues.
+The affected contract, turn-runner, Consumer, and orchestrator tests passed
+(352 passed, 4 skipped); Ruff and whitespace checks passed. Formal
+`python -m app.deploy` waited for the four items that were in flight at the
+preflight check and advanced the production checkout from `8b480c30` to
+`3ab4f2fe`. The new launchd supervisor PID was 74487 and `/healthz` returned
+HTTP 200. The subsequent in-flight count and dispatcher running counts were
+zero. Status, Attention, and History APIs returned HTTP 200; Attention still
+contained seven existing items. The newest failed History item occurred at
+10:19:39 UTC, before the 11:29 UTC deployment, while newer History items were
+completed. The existing system-health `degraded` violation remains and is not
+evidence of a new stage-binding failure. GitHub Quality was still running at
+readback and is supplementary to the local and fixed-case evidence.
+
+This release verifies that the new diagnostic is installed and the service
+restarted cleanly. No natural post-release Consumer correction turn has yet
+confirmed a business outcome.
