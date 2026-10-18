@@ -2443,3 +2443,9 @@ same envelope validator; it returns diagnostic strings only and cannot be adopte
 as a candidate. Malformed relationship syntax supplies no inferred relationship
 errors. Supporting membership violations are reported together. Full candidate
 validation, the native output schema, and the one-correction budget are unchanged.
+The same-session result correction now submits the bounded validation errors and
+brief preservation instructions, rather than replaying a generic catalogue of
+Project, Task, Attention and source rules. A runtime-path rejection receives its
+path rule only for that error. The initial Work Tracking Skill, strict result
+validation, native schema, routes and correction budget are unchanged. Fixed-case
+evidence and limits are in `docs/task-result-repair-prompt-validation.md`.

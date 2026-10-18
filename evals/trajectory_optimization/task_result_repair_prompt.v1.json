@@ -1,0 +1,56 @@
+{
+  "title": "Task Agent same-session result-correction prompt, anonymous fixed-case comparison",
+  "date": "2026-10-18",
+  "source": "fictional Product/Task source; no production content or Work Profile",
+  "source_text": "Product: Alex owns the wireframe. The owner will revise the wireframe and share its notes. Another Product remains on track.",
+  "source_sha256": "e983cc3ce5533eb08273071205f9d6ff8ccccc1ae80d32bff64d8076fd978fe3",
+  "model": "gpt-5.6-luna via Codex OAuth",
+  "method": "Each arm has a persisted cold session with full checked-in Work Tracking Skill and exact invalid draft echo, then a same-session native output-schema correction. Read-only, no MCP or tools.",
+  "skill_sha256": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+  "schema_sha256": "71e3cff6e1f70ef8ee76c5e2861e4c26c07d00a19f0c6b777a004b2e9abdb701",
+  "business_gate": "Keep task action, title, owner, current-source citations and each Project assessment. Missing selector must include original Project-link evidence required by the application; wrong membership must remove only the second support index.",
+  "records": [
+    {
+      "case": "missing_selector",
+      "arm": "baseline",
+      "cold_exact_echo": true,
+      "tool_calls": 0,
+      "repair_prompt_chars": 11675,
+      "valid_task_agent_decision": true,
+      "semantic_diff_paths_from_minimal_application_valid_result": [
+        ".project_assessments[0].evidence[0].source_excerpt",
+        ".project_assessments[0].reason",
+        ".task_decisions[0].confidence",
+        ".update_summary"
+      ]
+    },
+    {
+      "case": "missing_selector",
+      "arm": "candidate",
+      "cold_exact_echo": true,
+      "tool_calls": 0,
+      "repair_prompt_chars": 775,
+      "valid_task_agent_decision": true,
+      "semantic_diff_paths_from_minimal_application_valid_result": []
+    },
+    {
+      "case": "wrong_membership",
+      "arm": "baseline",
+      "cold_exact_echo": true,
+      "tool_calls": 0,
+      "repair_prompt_chars": 11692,
+      "valid_task_agent_decision": true,
+      "semantic_diff_paths_from_minimal_application_valid_result": []
+    },
+    {
+      "case": "wrong_membership",
+      "arm": "candidate",
+      "cold_exact_echo": true,
+      "tool_calls": 0,
+      "repair_prompt_chars": 792,
+      "valid_task_agent_decision": true,
+      "semantic_diff_paths_from_minimal_application_valid_result": []
+    }
+  ],
+  "limits": "Two anonymous fixed cases; does not prove every future natural correction or production business outcome."
+}
