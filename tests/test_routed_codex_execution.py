@@ -13,6 +13,7 @@ from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
+    RuntimeKind,
 )
 from app.agent_runtime_router import (
     CAPACITY_WAITS_BEFORE_FAILOVER,
@@ -337,6 +338,42 @@ def test_runtime_falls_back_to_friday_in_same_agent_run(tmp_path, monkeypatch):
     ]
     assert len(friday.calls) == 1
     assert store.get_agent_run(run_id).status == "running"
+
+
+def test_route_prompt_override_uses_compact_codex_input_and_full_friday_fallback(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "meeting-route-prompt.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=998)
+    config = _friday_config(monkeypatch, "codex_oauth,friday_runtime")
+    friday = FakeFridayAdapter(result=FridayExecutionResult(
+        text="7", thread_id="thread-1", turn_id="turn-1",
+        operation_id="operation-1", artifact={"final_message": "7"},
+    ))
+    codex_prompts = []
+
+    def executor(command, **kwargs):
+        codex_prompts.append(kwargs["prompt"])
+        return ProcessRunResult(1, "", "provider unavailable")
+
+    routed = RoutedCodexExecution(
+        store=store, config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(), friday_adapter=friday, executor=executor, now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="FULL SOURCE",
+        route_prompt_overrides={RuntimeKind.CODEX_CLI: "COMPACT SOURCE"},
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=_friday_int, result_codec=INT_CODEC,
+    )
+
+    assert result.value == 7
+    assert codex_prompts == ["COMPACT SOURCE"]
+    assert "FULL SOURCE" in friday.calls[0][0]
+    assert "COMPACT SOURCE" not in friday.calls[0][0]
 
 
 def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeypatch):
@@ -665,8 +702,9 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
 
 
 
+@pytest.mark.parametrize("route_override", [False, True])
 def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
-    store, config
+    store, config, route_override
 ):
     key = seed_structured_parent(store, 71)
     adapter = FakeAdapter()
@@ -709,6 +747,9 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
         workload_kind="structured",
         workload_key=key,
         prompt="analyze all KRs",
+        route_prompt_overrides=(
+            {RuntimeKind.CODEX_CLI: "compact KR facts"} if route_override else None
+        ),
         command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
@@ -725,7 +766,10 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
             ("codex_oauth", None, "on-failure", False),
             ("codex_oauth", "session-1", "on-failure", False),
     ]
-    assert prompts[0] == "analyze all KRs"
+    assert prompts[0] == ("compact KR facts" if route_override else "analyze all KRs")
+    if route_override:
+        assert "compact KR facts" in prompts[1]
+        assert "analyze all KRs" not in prompts[1]
     assert "Return every KR" in prompts[1]
     assert "expected complete KR coverage" in prompts[1]
     attempts = store.list_runtime_operation_attempts("structured", key)

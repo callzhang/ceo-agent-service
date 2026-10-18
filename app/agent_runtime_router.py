@@ -1010,6 +1010,7 @@ class RoutedCodexExecution:
         conversation_id: str | None = None,
         continuation_prompt: str | None = None,
         continuation_session_id: str | None = None,
+        route_prompt_overrides: Mapping[RuntimeKind, str] | None = None,
         required_capabilities: frozenset[str] = frozenset(),
         result_validation_retry: RoutedResultValidationRetry | None = None,
         on_stdout_line: Callable[[str], None] | None = None,
@@ -1035,6 +1036,13 @@ class RoutedCodexExecution:
         if not prompt:
             raise ValueError("prompt must be non-empty")
         original_prompt = prompt
+        route_prompts = dict(route_prompt_overrides or {})
+        if any(not value.strip() for value in route_prompts.values()):
+            raise ValueError("route prompt override must be non-empty")
+
+        def prompt_for(runtime_kind: RuntimeKind) -> str:
+            return route_prompts.get(runtime_kind, original_prompt)
+
         if (continuation_prompt is None) != (continuation_session_id is None):
             raise ValueError("continuation prompt and session must be paired")
         if continuation_prompt is not None:
@@ -1144,7 +1152,7 @@ class RoutedCodexExecution:
                 )
                 forced_retry_session_id = latest.session_id
                 prompt = result_validation_retry.corrected_prompt(
-                    original_prompt,
+                    prompt_for(decision.route.runtime_kind),
                     RoutedResultValidationError(
                         "the prior persisted result did not satisfy validation"
                     ),
@@ -1169,7 +1177,7 @@ class RoutedCodexExecution:
                     if result_validation_retry.resume_same_session:
                         forced_retry_session_id = latest.session_id
                     prompt = result_validation_retry.corrected_prompt(
-                        original_prompt,
+                        prompt_for(decision.route.runtime_kind),
                         RoutedResultValidationError(
                             "the prior persisted result did not satisfy validation"
                         ),
@@ -1294,7 +1302,7 @@ class RoutedCodexExecution:
                     if continuation_prompt is not None
                     and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
                     and route_session_id == continuation_session_id
-                    else original_prompt
+                    else prompt_for(route.runtime_kind)
                 )
             from app.native_trajectory import count_claude_session_lines
 
@@ -1663,7 +1671,7 @@ class RoutedCodexExecution:
                     active_attempt = successor
                     route_session_id = successor_session_id
                     prompt = result_validation_retry.corrected_prompt(
-                        original_prompt, exc
+                        prompt_for(route.runtime_kind), exc
                     )
                     result_validation_retries_used = 1
                     continue
@@ -1826,7 +1834,7 @@ class RoutedCodexExecution:
                 # The wait budget is spent: the correction session stays on
                 # the failed provider, so the successor route restarts from
                 # the original prompt with its own correction turn.
-                prompt = original_prompt
+                prompt = prompt_for(route.runtime_kind)
                 result_validation_retries_used = 0
             route_session_id = (
                 None

@@ -818,10 +818,12 @@ class FakeMeetingRunner:
         self.decision = decision
         self.calls = 0
         self.prompts: list[str] = []
+        self.compact_prompts: list[str | None] = []
 
-    def decide(self, *, prompt: str, run_id=None) -> MeetingAlignmentDecision:
+    def decide(self, *, prompt: str, run_id=None, compact_prompt=None) -> MeetingAlignmentDecision:
         self.calls += 1
         self.prompts.append(prompt)
+        self.compact_prompts.append(compact_prompt)
         return self.decision
 
 
@@ -1443,13 +1445,16 @@ def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_p
         skill_protocol="SHORT CATALOG MUST NOT SUBSTITUTE",
         skill_materials=(
             ServiceCommandSkillMaterial(
-                name="ceo-meeting-work", content="FROZEN MEETING SKILL BODY"
+                name="ceo-meeting-work",
+                content="## Managed Skill: ceo-meeting-work\nsha256: frozen\n\nFROZEN MEETING SKILL BODY",
             ),
             ServiceCommandSkillMaterial(
-                name="dingtalk-minutes", content="FROZEN MINUTES SKILL BODY"
+                name="dingtalk-minutes",
+                content="## Operation Skill: dingtalk-minutes\nsha256: frozen\n\nFROZEN MINUTES SKILL BODY",
             ),
             ServiceCommandSkillMaterial(
-                name="dingtalk-calendar", content="FROZEN CALENDAR SKILL BODY"
+                name="dingtalk-calendar",
+                content="## Operation Skill: dingtalk-calendar\nsha256: frozen\n\nFROZEN CALENDAR SKILL BODY",
             ),
         ),
     )
@@ -1471,6 +1476,11 @@ def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_p
     assert "FROZEN MINUTES SKILL BODY" in prompt
     assert "FROZEN CALENDAR SKILL BODY" in prompt
     assert "SHORT CATALOG MUST NOT SUBSTITUTE" not in prompt
+    [compact_prompt] = runner.compact_prompts
+    assert compact_prompt is not None
+    assert "FROZEN MEETING SKILL BODY" in compact_prompt
+    assert "FROZEN MINUTES SKILL BODY" not in compact_prompt
+    assert "FROZEN CALENDAR SKILL BODY" not in compact_prompt
 
 
 def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
