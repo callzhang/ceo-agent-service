@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+import hashlib
 import re
 from typing import Literal
 
@@ -46,6 +47,26 @@ class ServiceCommandSkillMaterial:
 
     name: str
     content: str
+
+    def verified_body_sha256(self) -> str | None:
+        """Return a digest only when the frozen wrapper matches its full body."""
+        lines = self.content.splitlines()
+        if not lines or lines[0] not in {
+            f"## Managed Skill: {self.name}",
+            f"## Operation Skill: {self.name}",
+        }:
+            return None
+        try:
+            separator = self.content.index("\n\n")
+        except ValueError:
+            return None
+        header = self.content[:separator]
+        match = re.search(r"(?m)^sha256: ([0-9a-fA-F]{64})$", header)
+        if match is None:
+            return None
+        body = self.content[separator + 2 :]
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        return digest if digest == match.group(1).lower() else None
 
 
 @dataclass(frozen=True)

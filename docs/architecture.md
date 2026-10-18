@@ -788,7 +788,7 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 任务。入口只接受有完整日历参会人证据的失败任务；ASR 不提供说话人身份或受众判断。已有部分
 效果、投递回执、活动领取或运行时回合都会拒绝导入。分析和投递阶段读取同一持久化转写，保留
 原失败运行；外部消息仍只能由原 Meeting 审查与投递流程产生。
-独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力，分析输入保留本轮定时任务提示及完整冻结 Skill 正文，保证自定义业务要求可见；无冻结材料的旧自定义 inline 约定继续保留。
+独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力，分析输入保留本轮定时任务提示及完整冻结 Skill 正文，保证自定义业务要求可见；无冻结材料的旧自定义 inline 约定继续保留。Codex 路线会把冻结 Skill 的校验摘要传给原生 CLI，仅按精确路径禁用内容 hash 完全相同的本机副本；同名但内容不同、无效或无法读取的副本仍保留，不缩减服务提交的 Skill 正文。转录说话人身份仅在重复字段的无损索引投影连同新增格式说明使来源段落整体变短时才集中到身份表；索引按来源首次出现次序，转录顺序、时间戳、文本和其他来源字段均保留，持久化来源不变。
 
 `audience_scope` 是当前 Meeting Alignment Agent 输出的必填字段。投递器读取早于该字段的
 持久化 `send` 决策时，只能从其已保存的 `target.kind` 规范化一次：`group` 对应 `business`，

@@ -7,7 +7,10 @@ import os
 from pathlib import Path
 
 from app.agent_runtime_config import AgentRuntimeConfig
-from app.business_skills import codex_inlined_skill_config_override, codex_skill_config_override
+from app.business_skills import (
+    codex_inlined_skill_config_override,
+    codex_skill_config_override,
+)
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeFailure,
@@ -131,6 +134,7 @@ class CodexRuntimeAdapter:
         reasoning_effort: str | None = None,
         skill_names: tuple[str, ...] | None = None,
         inlined_skill_names: tuple[str, ...] = (),
+        inlined_skill_hashes: tuple[tuple[str, str], ...] = (),
         tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
@@ -157,10 +161,15 @@ class CodexRuntimeAdapter:
             skip_git_repo_check=skip_git_repo_check,
             reasoning_effort=reasoning_effort,
             skill_exclusion_override=codex_skill_config_override(
-                skill_names, inlined_names=inlined_skill_names
+                skill_names,
+                inlined_names=inlined_skill_names,
+                inlined_hashes=dict(inlined_skill_hashes),
             )
             if skill_names is not None
-            else codex_inlined_skill_config_override(inlined_skill_names),
+            else codex_inlined_skill_config_override(
+                inlined_skill_names,
+                inlined_hashes=dict(inlined_skill_hashes),
+            ),
         )
         _insert_service_mcp_options(
             command,

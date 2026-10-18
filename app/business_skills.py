@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import csv
 import hashlib
 from dataclasses import dataclass
@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 
@@ -742,6 +743,7 @@ def codex_skill_config_override(
     allowed_names: Iterable[str],
     *,
     inlined_names: Iterable[str] = (),
+    inlined_hashes: Mapping[str, str] | None = None,
     target_root: Path | None = None,
     codex_home: Path | None = None,
 ) -> str:
@@ -771,12 +773,22 @@ def codex_skill_config_override(
     files = sorted(
         {path for root in roots if root.is_dir() for path in root.rglob("SKILL.md")}
     )
+    inlined_hash_paths = set(
+        _codex_inlined_skill_hash_paths(
+            inlined_hashes,
+            paths=files,
+            target_root=target_root,
+            codex_home=codex_home,
+        )
+    )
     always_on = set(default_plugin_skill_files(roots[2]))
     enable: list[Path] = []
     disable: list[Path] = []
     for path in files:
         described = _describe_skill_file(path)
-        if path in always_on or (described is not None and described[0] in keep_names):
+        if path in inlined_hash_paths:
+            disable.append(path)
+        elif path in always_on or (described is not None and described[0] in keep_names):
             enable.append(path)
         else:
             disable.append(path)
@@ -789,12 +801,55 @@ def codex_skill_config_override(
     return f"skills.config=[{','.join(items)}]" if items else ""
 
 
-def codex_inlined_skill_config_override(names: Iterable[str]) -> str:
-    """Suppress native copies of explicitly inlined Skills using native names."""
-    items = [
+def codex_inlined_skill_config_override(
+    names: Iterable[str], *, inlined_hashes: Mapping[str, str] | None = None,
+    target_root: Path | None = None, codex_home: Path | None = None,
+) -> str:
+    """Suppress named inlines or native files whose hash matches frozen content."""
+    paths = _codex_inlined_skill_hash_paths(
+        inlined_hashes, target_root=target_root, codex_home=codex_home
+    )
+    items = [f'{{path="{path}",enabled=false}}' for path in paths]
+    items.extend(
         f"{{name={json.dumps(name)},enabled=false}}" for name in dict.fromkeys(names)
-    ]
+    )
     return f"skills.config=[{','.join(items)}]" if items else ""
+
+
+def _codex_inlined_skill_hash_paths(
+    inlined_hashes: Mapping[str, str] | None,
+    *,
+    paths: Iterable[Path] | None = None,
+    target_root: Path | None = None,
+    codex_home: Path | None = None,
+) -> tuple[Path, ...]:
+    expected = {
+        name: digest.lower()
+        for name, digest in (inlined_hashes or {}).items()
+        if isinstance(name, str)
+        and name
+        and isinstance(digest, str)
+        and re.fullmatch(r"[0-9a-fA-F]{64}", digest)
+    }
+    if not expected:
+        return ()
+    if paths is None:
+        roots = codex_skill_roots(target_root=target_root, codex_home=codex_home)
+        paths = (
+            path for root in roots if root.is_dir() for path in root.rglob("SKILL.md")
+        )
+    matches: list[Path] = []
+    for path in paths:
+        described = _describe_skill_file(path)
+        if described is None or described[0] not in expected:
+            continue
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if actual == expected[described[0]]:
+            matches.append(path)
+    return tuple(dict.fromkeys(matches))
 
 
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:

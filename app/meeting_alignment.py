@@ -1198,6 +1198,15 @@ def _analyze_meeting_job(
                 if scheduled_consumer is not None
                 else ""
             ),
+            inlined_skill_hashes=(
+                tuple(
+                    (material.name, digest)
+                    for material in scheduled_consumer.skill_materials
+                    if (digest := material.verified_body_sha256()) is not None
+                )
+                if scheduled_consumer is not None
+                else ()
+            ),
         )
     except MeetingOrganizerIdentityError as exc:
         if exc.decision is not None:

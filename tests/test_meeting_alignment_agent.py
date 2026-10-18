@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import app.meeting_alignment_agent as meeting_alignment_agent_module
 from app.audit_rules import MESSAGE_AUDIENCE_CONTRACT
 from pydantic import ValidationError
 
@@ -140,6 +141,99 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             ],
             "source_url": "https://example.test/minutes-1",
         }
+    )
+
+
+def test_speaker_index_projection_is_lossless_for_repeated_and_ambiguous_names():
+    payload = source().model_dump(mode="json")
+    payload["transcript"] = [
+        *[
+            {"speaker_name": "Alex", "speaker_user_id": "alex-1", "text": f"first-{i}"}
+            for i in range(6)
+        ],
+        *[
+            {"speaker_name": "Lin", "speaker_user_id": "lin-1", "text": f"second-{i}"}
+            for i in range(5)
+        ],
+        *[
+            {"speaker_name": "Alex", "speaker_user_id": "alex-2", "text": f"fourth-{i}"}
+            for i in range(5)
+        ],
+        *[
+            {"speaker_name": "Morgan", "speaker_user_id": "", "text": f"fifth-{i}"}
+            for i in range(4)
+        ],
+    ]
+    original = MeetingSource.model_validate(payload)
+
+    projection = getattr(meeting_alignment_agent_module, "_meeting_source_prompt_projection", None)
+    assert callable(projection)
+    projected = projection(original)
+
+    speakers = projected["transcript_speakers"]
+    assert speakers == [
+        {"speaker_name": "Alex", "speaker_user_id": "alex-1"},
+        {"speaker_name": "Lin", "speaker_user_id": "lin-1"},
+        {"speaker_name": "Alex", "speaker_user_id": "alex-2"},
+        {"speaker_name": "Morgan", "speaker_user_id": ""},
+    ]
+    assert [line["speaker_index"] for line in projected["transcript"]] == [
+        *([0] * 6), *([1] * 5), *([2] * 5), *([3] * 4)
+    ]
+    restored = {key: value for key, value in projected.items() if key != "transcript_speakers"}
+    restored["transcript"] = [
+        {
+            "speaker_name": speakers[line["speaker_index"]]["speaker_name"],
+            "speaker_user_id": speakers[line["speaker_index"]]["speaker_user_id"],
+            **{key: value for key, value in line.items() if key != "speaker_index"},
+        }
+        for line in projected["transcript"]
+    ]
+    assert MeetingSource.model_validate(restored).model_dump(mode="json") == original.model_dump(mode="json")
+
+
+def test_speaker_index_projection_keeps_unique_short_transcript_unindexed():
+    original = source()
+
+    projection = getattr(meeting_alignment_agent_module, "_meeting_source_prompt_projection", None)
+    assert callable(projection)
+    projected = projection(original)
+
+    assert projected == original.model_dump(mode="json")
+
+
+def test_speaker_index_projection_accounts_for_prompt_note_overhead():
+    payload = source().model_dump(mode="json")
+    repeated_line = payload["transcript"][0]
+    payload["transcript"] = [repeated_line] * 4
+    original = MeetingSource.model_validate(payload)
+
+    projection = meeting_alignment_agent_module._meeting_source_prompt_projection
+
+    assert projection(original) == original.model_dump(mode="json")
+
+
+def test_prompt_explains_indexed_speaker_table_when_it_reduces_input():
+    payload = source().model_dump(mode="json")
+    payload["transcript"] = [payload["transcript"][0]] * 12
+    meeting = MeetingSource.model_validate(payload)
+
+    prompt = build_meeting_alignment_prompt(
+        meeting,
+        work_profile="",
+        work_profile_source="synthetic",
+    )
+
+    assert "transcript_speakers" in prompt
+    assert "transcript[].speaker_index" in prompt
+    source_json = prompt.split("完整会议来源 JSON：\n", 1)[1].splitlines()[0]
+    serialized = json.loads(source_json)
+    assert serialized["transcript_speakers"] == [
+        {"speaker_name": "Alex", "speaker_user_id": ""}
+    ]
+    assert all(
+        "speaker_name" not in line and "speaker_user_id" not in line
+        for line in serialized["transcript"]
     )
 
 
@@ -928,6 +1022,19 @@ def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
         "meeting_alignment_decision.schema.json"
     )
     assert runner.last_transcript_start_line == 0
+
+
+def test_runner_passes_frozen_skill_hashes_to_native_command():
+    routed = FakeRoutedMeetingExecution(
+        json.dumps(summary_payload(), ensure_ascii=False)
+    )
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+    hashes = (("ceo-meeting-work", "a" * 64), ("dingtalk-minutes", "b" * 64))
+
+    runner.decide(prompt="decide", run_id=8, inlined_skill_hashes=hashes)
+
+    factory = routed.calls[0]["command_factory"]
+    assert factory.inlined_skill_hashes == hashes
 
 
 def test_runner_normalizes_mechanical_trigger_mismatch(tmp_path: Path):

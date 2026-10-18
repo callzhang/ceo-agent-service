@@ -183,6 +183,7 @@ class CodexCommandFactory:
     image_paths: tuple[Path, ...] = ()
     skill_names: tuple[str, ...] | None = None
     inlined_skill_names: tuple[str, ...] = ()
+    inlined_skill_hashes: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -198,6 +199,7 @@ class CodexCommandFactory:
         image_paths: Sequence[Path] = (),
         skill_names: Sequence[str] | None = None,
         inlined_skill_names: Sequence[str] = (),
+        inlined_skill_hashes: Sequence[tuple[str, str]] = (),
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -206,6 +208,7 @@ class CodexCommandFactory:
             image_paths=tuple(image_paths),
             skill_names=tuple(skill_names) if skill_names is not None else None,
             inlined_skill_names=tuple(inlined_skill_names),
+            inlined_skill_hashes=tuple(inlined_skill_hashes),
         )
 
     def build(
@@ -235,6 +238,8 @@ class CodexCommandFactory:
             build_options["skip_git_repo_check"] = True
         if self.inlined_skill_names:
             build_options["inlined_skill_names"] = self.inlined_skill_names
+        if self.inlined_skill_hashes:
+            build_options["inlined_skill_hashes"] = self.inlined_skill_hashes
         command = adapter.build_command(**build_options)
         return command, adapter.build_env(route)
 
