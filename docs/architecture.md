@@ -69,8 +69,10 @@ Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务�
 新增内容或 compaction 时，才在该 session 里提交精简修订指令：本轮时间、完整 Audit feedback、
 必要的 runtime correction，以及要求返回完整替代候选。原始事实和候选由同一 session 继续承载，
 指纹绑定 Developer 指令、稳定 Task 输入、结果契约和图片来源。条件不满足、找不到可信轨迹或
-线路不是该 Codex session 时，一律提交完整 Consumer 输入。每轮都提交当前任务专属内容；实际
-提交输入及 prompt snapshot 记录所选版本。此优化不改变 Audit 独立审核、反馈预算、候选校验或任务状态。
+线路不是该 Codex session 时，一律提交完整 Consumer 输入。轨迹尾部行数、marker 与实际输入
+解析共用同一个已解析的 Codex home，避免不同目录中的同名 session 交叉验证。本轮反馈、时间和
+必要修正每轮提交；实际提交输入及 prompt snapshot 记录所选版本。此优化不改变 Audit 独立审核、
+反馈预算、候选校验或任务状态。
 
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取
 当前所选 Skill 或对应任务配置，则不排入重跑。原 Attempt、旧代际和旧 Skill 快照保留不变。

@@ -85,3 +85,45 @@ def test_context_reuse_fails_after_native_compaction(tmp_path, monkeypatch):
     )
 
     assert not _guard(path, monkeypatch, end=1, session_end=2)
+
+
+def test_context_reuse_reads_the_explicit_codex_home_for_duplicate_session_ids(
+    tmp_path, monkeypatch
+):
+    configured_home = tmp_path / "configured"
+    default_path = tmp_path / "default" / "sessions" / "session-a.jsonl"
+    configured_path = configured_home / "sessions" / "session-a.jsonl"
+    default_path.parent.mkdir(parents=True)
+    configured_path.parent.mkdir(parents=True)
+    _write_session(default_path, [_user_message("stale default-home copy")])
+    _write_session(
+        configured_path,
+        [
+            _user_message(
+                "full task context\n\n"
+                "<!-- consumer-source-context-sha256:abc123 -->"
+            )
+        ],
+    )
+    resolved_homes = []
+
+    def find_session(session_id, *, codex_home=None):
+        resolved_homes.append(codex_home)
+        if codex_home == configured_home:
+            return configured_path
+        if codex_home is None:
+            return default_path
+        return None
+
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", find_session)
+
+    assert native_trajectory.codex_session_has_final_user_marker_without_compaction(
+        "session-a",
+        "consumer-source-context-sha256:abc123",
+        context_start_line=0,
+        attempt_start_line=0,
+        attempt_end_line=1,
+        session_end_line=1,
+        codex_home=configured_home,
+    )
+    assert resolved_homes == [configured_home, configured_home]

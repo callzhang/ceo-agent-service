@@ -282,6 +282,7 @@ def codex_session_has_final_user_marker_without_compaction(
     session_id: str,
     marker: str,
     *,
+    codex_home: Path | None = None,
     context_start_line: int,
     attempt_start_line: int,
     attempt_end_line: int,
@@ -298,7 +299,9 @@ def codex_session_has_final_user_marker_without_compaction(
     ):
         return False
     try:
-        path = find_codex_session_path(session_id, codex_home=_codex_home())
+        path = find_codex_session_path(
+            session_id, codex_home=codex_home or _codex_home()
+        )
         if path is None:
             return False
         context_records = _native_records(path, context_start_line, session_end_line)
@@ -323,7 +326,8 @@ def codex_session_has_final_user_marker_without_compaction(
                 session_id=session_id,
                 transcript_start=attempt_start_line,
                 transcript_end=attempt_end_line,
-            )
+            ),
+            codex_home=codex_home or _codex_home(),
         )
     except (OSError, UnicodeError):
         return False

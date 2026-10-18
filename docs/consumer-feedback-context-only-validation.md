@@ -38,4 +38,11 @@ withdrawn old slot, proposed unaccepted new slot, unresolved repeated LA
 hour, draft invitation not sent, Mei as current owner, exact middle and late
 reference IDs, and no private-topic hint for the public group. This tests
 native context retention in one synthetic pair; service route/guard behavior
-and broad business quality are not established by it.
+and broad business quality are not established by it. The recorded result is
+`evals/trajectory_optimization/consumer_revision_context.production_shape.native.v1.json`.
+
+After applying only the Consumer portion of PR #125 to current main and binding
+all trajectory reads to the same resolved Codex home, the Consumer,
+turn-runner, route and native-input tests passed: 287 passed, 4 skipped.
+Ruff and whitespace checks passed. The PR #125 Task Agent reuse change was not
+included in this branch.

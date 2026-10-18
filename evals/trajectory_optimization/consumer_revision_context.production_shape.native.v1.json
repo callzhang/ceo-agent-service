@@ -1,0 +1,100 @@
+{
+  "source_chars": 51578,
+  "source_sha256": "f019995c191068d9deb8e68e97e27cffa2941b16c3146b2a9d0ec257e5453e44",
+  "prompt_chars": 51873,
+  "arms": {
+    "full": {
+      "cold": {
+        "exit": 0,
+        "sid": "01a14e9f-0ac6-7c63-a1de-306202cc4aaa",
+        "result": {
+          "old_slot_status": "withdrawn",
+          "new_slot_status": "proposed",
+          "timezone": "America/Los_Angeles",
+          "dst_occurrence": "neither occurrence selected",
+          "invitation_sent": false,
+          "project_owner": "Mei",
+          "middle_reference": "MID-DST-55",
+          "late_reference": "LATE-OWNER-151",
+          "public_group_mentions_private_topic": false
+        },
+        "tool_events": 0,
+        "error_tail": ""
+      },
+      "resume": {
+        "exit": 0,
+        "sid": "01a14e9f-0ac6-7c63-a1de-306202cc4aaa",
+        "result": {
+          "old_slot_status": "withdrawn",
+          "new_slot_status": "proposed",
+          "timezone": "America/Los_Angeles",
+          "dst_occurrence": "neither occurrence selected",
+          "invitation_sent": false,
+          "project_owner": "Mei",
+          "middle_reference": "MID-DST-55",
+          "late_reference": "LATE-OWNER-151",
+          "public_group_mentions_private_topic": false
+        },
+        "tool_events": 0,
+        "error_tail": ""
+      },
+      "resume_chars": 52195
+    },
+    "compact": {
+      "cold": {
+        "exit": 0,
+        "sid": "01a14e9f-2953-7253-8f74-0491a91cfbfe",
+        "result": {
+          "old_slot_status": "withdrawn",
+          "new_slot_status": "proposed",
+          "timezone": "America/Los_Angeles",
+          "dst_occurrence": "neither occurrence chosen",
+          "invitation_sent": false,
+          "project_owner": "Mei",
+          "middle_reference": "MID-DST-55",
+          "late_reference": "LATE-OWNER-151",
+          "public_group_mentions_private_topic": false
+        },
+        "tool_events": 0,
+        "error_tail": ""
+      },
+      "resume": {
+        "exit": 0,
+        "sid": "01a14e9f-2953-7253-8f74-0491a91cfbfe",
+        "result": {
+          "old_slot_status": "withdrawn",
+          "new_slot_status": "proposed",
+          "timezone": "America/Los_Angeles",
+          "dst_occurrence": "neither occurrence chosen",
+          "invitation_sent": false,
+          "project_owner": "Mei",
+          "middle_reference": "MID-DST-55",
+          "late_reference": "LATE-OWNER-151",
+          "public_group_mentions_private_topic": false
+        },
+        "tool_events": 0,
+        "error_tail": ""
+      },
+      "resume_chars": 318
+    }
+  },
+  "expected": {
+    "old_slot_status": "withdrawn",
+    "new_slot_status": "proposed",
+    "timezone": "America/Los_Angeles",
+    "invitation_sent": false,
+    "project_owner": "Mei",
+    "middle_reference": "MID-DST-55",
+    "late_reference": "LATE-OWNER-151",
+    "public_group_mentions_private_topic": false
+  },
+  "version": "consumer_revision_context.production_shape.native.v1",
+  "scope": "Fictional, read-only native Codex cold/resume comparison; tools and business MCP not used.",
+  "source_shape": "160 deterministic fictional delivery-log records with decisive facts at records 003, 055, 076, 110 and 151; source SHA-256 binds the evaluated text.",
+  "schema": "Required fields and primitive types only; no expected answer literals or const values.",
+  "limits": [
+    "One paired synthetic run is not a service route or guard test.",
+    "Character reduction is not a general token or quality estimate.",
+    "No production business action or source was used."
+  ]
+}
