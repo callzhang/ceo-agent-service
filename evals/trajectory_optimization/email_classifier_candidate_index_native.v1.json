@@ -1,0 +1,31 @@
+{
+  "case": "anonymous long unwanted promotion with one opaque candidate",
+  "model": "gpt-5.6-luna",
+  "transport": "Codex OAuth read-only; no business MCP or tools; no output schema",
+  "skill_sha256": "3506daa2d96bd6335efe21229a50ee15fe04e402b25d0f474a2cc1b24927fd39",
+  "prompt_chars": 21412,
+  "prompt_sha256": "0cb3eb988770fd002d4ed8a14a285250e02522040a1c6133f2c15f7c1470e72f",
+  "results": [
+    {
+      "repetition": 1,
+      "exit_code": 0,
+      "tool_calls": 0,
+      "category": "junk",
+      "certainty": "certain",
+      "candidate_index": 0,
+      "wire_has_url": false,
+      "bound_exactly": true
+    },
+    {
+      "repetition": 2,
+      "exit_code": 0,
+      "tool_calls": 0,
+      "category": "junk",
+      "certainty": "certain",
+      "candidate_index": 0,
+      "wire_has_url": false,
+      "bound_exactly": true
+    }
+  ],
+  "accepted": true
+}

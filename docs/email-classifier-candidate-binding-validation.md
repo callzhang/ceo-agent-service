@@ -41,12 +41,22 @@ invocation binding, the routed backend parser boundary, redacted persistence,
 and alignment between the managed Skill example and the wire model. They do
 not call an email provider or perform unsubscribe actions.
 
+After merging current `origin/main` into this branch, the focused classifier,
+Skill-contract, and email task adapter suites passed **148** tests. The fixed
+anonymous native case in
+`evals/trajectory_optimization/email_classifier_candidate_index_native.v1.json`
+used this branch's exact managed Skill SHA-256 `3506daa2…`, a 21,412-character
+input, and one opaque unsubscribe candidate. Both read-only Codex OAuth runs
+returned valid `junk` results with candidate index 0 and no URL field; service
+binding recovered the exact candidate in each run. There were zero tool calls.
+
 ## Evidence boundary
 
-This validates the service-side binding path and repository Skill contract in
-the local checkout. It does not prove the new wire contract has been exercised
-by a native model run or production, and it does not measure token savings or
-classification quality. The production checkout remains unchanged until the
-normal release path deploys a reviewed commit; end-to-end acceptance requires
-a post-release trajectory with at least one unsubscribe candidate and an exact
-service-bound URL readback.
+This validates the service-side binding path, repository Skill contract, and
+one anonymous native classifier case. The native case calls Codex directly; it
+does not prove the full routed worker path or a production result. It does not
+measure classification quality across diverse mail. The production checkout
+remains unchanged until the normal release path deploys a reviewed commit.
+Post-release readback must confirm the new commit, loaded managed Skill digest,
+healthy worker and queue state; a later real candidate-bearing trajectory is
+needed to claim that production completed the end-to-end binding path.
