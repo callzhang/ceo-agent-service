@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -31,6 +32,67 @@ EXTERNAL_DEPENDENCY_WAIT_ERRORS = frozenset(
     {"dependency_read_unavailable", "agent_context_refresh_failed"}
 )
 MAX_EXECUTION_STAGES = 16
+
+
+def _scheduled_consumer_work_receipts(
+    task: ReplyTask, run: AgentRun,
+) -> tuple[dict[str, object], ...]:
+    """Project service-owned receipts from the exact scheduled Consumer parent."""
+    if (
+        task.channel != "scheduled"
+        or run.reply_task_id != task.id
+        or run.execution_generation != task.execution_generation
+        or run.role is not AgentRole.CONSUMER
+        or run.status != "completed"
+    ):
+        return ()
+    receipts: list[dict[str, object]] = []
+    for event in run.tool_events:
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if (
+            event.get("type") != "item.completed"
+            or not isinstance(item, dict)
+            or item.get("type") != "mcp_tool_call"
+            or item.get("tool") != "consumer_document_write"
+        ):
+            continue
+        arguments = item.get("arguments")
+        result = item.get("result")
+        result = result.get("structuredContent", result.get("structured_content")) if isinstance(result, dict) else None
+        if not isinstance(arguments, dict) or not isinstance(result, dict):
+            continue
+        provider = result.get("provider_result")
+        if not isinstance(provider, dict):
+            continue
+        provider_data = provider.get("data")
+        provider_verified = provider.get("verified") is True or (
+            isinstance(provider_data, dict) and provider_data.get("verified") is True
+        )
+        readback = result.get("readback")
+        if not isinstance(readback, dict):
+            continue
+        content = arguments.get("content")
+        readback_content = readback.get("markdown")
+        receipts.append({
+            "operation": result.get("operation"),
+            "node_id": result.get("node_id"),
+            "title": result.get("title"),
+            "provider_verified": provider_verified,
+            "readback_success": readback.get("success") is True,
+            "readback_node_id": readback.get("nodeId"),
+            "content_matches": (
+                content == readback_content
+                if isinstance(content, str) and isinstance(readback_content, str)
+                else None
+            ),
+            "content_sha256": (
+                hashlib.sha256(content.encode("utf-8")).hexdigest()
+                if isinstance(content, str) else None
+            ),
+        })
+    return tuple(receipts)
 
 
 class ConsumerRunner(Protocol):
@@ -295,6 +357,10 @@ class AgentOrchestrator:
                     )
                 else:
                     consumer_parent = self._validate_audit_parent(task, state)
+                    if task.channel == "scheduled":
+                        consumer_parent = self.store.get_agent_run(
+                            consumer_parent.id, load_events=True
+                        ) or consumer_parent
                     previous_review = (
                         self.store.get_candidate_review_for_audit_run(consumer_parent.parent_agent_run_id)
                         if consumer_parent.parent_agent_run_id else None
@@ -312,6 +378,7 @@ class AgentOrchestrator:
                             candidate=state.candidate,
                             candidate_digest=state.candidate_digest,
                             audit_rules="",
+                            scheduled_work_receipts=_scheduled_consumer_work_receipts(task, consumer_parent),
                             previous_revision_review=(
                                 previous_result if previous_result is not None
                                 and previous_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT)

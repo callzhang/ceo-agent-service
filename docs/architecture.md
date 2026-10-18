@@ -273,6 +273,14 @@ scheduled_tasks
   -> reply_attempt / agent_runs / provider facts
 ```
 
+Scheduled Agent Audit also receives a compact service projection of any completed
+`consumer_document_write` result from its exact Consumer parent run. The projection
+contains the service tool's document identity, provider verification/readback
+status, and whether the read-back body matches the submitted body, plus a digest;
+it omits the report body itself. This is execution evidence, not proof that report
+claims are correct. The behavior is shared by scheduled Agent tasks and does not
+change Audit's independent review standard.
+
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是
 DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工作来源、受限 AI 听记权限申请和 AI 听记同步），不需要

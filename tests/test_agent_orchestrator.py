@@ -3,12 +3,13 @@
 from collections import deque
 from dataclasses import replace
 import sqlite3
+import hashlib
 
 import pytest
 
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
-from app.agent_orchestrator import AgentOrchestrator, _operation_id
+from app.agent_orchestrator import AgentOrchestrator, _operation_id, _scheduled_consumer_work_receipts
 from app.agent_result import AgentError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dws_client import DwsError
@@ -143,6 +144,67 @@ def test_persisted_terminal_read_needs_no_context_or_new_effect(tmp_path, outcom
         task.model_copy(update={"execution_generation": "new-unprocessed-generation"})
     ) is None
     assert (len(consumer.calls), len(audit.calls), len(handler.calls)) == calls
+
+
+def test_scheduled_audit_receives_compact_service_report_receipt_only():
+    task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
+    run = type("Run", (), {
+        "reply_task_id": 42,
+        "execution_generation": "generation-1",
+        "role": AgentRole.CONSUMER,
+        "status": "completed",
+        "tool_events": [{
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call", "tool": "consumer_document_write",
+                "arguments": {"content": "report body"},
+                "result": {"structuredContent": {
+                    "operation": "write_report_document", "node_id": "doc-7", "title": "Report",
+                    "provider_result": {"verified": True},
+                    "readback": {"success": True, "nodeId": "doc-7", "markdown": "report body"},
+                }},
+            },
+        }],
+    })()
+
+    receipts = _scheduled_consumer_work_receipts(task, run)
+
+    assert receipts == ({
+        "operation": "write_report_document", "node_id": "doc-7", "title": "Report",
+        "provider_verified": True, "readback_success": True,
+        "readback_node_id": "doc-7", "content_matches": True,
+        "content_sha256": hashlib.sha256(b"report body").hexdigest(),
+    },)
+    assert "report body" not in str(receipts)
+
+
+@pytest.mark.parametrize("channel,status,tool,task_id,generation,role", [
+    ("dingtalk", "completed", "consumer_document_write", 42, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "failed", "consumer_document_write", 42, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "completed", "other_tool", 42, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "completed", "consumer_document_write", 43, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "completed", "consumer_document_write", 42, "stale-generation", AgentRole.CONSUMER),
+    ("scheduled", "completed", "consumer_document_write", 42, "generation-1", AgentRole.AUDIT),
+])
+def test_scheduled_audit_receipt_projection_excludes_unbound_events(
+    channel, status, tool, task_id, generation, role,
+):
+    task = type("Task", (), {"id": 42, "channel": channel, "execution_generation": "generation-1"})()
+    run = type("Run", (), {
+        "reply_task_id": task_id,
+        "execution_generation": generation,
+        "role": role,
+        "status": status,
+        "tool_events": [{
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call", "tool": tool, "arguments": {"content": "x"},
+                "result": {"structuredContent": {"provider_result": {"verified": True}}},
+            },
+        }],
+    })()
+
+    assert _scheduled_consumer_work_receipts(task, run) == ()
 
 
 def test_approved_candidate_executes_after_audit_and_persists_receipt(tmp_path):

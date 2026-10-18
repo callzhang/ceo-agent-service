@@ -1863,6 +1863,12 @@ fallback 换到其余配置线路（Derek 2026-09-24，此前定时任务固定�
 同样记 `skipped`：配置性原因（未配置、缺能力、认证暂停）每次写 Attention，
 provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停状态，不逐次写 Attention。
 
+创建 Audit 输入时，编排器从当前代次、当前 reply task 且已完成的 Consumer 父运行中，读取
+`consumer_document_write` 的服务工具结果，并投影文档身份、provider 验证/读回状态、提交正文与
+读回正文是否一致及正文摘要；不把报告正文重复注入。该证据只证明服务工具实际返回和读回了什么，
+不证明报告事实正确。该交接适用于 `channel=scheduled` 的 Agent 任务，不增加日报或周报专属规则，
+也不改变 Audit 的独立审查标准。
+
 服务命令任务（`scheduled_tasks.command` 非空）只有第一阶段：`scheduled` adapter 领取 trigger
 后，在同一个 claim 内直接运行服务命令目录中的实现（例如 `produce-once` 是 DingTalk 消息
 producer 的一次增量读取，与 `app.cli produce-once` 相同），成功后把

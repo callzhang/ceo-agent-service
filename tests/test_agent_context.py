@@ -775,6 +775,11 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
         candidate=_candidate(proposal),
         candidate_digest="b" * 64,
         audit_rules="Only publish supported facts.",
+        scheduled_work_receipts=({
+            "node_id": "doc-1", "provider_verified": True,
+            "readback_success": True, "content_matches": True,
+            "content_sha256": "a" * 64,
+        },),
     ).render()
 
     assert "Audit reads and judges it" in audit_developer_instructions("Only publish supported facts.")
@@ -786,6 +791,9 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Audit reads and judges it without executing actions" in audit_developer_instructions("Only publish supported facts.")
     assert _has_json_field(rendered, "candidate_digest", "b" * 64)
     assert "Candidate revision" in rendered
+    assert "Service-recorded scheduled work receipts" in rendered
+    assert _has_json_field(rendered, "node_id", "doc-1")
+    assert "report body" not in rendered
     assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered
     assert "exact OA comment and applicant notification" not in rendered
