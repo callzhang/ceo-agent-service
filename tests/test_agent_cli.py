@@ -310,7 +310,7 @@ def test_weekly_report_manifest_schema_exposes_target_existence(exists):
     assert validated["manifest"]["target"]["exists"] is exists
 
 
-def test_weekly_report_complete_skill_fixture_remains_publishable():
+def test_weekly_report_skill_fixture_requires_renderer_fields():
     # Isolate the standalone Skill's `scripts` package from the service package.
     code = '''
 import pathlib, runpy, sys
@@ -321,13 +321,14 @@ fixture = runpy.run_path(str(root / "tests/test_report_contract.py"))
 sample = fixture["ReportContractTests"]()
 report = sample.complete_report()
 report["company_metrics"][0]["data_date"] = None
-report["issues"] = [{"id": "COMP-001", "deadline": None}]
 report["claims"] = [{"type": "hypothesis_pending_validation", "evidence": None}]
 arguments = {"manifest": sample.complete_manifest(), "report": report, "previous_issues": []}
 tool = build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
 validated = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
 assert validated == arguments
-assert fixture["validate_run"](**arguments) == fixture["validate_run"](**validated) == {"publishable": True, "errors": []}
+result = fixture["validate_run"](**arguments)
+assert result == fixture["validate_run"](**validated)
+assert result == {"publishable": False, "errors": ["company_metrics[0] is missing renderer field data_date"]}
 '''
     subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True, text=True)
 

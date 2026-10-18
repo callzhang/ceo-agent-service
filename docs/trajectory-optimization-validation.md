@@ -981,3 +981,22 @@ and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
 or incidental effect-reconciliation policy change was made.
+
+### Weekly Report validator and runtime publication alignment (2026-10-17)
+
+The synthetic new-target native trace exposed a validator/render contract
+mismatch: the installed validator returned `publishable=true`, followed by nine
+failed render calls for fields the renderer reads. The candidate validator
+reports the missing metric, issue, owner and business-line fields before
+rendering; after correction, rendering and the in-memory fake-sink readback
+passed. A matched prompt-only reuse hint did not remove a second identical
+successful render call, so no new Skill instruction was added.
+
+The current `consumer-system-contract-release` manifest also omitted both
+validator scripts and had a stale Weekly Report Skill digest. The candidate
+release now includes `report_contract.py` and `validate_run.py` with the Skill;
+focused publication tests cover exact copy and rollback. Skill tests: 57 passed;
+release, materials and CLI tests: 97 passed. Production remains unchanged at
+HEAD `1fcbddda` with the old `validate_run.py` digest and no manifest entry.
+This is local candidate evidence only; no real report was written or deployed.
+Receipt: `evals/trajectory_optimization/weekly_report_missing_target_render.native.v1.json`.
