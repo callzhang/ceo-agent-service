@@ -65,6 +65,18 @@ def _scheduled_consumer_work_receipts(
         if not isinstance(envelope, dict) or envelope.get("isError") is True:
             continue
         result = envelope.get("structuredContent", envelope.get("structured_content"))
+        if result is None:
+            blocks = envelope.get("content")
+            if (
+                isinstance(blocks, list) and len(blocks) == 1
+                and isinstance(blocks[0], dict)
+                and blocks[0].get("type") == "text"
+                and isinstance(blocks[0].get("text"), str)
+            ):
+                try:
+                    result = json.loads(blocks[0]["text"])
+                except json.JSONDecodeError:
+                    continue
         if not isinstance(result, dict):
             continue
         operation = result.get("operation")

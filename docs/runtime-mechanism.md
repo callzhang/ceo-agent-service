@@ -1864,7 +1864,7 @@ fallback 换到其余配置线路（Derek 2026-09-24，此前定时任务固定�
 provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停状态，不逐次写 Attention。
 
 创建 Audit 输入时，编排器从当前代次、当前 reply task 且已完成的 Consumer 父运行中，读取
-`agent_cli.consumer_document_write` 已完成调用的结构化返回，并投影文档身份、读回对象摘要和
+`agent_cli.consumer_document_write` 已完成调用的结构化返回，或 Claude 轨迹中单个文本块承载的同一 JSON 对象，并投影文档身份、读回对象摘要和
 字节数；不把报告正文重复注入。无匹配返回时 Audit 明确看到空列表。该证据只证明服务工具
 返回了什么，不证明文档已被独立核实或报告事实正确。该交接适用于 `channel=scheduled` 的
 Agent 任务，不增加日报或周报专属规则，也不改变 Audit 的独立审查标准。

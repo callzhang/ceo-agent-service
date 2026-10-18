@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import replace
 import sqlite3
 import hashlib
+import json
 
 import pytest
 
@@ -181,6 +182,30 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
     assert "report body" not in str(receipts)
 
 
+def test_scheduled_audit_reads_claude_text_tool_return_without_report_body():
+    task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
+    returned = {
+        "operation": "created", "node_id": "doc-8", "title": "Weekly Report",
+        "provider_result": {"nodeId": "doc-8"},
+        "readback": {"content": "private synthetic weekly report"},
+    }
+    run = type("Run", (), {
+        "id": 78, "reply_task_id": 42, "execution_generation": "generation-1",
+        "role": AgentRole.CONSUMER, "status": "completed",
+        "tool_events": [{"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "server": "agent_cli",
+            "tool": "consumer_document_write", "id": "write-2",
+            "result": {"content": [{"type": "text", "text": json.dumps(returned)}]},
+        }}],
+    })()
+
+    [receipt] = _scheduled_consumer_work_receipts(task, run)
+    assert receipt["consumer_run_id"] == 78
+    assert receipt["operation"] == "created"
+    assert receipt["document_node_id"] == "doc-8"
+    assert "private synthetic weekly report" not in str(receipt)
+
+
 def test_scheduled_receipts_ignore_other_server_and_failed_tool_result():
     task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
     item = {
@@ -198,6 +223,9 @@ def test_scheduled_receipts_ignore_other_server_and_failed_tool_result():
         "tool_events": [
             {"type": "item.completed", "item": {**item, "server": "other_server"}},
             {"type": "item.completed", "item": {**item, "server": "agent_cli", "result": {**item["result"], "isError": True}}},
+            {"type": "item.completed", "item": {**item, "server": "agent_cli", "result": {
+                "content": [{"type": "text", "text": "provider failed: no document"}],
+            }}},
         ],
     })()
 
