@@ -44,6 +44,7 @@ from app.bounded_process import (
 from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
 from app.config import feedback_spike_vercel_base_url
 from app.dingtalk_message_payload_sharing import share_message_raw_payload
+from app.dingtalk_sheet_style_sharing import share_sheet_cell_styles
 from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
@@ -1656,15 +1657,15 @@ def build_role_server(
     def read_dingtalk_sheet_range(
         node_id: str, sheet_id: str, cell_range: str,
     ) -> dict[str, object]:
-        """Read an explicit A1 workbook range, bounded by the DWS read API."""
+        """Read a DWS-bounded A1 range. cellStyleRef indexes sharedCellStyles."""
         from app.dws_client import DwsClient
         if not node_id.strip() or not sheet_id.strip() or not cell_range.strip():
             raise ValueError("sheet node, ID, and range are required")
         dws = DwsClient()
-        return dws.run_json([
+        return share_sheet_cell_styles(dws.run_json([
             dws.dws_bin, "sheet", "range", "read", "--node", node_id,
             "--sheet-id", sheet_id, "--range", cell_range, "--format", "json",
-        ])
+        ]))
 
     def read_dingtalk_oa(process_instance_id: str) -> dict[str, object]:
         """Read the live DingTalk OA process and its current facts."""
