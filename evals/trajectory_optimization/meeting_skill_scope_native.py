@@ -145,11 +145,13 @@ def _checks(name: str, decision: object) -> dict[str, bool]:
     return {**common, "business_group": decision.audience_scope == "business" and target is not None and target.conversation_id == "synthetic-group-2", "business_assignments": "验收" in message and "付款" in message, "no_sensitive_hint": not any(term in decision.message_title + message for term in ("裁员", "减员", "人员优化", "人员事项"))}
 
 
-def _run(prompt: str, *, directory: str, config: str, schema: Path) -> dict[str, object]:
+def _run(prompt: str, *, directory: str, config: str | None, schema: Path) -> dict[str, object]:
     command = [
         "codex", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral",
         "--skip-git-repo-check", "-C", directory, "-s", "read-only",
-        "-m", MODEL, "-c", config, "--json", "--output-schema", str(schema), "-",
+        "-m", MODEL,
+        *(["-c", config] if config else []),
+        "--json", "--output-schema", str(schema), "-",
     ]
     result = subprocess.run(command, input=prompt, capture_output=True, text=True, timeout=240)
     events = []
@@ -194,12 +196,15 @@ def main() -> None:
     args = parser.parse_args()
     root = Path.home() / ".agents" / "skills"
     materials, hashes = _materials(root)
-    config = codex_skill_config_override(())
+    candidate_config = codex_skill_config_override(())
     schema = Path(__file__).resolve().parents[2] / "app/schemas/meeting_alignment_decision.schema.json"
     results = []
     with tempfile.TemporaryDirectory(prefix="meeting-skill-scope-", dir="/tmp") as directory:
         for name, source, groups in _cases():
-            for arm, protocol in (("full", "\n\n".join(materials)), ("managed_only", materials[0])):
+            for arm, protocol, config in (
+                ("full", "\n\n".join(materials), None),
+                ("managed_only", materials[0], candidate_config),
+            ):
                 prompt = build_meeting_alignment_prompt(
                     source, work_profile="", work_profile_source="",
                     group_candidates=groups, consumer_prompt="只依据本次虚构会议和给定的虚构证据判断。",
@@ -213,7 +218,8 @@ def main() -> None:
     output = {
         "model": MODEL,
         "skill_sha256": hashes,
-        "catalog_config_sha256": hashlib.sha256(config.encode("utf-8")).hexdigest(),
+        "baseline_catalog": "native_default",
+        "candidate_catalog_config_sha256": hashlib.sha256(candidate_config.encode("utf-8")).hexdigest(),
         "scope": "Anonymous read-only Codex OAuth; no Work Profile, business MCP or external action",
         "results": results,
     }

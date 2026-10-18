@@ -2,7 +2,9 @@
 
 The Meeting planner receives a frozen managed judgment Skill plus operation Skills used to collect minutes and calendar facts. In the inspected native runs, the service had already assembled the source facts before the decision turn, and the planner did not call business tools. This change keeps the full managed rule in Codex input and omits the two completed operation guides. Other runtime routes retain the original full protocol.
 
-The fixed [anonymous read-only cases](../evals/trajectory_optimization/meeting_skill_scope_native.py) compare the current full protocol against the managed-only input on the same latest-main prompt builder, model (`gpt-5.6-luna`), schema, and fictional facts. The [saved results](../evals/trajectory_optimization/meeting_skill_scope_native.v1.json) contain the Skill hashes, prompt hashes, checks, and structured decisions.
+The fixed [anonymous read-only cases](../evals/trajectory_optimization/meeting_skill_scope_native.py) compare the current full protocol and native Skill catalog against the managed-only input and filtered catalog on the same prompt builder, model (`gpt-5.6-luna`), schema, and fictional facts. The [saved results](../evals/trajectory_optimization/meeting_skill_scope_native.v2.json) contain the Skill hashes, prompt hashes, checks, and structured decisions. The earlier [v1 result](../evals/trajectory_optimization/meeting_skill_scope_native.v1.json) filtered the native catalog in both arms, so it isolated service-text reduction but did not represent the full production baseline.
+
+Acceptance requires a shorter submitted input, a valid complete decision in every case, the same justified recipient and cross-time-zone or business facts, and no personnel hint in the mixed-content group message. The scoped regression tests must keep the full frozen input on non-Codex routes and preserve the decision, audience and delivery contracts. A failed check stops this change rather than prompting a special-case rule.
 
 | Case | Full prompt | Managed-only prompt | Full checks | Managed-only checks |
 | --- | ---: | ---: | --- | --- |
@@ -10,7 +12,7 @@ The fixed [anonymous read-only cases](../evals/trajectory_optimization/meeting_s
 | Business rollout agreement | 41,608 chars | 24,193 chars | Pass | Pass |
 | Mixed business and sensitive personnel content | 41,547 chars | 24,132 chars | Failed sensitive-hint check | Pass |
 
-Each managed-only input saved 17,415 characters, about 42% of its corresponding full input. All six runs exited successfully, produced valid `MeetingAlignmentDecision` objects, made zero tool calls, and emitted no Skill-budget warning. The full-input sensitive result included “人员事项不纳入本次项目群总结,” which disclosed the existence of a personnel matter to the group; the managed-only result discussed only the business assignments.
+Each managed-only service input saved 17,415 characters, about 42% of its corresponding full input. All six v2 runs exited successfully, produced valid `MeetingAlignmentDecision` objects, and made zero tool calls. The native baseline emitted a Skill-description budget warning in all three cases; the filtered candidate emitted none. The full-input sensitive result included a hint that a personnel topic existed, while the managed-only group message discussed only the business assignments. The checks found no missing cross-time-zone fact, aligned business conclusion, recipient, or assignment in the candidate cases.
 
 This is one model run per case, so it establishes a reproducible comparison rather than a statistical quality improvement. The cases contain no Work Profile, real meeting, business MCP, or external action. Focused tests cover frozen-material selection, Codex route input, full-input fallback to Friday, and same-route correction. Production behavior requires a merged release and live readback; none is claimed here.
 
