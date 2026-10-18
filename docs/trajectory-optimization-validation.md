@@ -1449,5 +1449,19 @@ restored identical ordered JSON, and the projected JSON parsed. This probe did
 not submit business cells to a model or change the source workbook.
 
 These anonymous runs verify representation and model visibility in the fixed
-cases. They do not establish a real post-release business outcome; production
-version, health and queue readback belong to the release step.
+cases. They do not establish a real post-release business outcome.
+
+**Release readback, 2026-10-18.** Independent review closed its one material
+finding before PR #146 merged as `2246d5184de62a4f629967fc0effbdb2b6504d10`.
+The official `python -m app.deploy` path waited for a quiet window, backed up
+the database and advanced the production checkout from `91da74b8` to that
+merge commit. The production checkout was clean; launchd reported a running
+new PID, `63135` (previously `77471`), and `/healthz` returned `ok=true` and
+`status=ok`. Console readback showed 13 queues, six pending items, zero
+processing items, 12 failed items, zero retryable items and seven Attention
+items. The failed and pending queue counts and seven Attention items were
+already present before deployment; no new failed or stuck work was observed.
+History reported 36,080 total records. A real business Sheet run after this
+release has not yet been observed, so no production judgment outcome is claimed.
+GitHub Quality remained in progress at the time of this readback; it is a
+supplemental check, not the basis for the behavior acceptance above.
