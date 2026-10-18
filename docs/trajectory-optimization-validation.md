@@ -1389,3 +1389,18 @@ The next investigation must resolve the importance behavior with a repeated,
 fixed comparison or an explicit product-level importance criterion before
 reconsidering a Skill change. No real email classification or provider action
 was part of this evaluation.
+
+**Exact-input repeat, 2026-10-18.** The saved anonymous case and the original
+evaluation script were used to reconstruct both prompts byte for byte; their
+SHA-256 hashes match the v1 receipt. Two new calls per arm, interleaved under
+the same `gpt-5.6-luna` read-only invocation, returned valid wire results and
+made no tool calls. Together with the original pair, all three baseline calls
+classified the subscription receipt as `external_billing` with
+`important=false`, while all three shorter-Skill calls classified it as
+`external_billing` with `important=true`. A preliminary two-per-arm probe had
+used a simplified sender shape and produced a different prompt hash; it is
+recorded separately and is not counted as a reproduction of the original
+comparison. The exact-input result strengthens the no-go: removing the table
+reliably changes an importance decision in this fixed case. No Skill or runtime
+change follows. The compact, sanitized repeat receipt is
+`evals/trajectory_optimization/email_classifier_category_table_repeat.v2.json`.

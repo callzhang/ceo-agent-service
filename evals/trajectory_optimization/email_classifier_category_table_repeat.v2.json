@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "date": "2026-10-18",
+  "status": "no_go",
+  "source_receipt": "evals/trajectory_optimization/email_classifier_category_table_pair.v1.json",
+  "model": "gpt-5.6-luna",
+  "invocation": "codex exec --ephemeral --json --ignore-user-config --ignore-rules --skip-git-repo-check -s read-only -m gpt-5.6-luna -C /tmp",
+  "case": "external_billing",
+  "fixture_is_anonymous": true,
+  "prompt_reconstruction": "Source script in current outer Codex rollout; exact original prompt SHA-256 matched for both arms. Original message sender was an object with email/name and attachments was an empty list.",
+  "order": [
+    "candidate:repeat_1",
+    "baseline:repeat_1",
+    "baseline:repeat_2",
+    "candidate:repeat_2"
+  ],
+  "arms": {
+    "baseline": {
+      "prompt_chars": 6900,
+      "prompt_sha256": "9f013a4c95e44c809f6fc870a736d53a6341a36cf644f1b6e0d3faead0bd1ee1",
+      "original": {
+        "category": "external_billing",
+        "important": false,
+        "certainty": "certain",
+        "unsubscribe_candidate_index": null,
+        "valid": true,
+        "tool_calls": 0
+      },
+      "repeat_1": {
+        "category": "external_billing",
+        "important": false,
+        "certainty": "certain",
+        "unsubscribe_candidate_index": null,
+        "valid": true,
+        "tool_calls": 0
+      },
+      "repeat_2": {
+        "category": "external_billing",
+        "important": false,
+        "certainty": "certain",
+        "unsubscribe_candidate_index": null,
+        "valid": true,
+        "tool_calls": 0
+      }
+    },
+    "candidate": {
+      "prompt_chars": 5251,
+      "prompt_sha256": "0e2980ebeb7599a47676c6a620126c4b29a893604bbbdd9fe62bd49881f22ba9",
+      "original": {
+        "category": "external_billing",
+        "important": true,
+        "certainty": "certain",
+        "unsubscribe_candidate_index": null,
+        "valid": true,
+        "tool_calls": 0
+      },
+      "repeat_1": {
+        "category": "external_billing",
+        "important": true,
+        "certainty": "certain",
+        "unsubscribe_candidate_index": null,
+        "valid": true,
+        "tool_calls": 0
+      },
+      "repeat_2": {
+        "category": "external_billing",
+        "important": true,
+        "certainty": "certain",
+        "unsubscribe_candidate_index": null,
+        "valid": true,
+        "tool_calls": 0
+      }
+    }
+  },
+  "diagnostic_note": "A preliminary probe with simplified sender structure had different hashes and returned important=false on both arms in two calls each. It is excluded from exact-input comparison.",
+  "acceptance": "Category, important and unsubscribe candidate index must match across arms; important differs in all three exact-input pairs.",
+  "conclusion": "Do not remove the static category table or deploy the shorter Skill from this candidate."
+}
