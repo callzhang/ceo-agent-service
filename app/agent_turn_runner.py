@@ -122,6 +122,33 @@ def _fallback_requested_session_id(
     return initial_session_id
 
 
+def _prompt_for_runtime_route(
+    route: RuntimeRoute,
+    route_session_id: str | None,
+    full_prompt: str,
+    full_invocation_facts: dict[str, object],
+    session_scoped_prompt: Mapping[str, object] | None,
+) -> tuple[str, dict[str, object]]:
+    """Use a compact task input only on its exact existing Codex session."""
+    if (
+        route.runtime_kind is not RuntimeKind.CODEX_CLI
+        or not isinstance(session_scoped_prompt, Mapping)
+        or route.name != session_scoped_prompt.get("route_name")
+        or not route_session_id
+        or route_session_id != session_scoped_prompt.get("session_id")
+    ):
+        return full_prompt, full_invocation_facts
+    compact_prompt = session_scoped_prompt.get("prompt")
+    compact_facts = session_scoped_prompt.get("invocation_facts")
+    if (
+        not isinstance(compact_prompt, str)
+        or not compact_prompt.strip()
+        or not isinstance(compact_facts, dict)
+    ):
+        return full_prompt, full_invocation_facts
+    return compact_prompt, compact_facts
+
+
 def _normalized_key(key: str) -> str:
     return "".join(character for character in key.casefold() if character.isalnum())
 
@@ -765,6 +792,7 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
         invocation_facts: dict[str, object] | None = None,
+        session_scoped_prompt: Mapping[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
         sensitive_result = result_contains_sensitive_value or (
@@ -1180,7 +1208,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 from app.prompt_composition import append_runtime_context
 
                 rendered_at = datetime.now().astimezone().isoformat()
-                context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                # A failed native attempt can grow or compact its session. The
+                # original context proof only permits the first submission;
+                # any retry carries the complete current task input.
+                scoped_prompt_for_attempt = session_scoped_prompt
+                session_scoped_prompt = None
+                turn_prompt, turn_invocation_facts = _prompt_for_runtime_route(
+                    route,
+                    route_session_id,
+                    prompt,
+                    invocation_facts or {},
+                    scoped_prompt_for_attempt,
+                )
+                context_facts = {
+                    **turn_invocation_facts,
+                    "proposal_revision": run.proposal_revision,
+                }
                 runtime_context = render_runtime_context(
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
@@ -1193,13 +1236,13 @@ class AgentTurnProcess(Generic[ResultT]):
                         for value in command
                     ]
                 executor_prompt = (
-                    _claude_input_contract(prompt=prompt, developer_instructions=submitted_developer_instructions)
-                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else prompt
+                    _claude_input_contract(prompt=turn_prompt, developer_instructions=submitted_developer_instructions)
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else turn_prompt
                 )
                 snapshot = runtime_prompt_snapshot(
                     role=run.role.value, route=route, runtime_attempt_id=active_attempt.id,
                     task=self.task, developer_instructions=submitted_developer_instructions,
-                    task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+                    task_prompt=turn_prompt, runtime_context=runtime_context, current_time=rendered_at,
                     invocation_facts=context_facts,
                 )
                 snapshot["proposal_revision"] = run.proposal_revision
@@ -1207,7 +1250,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 try:
                     if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                         friday_result = self.friday_adapter.execute(
-                            prompt,
+                            turn_prompt,
                             project_id=self.runtime_config.friday_runtime_project_id,
                             conversation_id=self.task.conversation_id,
                             model=route.model,

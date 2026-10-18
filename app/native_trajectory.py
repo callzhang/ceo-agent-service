@@ -278,6 +278,92 @@ def read_claude_events(session_id: str, *, start_line: int, end_line: int) -> li
     return events
 
 
+def codex_session_has_final_user_marker_without_compaction(
+    session_id: str,
+    marker: str,
+    *,
+    codex_home: Path | None = None,
+    context_start_line: int,
+    attempt_start_line: int,
+    attempt_end_line: int,
+    session_end_line: int,
+) -> bool:
+    """Verify one exact completed User input remains in an uncompacted session."""
+    if (
+        not session_id
+        or not marker
+        or context_start_line < 0
+        or attempt_start_line < context_start_line
+        or attempt_end_line <= attempt_start_line
+        or session_end_line < attempt_end_line
+    ):
+        return False
+    try:
+        path = find_codex_session_path(
+            session_id, codex_home=codex_home or _codex_home()
+        )
+        if path is None:
+            return False
+        context_records = _native_records(path, context_start_line, session_end_line)
+        attempt_records = _native_records(path, attempt_start_line, attempt_end_line)
+    except (OSError, UnicodeError):
+        return False
+    if (
+        not context_records
+        or not attempt_records
+        or any(record.get("type") == "compacted" for record in context_records)
+    ):
+        return False
+    saw_user = saw_answer = completed_answer = False
+    for record in attempt_records:
+        body = record.get("payload")
+        if not isinstance(body, dict):
+            continue
+        if record.get("type") == "response_item" and body.get("type") == "message":
+            metadata = body.get("internal_chat_message_metadata_passthrough")
+            kinds = metadata.get("content_item_kinds", []) if isinstance(metadata, dict) else []
+            if body.get("role") == "user" and "user.text" in kinds:
+                saw_user, saw_answer = True, False
+            elif saw_user and body.get("role") == "assistant":
+                content = body.get("content")
+                saw_answer = isinstance(content, list) and any(
+                    isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                    and block["text"].strip()
+                    for block in content
+                )
+        elif (
+            record.get("type") == "event_msg"
+            and body.get("type") == "task_complete"
+            and saw_answer
+        ):
+            completed_answer = True
+    if not completed_answer:
+        return False
+
+    from types import SimpleNamespace
+
+    from app.native_prompt_input import read_attempt_input
+
+    try:
+        submitted = read_attempt_input(
+            SimpleNamespace(
+                runtime_kind="codex_cli",
+                session_id=session_id,
+                transcript_start=attempt_start_line,
+                transcript_end=attempt_end_line,
+            ),
+            codex_home=codex_home or _codex_home(),
+        )
+    except (OSError, UnicodeError):
+        return False
+    if not submitted:
+        return False
+    task_prompt = submitted["task_prompt"].rstrip()
+    return task_prompt.endswith(marker) or task_prompt.endswith(f"<!-- {marker} -->")
+
+
 def read_run_events(db, row) -> list[dict]:
     attempts = db.execute(
         f"select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",

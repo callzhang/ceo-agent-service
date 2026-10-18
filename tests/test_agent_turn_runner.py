@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import app.agent_turn_runner as agent_turn_runner
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 from app.agent_turn_runner import (
     AgentTurnProcess,
     RuntimeRouteUnavailableError,
@@ -13,9 +14,66 @@ from app.agent_turn_runner import (
     _encode_runtime_domain_result,
     _process_failure_detail,
     _persist_provider_event,
+    _prompt_for_runtime_route,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
+
+
+def test_compact_prompt_is_used_only_for_its_exact_codex_session():
+    route = RuntimeRoute(
+        name="codex_oauth",
+        runtime_kind=RuntimeKind.CODEX_CLI,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
+        model="gpt-5.6-luna",
+    )
+    scoped = {
+        "route_name": "codex_oauth",
+        "session_id": "session-a",
+        "prompt": "feedback-only",
+        "invocation_facts": {"prompt_sections": [{"section": "feedback"}]},
+    }
+
+    prompt, facts = _prompt_for_runtime_route(
+        route, "session-a", "full-task-context", {"full": True}, scoped
+    )
+
+    assert prompt == "feedback-only"
+    assert facts == scoped["invocation_facts"]
+
+
+@pytest.mark.parametrize(
+    ("runtime_kind", "route_name", "session_id"),
+    [
+        (RuntimeKind.CODEX_CLI, "codex_oauth", "different-session"),
+        (RuntimeKind.CODEX_CLI, "other-codex", "session-a"),
+        (RuntimeKind.CLAUDE_CLI, "codex_oauth", "session-a"),
+        (RuntimeKind.FRIDAY_RUNTIME, "codex_oauth", "session-a"),
+    ],
+)
+def test_other_route_or_session_keeps_full_prompt(
+    runtime_kind, route_name, session_id
+):
+    route = RuntimeRoute(
+        name=route_name,
+        runtime_kind=runtime_kind,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
+        model="route-model",
+    )
+    full_facts = {"prompt_sections": [{"section": "full"}]}
+    scoped = {
+        "route_name": "codex_oauth",
+        "session_id": "session-a",
+        "prompt": "feedback-only",
+        "invocation_facts": {"prompt_sections": [{"section": "feedback"}]},
+    }
+
+    prompt, facts = _prompt_for_runtime_route(
+        route, session_id, "full-task-context", full_facts, scoped
+    )
+
+    assert prompt == "full-task-context"
+    assert facts is full_facts
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
