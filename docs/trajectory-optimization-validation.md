@@ -1374,8 +1374,8 @@ shorter prompt alone was insufficient.
 
 **Paired fixed cases and decision.** Eleven anonymous messages, one per current
 category, were run once through each arm using the same `gpt-5.6-luna` Codex
-OAuth model, category descriptions, message facts, read-only CLI settings and
-no business MCP. All 22 results passed `AgentClassificationWireResult`
+OAuth model, synthetic category descriptions, message facts, read-only CLI
+settings and no business MCP. All 22 results passed `AgentClassificationWireResult`
 validation and made no tool calls. The candidate saved exactly 1,649 prompt
 characters per case; all categories and unsubscribe indices matched. The
 `external_billing` case changed `important` from `false` in the baseline to
