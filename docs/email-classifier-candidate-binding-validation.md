@@ -42,13 +42,35 @@ and alignment between the managed Skill example and the wire model. They do
 not call an email provider or perform unsubscribe actions.
 
 After merging current `origin/main` into this branch, the focused classifier,
-Skill-contract, and email task adapter suites passed **148** tests. The fixed
-anonymous native case in
+Skill-contract, and email task adapter suites passed **148** tests. After
+aligning the repository Skill copy byte-for-byte with the installed source,
+the two directly affected suites passed **30** tests. The fixed anonymous
+native case in
 `evals/trajectory_optimization/email_classifier_candidate_index_native.v1.json`
-used this branch's exact managed Skill SHA-256 `3506daa2…`, a 21,412-character
-input, and one opaque unsubscribe candidate. Both read-only Codex OAuth runs
-returned valid `junk` results with candidate index 0 and no URL field; service
-binding recovered the exact candidate in each run. There were zero tool calls.
+used that exact installed Skill SHA-256 `5ba8cb23…`, a 21,491-character input,
+and one opaque unsubscribe candidate. Both read-only Codex OAuth runs returned
+valid `junk` results with candidate index 0 and no URL field; service binding
+recovered the exact candidate in each run. There were zero tool calls.
+
+## Release binding
+
+The installed `~/.agents/skills/ceo-email-classifier/SKILL.md` is the managed
+Skill source of truth. Normal code deploy does not publish the `ci/shared-skills`
+copy. On 2026-10-18 the installed file and this branch's copy both hash to
+`5ba8cb23…`, but the enabled scheduled classifier task 10 still references
+managed revision 10 (`816012c2…`). Startup imports revision 182 (`5ba8cb23…`),
+then reconciles the enabled task's old exact revision and loads the old one.
+Production therefore cannot pass until the scheduled task reference is updated.
+
+For a bounded release, pause only scheduled task 10 through its versioned API,
+update its single Skill reference to revision 182 while preserving every other
+task field, deploy the merged code through `python -m app.deploy`, verify the
+worker load receipt and active binding use `5ba8cb23…`, then re-enable task 10
+through the versioned API. Confirm the installed file hash, task reference,
+process, health, queue and Attention/History after re-enabling. If any step
+fails, keep the task paused and report the exact gap rather than run mismatched
+classifier code and Skill. This changes only the classifier task's binding;
+other scheduled task settings are not part of this release.
 
 ## Evidence boundary
 
@@ -58,5 +80,6 @@ does not prove the full routed worker path or a production result. It does not
 measure classification quality across diverse mail. The production checkout
 remains unchanged until the normal release path deploys a reviewed commit.
 Post-release readback must confirm the new commit, loaded managed Skill digest,
-healthy worker and queue state; a later real candidate-bearing trajectory is
-needed to claim that production completed the end-to-end binding path.
+updated classifier task reference, healthy worker and queue state; a later real
+candidate-bearing trajectory is needed to claim that production completed the
+end-to-end binding path.

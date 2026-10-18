@@ -10,9 +10,10 @@ import pytest
 
 from app.codex_runner import CodexRunner
 from app.email_classifier_agent import (
+    AgentClassificationWireResult,
     _parse_agent_classification_json,
+    bind_agent_classification_candidate,
     build_agent_classification_prompt,
-    validate_agent_classification_result,
 )
 from app.process_runner import run_process_with_idle_timeout
 
@@ -29,7 +30,7 @@ pytestmark = [
 ]
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-SKILL_PATH = REPOSITORY_ROOT / "skills" / "ceo-email-classifier" / "SKILL.md"
+SKILL_PATH = REPOSITORY_ROOT / "ci" / "shared-skills" / "ceo-email-classifier" / "SKILL.md"
 ALLOWED = (
     "work",
     "human_resources",
@@ -102,8 +103,10 @@ def test_classifier_skill_resists_category_and_action_pressure(tmp_path: Path) -
     )
 
     assert process.returncode == 0, process.stderr
-    raw = _parse_agent_classification_json(process.stdout)
-    result = validate_agent_classification_result(
+    raw = _parse_agent_classification_json(
+        process.stdout, result_model=AgentClassificationWireResult
+    )
+    result = bind_agent_classification_candidate(
         raw,
         allowed_category_keys=ALLOWED,
         unsubscribe_candidates=(CANDIDATE,),
