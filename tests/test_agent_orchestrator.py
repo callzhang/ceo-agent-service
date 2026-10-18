@@ -182,7 +182,8 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
     assert "report body" not in str(receipts)
 
 
-def test_scheduled_audit_reads_claude_text_tool_return_without_report_body():
+@pytest.mark.parametrize("text_result", [False, True])
+def test_scheduled_audit_reads_claude_text_tool_return_without_report_body(text_result):
     task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
     returned = {
         "operation": "created", "node_id": "doc-8", "title": "Weekly Report",
@@ -195,7 +196,10 @@ def test_scheduled_audit_reads_claude_text_tool_return_without_report_body():
         "tool_events": [{"type": "item.completed", "item": {
             "type": "mcp_tool_call", "server": "agent_cli",
             "tool": "consumer_document_write", "id": "write-2",
-            "result": {"content": [{"type": "text", "text": json.dumps(returned)}]},
+            "result": (
+                json.dumps(returned) if text_result else
+                {"content": [{"type": "text", "text": json.dumps(returned)}]}
+            ),
         }}],
     })()
 
