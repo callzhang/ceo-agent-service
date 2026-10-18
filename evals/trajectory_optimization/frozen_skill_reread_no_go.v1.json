@@ -1,0 +1,25 @@
+{
+  "case": "anonymous_message_triage_frozen_skill_reuse",
+  "route": "Codex OAuth, read-only isolated fixture",
+  "facts": "synthetic status update, acknowledgment, then explicit release-decision request",
+  "arms": {
+    "baseline": {
+      "session_id": "01a14f1b-e64b-7973-be1b-e2ee6707d176",
+      "phases": [
+        {"name": "cold", "skill_reads": 2, "current_context_reads": 1, "action": "no_action"},
+        {"name": "unchanged_continuation", "skill_reads": 0, "current_context_reads": 1, "action": "no_action"},
+        {"name": "changed_source_continuation", "skill_reads": 1, "current_context_reads": 1, "action": "reply"}
+      ]
+    },
+    "candidate": {
+      "session_id": "01a14f1c-6833-7122-a8ba-938d90881de7",
+      "phases": [
+        {"name": "cold", "skill_reads": 2, "current_context_reads": 1, "action": "no_action"},
+        {"name": "unchanged_continuation", "skill_reads": 0, "current_context_reads": 1, "action": "no_action"},
+        {"name": "changed_source_continuation", "skill_reads": 1, "current_context_reads": 1, "action": "reply"}
+      ]
+    }
+  },
+  "fixture_limit": "Synthetic Skill bodies do not reproduce the production repeated-read pattern; no real business source, Work Profile, DingTalk MCP, send or write was used.",
+  "decision": "no_go_no_runtime_change"
+}
