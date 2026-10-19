@@ -695,9 +695,10 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
     error = result["error"]
     assert isinstance(error, dict)
     return {
-        "outcome": result["outcome"],
+        "action": "plan" if result["outcome"] == "proposal" else result["outcome"],
+        "reason": result["summary"], "target": {}, "evidence_refs": [],
         "summary": result["summary"],
-        "proposal": result["proposal"],
+        "payload": result["proposal"] if result["outcome"] == "proposal" else {},
         "decision_options": result.get("decision_options", []),
         "risk": result.get("risk", "low"),
         "confidence": result.get("confidence", 1.0),
@@ -1215,7 +1216,7 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority(monkeypatch
     assert "Technical/provider, authentication-route, schema, model-output and retry failures are failed" in instructions
     assert "complete plans for continuing this item under the selected reusable rule" in instructions
     assert "never with requested_input as a zero-option needs_human" in instructions
-    assert "For proposal, no_action, and failed, decision_options must be empty" in instructions
+    assert "For direct business actions, plan, retry, no_action, and failed, decision_options must be empty" in instructions
     assert "requested_input, needs_human_reason, and decision_basis must be null" in instructions
     assert "never writes a reusable policy or edits a Skill itself" in instructions
     assert "user feedback may independently select one-time application and Skill update" in instructions
@@ -3864,9 +3865,9 @@ def test_claude_route_session_is_not_checked_as_local_codex_history(store, task)
 def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
     payload = json.dumps(
         {
-            "outcome": outcome,
+            "action": outcome, "reason": "Observed tool failure", "target": {}, "evidence_refs": [],
             "summary": "The unsubscribe page state could not be determined.",
-            "proposal": None,
+            "payload": {},
             "decision_options": [],
             "risk": "low",
             "confidence": 1.0,

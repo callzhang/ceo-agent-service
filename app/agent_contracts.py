@@ -12,6 +12,7 @@ from pydantic import (
     ValidationInfo,
     field_validator,
     model_validator,
+    model_serializer,
 )
 
 from app.agent_result import AgentError
@@ -79,7 +80,7 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {
-                    "enum": ["no_action", "failed"],
+                    "enum": ["no_action", "failed", "retry"],
                 },
                 "proposal": {"type": "null"},
                 "decision_options": {"type": "array", "maxItems": 0},
@@ -121,6 +122,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
 
 class ConsumerOutcome(StrEnum):
     PROPOSAL = "proposal"
+    RETRY = "retry"
     NO_ACTION = "no_action"
     NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
     FAILED = "failed"
@@ -491,10 +493,18 @@ class ConsumerAgentResult(BaseModel):
     stage_index: int = Field(default=0, ge=0)
     predecessor_review_id: int | None = Field(default=None, ge=1)
     continue_after_execution: bool = False
+    purpose_output: dict[str, JsonValue] | None = None
     source_bindings: tuple[ReviewedSourceBinding, ...] = ()
     # Required on the wire the Agent answers in; results stored before the
     # field existed read back as having none.
     durable_memories: tuple[DurableMemory, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def serialize_purpose_metadata(self, handler):
+        data = handler(self)
+        if self.purpose_output is None:
+            data.pop("purpose_output", None)
+        return data
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -570,6 +580,11 @@ class ConsumerAgentResult(BaseModel):
             )
         ):
             raise ValueError("needs_human fields are only valid for needs_human")
+        if self.outcome is ConsumerOutcome.RETRY:
+            if not self.purpose_output or self.purpose_output.get("action") != "retry":
+                raise ValueError("retry requires a purpose retry output")
+            if self.error.code:
+                raise ValueError("purpose retry is not a technical error")
         if self.continue_after_execution and self.outcome is not ConsumerOutcome.PROPOSAL:
             raise ValueError("only a proposal can continue after execution")
         return self

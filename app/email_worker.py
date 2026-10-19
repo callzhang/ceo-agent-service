@@ -3146,6 +3146,9 @@ def _finalize_email_task(store: object, task: object, result: object, *,
             REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(task.attempts - 1, 0)),
             REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
         )
+        from app.consumer_purpose_retry import RETRY_REQUESTED
+        if error == RETRY_REQUESTED:
+            delay_seconds = max(delay_seconds, result.retry_after_seconds)
         available_at = (
             datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         ).strftime("%Y-%m-%d %H:%M:%S")
@@ -3154,6 +3157,7 @@ def _finalize_email_task(store: object, task: object, result: object, *,
             error or "email_orchestration_deferred",
             expected_execution_generation=task.execution_generation,
             available_at=available_at,
+            refund_attempt=error == RETRY_REQUESTED,
         )
         return
     run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
