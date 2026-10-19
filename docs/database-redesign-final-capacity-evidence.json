@@ -34421,5 +34421,15 @@
     "current_candidate_cold_readback_exact": true,
     "current_candidate_readback": "/tmp/db-redesign-final-guard.3LeMgv/current-projection-native-readback.json",
     "current_candidate_note": "After numeric projection fix, final target copy native snapshot exactly matches earlier real CLI task/business/results/receipts; no new model call or dispatch"
+  },
+  "final_email_worker_fixture_verification": {
+    "runtime_changes": false,
+    "observed_failed_nodes": "17 passed in 64.89s",
+    "focused_log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-worker-focused.log",
+    "root_review_followup": "Current-input mutations now target current_input_id rather than an arbitrary historical version; exact one-row writes asserted",
+    "followup_result": "12 passed, 238 deselected in 43.81s",
+    "followup_log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-worker-current-pointer.log",
+    "scope": "Task generation/audited-input replacement, historical-candidate read, canonical paired locator scanner race and rollback, actual source reader fake interface; privacy/lifecycle/receipt assertions retained",
+    "whole_file_run": false
   }
 }

@@ -82,6 +82,17 @@ from app.email_provider_actions import ProviderActionResult
 from app.email_store import StoredEmailLocator
 
 
+def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object]) -> None:
+    from app.task8_storage import task8_set_parts
+    from app.task_storage import task_id_expression
+
+    parts = task8_set_parts(kind, values, payload_source="tasks.payload_json")
+    assert db.execute(
+        f"update tasks set {parts.sql} where id={task_id_expression(kind, '?')}",
+        (*parts.parameters, public_id),
+    ).rowcount == 1
+
+
 def _module():
     return import_module("app.email_worker")
 
@@ -2761,9 +2772,11 @@ def test_historical_candidate_already_decided_by_agent_or_user_is_skipped_not_fa
     )
 
     assert [item.action_outcome for item in outcomes] == ["durable_conflict"]
+    from app.task12_storage import task12_projection
+
     with sqlite3.connect(settings.db_path) as db:
         state, reason = db.execute(
-            "select state, reason from email_historical_candidates "
+            f"select state, reason from ({task12_projection('email_historical_candidates')}) "
             "where stable_message_identity=?",
             ("account-1:message-id:<already-decided@example.com>",),
         ).fetchone()
@@ -5568,6 +5581,10 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
                 messages=(self.message,),
             )
 
+        def fetch_message(self, _locator, *, stable_message_identity):
+            assert stable_message_identity == self.message["stableMessageIdentity"]
+            return self.message
+
         def logout(self):
             return None
 
@@ -7700,10 +7717,18 @@ def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
             if self.rotated:
                 return
             with sqlite3.connect(database) as db:
+                from app.task8_storage import task8_set_parts
+                from app.task_storage import task_id_expression
+
+                parts = task8_set_parts(
+                    "reply_tasks",
+                    {"execution_generation": "replacement-generation"},
+                    payload_source="tasks.payload_json",
+                )
                 db.execute(
-                    "update tasks set execution_generation=? "
-                    "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                    ("replacement-generation", legacy.id),
+                    "update tasks set "
+                    f"{parts.sql} where id={task_id_expression('reply_tasks', '?')}",
+                    (*parts.parameters, legacy.id),
                 )
             self.rotated = True
 
@@ -8519,13 +8544,17 @@ def test_final_empty_inventory_clears_bootstrap_unresolved_after_safe_replacemen
         payload = json.loads(legacy.trigger_message_json)
         payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
         with sqlite3.connect(database) as db:
-            changed = db.execute(
-                "update tasks set trigger_message_json=? "
-                "where record_type='reply_task_inputs' and id=(select current_input_id "
-                "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-                (json.dumps(payload), legacy.id),
+            from app.task20_definitions import task20_projection
+
+            input_id = db.execute(
+                f"select id from ({task20_projection('reply_task_inputs')}) "
+                f"where reply_task_id=? and id=(select current_input_id from ({task20_projection('reply_tasks')}) where id=?)",
+                (legacy.id, legacy.id),
+            ).fetchone()[0]
+            _update_task_facts(
+                db, "reply_task_inputs", input_id,
+                {"trigger_message_json": json.dumps(payload)},
             )
-            assert changed.rowcount == 1
         return ready_dependencies
 
     bootstrap = SimpleNamespace(
@@ -8617,34 +8646,41 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
                 return
             with sqlite3.connect(database) as db:
                 if replacement == "terminal":
-                    db.execute(
-                        "update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                        (legacy.id,),
-                    )
+                    _update_task_facts(db, "reply_tasks", legacy.id, {"status": "done"})
                 elif replacement == "audited-v2":
                     payload = json.loads(legacy.trigger_message_json)
                     payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
-                    db.execute(
-                        "update tasks set trigger_message_json=? "
-                        "where record_type='reply_task_inputs' and id=(select current_input_id "
-                        "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-                        (json.dumps(payload), legacy.id),
+                    from app.task20_definitions import task20_projection
+
+                    input_id = db.execute(
+                        f"select id from ({task20_projection('reply_task_inputs')}) "
+                        f"where reply_task_id=? and id=(select current_input_id from ({task20_projection('reply_tasks')}) where id=?)",
+                        (legacy.id, legacy.id),
+                    ).fetchone()[0]
+                    _update_task_facts(
+                        db, "reply_task_inputs", input_id,
+                        {"trigger_message_json": json.dumps(payload)},
                     )
                 elif replacement == "non-email":
-                    db.execute(
-                        "update tasks set channel='dingtalk' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                        (legacy.id,),
-                    )
+                    _update_task_facts(db, "reply_tasks", legacy.id, {"channel": "dingtalk"})
                 elif replacement == "malformed":
-                    db.execute(
-                        "update tasks set trigger_message_json='{malformed' "
-                        "where record_type='reply_task_inputs' and id=(select current_input_id "
-                        "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-                        (legacy.id,),
+                    from app.task20_definitions import task20_projection
+
+                    input_id = db.execute(
+                        f"select id from ({task20_projection('reply_task_inputs')}) "
+                        f"where reply_task_id=? and id=(select current_input_id from ({task20_projection('reply_tasks')}) where id=?)",
+                        (legacy.id, legacy.id),
+                    ).fetchone()[0]
+                    _update_task_facts(
+                        db, "reply_task_inputs", input_id,
+                        {"trigger_message_json": "{malformed"},
                     )
                 else:
+                    from app.task_storage import task_id_expression
+
                     db.execute(
-                        "delete from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+                        "delete from tasks where id="
+                        f"{task_id_expression('reply_tasks', '?')}",
                         (legacy.id,),
                     )
             self.replaced = True
@@ -9197,16 +9233,18 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     assert task_store.list_reply_tasks(channel="email") == []
     with sqlite3.connect(database) as db:
         assert db.execute(f'select count(*) from ({AGENT_RUN_SQL})').fetchone()[0] == 0
-        assert db.execute(
-            "select folder, uidvalidity, uid from email_classifications where id=901"
-        ).fetchone() == ("Archive", 10, 41)
-        assert db.execute(
-            """
-            select folder, uidvalidity, uid from email_messages
-            where stable_message_identity=?
-            """,
-            ("account-direct:message-id:<direct-901@example.com>",),
-        ).fetchone() == ("Archive", 10, 41)
+    locator = email_store.get_stored_email_locator(901)
+    assert locator is not None
+    assert (locator.folder, locator.uidvalidity, locator.uid) == ("Archive", 10, 41)
+    source_location = email_store.get_email_source_location(
+        "account-direct", "account-direct:message-id:<direct-901@example.com>"
+    )
+    assert source_location is not None
+    assert (
+        source_location["folder"],
+        source_location["uidvalidity"],
+        source_location["uid"],
+    ) == ("Archive", 10, 41)
 
 
 @pytest.mark.parametrize(
@@ -9226,23 +9264,20 @@ def test_direct_action_locator_completion_rolls_back_on_scanner_race(
     class Executor:
         def execute(self, action):
             with sqlite3.connect(database) as db:
-                if scanner_raced_table == "email_classifications":
-                    db.execute(
-                        """
-                        update email_classifications
-                        set folder='Scanner', uidvalidity=77, uid=707
-                        where id=901
-                        """
-                    )
-                else:
-                    db.execute(
-                        """
-                        update email_messages
-                        set folder='Scanner', uidvalidity=77, uid=707
-                        where stable_message_identity=?
-                        """,
-                        (action.locator.stable_message_identity,),
-                    )
+                from app.email_canonical_storage import update_email_paired_locator
+
+                assert scanner_raced_table in {"email_classifications", "email_messages"}
+                changed = update_email_paired_locator(
+                    db,
+                    classification_id=action.classification_id,
+                    account_id=action.account_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                    class_folder="Scanner",
+                    message_folder="Scanner",
+                    uidvalidity=77,
+                    uid=707,
+                )
+                assert changed == 1
             return result
 
     with pytest.raises(store_module.EmailActionAttemptConflict):
@@ -9252,33 +9287,23 @@ def test_direct_action_locator_completion_rolls_back_on_scanner_race(
             available_account_ids=("account-direct",),
         )
 
-    expected_classification = (
-        ("Scanner", 77, 707)
-        if scanner_raced_table == "email_classifications"
-        else ("INBOX", 9, 901)
+    expected_classification = ("Scanner", 77, 707)
+    # The current canonical Email row exposes one paired locator to both
+    # classification and source-location projections.
+    expected_message = expected_classification
+    class_locator = email_store.get_stored_email_locator(901)
+    assert class_locator is not None
+    assert (class_locator.folder, class_locator.uidvalidity, class_locator.uid) == expected_classification
+    source_location = email_store.get_email_source_location(
+        "account-direct", "account-direct:message-id:<direct-901@example.com>"
     )
-    expected_message = (
-        ("Scanner", 77, 707)
-        if scanner_raced_table == "email_messages"
-        else ("INBOX", 9, 901)
-    )
+    assert source_location is not None
+    assert (
+        source_location["folder"],
+        source_location["uidvalidity"],
+        source_location["uid"],
+    ) == expected_message
     with sqlite3.connect(database) as db:
-        assert (
-            db.execute(
-                "select folder, uidvalidity, uid from email_classifications where id=901"
-            ).fetchone()
-            == expected_classification
-        )
-        assert (
-            db.execute(
-                """
-            select folder, uidvalidity, uid from email_messages
-            where stable_message_identity=?
-            """,
-                ("account-direct:message-id:<direct-901@example.com>",),
-            ).fetchone()
-            == expected_message
-        )
         assert (
             db.execute(f"select count(*) from ({EMAIL_ATTEMPT_SQL})").fetchone()[0] == 0
         )
@@ -9973,26 +9998,39 @@ def test_email_task_input_uses_thread_text_attachment_metadata_and_receipts():
             }
         ],
     )
+    def provider_message(stable_message_identity):
+        return {
+            "stableMessageIdentity": stable_message_identity,
+            "threadId": "thread-1",
+            "from": {"email": "sender@example.com"},
+            "date": "2026-08-30T09:00:00+00:00",
+            "subject": "Current subject",
+            "textBody": (
+                "Current message text"
+                if stable_message_identity == stable_identity
+                else "Prior thread text"
+            ),
+            "listUnsubscribe": "",
+            "listUnsubscribePost": "",
+            "attachments": [
+                {
+                    "filename": "contract.pdf",
+                    "mime_type": "application/pdf",
+                    "size_bytes": 1234,
+                    "inline": False,
+                }
+            ],
+            "uid": 9,
+        }
+
     source = SimpleNamespace(
-        fetch_message=lambda locator, *, stable_message_identity: {
-                    "stableMessageIdentity": stable_message_identity,
-                    "threadId": "thread-1",
-                    "from": {"email": "sender@example.com"},
-                    "date": "2026-08-30T09:00:00+00:00",
-                    "subject": "Current subject",
-                    "textBody": "Current message text" if stable_message_identity == stable_identity else "Prior thread text",
-                    "listUnsubscribe": "",
-                    "listUnsubscribePost": "",
-                    "attachments": [
-                        {
-                            "filename": "contract.pdf",
-                            "mime_type": "application/pdf",
-                            "size_bytes": 1234,
-                            "inline": False,
-                        }
-                    ],
-                    "uid": 9,
-                },
+        fetch_message=lambda _locator, *, stable_message_identity: provider_message(
+            stable_message_identity
+        ),
+        fetch_messages=lambda requests: {
+            stable_message_identity: provider_message(stable_message_identity)
+            for _locator, stable_message_identity in requests
+        },
         logout=lambda: None,
     )
 
