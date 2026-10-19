@@ -11,7 +11,7 @@ from app.repository_updater import in_flight_work
 from app.store import AutoReplyStore, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.task_schema_release import publication_task_sources
 from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.task_storage import migrate_task_schema
+from app.task_storage import REPLY_TASK_SQL as TASK_RELEASE_REPLY_TASK_SQL, migrate_task_schema
 from tests.test_task_storage import source_database
 
 
@@ -41,7 +41,7 @@ def test_publication_quiet_sources_read_exact_source_and_target(tmp_path, row_fa
         db.commit()
         assert in_flight_work(path) == 1
         reply_sql, work_sql = publication_task_sources(db)
-        assert reply_sql == REPLY_TASK_SQL
+        assert reply_sql == TASK_RELEASE_REPLY_TASK_SQL
         assert "record_type='work_summary_inputs'" in work_sql
         assert db.execute(f"select count(*) from ({reply_sql}) where status='processing'").fetchone()[0] == 1
         assert db.execute(f"select count(*) from ({work_sql}) where status='processing'").fetchone()[0] == 1

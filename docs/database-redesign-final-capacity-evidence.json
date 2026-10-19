@@ -34866,5 +34866,24 @@
     ],
     "review": "Independent readonly diff review found no concrete issue; no source seed rows/ROWIDs/waters replaced or auxiliary rows copied; Ruff/diffclean",
     "scope_limit": "Only named controls passed; remaining Workbench manifest/current-literal nodes and other historical fixture callers not claimed as full-file success"
+  },
+  "final_task_retrieval_fixture_closure": {
+    "scope": "Test-only exact original source availability and explicit caller transactions; no retrieval/ranking/runtime changes",
+    "first_red": "Project citation original unavailable from locatorless synthetic fact; body literal existed only at fixture call site",
+    "root_findings": "All candidate originals must retain baseline availability: omitting the unrelated task source incorrectly put it into unverified bucket; supplying its exact source restores original exclusion through already-filled formal bucket. Root rejected a proposed output/runtime decision; original 4-source oracle preserved.",
+    "result": {
+      "passed": 35,
+      "seconds": 155.47,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/task-retrieval-wholefile-final2.log"
+    },
+    "review": "Root full diff and rank loop reviewed; exact binding/hash verified, no DB reconstruction, Fact has no body, prepared read carries original source; original relevance/ranking/limit/source/quote oracles retained; Ruff/diffclean; no providers/models"
+  },
+  "final_task_outer_historical_reader_controls": {
+    "passed": 6,
+    "seconds": 3.29,
+    "basetemp": "/tmp/task-outer-reader-historical.20261019",
+    "scope": "2 publication row factories plus2 oldsource versions x2rowfactories; retained readonly/busy/no mutation",
+    "change": "Historical post-migration 11.3 projection compared to exact app.task_storage.REPLY_TASK_SQL; final-current comparison still uses app.store.REPLY_TASK_SQL",
+    "review": "Root diff reviewed; no runtime, schema, data or product behavior changes"
   }
 }

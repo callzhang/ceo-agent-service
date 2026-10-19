@@ -159,7 +159,8 @@ State 更新索引补验：完成租约原需111175 VM步，其中 UPDATE 53695�
 | 历史source13配套声明与孤儿Run | 测试助手原先混合actual／fresh Config及Actions配套声明。改用已有冻结SQL构造一致的Config／State／follow-up／delivery／feedback配套结构，业务输入行／ROWID／水位不替换；3项主审通过／53.66秒，含真实配对迁移后Run2298→公开job4908且物理4908仍为reply_tasks，新孤儿拒绝及9父表／15子表完整指纹。独立只读复核无具体发现；不宣称其他历史夹具整文件通过 |
 | 当前Signal来源及分配器 | Store方法整文件13项通过／3.76秒，两种物理变体；新增观察来源与memory_provenance的完整身份隔离／reference-only不可读，以及空Signal族已有watermark83后公开ID84且物理ID不同。只保存hash／字节／定位，无正文；空旧表整库迁移水位仍不以当前writer测试代替 |
 | Business保留字段约束／结构 | 202项通过、264项未选入／122.15秒；仅改测试夹具使用当前Business／Actions／Sync写入器和投影，非空白检查（含Unicode空白）、周围空白保留、准确公开字段集合及完整schema校验原断言保留。另51项FK／悬空引用拒绝／唯一性／列表及默认值通过／26.23秒：通过实际生成列核验最终FK端点，原业务值、排序／EQP及事件断言保留。Signal正文／容器历史契约和其他未选节点仍待处理，不宣称整文件通过 |
-| Task外层读取当前结构 | 公开ID、dispatcher领取／释放、状态／Attention和codec／终态provenance4项主审通过／8.86秒；伪造旧版本标记8变体与未知标记2项通过／9.96秒。保留两种旧标记和全部mixed拒绝／只读断言；历史source13和publication节点未混算 |
+| Task外层读取当前结构 | 公开ID、dispatcher领取／释放、状态／Attention和codec／终态provenance4项主审通过／8.86秒；伪造旧版本标记8变体与未知标记2项通过／9.96秒。保留两种旧标记和全部mixed拒绝／只读断言；旧11.3 publication投影与当前Store投影分别核验，历史publication／scheduled-source6项通过／3.29秒；20个实际节点分别有定向证据，未宣称一次整文件运行 |
+| Task检索及来源准备 | 整文件35项通过／155.47秒；所有需要验证的原文（包括同词面的无关任务）通过精确来源绑定提供给临时reader，避免选择性缺失原文改变formal／unverified分桶。原排名、同来源超出limit、bounded proof、无关任务排除、正文不重复注入及历史证据断言保留；未改检索算法／运行时 |
 | Project评估业务断言 | 整文件25项通过／68.79秒；精确原文只经PreparedSources临时传递，关系注入及读回使用最终Actions投影。错误owner／项目归属／成员数量与身份／来源版本、意外对外意图和业务回执的原断言保留；无运行时修改／真实模型或provider调用 |
 | 会议／OKR外层读取 | 两整文件11项通过／33.05秒；公开／物理身份、租约、代际、错误、终态和Attention断言保留，历史orphan来源声明问题已用完整一致的旧版配套声明关闭：主审3项通过／53.66秒（历史孤儿读回、新孤儿拒绝、准确原始Business声明）；原11项与新增3项范围分别记录 |
 | 回复执行记录存储 | 原始源表与当前compact writer逐项对照整文件177项通过／6项原有skip，主agent冻结源码复跑10.62秒；默认值、SQLite类型、外键、ROWID分配器、失败事务范围及未知／退休字段拒绝断言保留；TEXT历史声明单独按两种真实变体核验 |
