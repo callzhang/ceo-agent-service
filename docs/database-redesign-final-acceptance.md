@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-**候选已实现10张核心表＋1张已有账本；未推送、未部署、整体未完成。** `13f957f0d`落实已批准的1000字符单份预览、本地默认检索及主动全文检索；`cd390f748`补充长正文详情与隔离UI夹具验证。最新main通过 `1da3d2d14` 合入，OA／发信内容准备／native回执／预览22项合并后通过。当前没有声称整仓测试全绿。
+**数据库结构改造已上线并通过生产读回。** 2026-10-19，官方部署从 `f836b6f9` 更新到 `a3779da46b1563228a0f3de8948227d1e6cfec5b`，新PID25339，生产checkout干净；Store `2026-10-14.1`／Email52。10张核心表＋既有迁移账本，无持久FTS／shadow。主库VACUUM后 **470,466,560 B／448.671875 MiB**，free0，checkpoint完成；最新读回WAL1,396,712 B，正常写入会继续变化。healthz与整体健康healthy，最新独立质量检查0缺失／0违规，队列processing0、failed10、Attention4与发布前相同。
 
 2026-10-19 09:21 UTC，在真实生产路径只读执行同一发布 coordinator，6.794秒通过：源 Store `2026-10-13.5`／Email51，目标 Store `2026-10-14.1`／Email52，231来源版本全部准备成功。生产 checkout `aa18a59858a477c3e446560fa956fbe13e26136a` 干净。未调用 publish 或生产 Store 构造器；该结果不等于迁移已上线。
 
@@ -12,7 +12,9 @@
 
 最新只读生产预检基于干净 `223788a26296a13341c8a522f362742c5606cb27`，12.778秒准备238来源版本成功。已批准预览的真实child副本正迁715.512秒通过，VACUUM后480,055,296 B，9,402封均单份且≤1000字符，默认DAO列表及查询56.733–121.055毫秒且来源读取被禁止。
 
-当前主要差项仅剩推送／官方部署及生产读回。已核验Email引用发布副本：7,424正文及5,501模型输入退休，其余所有物理字段（包括两处预览）、schema及其他表逐字段hash不变。加入1封测试邮件并完成额外原文退休的副本VACUUM后461,447,168 B／free0，不能当作纯结构收益。最新main的Claude Consumer schema修正已通过c446d9537合入，相关62项通过／0.54秒；没有改变存储声明、迁移／inverse或Codex路径。Derek已明确批准有界预览例外及默认预览／主动全文检索；完整正文仍不重复长期保存。
+**功能／迁移／发布验收无未完成项。** 仅已授权测试临时目录的删除受平台自动审批阻止；未绕过拒绝。已核验Email引用发布副本：7,424正文及5,501模型输入退休，其余所有物理字段（包括两处预览）、schema及其他表逐字段hash不变。加入1封测试邮件并完成额外原文退休的副本VACUUM后461,447,168 B／free0，不能当作纯结构收益。最新main的Claude Consumer schema修正已通过c446d9537合入，相关62项通过／0.54秒；没有改变存储声明、迁移／inverse或Codex路径。
+
+生产显式应用7,424正文／5,501模型输入引用；自动生命周期继续将新增完成邮件转为引用，最终读回为7,425／5,502。9,475邮件的预览≤1000且唯一；真实生产列表165毫秒、合同预览查询362毫秒，响应无全文。实际详情按来源读回15,953字符，预览为准确前1000字符；曾有一次502，随后相同邮件200，瞬态上游原因未查实，未使用本地预览冒充全文。生产IAB实际页面正常加载并显示当前9,477邮件及默认范围提示（与测量时点有正常新增）。Derek已明确批准有界预览例外及默认预览／主动全文检索；完整正文仍不重复长期保存。
 
 ## 需求与证据
 
@@ -23,7 +25,7 @@
 | 同数据、同VACUUM条件缩小结构 | 纯结构490,651,648→473,292,800 B；加批准预览后480,055,296 B，仍净减10,596,352 B | 固定229来源／956 Signal／9,402邮件；预览成本6,762,496 B单列，不混入后续退休或新任务收益 |
 | 新任务完整执行及恢复 | 五分支13次真实CLI／4次替身发送；合并后另1原生任务 | 0真实发送；不是每个任务都单独整库逆迁 |
 | 迁后新增数据可回退 | 新Task／Run／结果／回执经inverse→旧代码冷开→真实child再正迁→新代码冷开一致 | 不用旧备份覆盖当前业务事实；已知源FK finding保持，无新增 |
-| 发布闭环 | 新增main已合入；最新真实生产只读预检通过 | 默认本地检索及页面行为已验证；整库HTTP与inverse已通过；发布读回待完成 |
+| 发布闭环 | main已合入，a3779da46官方deploy及生产读回通过 | 生产470,466,560 B，10核心表＋账本；临时目录清理受自动审批阻止 |
 
 ## 最终表、字段与退休清单
 
@@ -57,15 +59,15 @@ Tasks／Actions仅存稳定整数 `_kind` 和按真实字段声明排序的JSONB
 
 ## 原文、训练与模型保留
 
-冻结来源对照：初始220版本（23 native、172听记、4周报、1 Console事实、20授权不可用原文），新增9版本沿summary input→task run→completed runtime attempt准确找到；229版本／956 Signal。定位清单只含坐标及校验。最新生产预检另有2版本，共231；不将该增量混入固定容量对照。
+冻结来源对照：初始220版本（23 native、172听记、4周报、1 Console事实、20授权不可用原文），新增9版本沿summary input→task run→completed runtime attempt准确找到；229版本／956 Signal。定位清单只含坐标及校验。发布前最后预检已准备238版本；不将该增量混入固定容量对照。
 
 限定20版本、489,023 UTF-8字节按 [已确认退休决定](superpowers/specs/2026-10-18-provenance-original-retirement-decision.json)移除，只保留定位／身份／hash／字节、业务事实和回执，并显示原文不可用。不得扩展到其他未核实原文，也不另存归档副本。
 
 Email正文与model input分别按实际序列化、完整hash／字节证明；单次引用内联既有 `message_source_reference_json`。仅完成且无分类／回复／邮箱动作／dispatch活跃依赖时CAS退休；完成／恢复入口已接入。未知来源保留原文，模型输入不能用可读正文替代。
 
-历史补验3,387候选、3,008.415秒，新增退休3,107正文／2,457模型输入；200错误（112 timeout、84 Message-ID缺失／歧义、4 UID不可用）及52次不能证明输入的读取未冒充成功。合计7,424正文引用／5,501模型引用；仍保留1,853正文7,053,406 B、3,902模型输入8,480,437 B。`scripts/retire_verified_email_inputs.py` 有9项及实际副本preview／apply证明；只发布仍匹配的来源引用，不复制副本业务行；尚未应用生产。
+历史补验3,387候选、3,008.415秒，新增退休3,107正文／2,457模型输入；200错误（112 timeout、84 Message-ID缺失／歧义、4 UID不可用）及52次不能证明输入的读取未冒充成功。合计7,424正文引用／5,501模型引用；仍保留1,853正文7,053,406 B、3,902模型输入8,480,437 B。`scripts/retire_verified_email_inputs.py` 有9项及实际副本preview／apply证明；只发布仍匹配的来源引用，不复制副本业务行；已于本次生产发布后显式应用，当前并发更新仍受原始hash／身份／状态匹配限制。
 
-956 owner案例身份唯一，混合输入冷重建特征／标签与原副本逐项一致（152引用＋804保留，100.618秒）；正常训练使用既有最新selected文件或准确来源，标签目录不无意义读取正文。外部selected／folder各最新一份的read_snapshot、schema及digest已核对，无活跃pin。2026-10-18外部产物只读核验有三份权重：当前54,726,153 B、最新candidate54,710,702 B、历史模型8,905,681 B。2026-10-19重新核对，实际active.json／previous.json均不存在，online当前为0930模型，0919模型仅因历史切换记录被清理策略保留；此前“fallback manifest引用”的描述不成立。已移除history-only权重保护，切换事实／回执原字节保持，实际manifest依赖及训练活动保护不变。经典／embedding两种历史制品回归先失败，修复后registry整文件43 pass／1.60秒。生产旧权重尚未删除；发布后的实际清理及读回仍待完成。
+956 owner案例身份唯一，混合输入冷重建特征／标签与原副本逐项一致（152引用＋804保留，100.618秒）；正常训练使用既有最新selected文件或准确来源，标签目录不无意义读取正文。外部selected／folder各最新一份的read_snapshot、schema及digest已核对，无活跃pin。2026-10-18外部产物只读核验有三份权重：当前54,726,153 B、最新candidate54,710,702 B、历史模型8,905,681 B。2026-10-19重新核对，实际active.json／previous.json均不存在，online当前为0930模型，0919模型仅因历史切换记录被清理策略保留；此前“fallback manifest引用”的描述不成立。已移除history-only权重保护，切换事实／回执原字节保持，实际manifest依赖及训练活动保护不变。经典／embedding两种历史制品回归先失败，修复后registry整文件43 pass／1.60秒。生产正常worker清理已生效：历史8,905,681 B权重已移除，只保留当前54,726,153 B和最新候选54,710,702 B；active_run_id为空，无实际active／previous manifest依赖。业务切换事实和回执继续保留。
 
 ## 同口径容量与剩余占用
 
@@ -83,23 +85,23 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 
 上表为无新增预览的纯结构基线。已批准1000字符预览实测：表页372,379,648 B、索引105,529,344 B、schema2,146,304 B、free0，共480,055,296 B。相对纯结构基线增加6,762,496 B／6.44921875 MiB；相对同一旧库仍节省10,596,352 B。9,402份预览逻辑UTF-8合计7,834,970 B，与页占用不混同；完整输入未因预览截断。
 
-后续完成额外来源退休、批准预览并含1封新测试邮件的演练副本：9,403邮件，461,447,168 B，schema2,146,304 B、free0；这是混合阶段结果，不是生产实测或同口径结构收益。先前457,007,104 B快照属于不含批准长预览的旧演练，不再作为当前占用。
+额外来源退休＋批准预览＋1封测试邮件的副本为461,447,168 B，属于混合阶段结果。**下表为实际生产20:22 UTC附近的页统计**，包含后来新增业务；不得与固定输入的结构收益混同。
 
 | 表 | 表页B | 索引B | 行数 |
 | --- | ---: | ---: | ---: |
-| actions | 135249920 | 29577216 | 99215 |
-| business | 10498048 | 1212416 | 5135 |
-| configs | 7442432 | 1347584 | 6028 |
+| actions | 139132928 | 29892608 | 100494 |
+| business | 10530816 | 1220608 | 5171 |
+| configs | 7585792 | 1396736 | 6090 |
 | email_schema_migrations | 4096 | 0 | 39 |
-| emails | 51781632 | 4034560 | 9403 |
-| provenance | 90112 | 45056 | 141 |
-| provider_state | 14364672 | 11399168 | 72333 |
-| runs | 85291008 | 46084096 | 248595 |
+| emails | 52162560 | 4067328 | 9475 |
+| provenance | 98304 | 49152 | 148 |
+| provider_state | 14372864 | 11403264 | 72344 |
+| runs | 87855104 | 47312896 | 254651 |
 | schedules | 16384 | 8192 | 15 |
-| state | 6561792 | 2396160 | 23594 |
-| tasks | 42467328 | 9424896 | 36248 |
+| state | 6590464 | 2404352 | 23674 |
+| tasks | 42778624 | 9502720 | 36578 |
 
-另sqlite_sequence一页4096 B／51行。生产实测在发布后单独回读，不能与此冻结来源副本直接作差。
+另sqlite_sequence4096 B／51行，schema2,146,304 B，free0。在线dbstat的页合计470,536,192 B，与文件stat相差69,632 B；表统计读的是含WAL的在线快照，主文件及WAL持续写入，不将两个不同观测强行凑等。迁移后尚未整理主文件571,158,528→470,466,560 B，回收100,691,968 B；这包括空闲页和额外原文退休，不称为纯结构节省。备份目录只有1份有完整性标记的SQLite备份，512,090,112 B；与主库和模型权重分开统计。
 
 ## 完整业务链和当前事实inverse
 
@@ -158,9 +160,9 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 - [x] 本轮发现的当前消费者证据缺口已闭合：TaskAgent247节点、Sync派发19、Project重放28、发送回执历史27；旧广泛诊断仍保留原范围，不宣称整仓通过。
 - [x] 搜索产品方式已批准，1000字符／唯一owner／完整详情／显式全文／输入回到预览已通过单测及隔离UI。
 - [x] 整库HTTP性能及预览迁后新增邮件的current-data inverse／旧代码冷开／真实child再正迁：9,403封所有邮件字段相同，quick_check通过，只有原始FK finding，无模型或发送重放。
-- [ ] 模型历史权重生产清理及只留当前／最新的实际读回待发布。
-- [ ] 最终来源／候选绑定刷新、推送与官方`python -m app.deploy`；执行前完整备份，发布失败使用schema inverse保存迁后新事实。
-- [ ] 生产PID／healthz／queues／Attention／History／最终schema及容量读回，核对无新增失败／卡住／重复发送后才报告生效。
+- [x] 历史模型权重已由正常worker清理；生产只留当前及最新候选，两份实际权重已读回。
+- [x] 最终238来源绑定刷新、主线推送及官方`python -m app.deploy`成功；已有完整性标记备份，失败inverse机制已经当前数据演练。
+- [x] 生产PID25339／healthz／queues／Attention／History／最终schema及VACUUM容量读回；fresh质量检查通过，无新增失败或卡住证据；测试触发真实发送0。
 
 ## Approved1000-character preview implementation plan (2026-10-19)
 
@@ -171,4 +173,4 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 - [x] Frontend: extend EmailClassificationListParams with `search_scope`, default preview label and explicit full-search action, query changes return to preview mode, full loading/error UI and ordinary detail unchanged. Existing React tests plus full build.
 - [x] Root review and production-copy forward/inverse/old-code cold readback/actual-child reforward verify approved preview policy and all9,403 Email fields. Existing unchanged CLI/receipt evidence reused; current-copy HTTP177–261ms,0 source calls.
 - [x] Source-proof publication current-copy check:7,424 bodies／5,501 model inputs retired; all other physical fields/schema exact, including preview; quick_check／source-only FK verified.
-- [ ] Push/integrate and official deploy; read back schema/queues/Attention/History/preview/details and VACUUM in quiet window.
+- [x] Push/integrate and official deploy completed at a3779da46; production schema/queues/Attention/History/preview/source detail and quiet VACUUM verified.
