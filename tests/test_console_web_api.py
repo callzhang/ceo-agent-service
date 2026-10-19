@@ -1,4 +1,10 @@
-from app.action_storage import insert_email_action, update_action
+from app.action_storage import (
+    insert_email_action,
+    error_set_parts,
+    update_action,
+    update_sync_action,
+    update_task_delivery_action,
+)
 import sqlite3
 import json
 import os
@@ -31,6 +37,9 @@ from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
 from app.run_storage import insert_run
+from app.task20_definitions import task20_column
+from app.task8_storage import task8_set_parts
+from app.action_task_delivery_definitions import task_delivery_projection
 from app.setup_wizard_models import SetupWizardEvent
 from app.wechat.models import WechatReplyScope
 from tests.test_audit_web import seed_attempt
@@ -994,9 +1003,8 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         confidence=0.9,
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update work_updates set created_at='2026-08-29 10:00:00' where id=?",
-            (update_id,),
+        update_sync_action(
+            db, "work_updates", update_id, {"created_at": "2026-08-29 10:00:00"}
         )
 
     job_id = store.upsert_meeting_alignment_job(
@@ -2765,10 +2773,14 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
     )
     with store._connect() as db:
         task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
+            f"select id from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?",
             ("audit-revision-conversation", "audit-revision-message"),
         ).fetchone()[0]
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task_id),
+        )
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -2828,10 +2840,14 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
     }
     with store._connect() as db:
         task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
+            f"select id from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?",
             ("needs-human-conversation", "needs-human-message"),
         ).fetchone()[0]
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task_id),
+        )
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -2873,11 +2889,15 @@ def test_queue_attention_rows_includes_unresolved_service_errors_older_than_heal
         "producer_loop_error",
         "database is locked",
     )
+    error_id = store.list_errors(limit=1)[0].id
     with store._connect() as db:
+        assignment, arguments = error_set_parts({"created_at": "2020-01-01 00:00:00"})
         db.execute(
-            "update errors set created_at='2020-01-01 00:00:00' "
-            "where conversation_id='old-conversation'"
+            f"update actions set {assignment} where record_type='errors' "
+            "and cast(legacy_key as integer)=?",
+            (*arguments, error_id),
         )
+    assert store.get_error(error_id).created_at == "2020-01-01 00:00:00"
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -3476,14 +3496,26 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         sensitivity_kind="normal", send_status="failed", channel="wechat",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
         db.execute(
-            "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
-            "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
-            (delivery_status, delivery_generation, delivery_conversation, delivery_id),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task.id),
+        )
+        update_task_delivery_action(
+            db,
+            "wechat_deliveries",
+            delivery_id,
+            {
+                "status": delivery_status,
+                "error": "wechat_ui_not_ready",
+                "pre_action_failure": 1,
+                "execution_generation": delivery_generation,
+                "conversation_id": delivery_conversation,
+            },
         )
         before = tuple(db.execute(
-            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+            f"select status, error from ({task_delivery_projection('wechat_deliveries')}) where id=?",
+            (delivery_id,),
         ).fetchone())
     with _client(tmp_path) as client:
         response = client.get("/api/console/history?status=failed")
@@ -3495,7 +3527,8 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         assert detail.json()["item"]["status"]["raw"] == ("failed" if expected_failed else "done")
     with store._connect() as db:
         assert tuple(db.execute(
-            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+            f"select status, error from ({task_delivery_projection('wechat_deliveries')}) where id=?",
+            (delivery_id,),
         ).fetchone()) == before
     assert store.get_reply_task(task.id).status == "done"
     assert store.get_reply_attempt(attempt_id).send_status == "failed"

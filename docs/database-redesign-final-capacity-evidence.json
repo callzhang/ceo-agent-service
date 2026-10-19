@@ -32442,6 +32442,29 @@
     "equality_only_still_failed_seconds": 3.89,
     "green_seconds": 4.1,
     "test": "tests/test_attention_email_query_plan.py",
+    "production_writes": false,
+    "independent_read_review": "No concrete finding; numeric row identity, nullable public task ID, schema-constrained lowercase state, ordering and limit preserved."
+  },
+  "final_regression_fixture_group": {
+    "console_named": {
+      "passed": 8,
+      "seconds": 93.13,
+      "timestamp_fixture_readback_correction": {
+        "passed": 1,
+        "seconds": 12.86,
+        "overlaps_named_selection": true
+      }
+    },
+    "business_constructor_and_event_files": {
+      "passed": 6,
+      "seconds": 34.3
+    },
+    "attention_query_cost_file": {
+      "passed": 16,
+      "seconds": 60.68,
+      "vm_steps_upper_bound": 400000
+    },
+    "runtime_policy_or_schema_changed": false,
     "production_writes": false
   }
 }

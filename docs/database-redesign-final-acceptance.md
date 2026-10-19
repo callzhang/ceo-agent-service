@@ -23,6 +23,8 @@
 - [ ] 稳定同一候选的最终独立审查，主 agent 集成、提交、推送。
 - [ ] 既有 deploy 发布及生产 PID、health、队列、Attention、History 回读。
 
+测试夹具首组闭合：Console 的 History 链接、两个 needs-human 排除、历史服务错误和 WeChat 当前 generation／conversation 四分支共 8 项通过（93.13 秒）；主审发现旧时间戳 fixture 未实际更新，改用 `error_set_parts` 并增加准确读回后，单项再次通过（12.86 秒）。两种 Store／Email 冷开顺序与 Task Event 写入／重放所在两文件 6 项通过（34.30 秒）。Attention 同 schedule 恢复、终态证据及性能文件 16 项通过（60.68 秒），400,000 VM steps 上界不变。只更新测试夹具到当前 typed schema，保留原业务断言；这些通过不代表仍在进行的 CLI／调度／端到端批次通过。
+
 回归定位补充：Email Attention 的状态索引已保留为 `idx_task20_native_1`，但通用完整投影的边界使失败 ID 子查询未使用它；原 `lower(status)` 也不能表达已有小写状态约束的等值查找。现从 Tasks 类型／状态生成列直接筛选公开 ROWID，再读取失败内容，结果和 nullable task_id／limit 不变。当前索引名回归先失败（7.21 秒）；仅改等值仍失败（3.89 秒）；直接使用现有列后通过（4.10 秒）。未新增索引、字段或迁移声明。其他 CLI／历史边界测试仍在修正，不能称广泛回归通过。
 
 最终审查补充：owner 案例原检查采用 count/max(updated_at)，而 `_now()` 只有秒精度；同秒改分类可返回旧标签或复用旧索引。两个回归在修复前均失败；改为对同一快照的既有身份、sender/subject、分类、时钟及完整输入 hash 计算临时 digest，来源读取后复查。原文字节退休前后 stamp 一致，未增字段、缓存或排序规则。当前 22 项模型生命周期回归通过（18.28 秒）、相似案例及学习 24 项通过（27.07 秒），独立聚焦复查无具体问题；真实 956 个 owner 案例的仅 stamp 读取 0.0434 秒、0 provider 调用；这不代替完整来源重建耗时。

@@ -8,6 +8,7 @@ import pytest
 from app.business_schema_release import business_schema_is_current
 from app.business_storage import insert_business
 from app.email_store import EmailStore
+from app.state_definitions import state_projection
 from app.store import AutoReplyStore
 
 
@@ -84,9 +85,16 @@ def test_fresh_and_cold_constructor_orders_create_business(tmp_path, first):
         EmailStore(path)
         AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
-        assert business_schema_is_current(db)
+        assert business_schema_is_current(
+            db,
+            include_followup_sync=True,
+            include_candidates=True,
+            include_business_actions=True,
+            inline_legacy_owner=True,
+        )
         assert db.execute(
-            "select value from service_state where key='store_schema_version'"
+            f"select value from ({state_projection('service_state')}) "
+            "where key='store_schema_version'"
         ).fetchone() == ("2026-10-14.1",)
         assert db.execute(
             "select max(version) from email_schema_migrations"
@@ -94,7 +102,13 @@ def test_fresh_and_cold_constructor_orders_create_business(tmp_path, first):
     EmailStore(path)
     AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
-        assert business_schema_is_current(db)
+        assert business_schema_is_current(
+            db,
+            include_followup_sync=True,
+            include_candidates=True,
+            include_business_actions=True,
+            inline_legacy_owner=True,
+        )
         db.execute("drop index idx_business_task_public_id")
         db.commit()
     with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source"):
