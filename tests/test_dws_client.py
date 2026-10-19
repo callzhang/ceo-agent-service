@@ -6816,6 +6816,56 @@ def test_download_oa_process_attachment_uses_official_download_url(monkeypatch):
     ]
 
 
+def test_download_oa_process_comment_attachment_uses_premium_download_url(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b"comment-image-bytes"
+
+    class FakeClient(DwsClient):
+        def _dingtalk_api_json(
+            self,
+            method,
+            path,
+            *,
+            params=None,
+            payload=None,
+            config_path=None,
+        ):
+            calls.append((method, path, params, payload, config_path))
+            return {"result": {"downloadUri": "https://signed.example/comment"}}
+
+    monkeypatch.setattr(
+        dws_client,
+        "urlopen",
+        lambda url, timeout: FakeResponse()
+        if url == "https://signed.example/comment" and timeout == 90
+        else pytest.fail("unexpected signed attachment download"),
+    )
+
+    data = FakeClient(timeout_seconds=3).download_oa_process_comment_attachment(
+        "proc-1", "comment-file-1",
+    )
+
+    assert data == b"comment-image-bytes"
+    assert calls == [
+        (
+            "POST",
+            "/v1.0/workflow/premium/processInstances/spaces/files/urls/download",
+            None,
+            {"processInstanceId": "proc-1", "fileId": "comment-file-1"},
+            None,
+        )
+    ]
+
+
 def test_download_oa_process_attachment_uses_shared_exponential_backoff(
     monkeypatch,
 ):

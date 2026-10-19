@@ -2593,13 +2593,45 @@ class DwsClient:
         *,
         config_path: str | None = None,
     ) -> bytes:
+        return self._download_oa_process_attachment_from_endpoint(
+            process_instance_id,
+            file_id,
+            endpoint="/v1.0/workflow/processInstances/spaces/files/urls/download",
+            config_path=config_path,
+        )
+
+    def download_oa_process_comment_attachment(
+        self,
+        process_instance_id: str,
+        file_id: str,
+        *,
+        config_path: str | None = None,
+    ) -> bytes:
+        """Download one exact OA operation-record attachment via premium API."""
+        return self._download_oa_process_attachment_from_endpoint(
+            process_instance_id,
+            file_id,
+            endpoint=(
+                "/v1.0/workflow/premium/processInstances/spaces/files/urls/download"
+            ),
+            config_path=config_path,
+        )
+
+    def _download_oa_process_attachment_from_endpoint(
+        self,
+        process_instance_id: str,
+        file_id: str,
+        *,
+        endpoint: str,
+        config_path: str | None,
+    ) -> bytes:
         attempts = max(self.transient_retry_attempts, 1)
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:
                 payload = self._dingtalk_api_json(
                     "POST",
-                    "/v1.0/workflow/processInstances/spaces/files/urls/download",
+                    endpoint,
                     payload={
                         "processInstanceId": process_instance_id,
                         "fileId": file_id,
