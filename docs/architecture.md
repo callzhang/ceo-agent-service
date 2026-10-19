@@ -334,6 +334,8 @@ userId；身份关联必须由同一账号返回的稳定 ID 证明，空资料�
 
 本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 保留 DecisionRunner/persistent Sender，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
 
+微信单聊 producer 只把有可读正文的入站文本作为回复候选。每次 Reader 扫描按消息时间把相隔不超过五分钟的候选合成一段；只有该段最后一条消息已安静满五分钟，才以它的原始消息 ID 创建一条回复任务。未结束的段不推进读取水位，因此跨定时扫描到达的后续文字仍可合并；相隔超过五分钟的段分别处理。群聊仍只按精确的当前账号 @ 入队，手动重跑和 Sender 投递不经过这一步重新合并。
+
 ```text
 pending -> processing -> done
                      -> failed

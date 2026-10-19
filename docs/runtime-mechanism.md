@@ -2070,12 +2070,13 @@ trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 
-`wechat-produce-once` 每 15 秒对唯一就绪的微信账号跑一次 producer。Reader 的可用性是
+`wechat-produce-once` 默认每五分钟对唯一就绪的微信账号跑一次 producer。Reader 的可用性是
 `wechat.reader` 健康事实而不是 trigger 失败：没有就绪账号时命令返回跳过摘要；Reader IPC 连续
 失败 3 次时请求一次 Reader 重启、把健康标为 degraded 并只记录一条
 `wechat_reader_unavailable`；App Data 权限缺失只记录一条 `wechat_data_permission_required`；
 下一次成功读取恢复 healthy 并清除上述报告。其他异常才是命令失败，trigger 记 `failed`。
 Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因此链接消息进入与普通文本相同的回复队列；图片目前只保留消息类型元数据，未提供媒体文件或视觉输入时不会被当作可读文本触发。
+单聊只有非空的可读入站文本可触发回复。producer 在 Reader 扫描时将相邻消息间隔不超过五分钟的候选合成一段，等该段最后一条消息已安静满五分钟后，才以最后一条创建回复任务；未结束的段保持在读取水位之后，下次扫描继续合并。已完成的较早一段可先入队，群聊 @ 规则不变。这样处理时间按实际看到完整安静窗口计算，不依赖任务在下一轮扫描前仍处于 pending。
 通过 History 发起的 WeChat 手动 rerun 会在决策提示中明确标记为 Derek 的主动重跑；消息时效和后续上下文仍会提供给 Agent，但不能单独把该 rerun 强制收口为 `no_reply`。
 
 独立微信 Consumer 的 `CodexDecision` 不是统一 Audit 候选。完成时仅对持久任务
