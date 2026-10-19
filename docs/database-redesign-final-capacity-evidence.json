@@ -14922,16 +14922,7 @@
       "seconds": 15786.36,
       "scope": "Historical nonfrozen diagnostic, not current acceptance totals"
     },
-    "current_unmatched_focus": {
-      "file": "tests/test_task_agent.py",
-      "initial_current_run": {
-        "passed": 6,
-        "failed": 1,
-        "seconds": 4.62,
-        "log": "/tmp/db-redesign-final-guard.3LeMgv/task-agent-current-evidence.log"
-      },
-      "reason": "Missing current prepared original in fixture; bounded fixture author assigned. Not a proved runtime defect."
-    }
+    "current_unmatched_focus": "TaskAgent247-node current closure complete. Historical broad-run failures remain diagnostic, not a claim of current whole-repository passing."
   },
   "final_frontend_single_worker": {
     "status": "passed",
@@ -16463,7 +16454,7 @@
   },
   "final_task_agent_current_fixture_closure": {
     "file": "tests/test_task_agent.py",
-    "status": "remaining_16_fixture_nodes_in_progress",
+    "status": "247_current_collected_nodes_covered_by_passing_slices",
     "collected_nodes": 247,
     "frozen_prefix_passed": 174,
     "prefix_seconds": 88.87,
@@ -16471,10 +16462,83 @@
     "relative_date_separate_passed": 1,
     "relative_date_log": "/tmp/task-agent-relative-date-green.log",
     "tail_passed": 56,
-    "tail_failed": 16,
     "tail_seconds": 69.8,
     "tail_log": "/tmp/task-agent-tail-final.log",
     "root_review": "Prepared exact originals only, existing794 assertions retained plus no-body-copy controls; expected invalid proof predicates preserved",
-    "production_changes": false
+    "production_changes": false,
+    "focused_passed": 20,
+    "focused_seconds": 32.08,
+    "focused_log": "/tmp/task-agent-failed16-current.log",
+    "node_coverage_validation": {
+      "collected": 247,
+      "unique_passed_union": 247,
+      "old_to_current_node_id_mapping": {
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update0-seed-historical Project evidence signal does not exist]": "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update0-seed-prepared evidence Signal changed or is missing]"
+      },
+      "selected20": [
+        "tests/test_task_agent.py::test_source_grounded_completion_updates_task_status_without_todo_write",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update0-seed-prepared evidence Signal changed or is missing]",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update1-seed-historical Project evidence signal/source_ref does not match]",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update2-seed-historical Project quote is absent]",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update3-memory_provenance-Project evidence must be observed original source]",
+        "tests/test_task_agent.py::test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect",
+        "tests/test_task_agent.py::test_existing_attention_keeps_card_id_but_reports_current_proposal_error",
+        "tests/test_task_agent.py::test_existing_attention_identity_and_original_proof_are_stored_facts[guessed-existing Attention card does not exist]",
+        "tests/test_task_agent.py::test_existing_attention_identity_and_original_proof_are_stored_facts[unrelated-existing Attention card belongs to a different Project]",
+        "tests/test_task_agent.py::test_existing_attention_identity_and_original_proof_are_stored_facts[inactive-existing Attention card is not active]",
+        "tests/test_task_agent.py::test_existing_attention_identity_and_original_proof_are_stored_facts[wrong_member-does not contain the assessment's supporting Tasks]",
+        "tests/test_task_agent.py::test_existing_attention_identity_and_original_proof_are_stored_facts[bad_proof-historical Project evidence signal/source_ref does not match]",
+        "tests/test_task_agent.py::test_existing_attention_rejects_same_project_peer_outside_saved_membership",
+        "tests/test_task_agent.py::test_unknown_current_project_clue_saves_source_without_fake_business_objects",
+        "tests/test_task_agent.py::test_existing_attention_requires_assessment_to_cite_that_cards_original_proof",
+        "tests/test_task_agent.py::test_process_work_item_repairs_stored_attention_original_proof_before_domain_writes[True]",
+        "tests/test_task_agent.py::test_process_work_item_repairs_stored_attention_original_proof_before_domain_writes[False]",
+        "tests/test_task_agent.py::test_existing_attention_changed_current_words_with_actual_old_proof_is_idempotent",
+        "tests/test_task_agent.py::test_stored_assessment_membership_checks_do_not_materialize_full_task_evidence",
+        "tests/test_task_agent.py::test_existing_attention_same_ref_quote_with_different_source_identity_requires_original_signal"
+      ],
+      "original_failed16": [
+        "tests/test_task_agent.py::test_source_grounded_completion_updates_task_status_without_todo_write",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update0-seed-historical Project evidence signal does not exist]",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update1-seed-historical Project evidence signal/source_ref does not match]",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update2-seed-historical Project quote is absent]",
+        "tests/test_task_agent.py::test_stored_assessment_rejects_false_historical_provenance[historical_update3-memory_provenance-Project evidence must be observed original source]",
+        "tests/test_task_agent.py::test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect",
+        "tests/test_task_agent.py::test_existing_attention_keeps_card_id_but_reports_current_proposal_error",
+        "tests/test_task_agent.py::test_existing_attention_identity_and_original_proof_are_stored_facts[bad_proof-historical Project evidence signal/source_ref does not match]",
+        "tests/test_task_agent.py::test_existing_attention_rejects_same_project_peer_outside_saved_membership",
+        "tests/test_task_agent.py::test_unknown_current_project_clue_saves_source_without_fake_business_objects",
+        "tests/test_task_agent.py::test_existing_attention_requires_assessment_to_cite_that_cards_original_proof",
+        "tests/test_task_agent.py::test_process_work_item_repairs_stored_attention_original_proof_before_domain_writes[True]",
+        "tests/test_task_agent.py::test_process_work_item_repairs_stored_attention_original_proof_before_domain_writes[False]",
+        "tests/test_task_agent.py::test_existing_attention_changed_current_words_with_actual_old_proof_is_idempotent",
+        "tests/test_task_agent.py::test_stored_assessment_membership_checks_do_not_materialize_full_task_evidence",
+        "tests/test_task_agent.py::test_existing_attention_same_ref_quote_with_different_source_identity_requires_original_signal"
+      ],
+      "extra_parameter_siblings": 4,
+      "prefix_passed": 174,
+      "relative_date_passed": 1,
+      "tail_previously_passed": 56,
+      "focused_passed": 20
+    },
+    "original_assertion_count": 794,
+    "current_assertion_count": 804,
+    "assertion_changes": "Three retired relation counts use current projections; two source checks additionally prove no DB original, missing999 expected error now prepared-signal integrity; added four no-write snapshots. Other business assertions retained.",
+    "runtime_changes": false,
+    "independent_review": "Initial source/projection/fake-attempt changes independently reviewed; root reviewed all16 tail fixture conversions and independently verified247-node union."
+  },
+  "latest_production_publication_status_readonly": {
+    "observed_at": "2026-10-19T10:03:05.956972+00:00",
+    "readonly": true,
+    "production_head": "aa18a59858a477c3e446560fa956fbe13e26136a",
+    "checkout_clean": true,
+    "table_types": {
+      "table": 116,
+      "virtual": 1,
+      "shadow": 4
+    },
+    "main_bytes": 514686976,
+    "wal_bytes": 4161232,
+    "final_core_plus_ledger_published": false
   }
 }

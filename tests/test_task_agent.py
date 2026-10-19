@@ -7,10 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_candidate_definitions import candidate_projection
 from app.business_storage import update_business
-from app.store import AutoReplyStore
-from app.run_storage import TASK_AGENT_RUN_SQL
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.business_source_reader import PreparedSources
+from app.store import AutoReplyStore, TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL, insert_business_action
 from app.fxiaoke_customer_lookup import CrmCustomerCandidate, CrmCustomerLookup
 from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
 from app.task_agent import (
@@ -132,6 +132,33 @@ def _independent_project_decision():
             ],
             "update_summary": "保存项目定义、分工与正常进展，没有新任务",
         }
+    )
+
+
+def _prepared_task_sources(store, *original_items, original_bodies=None):
+    """Make only caller-owned exact source bodies available to this test request."""
+    prepared = PreparedSources(store.business_source_reader())
+    bodies_by_ref = dict(original_bodies or {})
+    bodies_by_ref.update({item.source.ref: item.summary for item in original_items})
+    for signal in store.list_business_task_signals():
+        prepared.add(signal)
+        body = bodies_by_ref.get(signal.source_ref)
+        if body is not None and signal.source.matches_body(body):
+            prepared.add_current(signal, body)
+    return prepared
+
+
+def _prepared_project_seed_sources(
+    store, seed, *original_items, seed_original_body, extra_original_bodies=None
+):
+    signal = store.get_business_task_signal(seed.signal_id)
+    assert signal is not None
+    original_bodies = {signal.source_ref: seed_original_body}
+    original_bodies.update(extra_original_bodies or {})
+    return _prepared_task_sources(
+        store,
+        *original_items,
+        original_bodies=original_bodies,
     )
 
 
@@ -426,7 +453,10 @@ def test_independent_project_context_update_preserves_task_truth_and_historical_
         }
     )
     result = apply_task_agent_decision(
-        store, summary_input_id=2, work_item=item, decision=decision, record_run=False
+        store, summary_input_id=2, work_item=item, decision=decision, record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, _independent_project_work_item()
+        ),
     )
     after = store.list_business_projects()[0]
     assert (
@@ -593,7 +623,10 @@ def test_independent_project_suggests_from_historical_role_then_human_promotes_s
     }
     decision = TaskAgentDecision.model_validate(payload)
     result = apply_task_agent_decision(
-        store, summary_input_id=2, work_item=item, decision=decision, record_run=False
+        store, summary_input_id=2, work_item=item, decision=decision, record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, _independent_project_work_item(), item
+        ),
     )
     task_id = result.task_ids[0]
     suggested = store.get_business_task(task_id)
@@ -603,7 +636,10 @@ def test_independent_project_suggests_from_historical_role_then_human_promotes_s
     assert json.loads(suggested.suggestion_json)["suggested_owner_name"] == "王五"
     assert role["signal_id"] == first.applied_projects[0].signal_ids[0]
     repeated = apply_task_agent_decision(
-        store, summary_input_id=3, work_item=item, decision=decision, record_run=False
+        store, summary_input_id=3, work_item=item, decision=decision, record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, _independent_project_work_item(), item
+        ),
     )
     assert repeated.task_ids == (task_id,)
     assert store.list_business_task_todo_sync_outbox() == []
@@ -666,6 +702,9 @@ def test_independent_project_suggests_from_historical_role_then_human_promotes_s
         work_item=assigned_item,
         decision=assigned,
         record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, _independent_project_work_item(), item, assigned_item
+        ),
     )
     actual = store.get_business_task(task_id)
     assert promoted.task_ids == (task_id,)
@@ -769,7 +808,16 @@ def test_independent_project_link_preserves_all_original_proofs(
         }
     )
     result = apply_task_agent_decision(
-        store, summary_input_id=2, work_item=item, decision=decision, record_run=False
+        store, summary_input_id=2, work_item=item, decision=decision, record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, item,
+            original_bodies={
+                f"chat:link-proof-{i}": (
+                    f"准备验收材料属于客户验收项目，佐证 {i}。"
+                )
+                for i in (1, 2)
+            },
+        ),
     )
     actual = store.get_business_task(old.task_id)
     assert result.task_ids == (old.task_id,)
@@ -853,6 +901,9 @@ def test_independent_project_suggestion_reason_update_preserves_omitted_descript
         work_item=item,
         decision=TaskAgentDecision.model_validate(payload),
         record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, _independent_project_work_item(), item
+        ),
     )
     payload["task_decisions"][0].update(
         action="update_task", transition="update_fields", task_id=first.task_ids[0]
@@ -868,6 +919,9 @@ def test_independent_project_suggestion_reason_update_preserves_omitted_descript
         work_item=item,
         decision=TaskAgentDecision.model_validate(payload),
         record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store, _independent_project_work_item(), item
+        ),
     )
     actual = store.get_business_task(first.task_ids[0])
     assert second.task_ids == first.task_ids
@@ -911,7 +965,7 @@ def test_independent_project_old_card_proof_does_not_mask_rejected_current_propo
         },
     )
 
-    def rejected(self, proposal):
+    def rejected(self, proposal, *, _db=None):
         raise ValueError("current proposal rejected by projection")
 
     monkeypatch.setattr(BusinessAttentionProjection, "upsert", rejected)
@@ -927,6 +981,13 @@ def test_independent_project_old_card_proof_does_not_mask_rejected_current_propo
             }
         ),
         record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store,
+            item,
+            original_bodies={
+                "seed:售前知识库": "售前知识库历史交付风险",
+            },
+        ),
     )
     receipt = result.projection_receipt.project_assessments[0]
     assert receipt.status == "rejected"
@@ -1248,11 +1309,15 @@ class FakeCodexWithAuditEvents(FakeCodex):
 
 
 class FakeRoutedTaskExecution:
-    def __init__(self, raw, *, session_id="", transcript_start=0, transcript_end=0):
+    def __init__(
+        self, raw, *, session_id="", transcript_start=0, transcript_end=0,
+        attempt_id=1,
+    ):
         self.raw = raw
         self.session_id = session_id
         self.transcript_start = transcript_start
         self.transcript_end = transcript_end
+        self.attempt_id = attempt_id
         self.calls = []
 
     def execute(self, **kwargs):
@@ -1263,7 +1328,7 @@ class FakeRoutedTaskExecution:
         return SimpleNamespace(
             value=value,
             route_name="codex_oauth",
-            attempt_id=1,
+            attempt_id=self.attempt_id,
             session_id=self.session_id,
             transcript_start=self.transcript_start,
             transcript_end=self.transcript_end,
@@ -1363,6 +1428,7 @@ def test_attention_shape_omissions_use_existing_same_session_repair(fault, probl
             return SimpleNamespace(
                 value=value,
                 session_id="contract-repair-session",
+                attempt_id=None,
                 transcript_start=0,
                 transcript_end=2,
             )
@@ -1457,6 +1523,7 @@ def test_project_assessment_envelope_uses_one_same_session_parser_correction(fau
             return SimpleNamespace(
                 value=value,
                 session_id="assessment-repair-session",
+                attempt_id=None,
                 transcript_start=0,
                 transcript_end=2,
             )
@@ -2469,6 +2536,7 @@ def test_process_work_item_reads_current_native_transcript_range(tmp_path):
         session_id="task-session-1",
         transcript_start=1,
         transcript_end=10,
+        attempt_id=None,
     )
     codex = TaskAgentCodexRunner(routed_execution=routed)
     observed_ranges = []
@@ -4023,7 +4091,9 @@ def test_project_weekly_report_registry_row_becomes_official_project(tmp_path):
     assert [project.title for project in projects] == ["大众底盘采集"]
     with store._connect() as db:
         assert (
-            db.execute("select count(*) from business_project_candidates").fetchone()[0]
+            db.execute(
+                f"select count(*) from ({candidate_projection('project_candidate')})"
+            ).fetchone()[0]
             == 0
         )
     assert [
@@ -4659,6 +4729,7 @@ def test_missing_new_task_title_uses_existing_same_session_repair():
             return SimpleNamespace(
                 value=value,
                 session_id="title-repair",
+                attempt_id=None,
                 transcript_start=0,
                 transcript_end=2,
             )
@@ -4825,6 +4896,7 @@ def test_owner_evidence_keeps_the_citation_the_agent_gave(tmp_path):
         work_item=item,
         decision=decision,
         record_run=False,
+        prepared_sources=_prepared_task_sources(store, item),
     )
 
     task = store.get_business_task(result.task_ids[0])
@@ -5088,7 +5160,9 @@ def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidenc
     assert len(store.list_business_work_cluster_tasks(cluster_id=cluster_id)) == 2
     with store._connect() as db:
         assert (
-            db.execute("select count(*) from business_project_candidates").fetchone()[0]
+            db.execute(
+                f"select count(*) from ({candidate_projection('project_candidate')})"
+            ).fetchone()[0]
             == 0
         )
 
@@ -6051,9 +6125,10 @@ def test_agent_recomputes_existing_attention_after_terminal_or_irrelevant_change
         anchor_id=anchor_id, registry_source="meeting:delivery"
     )
     with store.business_task_transaction() as db:
-        db.execute(
-            "insert into business_project_evidence(project_id, signal_id) values (?, ?)",
-            (project_id, seed.signal_id),
+        insert_business_action(
+            db,
+            "business_project_evidence",
+            {"project_id": project_id, "signal_id": seed.signal_id},
         )
     resolution.confirm_anchor_match(
         task_id=seed.task_id,
@@ -6865,7 +6940,13 @@ def test_unparseable_relative_date_stays_only_in_linked_source_evidence(tmp_path
     (evidence,) = store.list_business_task_evidence(task_id)
     signal = store.get_business_task_signal(evidence.signal_id)
     from app.business_source_reader import AvailableSource
-    original = store.business_source_reader().resolve(signal.source)
+    reader = store.business_source_reader()
+    assert not isinstance(reader.resolve(signal.source), AvailableSource)
+    prepared = PreparedSources(reader)
+    prepared.add(signal)
+    assert signal.source.matches_body(item.summary)
+    prepared.add_current(signal, item.summary)
+    original = prepared.reading_for(signal)
     assert isinstance(original, AvailableSource) and "下周五前" in original.body
 
 
@@ -7070,7 +7151,9 @@ def test_source_grounded_completion_updates_task_status_without_todo_write(tmp_p
     assert result.task_ids == (assigned.task_id,)
     assert store.get_business_task(assigned.task_id).status.value == "done"
     with store._connect() as db:
-        assert db.execute("select count(*) from work_todos").fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from business where record_type='work_todo'"
+        ).fetchone()[0] == 0
     [intent] = store.list_business_task_todo_sync_outbox()
     assert intent["business_task_id"] == assigned.task_id
     assert intent["operation"] == "complete"
@@ -7893,7 +7976,7 @@ def test_stored_assessment_rejects_wrong_current_citation_atomically(
         (
             {"signal_id": 999},
             "seed",
-            "historical Project evidence signal does not exist",
+            "prepared evidence Signal changed or is missing",
         ),
         (
             {"source_ref": "seed:wrong"},
@@ -7943,6 +8026,10 @@ def test_stored_assessment_rejects_false_historical_provenance(
             "task_decisions": [],
         }
     )
+    tasks_before = store.list_business_tasks()
+    signals_before = store.list_business_task_signals()
+    projects_before = store.list_business_projects()
+    attention_before = store.list_business_attention_items()
 
     with pytest.raises(ValueError, match=problem):
         apply_task_agent_decision(
@@ -7951,7 +8038,14 @@ def test_stored_assessment_rejects_false_historical_provenance(
             work_item=item,
             decision=decision,
             record_run=False,
+            prepared_sources=_prepared_project_seed_sources(
+                store, seed, item, seed_original_body="售前知识库历史交付风险"
+            ),
         )
+    assert store.list_business_tasks() == tasks_before
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_projects() == projects_before
+    assert store.list_business_attention_items() == attention_before
 
 
 @pytest.mark.parametrize(
@@ -8065,6 +8159,9 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(
         work_item=item,
         decision=decision,
         record_run=False,
+        prepared_sources=_prepared_project_seed_sources(
+            store, seed, item, seed_original_body="售前知识库历史交付风险"
+        ),
     )
 
     assert result.task_ids == ()
@@ -8088,6 +8185,9 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(
         work_item=item,
         decision=decision,
         record_run=False,
+        prepared_sources=_prepared_project_seed_sources(
+            store, seed, item, seed_original_body="售前知识库历史交付风险"
+        ),
     )
 
     assert replay.projection_receipt is not None
@@ -8168,7 +8268,7 @@ def test_existing_attention_keeps_card_id_but_reports_current_proposal_error(
     )
     events_before = store.list_business_attention_events(attention_id)
 
-    def fail_projection(_self, _proposal):
+    def fail_projection(_self, _proposal, *, _db=None):
         raise RuntimeError("existing card proposal failed")
 
     monkeypatch.setattr(BusinessAttentionProjection, "upsert", fail_projection)
@@ -8178,6 +8278,9 @@ def test_existing_attention_keeps_card_id_but_reports_current_proposal_error(
         work_item=item,
         decision=decision,
         record_run=False,
+        prepared_sources=_prepared_project_seed_sources(
+            store, seed, item, seed_original_body="售前知识库历史交付风险"
+        ),
     )
 
     assert result.projection_receipt is not None
@@ -8311,6 +8414,9 @@ def test_existing_attention_identity_and_original_proof_are_stored_facts(
                 }
             ),
             record_run=False,
+            prepared_sources=_prepared_project_seed_sources(
+                store, seed, item, seed_original_body="售前知识库历史交付风险"
+            ),
         )
 
 
@@ -8373,6 +8479,9 @@ def test_existing_attention_rejects_same_project_peer_outside_saved_membership(
                 }
             ),
             record_run=False,
+            prepared_sources=_prepared_project_seed_sources(
+                store, member, item, seed_original_body="售前知识库历史交付风险"
+            ),
         )
     assert [
         row.task_id for row in store.list_business_attention_tasks(attention_id)
@@ -8435,6 +8544,13 @@ def test_two_current_tasks_share_one_stored_project_judgment(tmp_path):
             }
         ),
         record_run=False,
+        prepared_sources=_prepared_task_sources(
+            store,
+            item,
+            original_bodies={
+                "seed:售前知识库": "售前知识库历史交付风险",
+            },
+        ),
     )
 
     assert result.task_ids == (first.task_id, second.task_id)
@@ -8666,7 +8782,13 @@ def test_unknown_current_project_clue_saves_source_without_fake_business_objects
     assert len(store.list_business_task_signals()) == 1
     from app.business_source_reader import AvailableSource
     signal = store.get_business_task_signal(result.current_signal_id)
-    original = store.business_source_reader().resolve(signal.source)
+    reader = store.business_source_reader()
+    assert not isinstance(reader.resolve(signal.source), AvailableSource)
+    prepared = PreparedSources(reader)
+    prepared.add(signal)
+    assert signal.source.matches_body(item.summary)
+    prepared.add_current(signal, item.summary)
+    original = prepared.reading_for(signal)
     assert isinstance(original, AvailableSource) and original.body == item.summary
     assert store.list_business_projects() == []
     assert store.list_business_attention_items() == ()
@@ -9477,6 +9599,13 @@ def test_existing_attention_requires_assessment_to_cite_that_cards_original_proo
                     }
                 ),
                 record_run=False,
+                prepared_sources=_prepared_project_seed_sources(
+                    store,
+                    seed,
+                    item,
+                    seed_original_body="售前知识库历史交付风险",
+                    extra_original_bodies={"seed:other-proof": "另一条真实历史事实"},
+                ),
             )
 
 
@@ -9489,6 +9618,22 @@ def test_process_work_item_repairs_stored_attention_original_proof_before_domain
     monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
     store = AutoReplyStore(tmp_path / "stored-attention-proof-repair.sqlite3")
     seed, anchor_id = _stored_project_task(store)
+    import app.task_agent as task_agent
+    original_prepare = task_agent._prepare_decision_sources
+
+    def prepare_with_fixture_original(store_arg, decision_arg, *, source_reader=None):
+        prepared = original_prepare(
+            store_arg, decision_arg, source_reader=source_reader
+        )
+        signal = store.get_business_task_signal(seed.signal_id)
+        assert signal is not None
+        prepared.add(signal)
+        prepared.add_current(signal, "售前知识库历史交付风险")
+        return prepared
+
+    monkeypatch.setattr(
+        task_agent, "_prepare_decision_sources", prepare_with_fixture_original
+    )
     attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
     item = _work_item()
     input_id = store.enqueue_work_summary_input(
@@ -9646,6 +9791,9 @@ def test_existing_attention_changed_current_words_with_actual_old_proof_is_idemp
             }
         ),
         record_run=False,
+        prepared_sources=_prepared_project_seed_sources(
+            store, seed, item, seed_original_body="售前知识库历史交付风险"
+        ),
     )
 
     assert result.task_ids == ()
@@ -9749,6 +9897,13 @@ def test_stored_assessment_membership_checks_do_not_materialize_full_task_eviden
             }
         ),
         record_run=False,
+        prepared_sources=_prepared_project_seed_sources(
+            store,
+            seed,
+            item,
+            seed_original_body="售前知识库历史交付风险",
+            extra_original_bodies={"seed:second-card-proof": "第二条历史交付事实"},
+        ),
     )
 
     assert result.task_ids == ()
@@ -9801,6 +9956,9 @@ def test_existing_attention_same_ref_quote_with_different_source_identity_requir
             work_item=item,
             decision=TaskAgentDecision.model_validate(payload),
             record_run=False,
+            prepared_sources=_prepared_project_seed_sources(
+                store, seed, item, seed_original_body="售前知识库历史交付风险"
+            ),
         )
     assert store.list_business_task_signals() == signals_before
     assert store.list_business_attention_events(attention_id) == events_before
@@ -9819,6 +9977,9 @@ def test_existing_attention_same_ref_quote_with_different_source_identity_requir
         work_item=item,
         decision=TaskAgentDecision.model_validate(payload),
         record_run=False,
+        prepared_sources=_prepared_project_seed_sources(
+            store, seed, item, seed_original_body="售前知识库历史交付风险"
+        ),
     )
     [readback] = result.projection_receipt.project_assessments
     assert readback.status == "existing"
