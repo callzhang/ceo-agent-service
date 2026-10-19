@@ -1,0 +1,146 @@
+{
+  "accepted_code": "924a05135806508fd9d7db22bf53144915093cea",
+  "protocol": {
+    "source_lineage": "d6a1b024ca38aa25ec444a06fea7ef31512b9a56",
+    "target_pair": [
+      "2026-10-19.1",
+      52
+    ],
+    "source_foreign_keys": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "ordinary_constructor": {
+      "old_pair_refused_without_stored_change": true
+    },
+    "publication": {
+      "protocol": "SelectionSchemaRelease",
+      "only_source_marker_changed": true
+    },
+    "new_current_facts": {
+      "task": 416039,
+      "generation": "initial",
+      "candidate": 1028,
+      "selection": 1,
+      "execution": 327,
+      "external_key": "copy-release-e95054ee9f8b4c17b4bd0e09dd4d1aed",
+      "fixture": "typed DAO, no native model in this schema test",
+      "provider_invocations": 0,
+      "receipt": "explicit in-memory substitute"
+    },
+    "inverse_old_code": {
+      "source_schema_exact": true,
+      "old_store_cold_open": true,
+      "new_branch_and_receipt_readable": true,
+      "loaded_module": "/private/tmp/ceo-model-simplification-0zjph5co/published-old/app/store.py"
+    },
+    "republish": {
+      "current_rows_exact_except_publication_marker_clock": true,
+      "integrity_check": "ok",
+      "store_version": "2026-10-19.1",
+      "original_fk_findings_preserved": true
+    }
+  },
+  "native": {
+    "case": "business-model-selection-native.v1",
+    "source_sha256": "37d84652b8fa4c4900bf58b573b3b2293d5b2921d1934ff93ef4f39ba1b0b78e",
+    "baseline_sha256": "d720718ac4324bd4595435a9de4faaa645c245964276147a505e32ab26de37a1",
+    "task_id": 5365931408856038,
+    "generation": "initial",
+    "verification_tag": "NATIVE_SELECTION_293b761034",
+    "native_calls": [
+      {
+        "role": "consumer",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "558bb240fa86dad2336cdfff5f6933de1f63a77c0c2b4c0f24df60852625883c"
+      },
+      {
+        "role": "audit",
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "0965f4c13de2cf78ba0c2c0f35209d728fa239a773cf7768bca083cb12ccc7e0"
+      }
+    ],
+    "prepared": {
+      "task_status": "needs_human",
+      "provider_calls": 0,
+      "candidate_id": 1028,
+      "attempt_id": 15705
+    },
+    "native_evidence": {
+      "runs": [
+        {
+          "id": 385880,
+          "role": "consumer",
+          "status": "completed",
+          "session_id": "01a15663-8e03-7633-8078-64e8d23a91ce",
+          "start": 0,
+          "end": 38,
+          "tools": [
+            "read_task_artifact",
+            "read_system_action_contract"
+          ],
+          "local_bootstrap_reads": [
+            "read canonical AGENTS.md"
+          ]
+        },
+        {
+          "id": 385882,
+          "role": "audit",
+          "status": "completed",
+          "session_id": "01a15664-0957-7831-9d0f-4fa7816b3b67",
+          "start": 0,
+          "end": 24,
+          "tools": [
+            "read_system_action_contract"
+          ],
+          "local_bootstrap_reads": []
+        }
+      ],
+      "candidate_id": 1028,
+      "review_id": 1018,
+      "attempt_id": 15705,
+      "original_tables_unchanged": 11
+    },
+    "completed": {
+      "task_status": "done",
+      "execution_id": 327,
+      "provider_calls": 1,
+      "provider_verifications": 1,
+      "verified_attempts": 1,
+      "external_receipts": 1,
+      "no_additional_native_turn": true,
+      "original_tables_unchanged": 11
+    },
+    "native_inverse": {
+      "source_schema_exact": true,
+      "old_store_cold_open": true,
+      "new_native_task_done": true,
+      "new_selection_readable": true,
+      "new_fake_receipt_readable": true
+    },
+    "native_reforward": {
+      "current_facts_preserved": true,
+      "integrity_check": "ok",
+      "original_fk_multiset_preserved": true,
+      "console_provider_calls": 0
+    }
+  },
+  "ui": {
+    "environment": "isolated published SQLite copy on port18765; lifespan off; provider blocked",
+    "route": "/attempts/15705",
+    "observed": [
+      "needs_human with reviewed candidate and execute/stop choices",
+      "clicked execute; selected persisted and pending",
+      "completed; fixed fixture records=3 units_total=100",
+      "expanded verified receipt native-copy-provider-receipt"
+    ],
+    "production_writes": 0,
+    "real_provider_sends": 0
+  }
+}
