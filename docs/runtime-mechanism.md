@@ -1336,7 +1336,7 @@ Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
 语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
-Task 业务指导以每轮完整加载的当前 ceo-work-tracking Skill 为主，不再在包装正文重复展开已由 Skill 承载的规则。包装只保留未被当前安装 Skill 完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。此阶段仍注入完整 Skill，不新增读取工具、权限或路线；固定对照见 docs/task-guidance-dedup-evidence.md。
+Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/task-guidance-dedup-evidence.md，按需读取对照见 docs/task-skill-on-demand-validation.md。
 
 
 ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
@@ -1416,7 +1416,7 @@ source_metrics 是正文字符观测，不是总 prompt token 保证；检索排
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
 native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
 共享会话锁，运行时续租并在提交前核验；失锁本轮不提交，普通既有重试策略不变。
-旧 task:<run_id> session 历史保留。prompt 使用当前选定 Skill 根目录中的 ceo-work-tracking 正文，不固定历史 revision；旧 scheduled
+旧 task:<run_id> session 历史保留。本机 CLI 路线的 prompt 指向当前选定 Skill 根目录中的 ceo-work-tracking 文件及其 SHA-256；远端 Friday Runtime 路线继续收到完整正文，不固定历史 revision；旧 scheduled
 skill_protocol 不注入，scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
 
 完成只由新信息驱动。独立 completion Agent、周期性任务完成检查已删除，旧三类 completion-check
@@ -3153,7 +3153,7 @@ provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有
 
 ### Task 原生 Skill 目录
 
-Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 完整 Skill 正文、动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。验证见 `docs/task-native-skill-catalog-validation.md`。
+Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 的动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；本机 Codex/Claude CLI 以绝对路径和版本摘要按需读取当前 Work Tracking Skill，远端 Friday Runtime 继续收到完整正文。Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。目录验证见 `docs/task-native-skill-catalog-validation.md`。
 
 ## Unified reply and work-input storage (Store 2026-10-11.3)
 
@@ -3845,12 +3845,13 @@ schema text is byte-identical. See docs/task-schema-title-formatting-validation.
 
 标题合同升级不会改写旧的已准备正文：旧决策未核验标题时采用中性标题；如已有未确认的准备正文与之不符，沿现有正文一致性检查停止，需通过原有重新决策流程生成新版本。已确认的精确回执仍按原动作核对，不重发以获取新标题。发布前需核对旧版已准备但未确认的会议动作。
 
-Task Agent 当前每轮已经完整提交仓库中的 Work Tracking Skill，Codex 命令复用现有
+Task Agent 的本机 CLI 路线当前每轮提交 Work Tracking Skill 的绝对路径和 SHA-256；冷启动读取全文，
+续会话只在同版本全文仍在上下文时复用，否则重读。Codex 命令复用现有
 `inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
-原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。完整当前正文、
-其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
-或共享 AGENTS 配置。该改动消除第二份旧 Skill 的可见入口，尚未把完整正文改成按需读取。
-验证与限制见 `docs/task-inline-skill-once-validation.md`。
+原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。
+远端 Friday Runtime 路线继续收到完整 Skill 正文。其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
+或共享 AGENTS 配置。旧版同名入口的修复见 `docs/task-inline-skill-once-validation.md`；
+当前按需读取的验收与限制见 `docs/task-skill-on-demand-validation.md`。
 
 Codex continuation commands retain the caller-selected workspace through the native
 global `--cd <workspace>` option before `exec resume`; cold commands are unchanged.
