@@ -20,6 +20,7 @@ window.fetch=async(input,init)=>{
   const body=init?.body?JSON.parse(String(init.body)):{};
   let result:unknown;
   if(path==="/api/console/email/learning")result={ok:true,learning:learning()};
+  else if(path==="/api/console/email/processing-progress")result={window_hours:24,throughput:{window_minutes:30,finished:0,per_minute:0,median_seconds:null},provider_actions:{done:0,pending:0,processing:0,failed:0,skipped:0,failed_retriable:0,failed_not_retriable:0},classification_queue:{pending:0,processing:0},unsubscribe_queue:{pending:0,processing:0},waiting_for_owner:0,scans:[]};
   else if(path==="/api/console/email/runtime-mode"&&method==="PUT"){mode=body.mode;result={ok:true,...learning()};}
   else if(path==="/api/console/email/promotion-config"&&method==="PUT"){promotion={...body,config_version:"promotion-v"+(++version)};result={ok:true,config:promotion};}
   else if(path==="/api/console/email/config"&&method==="GET")result={items:configs};

@@ -72,6 +72,10 @@ def test_default_search_never_reads_sources_but_full_search_finds_deep_keyword(p
     rows, total = reader.list_classifications(status=None, q="后部关键词", limit=20, offset=0, search_scope="full")
     assert total == 2 and len(rows) == 2
     assert len(calls) == 2
+    detail = reader.get_classification(1)
+    assert detail["message_text"] == "前部关键词" + "中" * 1100 + "后部关键词"
+    assert len(detail["preview"]) == 1000
+    assert detail["message_text"].endswith("后部关键词")
 
 
 def test_default_search_keeps_unicode_casefold_and_literal_percent(preview_catalog):
