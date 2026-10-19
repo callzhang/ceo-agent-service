@@ -44,6 +44,7 @@ def _target_store(tmp_path: Path) -> AutoReplyStore:
         include_email=True,
         include_followup_sync=True,
         include_business_sync=True,
+        compact_payload=True,
     )
     create_state_schema(db)
     db.commit()
