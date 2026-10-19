@@ -295,7 +295,8 @@ class WorkbenchExecutor:
 
     def _execute_turn_reserved(self, turn: WorkbenchTurn) -> None:
         try:
-            self._execute_turn(turn)
+            with self.store.reuse_connection():
+                self._execute_turn(turn)
         finally:
             with self._schedule_lock:
                 self._reserved_turns -= 1

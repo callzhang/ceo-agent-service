@@ -1965,6 +1965,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._read_snapshot_connection: ContextVar[sqlite3.Connection | None] = (
             ContextVar(f"audit_read_snapshot_{id(self)}", default=None)
         )
+        self._reused_connection: ContextVar[sqlite3.Connection | None] = (
+            ContextVar(f"sqlite_reused_connection_{id(self)}", default=None)
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_initialized()
 
@@ -2387,18 +2390,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         flush=True,
                     )
             return
-        connection = self._open_connection()
+        reused = self._reused_connection.get()
+        connection = reused if reused is not None else self._open_connection()
         started_at = time.monotonic()
         body_finished_at = started_at
+        starting_changes = 0
         try:
             try:
                 terminal_event_runs = []
                 with connection:
+                    if reused is not None:
+                        starting_changes = connection.total_changes
                     try:
                         yield connection
                     finally:
                         body_finished_at = time.monotonic()
-                    if connection.total_changes:
+                    if connection.total_changes != starting_changes:
                         from app.native_trajectory import terminal_cached_run_ids
                         terminal_event_runs = terminal_cached_run_ids(connection, str(self.path.resolve()))
                 if terminal_event_runs:
@@ -2406,7 +2413,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     forget_live_events(str(self.path.resolve()), terminal_event_runs)
             finally:
                 close_started_at = time.monotonic()
-                connection.close()
+                if reused is None:
+                    connection.close()
                 closed_at = time.monotonic()
                 elapsed = closed_at - started_at
                 if elapsed >= 1.0:
@@ -2514,6 +2522,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 with suppress(sqlite3.Error):
                     connection.close()
             raise
+
+    @contextmanager
+    def reuse_connection(self) -> Iterator[None]:
+        """Keep one connection for this synchronous operation sequence.
+
+        Each _connect retains its own commit/rollback boundary. ContextVar
+        scoping keeps the execution thread separate from heartbeat threads.
+        """
+        if self._reused_connection.get() is not None:
+            yield
+            return
+        connection = self._open_connection()
+        token = self._reused_connection.set(connection)
+        try:
+            yield
+        finally:
+            self._reused_connection.reset(token)
+            connection.close()
 
     @contextmanager
     def read_snapshot(self) -> Iterator[None]:

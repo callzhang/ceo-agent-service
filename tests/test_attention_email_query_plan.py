@@ -43,6 +43,7 @@ def test_email_attention_reads_payloads_only_for_failed_ids(tmp_path):
     store = AutoReplyStore.__new__(AutoReplyStore)
     store.path = path
     store._read_snapshot_connection = ContextVar("attention_test", default=None)
+    store._reused_connection = ContextVar(f"test_reused_connection_{id(store)}", default=None)
     store.list_current_unresolved_problem_attempt_summaries = lambda **kwargs: []
 
     def connect():

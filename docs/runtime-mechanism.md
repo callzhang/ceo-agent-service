@@ -978,6 +978,8 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
+Workbench 的同步执行线程在一个 turn 内复用一条 SQLite 连接，减少大 schema 的重复装载；每次 Store 操作仍独立提交或回滚，turn 结束时关闭连接。心跳和 runtime 回调线程各自打开连接；只读快照仍使用独立的只读连接，不跨线程共享连接。
+
 
 主页面事件订阅回归先用 React `act` 完成时间线及其副作用，再等待真实 EventSource
 订阅建立后注入事件；页面文字出现不代表订阅已经建立。合并刷新和切换任务取消刷新

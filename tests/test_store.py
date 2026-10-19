@@ -143,6 +143,7 @@ def _store_without_initialization(path: Path) -> AutoReplyStore:
     store._read_snapshot_connection = ContextVar(
         f"test_read_snapshot_{id(store)}", default=None
     )
+    store._reused_connection = ContextVar(f"test_reused_connection_{id(store)}", default=None)
     return store
 
 
@@ -12426,18 +12427,18 @@ def test_open_connection_disables_mmap_for_mutable_service_database(
     store = _store_without_initialization(tmp_path / "mutable-service.sqlite3")
     executed: list[str] = []
 
-    class TrackingConnection:
+    class TrackingConnection(sqlite3.Connection):
         def execute(self, sql: str):
             executed.append(sql)
             return self
 
         def close(self) -> None:
-            return None
+            super().close()
 
     monkeypatch.setattr(
         store_module.sqlite3,
         "connect",
-        lambda *_args, **_kwargs: TrackingConnection(),
+        lambda *_args, **_kwargs: TrackingConnection(":memory:"),
     )
 
     store._open_connection().close()
@@ -12468,8 +12469,9 @@ def test_open_connection_names_and_reraises_each_pragma_io_error_once(
         name="SQLITE_IOERR_SHORT_READ",
     )
 
-    class SetupConnection:
+    class SetupConnection(sqlite3.Connection):
         def __init__(self) -> None:
+            super().__init__(":memory:")
             self.closed = False
 
         def execute(self, sql: str):
@@ -12478,6 +12480,7 @@ def test_open_connection_names_and_reraises_each_pragma_io_error_once(
             return self
 
         def close(self) -> None:
+            super().close()
             self.closed = True
 
     connection = SetupConnection()
@@ -12515,17 +12518,18 @@ def test_open_connection_preserves_setup_error_when_close_also_fails(
         name="SQLITE_IOERR",
     )
 
-    class FailingConnection:
+    class FailingConnection(sqlite3.Connection):
         def execute(self, _sql: str):
             raise setup_error
 
         def close(self) -> None:
+            super().close()
             raise close_error
 
     monkeypatch.setattr(
         store_module.sqlite3,
         "connect",
-        lambda *_args, **_kwargs: FailingConnection(),
+        lambda *_args, **_kwargs: FailingConnection(":memory:"),
     )
 
     with pytest.raises(sqlite3.Error) as raised:

@@ -54,6 +54,7 @@ def _target_store(tmp_path: Path) -> AutoReplyStore:
     store.busy_timeout_seconds = 1
     store.busy_timeout_milliseconds = 1000
     store._read_snapshot_connection = ContextVar("test_snapshot", default=None)
+    store._reused_connection = ContextVar(f"test_reused_connection_{id(store)}", default=None)
     return store
 
 
