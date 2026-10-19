@@ -1,4 +1,4 @@
-"""The native error table and opt-in Action projection have the same facts."""
+"""Historical native error table and TEXT Action projection share the same facts."""
 
 import json
 import sqlite3
@@ -34,6 +34,14 @@ INDEX_SQL = (
                     on errors(conversation_id, message_id, kind)
                 """,
 )
+
+
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """Keep this module's historical TEXT Actions DML off the compact writer."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
 
 
 def _db(path, *, fresh=False):
