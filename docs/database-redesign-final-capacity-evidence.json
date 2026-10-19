@@ -34555,5 +34555,20 @@
     "runtime_changes": false,
     "scope": "All six constructor orders, exact final ten core tables plus ledger, reopen, retired object absence, current declaration, FK, migration version and existing repair/refusal controls",
     "first_red": "Obsolete intermediate table count 51; actual final 11"
+  },
+  "final_caller_release_remaining8": {
+    "passed": 8,
+    "seconds": 2388.87,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-caller-release8.log",
+    "scope": [
+      "coordinator",
+      "prepared binding including BLOB inverse",
+      "receipt backfill",
+      "updater verification restart health",
+      "loaded receipt",
+      "unsupported inverse receipt"
+    ],
+    "source_and_assertions_frozen": true,
+    "production_writes": 0
   }
 }

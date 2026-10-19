@@ -143,7 +143,7 @@ State 更新索引补验：完成租约原需111175 VM步，其中 UPDATE 53695�
 | 夹具／调用方验证组 | 当前证据与准确范围 |
 | --- | --- |
 | 配置组件发布 | 整文件39项通过／102.49秒；历史TEXT源及新增Skill／Actions事实使用68a137490原生写入器，声明、类型、身份及逆迁断言保留 |
-| Email bootstrap／故障／并发／拒绝异常元数据 | 主agent冻结源码17项通过／41.98秒，包含精确store_schema_version绑定参数；真实child故障8项通过／1348.81秒；其余8项coordinator／binding／receipt／updater运行中 |
+| Email bootstrap／故障／并发／拒绝异常元数据 | 主agent冻结源码17项通过／41.98秒，包含精确store_schema_version绑定参数；真实child故障8项通过／1348.81秒；其余8项coordinator／binding／receipt／updater全部通过／2388.87秒，运行期间源码及断言冻结 |
 | Email 元数据及历史DML | 元数据整文件39项通过／377.06秒；历史迁移新增事实／ROWID／类型4项通过／8.74秒 |
 | Direct／Validator | 冻结源码合并23项通过、7未选入／359.50秒；reply代表1项／429.08秒、unsubscribe代表2项／439.57秒，不宣称两个DAO整文件已通过 |
 | Task delivery | 11个观察到的失败均定向闭合；54项当前轻量控制／17.37秒、5项配对／逆迁控制／841.08秒、2项历史四族控制／92.48秒；未重复跑整文件，未变error／feedback配对证明沿用 |
