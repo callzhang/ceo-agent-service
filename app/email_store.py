@@ -17537,7 +17537,8 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select classifications.sender, classifications.subject,
+                select classifications.id as classification_id, actions.action_id,
+                       classifications.sender, classifications.subject,
                        classifications.preview, classifications.category,
                        classifications.received_at, actions.finished_at
                 from ({EMAIL_DIRECT_ACTION_SQL}) as actions

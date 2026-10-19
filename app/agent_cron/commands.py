@@ -244,13 +244,6 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=False,
     ),
     ServiceCommandOption(
-        name="weekly-okr-report",
-        display_name="生成并发送 OKR 周报",
-        description="读取所有管理者的实时 OKR，由 Agent 结合工作证据分析后生成周报，并发布到管理知识库和 CEO-2 管理群。",
-        channel="dingtalk",
-        consumer_prompt_enabled=False,
-    ),
-    ServiceCommandOption(
         name="recover-recent-messages",
         display_name="补查近期钉钉消息",
         description="扩大读取范围，找回常规检查可能遗漏的单聊、群聊 @ 消息和原地更新的日历邀请；发现后由 Agent 按对应规则处理。",

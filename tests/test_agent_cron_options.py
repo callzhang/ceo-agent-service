@@ -617,7 +617,6 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
         "sync-chrome-cookies",
         "request-minutes-access",
         "sync-minutes-once",
-        "weekly-okr-report",
         "recover-recent-messages",
     ]
     assert all(option.description for option in options)
@@ -631,7 +630,6 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
         True,
         True,
         True,
-        False,
         False,
         False,
         False,
