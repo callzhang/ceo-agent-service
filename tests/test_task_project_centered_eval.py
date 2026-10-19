@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 
 from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_source_reader import PreparedSources
 from app.business_storage import insert_business, update_business
+from app.action_business_storage import insert_business_action
+from app.action_storage import insert_sync_action
+from app.store import BUSINESS_ACTION_SQL
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -41,6 +45,16 @@ def _clone_suggestion_task(db, task_id, *, title=None):
     if title is not None:
         values["title"] = title
     return int(insert_business(db, "task", values).lastrowid)
+
+
+def _task_anchor_link(db, task_id):
+    row = db.execute(
+        f'select anchor_id,status,active,evidence_signal_id,reason '
+        f'from ({BUSINESS_ACTION_SQL["business_task_anchor_links"]}) '
+        'where task_id=? order by id limit 1', (task_id,),
+    ).fetchone()
+    assert row is not None
+    return dict(row)
 
 
 @pytest.mark.parametrize("call_style", ["positional", "keyword"])
@@ -162,6 +176,10 @@ def seeded_domain(tmp_path):
             evidence_text=risk_text, dedupe_key="eval:risk",
         )
         risk_id = store.create_business_task_signal(**risk.__dict__)
+        prepared_sources = PreparedSources(store.business_source_reader())
+        prepared_sources.add_current(store.get_business_task_signal(duty_id), duty_text)
+        prepared_sources.add_current(store.get_business_task_signal(risk_id), risk_text)
+        store._project_eval_prepared_sources = prepared_sources
         duty_citation = {"signal_id": duty_id, "source_ref": "meeting:project-start",
                          "source_excerpt": duty_text}
         risk_citation = {"signal_id": risk_id, "source_ref": "chat:cash-risk",
@@ -179,6 +197,7 @@ def seeded_domain(tmp_path):
             ProjectContextService(store).apply(
                 project_id=project_id, context=context,
                 signal_ids=(duty_id, risk_id), db=db,
+                prepared_sources=prepared_sources,
             )
         if attention:
             BusinessAttentionProjection(store).upsert(AttentionProposal(
@@ -199,7 +218,7 @@ def seeded_domain(tmp_path):
             task_id = TaskSemanticService(store).record_suggestion(RecordTaskSuggestion(
                 title="确认付款排期", description="核实客户付款时间",
                 signal=risk, suggestion=suggestion_value, project_anchor_id=anchor,
-            )).task_id
+            ), prepared_sources=prepared_sources).task_id
         return store, task_id
     return seed
 
@@ -255,9 +274,10 @@ def test_oracle_rejects_wrong_persisted_result(seeded_domain, fault, required_fa
             _clone_suggestion_task(db, task_id)
     if fault == "outbound_intent":
         with store._connect() as db:
-            db.execute("insert into business_task_todo_sync_outbox "
-                       "(operation_key,business_task_id,operation) values (?,?,?)",
-                       ("eval:unexpected-send", task_id, "create"))
+            insert_sync_action(db, "business_task_todo_sync_outbox", {
+                "operation_key": "eval:unexpected-send",
+                "business_task_id": task_id, "operation": "create",
+            })
     failures = evaluate_persisted_case(store, EXPECTED, before=before)
     assert required_failure in failures, failures
 
@@ -323,11 +343,14 @@ def test_oracle_rejects_two_official_projects_with_same_title(seeded_domain):
             "context_json": context["context_json"],
             "evidence_json": context["evidence_json"],
         })
-        db.execute(
-            "insert into business_project_evidence (project_id,signal_id) "
-            "select ?,signal_id from business_project_evidence where project_id=?",
-            (duplicate_id, original_id),
-        )
+        evidence_rows = db.execute(
+            f'select signal_id from ({BUSINESS_ACTION_SQL["business_project_evidence"]}) where project_id=?',
+            (original_id,),
+        ).fetchall()
+        for (signal_id,) in evidence_rows:
+            insert_business_action(db, "business_project_evidence", {
+                "project_id": duplicate_id, "signal_id": signal_id,
+            }, on_conflict_key_do_nothing=True)
         update_business(db, "project", duplicate_id, {"title": "甲客户一期交付"})
     expected = EXPECTED | {"project_titles": ["甲客户一期交付"]}
     failures = evaluate_persisted_case(store, expected, before=domain_snapshot(store))
@@ -397,11 +420,11 @@ def test_readback_accepts_only_allowed_assessment_task_counts(seeded_domain):
     store, task_id = seeded_domain(attention=False)
     with store.business_task_transaction() as db:
         peer_id = _clone_suggestion_task(db, task_id, title="独立商务对账")
-        db.execute(
-            "insert into business_task_anchor_links "
-            "(task_id,anchor_id,status,active,evidence_signal_id,reason) "
-            "select ?,anchor_id,status,active,evidence_signal_id,reason "
-            "from business_task_anchor_links where task_id=?", (peer_id, task_id)
+        link = _task_anchor_link(db, task_id)
+        store.create_business_task_anchor_link_in_transaction(
+            task_id=peer_id, anchor_id=link["anchor_id"], status=link["status"],
+            active=link["active"], evidence_signal_id=link["evidence_signal_id"],
+            reason=link["reason"], _db=db,
         )
         anchor_id = db.execute(
             f'select canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]}) where title=?',
@@ -477,11 +500,11 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
     seeded_domain, application_status, accepted,
 ):
     store, _ = seeded_domain(attention=True, suggestion=False)
-    with store._connect() as db:
-        card = db.execute("select id,anchor_id from business_attention_items").fetchone()
-        signal = db.execute(
-            "select id from business_task_signals where source_ref=?", ("chat:cash-risk",)
-        ).fetchone()
+    [card] = store.list_business_attention_items()
+    signal = next(
+        signal for signal in store.list_business_task_signals()
+        if signal.source_ref == "chat:cash-risk"
+    )
     current = WorkItem.model_validate({
         "source": {"type": "reply_attempt", "ref": "eval:card-still-open",
                    "created_at": "2026-10-02T09:00:00Z"},
@@ -497,9 +520,9 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
         "source_time": current.source.created_at, "source_link": "",
     }
     original_citation = {
-        "signal_id": signal["id"], "source_ref": "chat:cash-risk",
+        "signal_id": signal.id, "source_ref": "chat:cash-risk",
         "source_excerpt": "付款日期未确定，影响本期现金安排",
-        "source_time": "", "source_link": "",
+        "source_time": signal.source.source_time, "source_link": "",
     }
     proposed = application_status == "applied"
     wire_evidence = [
@@ -516,9 +539,9 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
         "project_decisions": [], "task_decisions": [],
         "project_assessments": [{
             "project_title": "甲客户一期交付", "outcome": "needs_attention",
-            "reason": "付款时间仍不确定", "anchor_id": card["anchor_id"],
+            "reason": "付款时间仍不确定", "anchor_id": card.anchor_id,
             "assessment_basis": "historical_comparison", "evidence": wire_evidence,
-            "existing_attention_id": None if proposed else card["id"],
+            "existing_attention_id": None if proposed else card.id,
             "attention_proposal": attention_proposal if proposed else None,
         }],
         "update_summary": "付款风险仍存在",
@@ -527,8 +550,8 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
         input_id, decision_json=decision.model_dump_json()
     )
     outcomes = ([{
-        "assessment_index": 0, "anchor_id": card["anchor_id"],
-        "attention_id": card["id"], "task_id": None, "status": "applied",
+        "assessment_index": 0, "anchor_id": card.anchor_id,
+        "attention_id": card.id, "task_id": None, "status": "applied",
     }] if proposed else [])
     store.record_task_agent_projection(run_id, json.dumps({
         "status": "completed" if proposed else "no_proposal",
@@ -537,8 +560,8 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
         "project_link_count": 0, "proposal_count": int(proposed),
         "project_assessments": [{
             "assessment_index": 0, "status": application_status,
-            "task_ids": [], "anchor_id": card["anchor_id"],
-            "attention_id": card["id"],
+            "task_ids": [], "anchor_id": card.anchor_id,
+            "attention_id": card.id,
             "evidence": [current_citation, original_citation],
         }],
     }, ensure_ascii=False))
@@ -555,7 +578,8 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
         }],
     }
     result = _tool().readback(
-        store, input_id=input_id, before=_tool().read_domain(store), expected=expected
+        store, input_id=input_id, before=_tool().read_domain(store), expected=expected,
+        prepared_sources=store._project_eval_prepared_sources,
     )
     assert ("project_assessment_receipt_mismatch" not in result["failures"]) is accepted, result
     assert result["passed"] is accepted, result
@@ -563,10 +587,11 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
 
 def test_oracle_rejects_unrelated_peer_added_to_project_card(seeded_domain):
     store, task_id = seeded_domain()
+    [card] = store.list_business_attention_items()
     with store._connect() as db:
-        card_id = db.execute("select id from business_attention_items").fetchone()[0]
-        db.execute("insert into business_attention_tasks (attention_item_id,task_id) values (?,?)",
-                   (card_id, task_id))
+        store.link_business_attention_task_in_transaction(
+            attention_item_id=card.id, task_id=task_id, _db=db,
+        )
     expected = EXPECTED | {"attention_member_counts": {"甲客户一期交付": 0}}
     assert "attention_member_count_mismatch" in evaluate_persisted_case(
         store, expected, before=domain_snapshot(store)
@@ -575,18 +600,17 @@ def test_oracle_rejects_unrelated_peer_added_to_project_card(seeded_domain):
 
 def test_oracle_rejects_wrong_project_peer_with_same_member_count(seeded_domain):
     store, task_id = seeded_domain()
+    [card] = store.list_business_attention_items()
     with store.business_task_transaction() as db:
         peer_id = _clone_suggestion_task(db, task_id, title="完成独立商务对账")
-        db.execute(
-            "insert into business_task_anchor_links "
-            "(task_id,anchor_id,status,active,evidence_signal_id,reason) "
-            "select ?,anchor_id,status,active,evidence_signal_id,reason "
-            "from business_task_anchor_links where task_id=?", (peer_id, task_id)
+        link = _task_anchor_link(db, task_id)
+        store.create_business_task_anchor_link_in_transaction(
+            task_id=peer_id, anchor_id=link["anchor_id"], status=link["status"],
+            active=link["active"], evidence_signal_id=link["evidence_signal_id"],
+            reason=link["reason"], _db=db,
         )
-        card_id = db.execute("select id from business_attention_items").fetchone()[0]
-        db.execute(
-            "insert into business_attention_tasks (attention_item_id,task_id) values (?,?)",
-            (card_id, peer_id),
+        store.link_business_attention_task_in_transaction(
+            attention_item_id=card.id, task_id=peer_id, _db=db,
         )
     expected = EXPECTED | {
         "task_count": 2,
@@ -607,13 +631,10 @@ def test_oracle_counts_distinct_signal_versions_for_same_ref(seeded_domain):
         evidence_text="甲客户一期交付付款日期未确定，影响本期现金安排。",
         dedupe_key="eval:risk:second-signal-same-document",
     )
-    with store._connect() as db:
-        signals = db.execute(
-            "select source_document_id from business_task_signals where source_ref=?",
-            ("chat:cash-risk",),
-        ).fetchall()
+    signals = [signal for signal in store.list_business_task_signals()
+               if signal.source_ref == "chat:cash-risk"]
     assert len(signals) == 2
-    assert len({signal[0] for signal in signals}) == 1
+    assert len({signal.source.identity_key for signal in signals}) == 1
     assert "signal_version_count_mismatch" in evaluate_persisted_case(
         store, expected, before=domain_snapshot(store)
     )

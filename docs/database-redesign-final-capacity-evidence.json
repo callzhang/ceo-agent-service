@@ -34723,5 +34723,20 @@
     "scope": "Select existing --code-root before importing App; test launches --help in isolated child with foreign PYTHONPATH and verifies no database created",
     "schema_or_model_or_provider_changes": false,
     "reused": "27 final replay module controls unchanged, already passed/73.35s"
+  },
+  "final_project_centered_eval_fixture_closure": {
+    "scope": "Fixture only; persisted business oracle unchanged; no runtime/provider/model changes",
+    "first_red": "project citation original was not prepared; seed omitted PreparedSources",
+    "changes": [
+      "Transient exact caller originals prepared for context/suggestion consumers",
+      "Current typed Actions writers and relation projections",
+      "Source versions counted by exact identity_key, not retired document container ID"
+    ],
+    "result": {
+      "passed": 25,
+      "seconds": 68.79,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-task-project-centered-eval-focused.log"
+    },
+    "root_review": "Full diff reviewed; negative owner/membership/version/receipt/outbound intent oracles retained; subsequent edits indentation only; Ruff and diff check clean"
   }
 }
