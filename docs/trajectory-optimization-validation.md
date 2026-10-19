@@ -1728,5 +1728,10 @@ tool and continuation compatibility for these fixtures, not production
 business quality. The two affected test files passed with 227 tests and four
 skips; a subsequent negative case confirmed that Pydantic still rejects a
 `proposal` outcome without a plan despite the projected native schema. Ruff,
-diff check and independent review found no blocking issue. Production deploy
-and readback are still required.
+diff check and independent review found no blocking issue. The quiet-wait
+deploy installed `f836b6f90` on 2026-10-19. Production restarted as PID
+21680; `/healthz` returned OK, the quality gate was healthy with zero
+violations, Reply/Work Item/Meeting queues had no processing item, Attention
+contained four existing records, and History returned successfully. Scheduled
+work resumed after the deploy. This verifies installed code and service health;
+no natural production Claude Consumer result has yet been observed.
