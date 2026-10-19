@@ -11,6 +11,7 @@ from app.action_followup_sync_storage import (
     capture_followup_sync_source, migrate_followup_sync_schema, restore_followup_sync_schema,
 )
 from app.action_storage import insert_sync_action, update_sync_action, delete_sync_action
+from test_email_action_migration import historical_text_action_writers as historical_text_action_writers
 from test_followup_sync_action_migration import source as _source_fixture
 from test_followup_sync_source import NAMES, values
 
@@ -88,7 +89,17 @@ def test_inverse_refuses_future_source_dependency_before_mutation(migration_sour
 
 
 @pytest.mark.parametrize("parent_state", ("missing", "wrong_kind"))
-def test_inverse_refuses_orphaned_business_attempt_without_losing_receipt(migration_source, parent_state):
+def test_inverse_refuses_orphaned_business_attempt_without_losing_receipt(
+    migration_source, parent_state, historical_text_action_writers, monkeypatch,
+):
+    monkeypatch.setattr(
+        "test_followup_sync_action_inverse.insert_sync_action",
+        historical_text_action_writers.insert_sync_action,
+    )
+    monkeypatch.setattr(
+        "test_followup_sync_action_inverse.delete_sync_action",
+        historical_text_action_writers.delete_sync_action,
+    )
     path, _ = migration_source
     with closing(sqlite3.connect(path)) as db:
         db.execute("pragma foreign_keys=off")
@@ -161,7 +172,21 @@ def test_inverse_refuses_swapped_legacy_link_column_metadata(migration_source):
 
 
 @pytest.mark.parametrize("initial", (False, True))
-def test_current_facts_all_families_and_legacy_link_survive_inverse_and_reforward(migration_source, initial):
+def test_current_facts_all_families_and_legacy_link_survive_inverse_and_reforward(
+    migration_source, initial, historical_text_action_writers, monkeypatch,
+):
+    monkeypatch.setattr(
+        "test_followup_sync_action_inverse.insert_sync_action",
+        historical_text_action_writers.insert_sync_action,
+    )
+    monkeypatch.setattr(
+        "test_followup_sync_action_inverse.update_sync_action",
+        historical_text_action_writers.update_sync_action,
+    )
+    monkeypatch.setattr(
+        "test_followup_sync_action_inverse.delete_sync_action",
+        historical_text_action_writers.delete_sync_action,
+    )
     path, variant = migration_source
     source_variant = "actual" if variant == "actual_no_memory_fk" else "fresh_candidate"
     with closing(sqlite3.connect(path)) as db:

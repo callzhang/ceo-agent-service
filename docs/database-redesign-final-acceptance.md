@@ -157,3 +157,5 @@ Email worker 此前17个观察到的失败节点全部定向通过（64.89秒）
 Email Store 已按当前名称／参数映射50个观察到的旧失败，合并定向52项通过（145.43秒）。主agent将cursor／config破坏案例改为准确当前声明名称及实际SQL参数后3项通过（10.99秒）。动态独立复核确认当前constructor实际覆盖5种metadata标识路径；旧FK-enum路径不再由当前constructor执行，单独保留helper测试，当前共享FK声明破坏拒绝仍有独立覆盖。未新增运行时检查或兼容分支。
 
 最新旧代码恢复读回另作完整值比较：原生任务的review_candidate、audit_review、execution、external_action_result、sent_reply、reply_attempt共6类各1行，所有公开字段、SQLite值类型及完整值在最终副本与逆迁后旧代码投影逐项一致；证据仅存字段数／hash，不复制正文。
+
+Follow-up／sync历史组件逆迁整文件26项通过（202.02秒）：仅两个需要写入历史TEXT中间结构的用例绑定原生68a137490写入器，全部新增事实、类型、ROWID、水位、精确逆迁及再正迁断言保留。当前运行时未改动。

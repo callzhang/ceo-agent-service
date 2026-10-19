@@ -34480,5 +34480,13 @@
     "independent_review": "Dynamic instrumentation confirms five reachable metadata labels and zero FK-enum calls on current ctor; obsolete legacy constructor cases refocused to actual current paths/helper boundary. Current shared FK declaration corruption tests retained. No demonstrated coverage loss on current path.",
     "runtime_changes_in_fixture_commit": false,
     "known_runtime_issue": "Numeric lineage scan fixed separately in0ef34a960, original500 VM-step bound retained"
+  },
+  "final_sync_inverse_fixture_verification": {
+    "root_cause": "Two component tests wrote current compact DML into explicit historical intermediate TEXT target",
+    "change": "Use exact committed 68a137490 sync insert/update/delete only in those two test bodies via local test-module binding; source and all inverse assertions retained",
+    "result": "26 passed in 202.02s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-sync-inverse.log",
+    "runtime_changes": false,
+    "static_check": "Root Ruff/diff clean; explicit fixture re-export alias only changed after run, same fixture binding"
   }
 }
