@@ -2,12 +2,14 @@
 from contextlib import contextmanager
 import json
 import sqlite3
+import subprocess
+import sys
+from types import ModuleType
 
 import pytest
 
 from app.action_reply_storage import _fingerprint, _source_declaration
-from app.action_skill_config_storage import insert_skill_receipt
-from app.action_storage import _objects, create_action_schema, insert_action, _current_objects
+from app.action_storage import _objects, create_action_schema, _current_objects
 from app.configs_schema_release import (
     capture_config_source, configs_schema_is_current, migrate_config_schema,
     restore_config_schema,
@@ -23,10 +25,30 @@ from app.schedules_storage import insert_schedule
 from app.task_storage import create_task_schema
 from tests.configs_source_fixtures import ROOT
 from tests.test_configs_schema_transfer import native, seed
+from tests.test_email_action_migration import historical_text_action_writers
 
 
 OBS = 'email_training_snapshot_observations'
 SKILL = ('managed_skill_export_receipts', 'runtime_skill_load_receipts')
+
+
+@pytest.fixture
+def historical_text_skill_receipt_writer():
+    """Load the frozen receipt writer for the post-retirement TEXT Actions target."""
+    module_name = "_test_action_skill_config_storage_68a137490"
+    source = subprocess.check_output(
+        ["git", "show", "68a137490:app/action_skill_config_storage.py"],
+        cwd=ROOT,
+        text=True,
+    )
+    module = ModuleType(module_name)
+    module.__file__ = "68a137490:app/action_skill_config_storage.py"
+    sys.modules[module_name] = module
+    try:
+        exec(compile(source, module.__file__, "exec"), module.__dict__)
+        yield module
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def install_observations(db, variant):
@@ -51,26 +73,31 @@ def install_observations(db, variant):
 @contextmanager
 def source(variant='actual_email52', action_variant='actual_no_memory_fk',
            observation_variant=None):
-    with native(variant) as db:
-        base = variant.split('_')[0]
-        install_observations(db, observation_variant or base)
-        create_task_schema(db, include_workbench=True)
-        create_run_schema(db, include_workbench=True)
-        create_current_email_classifications(db)
-        create_action_schema(db, include_reply=True, reply_variant=action_variant, include_email=True)
-        db.commit()
-        seed(db)
-        db.rollback()
-        db.execute('pragma foreign_keys=off')
-        db.execute('begin')
-        insert_run(db, 'scheduled_task_runs', dict(
-            event_id='source', scheduled_task_id=500, snapshot_id=400,
-            trigger_kind='manual', scheduled_for='now', occurrence_count=1))
-        insert_action(db, 'outbound_postfixes', dict(
-            channel='wechat', delivery_key='old-effect', final_body='body',
-            feedback_token='', postfix_version='v1'))
-        db.execute("insert into sqlite_sequence(name,seq) values('actions:sent_replies',950)")
-        yield db
+    writer_fixture = historical_text_action_writers.__wrapped__()
+    legacy_action_storage = next(writer_fixture)
+    try:
+        with native(variant) as db:
+            base = variant.split('_')[0]
+            install_observations(db, observation_variant or base)
+            create_task_schema(db, include_workbench=True)
+            create_run_schema(db, include_workbench=True)
+            create_current_email_classifications(db)
+            create_action_schema(db, include_reply=True, reply_variant=action_variant, include_email=True)
+            db.commit()
+            seed(db)
+            db.rollback()
+            db.execute('pragma foreign_keys=off')
+            db.execute('begin')
+            insert_run(db, 'scheduled_task_runs', dict(
+                event_id='source', scheduled_task_id=500, snapshot_id=400,
+                trigger_kind='manual', scheduled_for='now', occurrence_count=1))
+            legacy_action_storage.insert_action(db, 'outbound_postfixes', dict(
+                channel='wechat', delivery_key='old-effect', final_body='body',
+                feedback_token='', postfix_version='v1'))
+            db.execute("insert into sqlite_sequence(name,seq) values('actions:sent_replies',950)")
+            yield db
+    finally:
+        writer_fixture.close()
 
 
 def action_facts(db, columns):
@@ -117,7 +144,10 @@ def test_original_config_profile_with_email29_is_not_a_complete_source(variant):
 
 @pytest.mark.parametrize('variant', ('actual_email52', 'fresh_email52'))
 @pytest.mark.parametrize('action_variant', ('actual_no_memory_fk', 'fresh_memory_fk'))
-def test_retire_restore_current_facts_and_exact_declarations(variant, action_variant):
+def test_retire_restore_current_facts_and_exact_declarations(
+    variant, action_variant, historical_text_action_writers,
+    historical_text_skill_receipt_writer,
+):
     with source(variant, action_variant) as db:
         metadata = capture_config_source(db)
         assert 'rows' not in json.dumps(metadata)
@@ -140,14 +170,14 @@ def test_retire_restore_current_facts_and_exact_declarations(variant, action_var
         insert_schedule(db, dict(id=80, name='new', prompt='p', cron_expression='* * * * *',
                                  timezone='UTC', runtime_id='r', enabled=1))
         insert_config(db, 'scheduled_task_config_versions', {'id': 81, 'snapshot_json': '{}'})
-        exported = insert_skill_receipt(db, SKILL[0], dict(
+        exported = historical_text_skill_receipt_writer.insert_skill_receipt(db, SKILL[0], dict(
             revision_id=200, sha256=b'new-sha', path=b'new-path', created_at=b'new-time'))
-        loaded = insert_skill_receipt(db, SKILL[1], dict(
+        loaded = historical_text_skill_receipt_writer.insert_skill_receipt(db, SKILL[1], dict(
             config_id=300, pid=98, loaded_json=json.dumps({20: 'digest-é'}, sort_keys=True),
             created_at='new-time'))
-        failed = insert_skill_receipt(db, SKILL[1], dict(
+        failed = historical_text_skill_receipt_writer.insert_skill_receipt(db, SKILL[1], dict(
             config_id=300, pid=99, loaded_json='{}', error='failure', created_at='new-time'))
-        insert_action(db, 'outbound_postfixes', dict(
+        historical_text_action_writers.insert_action(db, 'outbound_postfixes', dict(
             channel='wechat', delivery_key='new-effect', final_body='new body',
             feedback_token='', postfix_version='v1'))
         current_actions = action_facts(db, action_columns)

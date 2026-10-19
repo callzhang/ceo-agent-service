@@ -34297,5 +34297,30 @@
     },
     "scope_note": "No claim of fresh entire-file pass; previously passing paired errors/feedback controls not repeated. Current full target inventory asserted exactly; all observed failures separately closed.",
     "runtime_changes": false
+  },
+  "final_configs_release_fixture_verification": {
+    "scope": "Historical TEXT component source and new facts through exact frozen native writers, no runtime edits",
+    "result": "39 passed in 102.49s",
+    "command": "nice -n 10 pytest -q --maxfail=1 tests/test_configs_schema_release.py",
+    "evidence": "agent tool transcript; no persisted log",
+    "source_writer_commit": "68a137490",
+    "assertions": "original exact declaration, new fact, scalar type, inverse and identity assertions retained"
+  },
+  "production_readonly_20261019": {
+    "observed_at": "2026-10-19T05:22:20.059751+00:00",
+    "read_only": true,
+    "store_schema_version": "2026-10-13.5",
+    "email_schema_version": 51,
+    "application_tables": 121,
+    "page_size": 4096,
+    "page_count": 124913,
+    "free_pages": 49,
+    "files": {
+      "main": 511643648,
+      "-wal": 4239512,
+      "-shm": 32768
+    },
+    "logical_bytes": 511643648,
+    "count_explanation": "121 sqlite_schema tables = 116 ordinary + 1 FTS virtual + 4 FTS shadows; same names as frozen source, not same-input capacity refresh"
   }
 }
