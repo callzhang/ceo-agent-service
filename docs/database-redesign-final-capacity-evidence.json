@@ -34585,5 +34585,24 @@
       "frozen Skill material"
     ],
     "fixture_changes": "Numeric public key predicate, actual compact parent payload and current public input projection"
+  },
+  "final_reply_attempt_storage_current_fixture": {
+    "passed": 177,
+    "skipped": 6,
+    "seconds": 10.62,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-reply-attempt-storage-root.log",
+    "runtime_changes": false,
+    "genuine_source_unchanged": true,
+    "scope": [
+      "SQLite value and type parity",
+      "original defaults",
+      "allocator and ROWID",
+      "native transaction and lock parity",
+      "foreign key parent type",
+      "queued marker order and multiplicity",
+      "unknown and retired fields rejected",
+      "both historical TEXT DDL variants"
+    ],
+    "clock_fixture": "Memory-update comparison seeds identical explicit source and target clocks; separate defaults test still exercises current_timestamp"
   }
 }
