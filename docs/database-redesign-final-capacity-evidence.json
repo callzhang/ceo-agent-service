@@ -32407,5 +32407,22 @@
     "body_or_provider_reads": false,
     "production_acceptance": false,
     "finding": null
+  },
+  "final_parallel_regression": {
+    "status": "running_failures_observed_not_accepted",
+    "command": "nice -n10 python -m pytest -q -n6 --maxfail=8",
+    "pid": 24191,
+    "session": 51230,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-parallel-pytest.log",
+    "live_tests_enabled": false,
+    "known_execution_detail": "xdist preassigned large chunks continue draining after the maxfail threshold; future bounded runs need --maxschedchunk=2",
+    "interrupt_attempt": "session control-C had no effect; direct kill -INT24191 rejected by automatic approval review because approval is required and mode is Never; no bypass",
+    "production_health_during_run": {
+      "http_status": 200,
+      "status": "ok",
+      "seconds": 0.038
+    },
+    "new_deployment_attempted": false,
+    "production_writes": false
   }
 }
