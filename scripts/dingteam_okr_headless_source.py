@@ -75,12 +75,18 @@ def _get_headless_headers() -> dict[str, str]:
     """Reuse a valid token or refresh it through the headless browser only."""
     cached = browser._read_cache()
     if cached:
-        return cached
+        try:
+            return _validate_captured_headers(cached)
+        except RuntimeError:
+            pass
     with _headless_browser_lock():
         cached = browser._read_cache()
         if cached:
-            return cached
-        headers = _capture_stable_headless_headers()
+            try:
+                return _validate_captured_headers(cached)
+            except RuntimeError:
+                pass
+        headers = _validate_captured_headers(_capture_stable_headless_headers())
         browser._write_cache(headers)
         return headers
 

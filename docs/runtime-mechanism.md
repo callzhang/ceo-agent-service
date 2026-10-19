@@ -372,8 +372,12 @@ values in the field index.
 
 OA Attention is a business-pending projection for work Derek still owns or must
 review. The scanner tracks exact Derek-owned RUNNING nodes from the authenticated
-pending list and source details. A locally completed reply task does not remove
-an OA item while that exact external node is still RUNNING for Derek. Conversely,
+pending list and source details. The projection includes a tracked node only
+when its matching current reply task has had no update for more than one hour;
+recently changed pending nodes remain in their normal queue and History views.
+Unmatched keys have no reliable task-progress timestamp and are not promoted to
+Attention. A locally completed reply task does not remove a stale OA item while
+that exact external node is still RUNNING for Derek. Conversely,
 an overall RUNNING process is not Derek's Attention when the exact tracked node
 is completed or assigned to another approver; the scanner removes only that
 node's key and preserves the historical task/attempt. Partial scans, missing
@@ -2094,7 +2098,7 @@ OKR 服务包装器与共享来源复用同一有效请求头收集器：首次�
 
 OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；组织选择页仍使用 `login.dingtalk.com`，不能仅凭该域名就认定需要原生确认弹窗。指定组织已可见时直接选择原组织；尚未可见才进入既有原生叮当 OKR 确认路径。组织选择失败时，只有 URL 的协议、域名和路径与配置的 OKR 入口一致，才允许单组织流程省略选择；空白页、其他域名或同域其他页面不能被记为已跳转成功。此区分不改变账号、组织、权限或无头实时来源要求。
 
-需要登录的无头浏览器任务（退订链接、听记权限申请、Dingteam OKR）不各自重新登录：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。
+需要登录的无头浏览器任务（退订链接、听记权限申请、Dingteam OKR）不各自重新登录：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。 Dingteam OKR token 缓存读取时先验证 JWT 有效期；过期或将过期的缓存不会返回，调用者在锁内重新读取缓存后再尝试既有 Chrome/本机 SSO 刷新。新捕获 token 也先验证再写入；认证仍不可用时保留认证失败。
 
 所有任务只通过 `app/service_browser.py` 的 `launch_service_chrome` 启动浏览器：真 Chrome、始终无头、指向调用方自己的资料目录；启动前把最新的副本放进该目录的 `Default/Cookies`，并去掉 Playwright 默认的 `--use-mock-keychain`（否则 Chrome 解不开复制来的 cookie）。这样由真 Chrome 自己读“Chrome Safe Storage”钥匙串项，不会弹授权。副本是快照，会话过期后等下一次同步；不连接你正在用的 Chrome（Chrome 136 起默认资料目录不允许远程调试）。
 
@@ -4178,9 +4182,12 @@ historical original retirements remain the only authorized unavailable versions.
 The same-session result correction now submits the bounded validation errors and
 brief preservation instructions, rather than replaying a generic catalogue of
 Project, Task, Attention and source rules. A runtime-path rejection receives its
-path rule only for that error. The initial Work Tracking Skill, strict result
-validation, native schema, routes and correction budget are unchanged. Fixed-case
-evidence and limits are in `docs/task-result-repair-prompt-validation.md`.
-
+path rule only for that error. Acceptance polarity and target-signal transition
+violations are reported at `task_decisions[i].acceptance_polarity` or
+`task_decisions[i].acceptance_target_signal_id`, so correction feedback identifies
+the exact field; the transition and evidence requirements are unchanged. The
+initial Work Tracking Skill, strict result validation, native schema, routes and
+correction budget are unchanged. Fixed-case evidence and limits are in
+`docs/task-result-repair-prompt-validation.md`.
 
 小时 Quality 的既有 Actions 声明校验使用最终 compact Tasks／Actions 发布对应的 FINAL_ACTION_OPTIONS；Memory 队列仍从现有 typed projection 读取，额外未知 Actions index 等不匹配声明继续报错。ASR 恢复、操作员跳过、终态 OA 和 needs-human 当前投影使用既有 typed DAO 写入，并保留上游原事务、状态条件和回执语义。

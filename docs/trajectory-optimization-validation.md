@@ -1504,3 +1504,66 @@ synthetic comparisons show mixed token totals, so it does not establish a
 general scheduled-task improvement. Keep both candidates unreleased; do not
 add a prompt rule, remove historical rows, or broaden a task-specific edit to
 scheduled tasks without the missing trajectory and behavior evidence.
+
+## Task acceptance-field native-schema no-go, 2026-10-18
+
+**Selection and boundary.** Natural post-#128 Task Agent trajectories are now
+available. In run 376298, its rejected decision attempt 376303 populated
+`acceptance_polarity` on eight `create_task`/`none` items, then exhausted the
+result repair and failed. The first attempt of the successful rerun, 376310,
+repeated that exact class of error on four items before later correction. An
+independent anonymous native Task probe on 2026-10-10 recorded the same
+accepted-polarity/`none` mismatch. The current flat native schema permits
+these combinations; `TaskDecision` correctly rejects them. This is an output
+representation gap, not permission to relax the business validator. The
+adjacent Task inputs of about 350,000–370,000 characters also repeat historical
+rows, but their relevance to duplicate suppression and Project matching remains
+unproved. This unit did not change retrieval or source projection.
+
+**Finite candidate.** Require native schema rejection of polarity/target ID
+outside `apply_acceptance`, require `accepted` and a positive assignment signal
+for that transition, and retain all other Task fields and domain checks. No
+prompt, Skill, route, session or repair-budget change was proposed. Native
+Codex OAuth `gpt-5.6-luna` rejects `allOf`/`if` both at the root and nested
+Task object; it accepts nested `anyOf` object variants. A temporary complete
+Task schema with two variants was accepted by the provider and produced a
+structured result. The generated candidate's compact JSON grew from 26,725
+to 34,743 characters; the semantically equal temporary file used by the native
+probe was 34,719 characters because integral numeric bounds serialized as
+integers rather than floats. The candidate was never committed or deployed.
+
+Six temporary structural regressions failed against the old schema and passed
+with the candidate; 179 focused Task model/schema/repair tests then passed.
+One wider Work Tracking Skill test failed because the machine's installed Skill
+text lacks the phrase expected by that test, while the repository Skill contains
+it; the test and both Skill files were unchanged here. The direct prompt-only
+model probes without the Work Tracking Skill produced unrelated cross-field
+errors in both arms and were not used for acceptance.
+
+**Behavioral no-go.** Identical anonymous service-built Work Tracking prompts,
+installed Skill and model were compared under old versus candidate schema with
+business-domain validation, not just JSON parsing. In a two-speaker assignment
+case, both arms created a formal Task in one of three cold runs; domain-valid
+results were one of three baseline and two of three candidate. This case is
+variable and does not establish improvement. In the clearer self-commitment
+case (fixed prompt SHA-256
+`082d08e929038c3383df8095688a17b0466a89556e8e21498ad95fb0160aee12`),
+both baseline runs created the formal Task and passed domain validation;
+the candidate created it in one of two runs, but returned **zero Tasks** in
+the other despite recognizing a self-committed deliverable. A paired existing
+Task acceptance case initially lacked `reply_to_source_ref`, so both arms
+correctly skipped it. After adding that required binding (fixed prompt SHA-256
+`5f3cd22380c75edaaff0d49b6513206c5cce10b4feaccaf20afbd6203ac04091`),
+both arms returned the same domain-valid `update_task`/`apply_acceptance` with
+accepted polarity and the exact assignment signal ID.
+
+The small native sample does not prove that the schema caused the missed Task,
+but it fails the stated no-regression gate and increases schema input. The
+candidate code, schema, tests and test-only dependency were removed from the
+worktree; no candidate runtime PR merge or production deploy follows. Do not
+replace the validator with silent normalization or add a case-specific prompt
+rule. A future representation candidate needs a fixed source/model comparison
+that preserves formal-task creation as well as acceptance, plus an actual
+post-release Task run before any business-outcome claim. Compact anonymous
+output digests and per-run judgments are recorded in
+`evals/trajectory_optimization/task_acceptance_schema_no_go.v1.json`.

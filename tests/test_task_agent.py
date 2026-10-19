@@ -1131,6 +1131,31 @@ def test_task_result_validation_repair_prompt_targets_field_errors_without_rule_
     assert "Vendor quote still pending" not in prompt
 
 
+def test_task_result_validation_repair_prompt_identifies_acceptance_fields():
+    decision = _null_evidence_decision()
+    task = decision["task_decisions"][0]
+    task.pop("untrusted_runtime_value")
+    task.update(
+        {
+            "action": "update_task",
+            "transition": "update_fields",
+            "task_id": 12,
+            "source_excerpt": "正在处理这项工作",
+            "source_ref": "minutes-1",
+            "acceptance_polarity": "accepted",
+            "acceptance_target_signal_id": 55,
+        }
+    )
+
+    prompt = _task_result_validation_repair_prompt(
+        _agent_message_jsonl(json.dumps(decision, ensure_ascii=False))
+    )
+
+    assert "task_decisions.0.acceptance_polarity" in prompt
+    assert "task_decisions.0.acceptance_target_signal_id" in prompt
+    assert "Change only fields needed" in prompt
+
+
 def test_task_result_validation_repair_prompt_for_prose_only_output():
     prompt = _task_result_validation_repair_prompt(
         "I could not find any durable work here."

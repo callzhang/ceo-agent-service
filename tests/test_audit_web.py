@@ -8891,6 +8891,85 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
     assert all(row["id"] != str(meeting_id) for row in rows)
 
 
+def test_worker_attention_excludes_recent_oa_pending_node(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "recent-oa-pending.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:recent-process",
+        conversation_title="Recent approval",
+        single_chat=True,
+        trigger_message_id="oa-pending:recent-process:revision-1",
+        trigger_create_time="2026-10-19 01:55:00",
+        trigger_sender="Applicant",
+        trigger_text="Review this approval.",
+        channel="dingtalk",
+        business_object_key="oa:recent-process:task-1",
+    )
+    store.set_daily_scan_state(
+        "oa_pending",
+        "2026-10-19T02:00:00+00:00",
+        json.dumps({"pending_business_object_keys": [task.business_object_key]}),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(
+        row["category"] == "OA approval" and row["id"] == str(task.id)
+        for row in rows
+    )
+
+
+def test_worker_attention_includes_oa_pending_node_stalled_over_one_hour(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "stale-oa-pending.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:stale-process",
+        conversation_title="Stale approval",
+        single_chat=True,
+        trigger_message_id="oa-pending:stale-process:revision-1",
+        trigger_create_time="2026-10-18 01:00:00",
+        trigger_sender="Applicant",
+        trigger_text="Review this approval.",
+        channel="dingtalk",
+        business_object_key="oa:stale-process:task-1",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update tasks set updated_at='2000-01-01 00:00:00' "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+    store.set_daily_scan_state(
+        "oa_pending",
+        "2026-10-19T02:00:00+00:00",
+        json.dumps({"pending_business_object_keys": [task.business_object_key]}),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert any(
+        row["category"] == "OA approval" and row["id"] == str(task.id)
+        for row in rows
+    )
+
+
+def test_worker_attention_excludes_oa_pending_key_without_task_timestamp(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "unmatched-oa-pending.sqlite3")
+    store.set_daily_scan_state(
+        "oa_pending",
+        "2000-01-01T00:00:00+00:00",
+        json.dumps({
+            "pending_business_object_keys": ["oa:unmatched-process:task-1"]
+        }),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(row["category"] == "OA approval" for row in rows)
+
+
 def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
     task_id = store.enqueue_reply_task(
