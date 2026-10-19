@@ -31,6 +31,10 @@ from app.task_semantic_service import (
 )
 from app import task_semantic_service as commands
 from app.todo_sync import maybe_create_dingtalk_todo
+from app.business_source_reader import PreparedSources
+from app.action_business_definitions import business_action_projection
+from app.action_storage import SYNC_ACTION_PROJECTIONS
+from app.provenance_storage import signal_projection
 
 
 class FakeTodoDws:
@@ -55,10 +59,11 @@ def project(tmp_path):
     project_id = resolver.register_official_project(
         anchor_id=anchor_id, registry_source="meeting:p"
     )
+    duty_text = "P 项目王五负责商务和回款。"
     duty_id = store.create_business_task_signal(
         source_type="meeting",
         source_ref="meeting:p",
-        evidence_text="P 项目王五负责商务和回款。",
+        evidence_text=duty_text,
         dedupe_key="meeting:p:duty",
         author_kind="human",
     )
@@ -74,18 +79,24 @@ def project(tmp_path):
         ],
         facts=[],
     )
-    with store.business_task_transaction() as db:
-        ProjectContextService(store).apply(
-            project_id=project_id, context=context, signal_ids=(duty_id,), db=db
-        )
+    risk_text = "P 项目本期款项尚未到账。"
     signal = SourceSignal(
         source_type="message",
         source_ref="chat:p:1",
-        evidence_text="P 项目本期款项尚未到账。",
+        evidence_text=risk_text,
         dedupe_key="chat:p:1:risk",
         author_kind=BusinessActorKind.HUMAN,
     )
     risk_id = store.create_business_task_signal(**signal.__dict__)
+    prepared_sources = PreparedSources(store.business_source_reader())
+    prepared_sources.add_current(store.get_business_task_signal(duty_id), duty_text)
+    prepared_sources.add_current(store.get_business_task_signal(risk_id), risk_text)
+    store._suggestion_prepared_sources = prepared_sources
+    with store.business_task_transaction() as db:
+        ProjectContextService(store).apply(
+            project_id=project_id, context=context, signal_ids=(duty_id,), db=db,
+            prepared_sources=prepared_sources,
+        )
     risk = SourceCitation(
         signal_id=risk_id, source_ref=signal.source_ref, source_excerpt="款项尚未到账"
     )
@@ -108,15 +119,26 @@ def record(project, **changes):
         project_anchor_id=anchor_id,
         **changes,
     )
-    return TaskSemanticService(store).record_suggestion(command)
+    return TaskSemanticService(store).record_suggestion(
+        command, prepared_sources=store._suggestion_prepared_sources
+    )
 
 
 def counts(store):
+    projections = {
+        "business_task_events": SYNC_ACTION_PROJECTIONS["business_task_events"],
+        "business_task_evidence": business_action_projection("business_task_evidence"),
+        "business_task_signals": signal_projection(),
+        "business_task_follow_ups": SYNC_ACTION_PROJECTIONS["business_task_follow_ups"],
+        "business_task_todo_sync_outbox": SYNC_ACTION_PROJECTIONS["business_task_todo_sync_outbox"],
+        "business_task_dingtalk_links": SYNC_ACTION_PROJECTIONS["business_task_dingtalk_links"],
+    }
     with store._connect() as db:
         return {
             table: db.execute(
-                f"select count(*) from ({BUSINESS_PROJECTIONS['task']})" if table == "business_tasks"
-                else f"select count(*) from {table}"
+                f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+                if table == "business_tasks"
+                else f"select count(*) from ({projections[table]})"
             ).fetchone()[0]
             for table in (
                 "business_tasks",
@@ -184,11 +206,13 @@ def test_suggestion_replay_and_changed_details_keep_identity(project):
         task_id=first.task_id,
     )
     service = TaskSemanticService(store)
-    assert service.record_suggestion(command).task_id == first.task_id
+    assert service.record_suggestion(
+        command, prepared_sources=store._suggestion_prepared_sources
+    ).task_id == first.task_id
     after = counts(store)
     assert after["business_tasks"] == before["business_tasks"]
     assert after["business_task_events"] == before["business_task_events"] + 1
-    service.record_suggestion(command)
+    service.record_suggestion(command, prepared_sources=store._suggestion_prepared_sources)
     assert counts(store) == after
 
 
@@ -211,14 +235,18 @@ def test_evidence_only_suggestion_update_reuses_explicit_identity(project):
         task_id=first.task_id,
     )
     service = TaskSemanticService(store)
-    result = service.record_suggestion(command)
+    result = service.record_suggestion(
+        command, prepared_sources=store._suggestion_prepared_sources
+    )
     after = counts(store)
     assert result.task_id == first.task_id
     assert after["business_tasks"] == before["business_tasks"]
     assert after["business_task_events"] == before["business_task_events"]
     assert after["business_task_signals"] == before["business_task_signals"] + 1
     assert after["business_task_evidence"] == before["business_task_evidence"] + 1
-    assert service.record_suggestion(command).task_id == first.task_id
+    assert service.record_suggestion(
+        command, prepared_sources=store._suggestion_prepared_sources
+    ).task_id == first.task_id
     assert counts(store) == after
     # No-ID replay belongs to the original event-backed creation source.
     assert record(project).task_id == first.task_id
@@ -249,16 +277,28 @@ def test_suggestion_invalid_proof_does_not_partially_write(project, invalid):
     )
     with store.business_task_transaction() as db:
         with pytest.raises(ValueError):
-            TaskSemanticService(store).record_suggestion(command, _db=db)
+            TaskSemanticService(store).record_suggestion(
+                command, _db=db,
+                prepared_sources=store._suggestion_prepared_sources,
+            )
         assert counts_in_transaction(db) == before
     assert counts(store) == before
 
 
 def counts_in_transaction(db):
+    projections = {
+        "business_task_events": SYNC_ACTION_PROJECTIONS["business_task_events"],
+        "business_task_evidence": business_action_projection("business_task_evidence"),
+        "business_task_signals": signal_projection(),
+        "business_task_follow_ups": SYNC_ACTION_PROJECTIONS["business_task_follow_ups"],
+        "business_task_todo_sync_outbox": SYNC_ACTION_PROJECTIONS["business_task_todo_sync_outbox"],
+        "business_task_dingtalk_links": SYNC_ACTION_PROJECTIONS["business_task_dingtalk_links"],
+    }
     return {
         table: db.execute(
-            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})" if table == "business_tasks"
-            else f"select count(*) from {table}"
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+            if table == "business_tasks"
+            else f"select count(*) from ({projections[table]})"
         ).fetchone()[0]
         for table in (
             "business_tasks",
@@ -395,6 +435,10 @@ def test_unobserved_provenance_cannot_be_original_suggestion_proof(
             evidence_text="王五负责商务和回款。款项尚未到账。",
             dedupe_key=f"{provenance_type}:duty",
         )
+        original_text = "王五负责商务和回款。款项尚未到账。"
+        store._suggestion_prepared_sources.add_current(
+            store.get_business_task_signal(signal_id), original_text
+        )
         field = (
             "responsibility_evidence"
             if position == "responsibility"
@@ -420,7 +464,10 @@ def test_unobserved_provenance_cannot_be_original_suggestion_proof(
     )
     with store.business_task_transaction() as db:
         with pytest.raises(ValueError, match="observed"):
-            TaskSemanticService(store).record_suggestion(command, _db=db)
+            TaskSemanticService(store).record_suggestion(
+                command, _db=db,
+                prepared_sources=store._suggestion_prepared_sources,
+            )
         assert counts_in_transaction(db) == before
 
 

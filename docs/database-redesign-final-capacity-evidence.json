@@ -35068,5 +35068,20 @@
     ],
     "ambiguity": "tests/test_worker.py has scoped later evidence but no exact map to29 diagnostic nodes; no inference that those nodes are currently failing.",
     "status": "Next bounded triage, not current defect totals."
+  },
+  "wechat_send_mode_current_20261019": {
+    "passed": 33,
+    "seconds": 55.19,
+    "exit_code": 0,
+    "log": "/tmp/wechat-send-mode-final.log",
+    "scope": "Full current confirm/auto/approve/reject/retry/recovery module with FakeSender; fixture verifies existing create_wechat_delivery already stores prepared final body; no runtime edit or actual WeChat calls."
+  },
+  "task_suggestions_current_20261019": {
+    "passed": 17,
+    "seconds": 28.93,
+    "exit_code": 0,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/task-suggestions-wholefile-final2.log",
+    "scope": "Full current suggestion module; exact duty/risk originals supplied transiently; current Actions/Sync count projections; identity/provenance/transaction and negative TODO assertions preserved.",
+    "provider_calls": 0
   }
 }

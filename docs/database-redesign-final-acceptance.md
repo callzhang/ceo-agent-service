@@ -183,3 +183,5 @@ Signal／业务语义整文件444项通过（176.96秒），已将输入DTO与�
 History整文件当前33项通过，包含真实dangling Run／Task来源、最终JSONB槽位损坏及生成列99999998读回，避免用错误JSON路径的空操作冒充故障注入；公开／物理Task身份、过滤、总数、页面及原查询成本边界均保留。
 
 旧诊断后续证据盘点明确的优先补验范围：test_store.py（旧115节点）、test_task_attention_multisource.py（旧42）、wechat/test_send_mode.py（旧27）、test_task_suggestions.py（旧16）。这些数字只是旧诊断中尚未找到匹配后续闭合证据的节点，不能当作当前运行缺陷数；worker旧29节点已有部分后续证明，准确映射仍待核对。已开始有界、无真实发送的代表测试及当前／退休契约核对。
+
+剩余差项后续闭合：微信发送模式整文件33项通过（55.19秒），只移除退休表夹具写入，额外核验当前创建API已保存准确prepared final body；confirm／auto／批准／拒绝／恢复断言和替身sender全部保留。Task建议整文件17项通过（28.93秒），准确职责／风险原文只通过临时PreparedSources提供，身份／事务／provenance及TODO负向断言保留。旧盘点的对应27／16节点不再列为无后续证据范围。存储API与多来源Attention仍在核对，不宣称整体完成。
