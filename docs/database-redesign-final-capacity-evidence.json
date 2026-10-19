@@ -34892,15 +34892,32 @@
       "passed": 44,
       "deselected": 422,
       "seconds": 37.17,
-      "evidence": "Exact terminal tool output reported by bounded agent; no persisted log for this run has been verified"
+      "evidence": "Exact bounded-agent terminal output via pytest session45063; no persisted log"
     },
     "index_strengthening": {
       "passed": 1,
       "seconds": 1.56,
-      "reason": "Root rejected deriving expected indexes solely from required manifest. Independent19actualsemanticindexnames checked both physically and against effective required declarations; missing Actions index makes actual Store manifest false, SAVEPOINT rollback restores true."
+      "reason": "Root rejected deriving expected indexes solely from required manifest. Independent19actualsemanticindexnames checked both physically and against effective required declarations; missing Actions index makes actual Store manifest false, SAVEPOINT rollback restores true.",
+      "evidence": "Exact bounded-agent terminal output via pytest session99718; no persisted log"
     },
     "effective_manifest": "Store schema manifest delegates current_configs_schema_is_current to exact complete Actions objects; flat index list alone is not the full manifest. No duplicate runtime index inventory added.",
     "review": "Root reviewed actual production-shape schema names, JSONB immutable mutations and existing validator call path; original constraint/immutable failures retained; no runtime changes",
     "scope_limit": "Group44 preceded strengthening its one index node; final index node rerun1passed, other43unchanged results reused; no full-file claim"
+  },
+  "final_workbench_manifest_and_confirmation_refusal": {
+    "result": {
+      "passed": 20,
+      "seconds": 13.73,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/workbench-manifest-final.log"
+    },
+    "fixture_changes": [
+      "Use actual idx_task20_active_turn and trg_task20_parent_workbench_artifacts_insert",
+      "Current task20_workbench_schema_is_current with existing allow-missing distinction",
+      "Native first-source9parent/15child hash control retained"
+    ],
+    "retirement_contract": "Old test expected success with executed confirmation and waiting_confirmation turn; approved canceled feature retires only empty closure. Recast as explicit refusal; no source row erased.",
+    "atomicity": "Spy invokes real schema preparer after legitimate archived predecessor steps, captures all schema/row/sequence fingerprint immediately at actual release boundary and asserts unchanged in finally; original confirmation count1 retained; exact refusal required.",
+    "positive_scope": "Eligible-source paired migration/cold reopen already covered by full production-copy proof and historical orphan source controls; this refusal node makes no idempotent-success claim",
+    "review": "Root full diff and existing confirmation_schema_release._empty_closure examined; no new runtime gate, policy or schema changes; original literal/refusal/repair/no-mutation checks retained; Ruff/diffclean"
   }
 }
