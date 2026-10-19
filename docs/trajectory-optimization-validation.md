@@ -1567,3 +1567,36 @@ that preserves formal-task creation as well as acceptance, plus an actual
 post-release Task run before any business-outcome claim. Compact anonymous
 output digests and per-run judgments are recorded in
 `evals/trajectory_optimization/task_acceptance_schema_no_go.v1.json`.
+
+## Post-PR #128 natural Task input: overlap confirmed, removal not yet justified (2026-10-19)
+
+The complete native session `01a14fbe-74e2-7102-bee5-baa8aa7de92f` is now
+available. It contains seven full Task Agent inputs after PR #128's within-input
+source sharing, rather than a reconstruction from the current database. Their
+submitted lengths are 355,260–440,430 characters. In one 371,642-character
+input, the rendered semantic-context JSON is 341,308 characters; its 63
+`source_documents` occupy 151,400 serialized characters and its 109
+`source_signals` occupy 68,238. The source projection reports 1,670,325 body
+characters before sharing, 922,850 unique body characters, and 150,371
+visible body characters. This confirms that PR #128's within-input sharing is
+present; the before-sharing metric is not a second potential saving.
+
+For each of six adjacent inputs whose `current_work_item` differs, exact
+serialized historical rows repeated across the pair total 249,908–272,031
+characters (median 260,270) across the project/task/source/attention
+collections. Exact `source_documents` rows alone account for
+110,696–121,145 characters per pair. These are submitted-input bytes, not a
+measured model token or latency reduction. The repeated rows can still provide
+evidence for cross-source Task identity, Project matching, duplicate
+suppression, and exact citations. Session history may also compact, so a hash
+pointing back to an earlier turn is not proof that the Agent can still inspect
+the source. No row was removed, no source was truncated further, and no
+runtime prompt or retrieval code changed in this checkpoint.
+
+Before changing this boundary, use fixed source/model cases to compare the
+same current source under full context and a proposed narrower context. Require
+formal Task creation, existing-Task updates, Project decisions, duplicate
+handling, and exact source citations to remain correct in both cold and
+continued sessions. A smaller serialized input alone does not pass that gate.
+The separate native Task acceptance-schema candidate remains no-go on its own
+behavioral result above.
