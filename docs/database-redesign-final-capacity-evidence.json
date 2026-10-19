@@ -32466,5 +32466,14 @@
     },
     "runtime_policy_or_schema_changed": false,
     "production_writes": false
+  },
+  "final_historical_business_boundary_regression": {
+    "file": "tests/test_action_business_storage.py",
+    "passed": 19,
+    "seconds": 509.29,
+    "scope": "historical TEXT migration intermediate native parity, inverse/reforward and current-data DML fixtures; not final compact writer proof",
+    "runtime_or_schema_changed": false,
+    "assertions_removed": false,
+    "production_writes": false
   }
 }

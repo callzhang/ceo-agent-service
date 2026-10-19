@@ -23,6 +23,8 @@
 - [ ] 稳定同一候选的最终独立审查，主 agent 集成、提交、推送。
 - [ ] 既有 deploy 发布及生产 PID、health、队列、Attention、History 回读。
 
+历史迁移边界回归：`test_action_business_storage.py` 的当前紧凑写接口原先被用于 `migrate_business_action_schema` 的 TEXT 中间步骤，因 `_kind` 不存在失败。发布事务稍后仍会执行最终 Actions 转换，因此未改中间声明或生产写入接口。该历史文件使用显式测试专用 TEXT DML，复用既有字段、分配、水位、默认值和锁 helpers，保留全部 native 比较、迁后写入／inverse／reforward、时钟、不可变约束和 SQLITE_FULL 事务断言；全文件 **19 pass／509.29 秒**。该文件作用域的测试替身不进入生产，也不把中间格式测试冒充最终 compact writer 通过，后者仍单独补验。
+
 测试夹具首组闭合：Console 的 History 链接、两个 needs-human 排除、历史服务错误和 WeChat 当前 generation／conversation 四分支共 8 项通过（93.13 秒）；主审发现旧时间戳 fixture 未实际更新，改用 `error_set_parts` 并增加准确读回后，单项再次通过（12.86 秒）。两种 Store／Email 冷开顺序与 Task Event 写入／重放所在两文件 6 项通过（34.30 秒）。Attention 同 schedule 恢复、终态证据及性能文件 16 项通过（60.68 秒），400,000 VM steps 上界不变。只更新测试夹具到当前 typed schema，保留原业务断言；这些通过不代表仍在进行的 CLI／调度／端到端批次通过。
 
 回归定位补充：Email Attention 的状态索引已保留为 `idx_task20_native_1`，但通用完整投影的边界使失败 ID 子查询未使用它；原 `lower(status)` 也不能表达已有小写状态约束的等值查找。现从 Tasks 类型／状态生成列直接筛选公开 ROWID，再读取失败内容，结果和 nullable task_id／limit 不变。当前索引名回归先失败（7.21 秒）；仅改等值仍失败（3.89 秒）；直接使用现有列后通过（4.10 秒）。未新增索引、字段或迁移声明。其他 CLI／历史边界测试仍在修正，不能称广泛回归通过。

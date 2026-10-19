@@ -23,6 +23,80 @@ SOURCE_PATH = (Path(__file__).parents[1] / "docs/superpowers/specs"
                / "2026-10-17-business-actions-current25-source.json")
 
 
+def _insert_text_boundary_business_action(db, kind, values, *, source_rowid=None,
+                                          ignore=False,
+                                          on_conflict_key_do_nothing=False):
+    """Test DML for the historical TEXT Actions intermediate only.
+
+    Final compact Actions writer behavior is covered by the native parity
+    tests; this fixture changes only the physical row representation here.
+    """
+    from app import action_business_storage as storage
+    from app import action_storage as actions
+    from app.action_business_definitions import BUSINESS_ACTION_AUTO, BUSINESS_ACTION_KEYS, business_action_column
+
+    storage._validate_fields(kind, values)
+    if on_conflict_key_do_nothing and (kind not in BUSINESS_ACTION_KEYS or ignore):
+        raise ValueError("unsupported Business action conflict clause")
+    actions._email_lock(db)
+    supplied = values.get("id") if kind in BUSINESS_ACTION_AUTO else source_rowid
+    identity = (storage._next_source_rowid(db, kind) if actions._source_bound_null(supplied)
+                else actions._native_integer_primary_key(supplied))
+    complete = storage._complete(db, kind, values)
+    if kind in BUSINESS_ACTION_AUTO:
+        complete.pop("id", None)
+    created_at_sql = "json_set(?, '$.created_at', current_timestamp)" if "created_at" not in values else "?"
+    conflict = (" on conflict(" + ",".join(business_action_column(kind, field)
+                 for field in BUSINESS_ACTION_KEYS[kind]) + f") where record_type='{kind}' do nothing"
+                if on_conflict_key_do_nothing else "")
+    cursor = db.execute(
+        "insert " + ("or ignore " if ignore else "")
+        + "into main.actions(record_type,legacy_key,payload_json) values(?,?," + created_at_sql + ")"
+        + conflict,
+        (kind, str(identity), actions._native_payload(complete)),
+    )
+    from app.action_business_storage import BusinessActionWriteResult
+    return BusinessActionWriteResult(identity if cursor.rowcount else None, cursor.rowcount)
+
+
+def _update_text_boundary_business_action(db, kind, source_rowid, values, *, ignore=False):
+    """Update the historical TEXT Actions intermediate using native payloads."""
+    from app import action_business_storage as storage
+    from app import action_storage as actions
+    from app.action_business_definitions import BUSINESS_ACTION_AUTO, BUSINESS_ACTION_FIELDS, business_action_projection
+    from app.action_task_delivery_storage import _quote
+
+    storage._validate_fields(kind, values)
+    if not values:
+        raise ValueError("empty Business action update")
+    actions._email_lock(db)
+    projection = business_action_projection(kind, include_rowid=True, public_id_index=True)
+    fields = BUSINESS_ACTION_FIELDS[kind]
+    row = db.execute("select " + ",".join(_quote(field) for field in fields)
+                     + " from (" + projection + ") where _source_rowid=?",
+                     (source_rowid,)).fetchone()
+    if row is None:
+        return 0
+    current = dict(zip(fields, row, strict=True))
+    current.update(values)
+    new_id = (actions._native_integer_primary_key(current.pop("id"), update=True)
+              if kind in BUSINESS_ACTION_AUTO else source_rowid)
+    return db.execute(
+        "update " + ("or ignore " if ignore else "")
+        + "main.actions set legacy_key=?,payload_json=? where record_type=? and legacy_key=?",
+        (str(new_id), actions._native_payload(current), kind, str(source_rowid)),
+    ).rowcount
+
+
+@pytest.fixture(autouse=True)
+def _historical_text_actions_writers(monkeypatch):
+    """Keep current25 migration-boundary tests on their actual TEXT DDL."""
+    from app import action_business_storage as storage
+
+    monkeypatch.setattr(storage, "insert_business_action", _insert_text_boundary_business_action)
+    monkeypatch.setattr(storage, "update_business_action", _update_text_boundary_business_action)
+
+
 def _current25_source_store(path):
     """Load the frozen Business-migration boundary and required parent graph."""
     from app.action_business_storage import capture_business_action_source
