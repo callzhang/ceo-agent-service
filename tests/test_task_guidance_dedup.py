@@ -20,9 +20,15 @@ def test_current_skill_owns_shared_guidance_once_and_task_keeps_unique_contract(
     prompt = build_task_agent_prompt(
         work, "EXACT_CURRENT_CONTEXT", current_time="2026-10-12T10:00:00Z"
     )
-    assert path.read_text().strip() in prompt
+    full_prompt = build_task_agent_prompt(
+        work, "EXACT_CURRENT_CONTEXT", current_time="2026-10-12T10:00:00Z",
+        inline_skill=True,
+    )
+    assert path.read_text().strip() not in prompt
+    assert str(path) in prompt
+    assert path.read_text().strip() in full_prompt
     assert (
-        prompt.count(
+        full_prompt.count(
             "All source_excerpt values are exact contiguous quotes, preserving punctuation,"
         )
         == 1
@@ -33,7 +39,7 @@ def test_current_skill_owns_shared_guidance_once_and_task_keeps_unique_contract(
     delivered_work = json.JSONDecoder().raw_decode(work_json)[0]
     assert delivered_work["source"]["ref"] == "synthetic-source"
     # The installed Skill can omit these rules even when the CI Skill has them.
-    task_only = prompt.replace(path.read_text().strip(), "")
+    task_only = full_prompt.replace(path.read_text().strip(), "")
     for rule in (
         "or neither only for an unresolved",
         "status and business_relevance may only change through update_fields",

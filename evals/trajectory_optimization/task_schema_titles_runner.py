@@ -130,7 +130,7 @@ def main():
         patch("app.task_agent.build_task_agent_prompt", fixed_builder),
         patch("app.task_agent.WORK_TRACKING_SKILL_PATH", source),
         patch("app.task_agent.memory_connector_config_issue", lambda: "Anonymous diagnostic: no Memory transport configured."),
-        patch("app.codex_runtime_adapter.service_mcp_config_options", lambda: []),
+        patch("app.codex_runtime_adapter.service_mcp_config_options", lambda **_options: []),
     ):
         process_work_item(store, runner, claimed[0], now=now.isoformat())
     sid = runner.codex.last_session_id

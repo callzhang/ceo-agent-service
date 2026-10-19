@@ -24,6 +24,7 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
+from app.agent_runtime_contracts import RuntimeKind
 from app.codex_runner import memory_connector_config_issue
 from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
@@ -299,6 +300,7 @@ class TaskCodex(Protocol):
         self,
         *,
         prompt: str,
+        friday_prompt: str | None = None,
         workload_key: str,
         session_scope_id: str | None = None,
         continuation_prompt: str | None = None,
@@ -328,11 +330,16 @@ class TaskAgentRunner:
                 "continuation_prompt": build_task_agent_repair_prompt(repair_context),
                 "continuation_session_id": prior_session,
             }
+        effective_time = datetime.now(timezone.utc).isoformat()
+        context = candidate_prompt + ("\n\n" + repair_context if repair_context else "")
         return self.codex.decide(
             prompt=build_task_agent_prompt(
-                work_item,
-                candidate_prompt + ("\n\n" + repair_context if repair_context else ""),
-                memory_issue=memory_issue,
+                work_item, context, memory_issue=memory_issue,
+                current_time=effective_time,
+            ),
+            friday_prompt=build_task_agent_prompt(
+                work_item, context, memory_issue=memory_issue,
+                current_time=effective_time, inline_skill=True,
             ),
             workload_key=(
                 str(run_id) if repair_round == 0
@@ -369,6 +376,7 @@ class TaskAgentCodexRunner:
         self,
         *,
         prompt: str,
+        friday_prompt: str | None = None,
         workload_key: str,
         session_scope_id: str | None = None,
         continuation_prompt: str | None = None,
@@ -384,6 +392,11 @@ class TaskAgentCodexRunner:
                 workload_kind="task",
                 workload_key=workload_key,
                 prompt=prompt,
+                **(
+                    {"route_prompt_overrides": {RuntimeKind.FRIDAY_RUNTIME: friday_prompt}}
+                    if friday_prompt is not None
+                    else {}
+                ),
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
                         "Return exactly one TaskAgentDecision JSON object.\n\n"
@@ -497,11 +510,23 @@ def build_task_agent_prompt(
     *,
     memory_issue: str = "",
     current_time: str = "",
+    inline_skill: bool = False,
 ) -> str:
     scheduled_consumer = ServiceCommandConsumerContext.from_payload(
         work_item.scheduled_consumer or None
     )
-    current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
+    if inline_skill:
+        current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
+    else:
+        current_skill_path = WORK_TRACKING_SKILL_PATH.resolve(strict=True)
+        current_skill_digest = hashlib.sha256(current_skill_path.read_bytes()).hexdigest()
+        current_skill_text = (
+            "CEO Work Tracking Skill (complete current protocol): "
+            f"{current_skill_path}\nSHA-256: {current_skill_digest}. "
+            "Read it before deciding. On a resumed turn, reuse a prior read only if "
+            "this exact version and its full text remain in the current context; "
+            "otherwise reread the file. Do not use an earlier version."
+        )
     scheduled_prompt = (
         f"## Scheduled Consumer Prompt\n{scheduled_consumer.prompt}\n"
         if scheduled_consumer is not None
