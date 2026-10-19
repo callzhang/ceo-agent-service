@@ -16540,5 +16540,26 @@
     "main_bytes": 514686976,
     "wal_bytes": 4161232,
     "final_core_plus_ledger_published": false
+  },
+  "final_release_path_drift_review": {
+    "candidate_commit": "0dcc3f522",
+    "comparison_base": "b859e78ce",
+    "unchanged_release_storage_files": [
+      "app/deploy.py",
+      "app/repository_updater.py",
+      "app/store_schema_release.py",
+      "app/action_email_schema_release.py",
+      "app/store.py",
+      "app/email_store.py"
+    ],
+    "later_app_changes": [
+      "app/email_classification_reader.py",
+      "app/email_model_registry.py"
+    ],
+    "official_release_order": "quiet -> stop -> database backup -> checkout -> prepare paired release -> publish -> verify -> start -> health -> verify_loaded",
+    "failure_order": "stop replacement if started -> rollback assets -> inverse current database -> rollback code -> restart old code -> health",
+    "new_test_runs": 0,
+    "production_writes": false,
+    "remaining_product_decision": "source-backed email search synchronous behavior cannot meet verified latency baseline; previous async choice remains unanswered"
   }
 }
