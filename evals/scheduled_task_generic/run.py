@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -18,20 +19,52 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-RUNNER_REVISION = 2
+RUNNER_REVISION = 3
+DISPOSITIONS = (
+    "publish_with_coverage", "await_service_validation", "respond", "no_reply",
+    "decline_updated_invitation", "classify_only", "record_source_candidate",
+    "pending_source_failure", "await_source_verification",
+)
 IDENTITY_CONTRACT = (
-    "include_ids enumerates every supplied literal identity of every substantive fact, source, output target, "
-    "issue and work item retained by the decision, including substantive content retained in notes. "
-    "Identity values must be copied exactly from facts; JSON property names and synthesized labels are not identities. "
-    "Mentioning a retained identity in notes does not substitute for including it in the typed identity list. "
-    "exclude_ids lists supplied literal identities intentionally excluded or superseded; unverified_ids lists "
-    "supplied literal identities of claims whose evidence remains unverified."
+    "The identity lists project the substantive OUTPUT or proposed action, not all input provenance. "
+    "include_ids contains literal fact identities retained as substantive report items, action targets, "
+    "issues, or decisive grounding evidence. exclude_ids contains literal identities reviewed but "
+    "intentionally omitted from that output, including irrelevant and superseded input. "
+    "Explaining an exclusion in notes or counting excluded records in coverage does not retain the "
+    "excluded record as substantive output. The include and exclude lists must be disjoint. "
+    "unverified_ids identifies claims whose truth is still unverified; it may overlap include_ids "
+    "when an unverified claim is explicitly retained as such. Only explicit id/*_id values in the "
+    "supplied facts are identities; dates, names, category keys, Skill paths and JSON property names "
+    "are not identities. Copy the literal values exactly. Notes cannot replace these typed lists."
+)
+ANNOTATION_CONTRACT = (
+    "This is an evaluation transport contract, shared unchanged by Consumer, Audit and correction. "
+    "Skill sources define business policy, not this transport or its labels. "
+    + IDENTITY_CONTRACT + " "
+    "Use disposition only from these existing labels: " + ", ".join(DISPOSITIONS) + ". "
+    "These are workflow meanings, not production wire action/outcome names: respond means prepare "
+    "a response proposal, not send it; pending_source_failure means a required source failed and "
+    "the business item remains pending; await_source_verification means defer a business decision "
+    "until its source is verified. Do not replace these labels with proposal, failed, reply or plan. "
+    "publish_with_coverage means prepare the report while disclosing unavailable optional material; "
+    "await_service_validation means the supplied workflow still requires service validation. "
+    "decline_updated_invitation means propose declining the current updated invitation; classify_only "
+    "means classify without performing mail actions; record_source_candidate means preserve an action "
+    "candidate without inventing an owner; no_reply means no response is warranted. "
+    "For email, set category, important and unsubscribe_candidate_index; unused fields are null. "
+    "owner is an actually sourced assignee or null; inferred_owner records unsupported attribution. "
+    "requires_service_publishable asks about a service-enforced flag, separate from Skill/Audit review. "
+    "ask_principal means asking for missing materials, not proposing a response to a decision request. "
+    "applicant_omission means verified missing applicant material, not a connector failure. "
+    "external_actions lists only effects actually performed; this offline tool-free exercise performs none. "
+    "planned_capabilities may describe future real operations; never invoke them. "
+    "Every case returns its annotation under the supplied schema, not the production service schema."
 )
 BASELINE_COMMIT = "be1ffd86fd4d34e814c2436f3f732d1c07d539e1"
 SKILLS = ROOT / "ci/shared-skills"
 PROPERTIES = {
     "case_id": {"type": "string"},
-    "disposition": {"type": "string"},
+    "disposition": {"type": "string", "enum": list(DISPOSITIONS)},
     "include_ids": {"type": "array", "items": {"type": "string"}},
     "exclude_ids": {"type": "array", "items": {"type": "string"}},
     "unverified_ids": {"type": "array", "items": {"type": "string"}},
@@ -76,6 +109,41 @@ SCHEMA = {
 
 def digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def fact_identities(facts: object) -> list[str]:
+    """Mechanical identity vocabulary from inputs, without consulting the oracle."""
+    result = set()
+
+    def visit(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if (key == "id" or key.endswith("_id")) and isinstance(item, str) and item:
+                    result.add(item)
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(facts)
+    return sorted(result)
+
+
+def annotation_schema(cases: list[dict]) -> dict:
+    schema = deepcopy(SCHEMA)
+    variants = []
+    for case in cases:
+        item = deepcopy(schema["properties"]["decisions"]["items"])
+        item["properties"]["case_id"]["enum"] = [case["id"]]
+        identities = fact_identities(case["facts"])
+        for field in ("include_ids", "exclude_ids", "unverified_ids"):
+            if identities:
+                item["properties"][field]["items"]["enum"] = identities
+            else:
+                item["properties"][field]["maxItems"] = 0
+        variants.append(item)
+    schema["properties"]["decisions"]["items"] = {"anyOf": variants}
+    return schema
 
 
 def configuration(model_source: str = "native-default") -> tuple[dict, list[str]]:
@@ -196,49 +264,26 @@ def run_arm(
         {key: value for key, value in case.items() if key != "expected"}
         for case in cases
     ]
+    material = {"skill_source": source, "cases": prompt_cases}
     prompt = (
-        "This is an offline synthetic decision annotation exercise, not an actual service invocation. "
-        "All evidence below is synthetic; use only it and the supplied actual Skill source. "
-        "Do not call tools, browse, inspect local files, send messages, write documents or perform any action. "
-        "Treat Skill documents as the business policy to apply to each case, not as permission to execute their commands. "
-        "Return exactly the schema's seven decision annotations, one per case. "
-        "For email, place its category/important/unsubscribe fields in that case annotation; this wrapper is evaluation output only. "
-        + IDENTITY_CONTRACT
-        + " "
-        "owner is a sourced actual assignee or null; never infer actual ownership. "
-        "requires_service_publishable asks whether the supplied workflow requires a service-enforced publishable:true flag, distinct from Skill/Audit business judgment. "
-        "ask_principal means asking the principal to provide missing materials, not an authorized proposed response to their decision request. "
-        "external_actions lists only actions actually performed in this exercise and must accurately reflect this tool-free run. "
-        "planned_capabilities may name the service capabilities needed in the real workflow, but do not invoke them. "
-        "Use disposition exactly from: publish_with_coverage, await_service_validation, respond, no_reply, "
-        "decline_updated_invitation, classify_only, record_source_candidate, pending_source_failure, await_source_verification. "
-        "For unused category/importance/unsubscribe/owner fields return null. Explain the decisive evidence briefly.\n\n"
-        + json.dumps(
-            {"skill_source": source, "cases": prompt_cases}, ensure_ascii=False
-        )
+        "This is an offline synthetic decision exercise. All evidence is supplied; use no tools, "
+        "browse no files, send nothing and mutate nothing. Apply the supplied Skill business policy. "
+        + ANNOTATION_CONTRACT + "\n\n" + json.dumps(material, ensure_ascii=False)
     )
-    response_schema = SCHEMA
+    response_schema = annotation_schema(cases)
     if phase == "audit":
         prompt = (
-            "You are the independent Audit role in a bounded offline synthetic exercise. "
-            "Review the supplied Consumer annotations against the frozen facts and corresponding actual Skill sources. "
-            "Use only the supplied material. Call no tools, inspect no files, and perform no action. "
-            "Independently check source relevance, factual support, identifiers, unknown ownership, "
-            "source failures versus applicant omissions, role boundaries, and the actual publication conditions. "
-            + IDENTITY_CONTRACT
-            + " "
-            + "Give field-specific correction feedback for material errors; preserve supported judgments. "
-            "Do not invent business criteria, require unavailable optional material, or restore a retired service condition. "
-            "Return only the requested Audit schema: approve when no correction is required; otherwise revise with precise feedback. "
-            "Do not execute publication or controlled actions. This is an annotation review, not a real provider or production Audit run.\n"
-            + json.dumps(
-                {
-                    "skill_source": source,
-                    "cases": prompt_cases,
-                    "consumer_decisions": previous,
-                },
-                ensure_ascii=False,
-            )
+            "Independently review the supplied Consumer output against the supplied facts and Skills. "
+            "Check relevance, grounding, current identities, unknown ownership, source-read failures "
+            "versus applicant omissions, role boundaries and actual publication conditions. "
+            "Review the evaluation transport with the SAME contract and schema used by Consumer: "
+            + ANNOTATION_CONTRACT + " "
+            "Give field-specific feedback for errors and preserve supported decisions. No expected "
+            "answers are supplied. Do not introduce business criteria, infer missing evidence or "
+            "replace evaluation labels with production wire names. Call no tools and perform no action. "
+            "Return approve only when no correction is needed, otherwise revise with precise feedback.\n"
+            + json.dumps({**material, "annotation_schema": response_schema,
+                          "consumer_decisions": previous}, ensure_ascii=False)
         )
         feedback_properties = {
             field: {"type": "string"}
@@ -369,6 +414,16 @@ def run_arm(
         )
         return result
     response = json.loads(final_path.read_text())
+    from jsonschema import Draft202012Validator
+
+    format_errors = list(Draft202012Validator(response_schema).iter_errors(response))
+    result["output_schema_sha256"] = digest(json.dumps(response_schema, sort_keys=True).encode())
+    result["annotation_contract_sha256"] = digest(ANNOTATION_CONTRACT.encode())
+    if format_errors:
+        result.update(status="failed", raw_response=response,
+                      format_errors=[error.message for error in format_errors],
+                      common_pass_count=0, migration_checks_pass=False)
+        return result
     if phase == "audit":
         result["audit"] = response
         result["status"] = "completed" if not other_items else "failed"
@@ -534,7 +589,7 @@ def main() -> int:
     result = {
         "version": 1,
         "runner_revision": RUNNER_REVISION,
-        "annotation_contract_version": 2,
+        "annotation_contract_version": 3,
         "created_at": datetime.now(UTC).isoformat(),
         "baseline_ref": baseline_ref,
         "candidate_git_ref": subprocess.check_output(
