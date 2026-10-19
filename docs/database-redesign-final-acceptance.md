@@ -145,3 +145,5 @@ Email Caller 当前空库／故障／并发／元数据控制17项已由主 agen
 钉钉历史投递恢复补验：当前类型写入／公共投影夹具修正后，前19项通过；错误回执写入改用既有 `insert_error_action` 后6项通过（116.90秒）；两项历史 uncertain 回执检查明确限定既有 System Executor 边界后2项通过（45.40秒），发送始终仅1次、恢复只读1次。原 orchestrator 假设早已与生产上游 `5d45bcbf4` 的回执反馈修订策略不符，本轮未改运行时策略。4个未变后续节点复用诊断通过证据；合计27项定向通过，不宣称新跑整文件31项。
 
 Consumer dispatcher 的旧夹具20个已观察失败已闭合：整文件74项通过（343.94秒）。随后仅将一项schema检查从字段常量改为真实Store的State投影列读回，该项单独通过（4.13秒）。保留领取、续租、owner fencing、10005历史lease裁剪、回退重试与原2秒唤醒断言；主agent完整diff复核与静态检查通过。没有运行时变更。
+
+九族follow-up／sync当前写入器与真实原表对照整文件62项通过（25.74秒），仅将目标夹具声明为当前紧凑格式，原source／类型／默认值／allocator／约束断言均保留。迁移子进程8个真实故障边界全部通过（1348.81秒），包含commit前后异常、崩溃及两个cold constructor；其余coordinator／binding／receipt／updater 8项单独补验中。

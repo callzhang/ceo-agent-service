@@ -42,7 +42,7 @@ def _pair(variant):
             source.execute(index["sql"])
     create_action_schema(target, include_reply=True,
                          reply_variant="actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk",
-                         include_email=True, include_followup_sync=True)
+                         include_email=True, include_followup_sync=True, compact_payload=True)
     source.commit()
     target.commit()
     return source, target

@@ -34368,5 +34368,30 @@
     "observed_broad_failures_closed": 20,
     "timing_control": "Original 2s enqueue-wake assertion retained; isolated 1 passed in 6.21s after loaded-run failure",
     "root_review": "Full diff reviewed; Ruff and diff check clean"
+  },
+  "final_sync_mutations": {
+    "root_cause": "Current writer inserts _kind while historical test target used physical record_type TEXT",
+    "change": "Only explicit compact_payload=True on target factory; exact native source declarations/variants and all behavioral assertions retained",
+    "result": "62 passed in 25.74s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-sync-writes-green.log",
+    "runtime_changes": false
+  },
+  "final_caller_child_faults": {
+    "result": "8 passed in 1348.81s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-caller-child-fault8.log",
+    "scope": [
+      "before_ddl",
+      "after_capture",
+      "during_conversion",
+      "after_first_marker",
+      "before_commit",
+      "crash_after_first_marker",
+      "cold_store",
+      "cold_email"
+    ],
+    "runtime_or_assertion_changes": false,
+    "real_sends": 0,
+    "production_writes": false,
+    "remaining": "8 coordinator/binding/receipt/updater cases executing separately"
   }
 }
