@@ -1,0 +1,103 @@
+{
+  "schema": "task_acceptance_schema_no_go.v1",
+  "scope": "anonymous read-only native Codex OAuth fixed cases; no production source or business provider action",
+  "model": "gpt-5.6-luna",
+  "schema_sha256": {
+    "baseline": "71e3cff6e1f70ef8ee76c5e2861e4c26c07d00a19f0c6b777a004b2e9abdb701",
+    "candidate": "5e8d2dc1f673e61adff4eb4bc3ad1efbea83880f95fd5aac875c70c9941974bf"
+  },
+  "compact_schema_chars": {
+    "baseline": 26725,
+    "candidate": 34719
+  },
+  "cases": {
+    "two_speaker_assignment": {
+      "prompt_sha256": "4ca5265cbf0e8209019ab509ac874cd8219342aa46a4f120cef0672bdf56a1ca",
+      "baseline": [
+        {
+          "result_sha256": "30f69cfcd6351f70592e46d3a97702323b0eab9445609a95911c999927f22e88",
+          "business_action": "create_task",
+          "domain_valid": false
+        },
+        {
+          "result_sha256": "7b1bfa3bfc74442892939c2ed7e76ffb93b4348f597cf17cb57b751f4e2882d0",
+          "business_action": "record_candidate",
+          "domain_valid": true
+        },
+        {
+          "result_sha256": "cc2c4e3767310cb4f73f62d8d29d3f205333f077a073ed68122cfb041f186107",
+          "business_action": "record_candidate",
+          "domain_valid": false
+        }
+      ],
+      "candidate": [
+        {
+          "result_sha256": "b58906e7d93da5fb4710b43cf43bb3e18567889c60fe73570192bec758413b6c",
+          "business_action": "record_candidate",
+          "domain_valid": true
+        },
+        {
+          "result_sha256": "d7af737effa5d64872f6ff2be21be48f2eda16778ef4eae235ed9c5dab208990",
+          "business_action": "record_candidate",
+          "domain_valid": true
+        },
+        {
+          "result_sha256": "838b0ba54f2612c7c79ec9bc68ca7f849938afc48443427075a02c983ddfd989",
+          "business_action": "create_task",
+          "domain_valid": false
+        }
+      ]
+    },
+    "self_commitment": {
+      "prompt_sha256": "082d08e929038c3383df8095688a17b0466a89556e8e21498ad95fb0160aee12",
+      "baseline": [
+        {
+          "result_sha256": "148008c7b158307ef61007adcb7d677ae616c5ea5bf4e45dddf3e62123f0f8a0",
+          "business_action": "create_task",
+          "domain_valid": true
+        },
+        {
+          "result_sha256": "425f12a7cfb4bc387dbfb10214652c2a1a0b8dbc816038b036d6f39f7a8fdc75",
+          "business_action": "create_task",
+          "domain_valid": true
+        }
+      ],
+      "candidate": [
+        {
+          "result_sha256": "56982126eeee32ec243e330a61d8483cd1229cca6ca7be4f30c9ef0f9247ef03",
+          "business_action": "none",
+          "domain_valid": true
+        },
+        {
+          "result_sha256": "a8a13e7a178154bdecfcf99ba4d601c7afdc24995d1654c9fa6ed90cd5c24535",
+          "business_action": "create_task",
+          "domain_valid": true
+        }
+      ]
+    },
+    "bound_acceptance": {
+      "prompt_sha256": "5f3cd22380c75edaaff0d49b6513206c5cce10b4feaccaf20afbd6203ac04091",
+      "baseline": [
+        {
+          "result_sha256": "4d748c15c11ff13b63df618f7386cac17eebee7bc39c93e69c8356577927f0e9",
+          "business_action": "apply_acceptance",
+          "domain_valid": true
+        }
+      ],
+      "candidate": [
+        {
+          "result_sha256": "9436e9027aa37e0c16d404e63459e1ff4f37e34e482ddca0699c752a9cc8b360",
+          "business_action": "apply_acceptance",
+          "domain_valid": true
+        }
+      ]
+    }
+  },
+  "gate": "no_go",
+  "reason": "candidate omitted an explicit self-committed formal Task in one of two fixed runs while baseline created it in both; domain-valid JSON alone did not preserve business behavior",
+  "limits": [
+    "small unseeded cold samples do not prove causality",
+    "ephemeral native session traces were not retained; output digests and local domain checks are the recorded evidence"
+  ],
+  "generated_candidate_compact_schema_chars": 34743
+}
