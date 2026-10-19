@@ -12,7 +12,10 @@ Read `references/report-contract.md` for business requirements and
 `references/dingtalk-runbook.md` for document operations. Fixed metrics,
 coverage, issue continuity, privacy and source quality are business review
 requirements: assess them under this Skill and the normal Audit feedback
-cycle. Missing business-line submissions are disclosed and do not block the
+cycle. Publication readiness is decided by this business review and Audit.
+The former service `publishable` flag and separate publication validator have
+been retired; historical validation output is not a current publication
+condition. Missing business-line submissions are disclosed and do not block the
 report. Do not ask Derek to supply materials already accessible to the Agent.
 
 ## Inputs and dates
@@ -47,7 +50,8 @@ requirements from the report contract before preparing any public document.
 Write structured report JSON as `report.json`. The meeting renderer reads:
 `ceo_judgment` (status/text objects), `company_metrics` and `issues` arrays.
 Metric fields are name, target, previous, current, change, status, data_date,
-definition_evidence. An issue supplies question, current_root_cause,
+definition_evidence. Tracking rows require a top-level as_of date. Every issue
+retains its stable id and supplies question, current_root_cause,
 prior_state, new_evidence, status_icon, weeks_open, next_checkpoint,
 closure_standard and owner={name,user_id}. Use empty arrays only when your
 business review supports them. Additional full-draft sections and business-line

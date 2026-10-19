@@ -34,6 +34,7 @@ SKILL_PATHS = tuple(f"ci/shared-skills/{name}/SKILL.md" for name in MANAGED_NAME
 EXPECTED_SOURCES = frozenset(
     (
         *SKILL_PATHS,
+        "ci/shared-skills/ceo-weekly-report/README.md",
         "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
         "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
         "ci/shared-skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
