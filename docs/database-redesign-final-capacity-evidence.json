@@ -34765,5 +34765,44 @@
       "Close DB connection before native reads"
     ],
     "review": "Full diff root-reviewed; no schema, provider, real model or production changes; Ruff/diff clean"
+  },
+  "final_semantic_retained_fixture_controls": {
+    "scope": "Retained current Business/candidate/Action/Sync fields only; historical body/container oracles unchanged",
+    "first_red": "Retired physical business_attention_items insert; later business_task_events belongs to Sync writer",
+    "changes": [
+      "Current typed writers/projections, complete FINAL_ACTION_OPTIONS schema check",
+      "Signal seed builds exact SourceVersionBinding and verifies allocated public ID equals supplied ID; no body persisted",
+      "Private source rowid used only for stable logical ordering"
+    ],
+    "selection": "(nonblank_text_rejects_whitespace_in_pydantic_and_sqlite or nonblank_text_preserves_surrounding_whitespace or schema_manifest_and_complete_record_columns) and not business_task_signals",
+    "result": {
+      "passed": 202,
+      "deselected": 264,
+      "seconds": 122.15,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/task-semantic-retained-nonsignal.log"
+    },
+    "residual": "Signal-body SQLite CHECK/current record shape and explicit source_document storage oracles remain old-contract failures; do not add compatibility fields or report full-file pass",
+    "root_review": "Typed field routes, ID assertion, exact schema inventory and all existing CHECK/value oracles reviewed; no runtime changes"
+  },
+  "final_task_outer_current_reader_controls": {
+    "root_result": {
+      "passed": 4,
+      "seconds": 8.86,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-task-outer-current-root.log"
+    },
+    "root_nodes": [
+      "test_dispatcher_and_status_use_public_work_item_id",
+      "test_public_work_id_keeps_codec_and_terminal_provenance",
+      "test_current14_quiet_readers_are_read_only_and_preserve_busy (2 row factories)"
+    ],
+    "marker_controls": {
+      "passed": 10,
+      "seconds": 9.96,
+      "source_marker_variants": 8,
+      "unknown_marker_variants": 2,
+      "basetemp": "/tmp/task-outer-source-marker.20261019"
+    },
+    "review": "Root rejected removing original source-marker variants; restored both values via current State writer; original mixed/readonly/lease/public-ID/codec provenance assertions retained",
+    "scope": "Current fixture controls only; historical publication and source13 layouts not counted; no runtime changes"
   }
 }

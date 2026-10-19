@@ -12,10 +12,19 @@ from app import task_semantic_models as models
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.business_schema_release import business_schema_is_current
 from app.business_storage import insert_business
+from app.action_business_storage import insert_business_action
+from app.business_candidate_definitions import candidate_projection
+from app.business_candidate_storage import insert_business_candidate
 from app.store import AutoReplyStore
+from app.store import BUSINESS_ACTION_SQL
+from app.action_storage import action_schema_is_current, insert_sync_action
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.current_database_schema import FINAL_ACTION_OPTIONS
+from app.action_business_definitions import business_action_projection
+from app.business_source_reader import SourceVersionBinding
+from app.provenance_storage import insert_signal_version
 from app.run_storage import TASK_AGENT_RUN_SQL, insert_run
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task
-from app.task_source_documents import source_document_key
 
 
 NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
@@ -295,17 +304,25 @@ def store(tmp_path):
 def insert_row(db, table, values):
     values = dict(values)
     if table == "business_task_signals":
-        identity_key = source_document_key(**{
+        from app.task_semantic_service import SourceSignal
+
+        signal = SourceSignal(**{
             field: values[field] for field in (
-                "source_type", "source_ref", "source_time", "conversation_id",
-                "author_user_id", "author_name", "author_kind", "evidence_text",
+                "source_type", "source_ref", "evidence_text", "dedupe_key",
+                "source_time", "conversation_id", "conversation_title",
+                "author_user_id", "author_name", "author_kind", "context_json",
             )
         })
-        body = values.pop("evidence_text")
-        insert_row(db, "business_source_documents", {
-            "id": values["source_document_id"], "identity_key": identity_key,
-            "body": body, "created_at": values["created_at"],
-        })
+        if not db.in_transaction:
+            db.execute("begin")
+        binding = SourceVersionBinding.from_signal(signal)
+        signal_id = insert_signal_version(
+            db, binding, conversation_title=signal.conversation_title,
+            context_json=signal.context_json, dedupe_key=signal.dedupe_key,
+            created_at=values["created_at"],
+        )
+        assert signal_id == values["id"]
+        return
     elif table == "business_projects":
         values["crm_customer_candidates_json"] = json.dumps(
             values.pop("crm_customer_candidates"), ensure_ascii=False
@@ -325,6 +342,25 @@ def insert_row(db, table, values):
         if not db.in_transaction:
             db.execute("begin")
         insert_business(db, kind, values)
+        return
+    candidate_kind = {
+        "business_attention_items": "attention_item",
+        "business_project_candidates": "project_candidate",
+    }.get(table)
+    if candidate_kind is not None:
+        if not db.in_transaction:
+            db.execute("begin")
+        insert_business_candidate(db, candidate_kind, values)
+        return
+    if table in BUSINESS_ACTION_SQL:
+        if not db.in_transaction:
+            db.execute("begin")
+        insert_business_action(db, table, values)
+        return
+    if table in SYNC_ACTION_PROJECTIONS:
+        if not db.in_transaction:
+            db.execute("begin")
+        insert_sync_action(db, table, values)
         return
     db.execute(
         f"insert into {table} ({', '.join(values)}) values ({', '.join('?' for _ in values)})",
@@ -346,7 +382,17 @@ def read_record_row(db, table):
         "business_project_context_revisions": "project_context_revision",
         "business_work_clusters": "work_cluster",
     }.get(table)
-    relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None else table
+    candidate_kind = {
+        "business_attention_items": "attention_item",
+        "business_project_candidates": "project_candidate",
+    }.get(table)
+    relation = (
+        f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None
+        else f"({candidate_projection(candidate_kind)})" if candidate_kind is not None
+        else f"({BUSINESS_ACTION_SQL[table]})" if table in BUSINESS_ACTION_SQL
+        else f"({SYNC_ACTION_PROJECTIONS[table]})" if table in SYNC_ACTION_PROJECTIONS
+        else table
+    )
     row = db.execute(f"select * from {relation} limit 1").fetchone()
     if table != "business_projects":
         return row
@@ -383,6 +429,26 @@ def current_rows(db, table):
         "business_project_context_revisions": "project_context_revision",
         "business_work_clusters": "work_cluster",
     }.get(table)
+    candidate_kind = {
+        "business_attention_items": "attention_item",
+        "business_project_candidates": "project_candidate",
+    }.get(table)
+    if candidate_kind is not None or table in BUSINESS_ACTION_SQL:
+        projection = (
+            candidate_projection(candidate_kind, with_rowid=True)
+            if candidate_kind is not None
+            else business_action_projection(table, include_rowid=True)
+        )
+        columns = [column[0] for column in db.execute(
+            f"select * from ({projection}) limit 0"
+        ).description if column[0] != "_source_rowid"]
+        return db.execute(
+            f"select {', '.join(columns)} from ({projection}) order by _source_rowid"
+        ).fetchall()
+    if table in SYNC_ACTION_PROJECTIONS:
+        return db.execute(
+            f"select * from ({SYNC_ACTION_PROJECTIONS[table]}) order by id"
+        ).fetchall()
     relation = f"({BUSINESS_PROJECTIONS[kind]})" if kind is not None else table
     ordering = "id" if kind is not None else "rowid"
     return db.execute(f"select * from {relation} order by {ordering}").fetchall()
@@ -595,19 +661,40 @@ def test_schema_manifest_and_complete_record_columns(store, table):
             "business_anchors": "anchor",
             "business_work_clusters": "work_cluster",
         }.get(table)
-        if kind is not None:
-            actual = {column[0] for column in db.execute(
-                f"select * from ({BUSINESS_PROJECTIONS[kind]}) limit 0"
-            ).description}
-            assert business_schema_is_current(
-                db, include_followup_sync=True, include_candidates=True,
-                include_business_actions=True, inline_legacy_owner=True,
+        candidate_kind = {
+            "business_attention_items": "attention_item",
+            "business_project_candidates": "project_candidate",
+        }.get(table)
+        action_kind = table if table in BUSINESS_ACTION_SQL or table in SYNC_ACTION_PROJECTIONS else None
+        if kind is not None or candidate_kind is not None or action_kind is not None:
+            projection = (
+                BUSINESS_PROJECTIONS[kind] if kind is not None
+                else candidate_projection(candidate_kind) if candidate_kind is not None
+                else BUSINESS_ACTION_SQL[action_kind]
+                if action_kind in BUSINESS_ACTION_SQL
+                else SYNC_ACTION_PROJECTIONS[action_kind]
             )
+            actual = {column[0] for column in db.execute(
+                f"select * from ({projection}) limit 0"
+            ).description}
+            if kind is not None or candidate_kind is not None:
+                assert business_schema_is_current(
+                    db, include_followup_sync=True, include_candidates=True,
+                    include_business_actions=True, inline_legacy_owner=True,
+                )
+                physical_table = "business"
+            else:
+                assert action_schema_is_current(
+                    db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS,
+                )
+                physical_table = "actions"
         else:
             actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected
-    if kind is not None:
-        assert "business" in store_module.STORE_SCHEMA_REQUIRED_TABLES
+    if kind is not None or candidate_kind is not None:
+        assert physical_table in store_module.STORE_SCHEMA_REQUIRED_TABLES
+    elif action_kind is not None:
+        assert physical_table in store_module.STORE_SCHEMA_REQUIRED_TABLES
     else:
         assert table in store_module.STORE_SCHEMA_REQUIRED_TABLES
         assert expected <= set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS[table])
