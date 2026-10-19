@@ -16,17 +16,28 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.validate_native_copy_lifecycle import InMemoryProvider, NativeExecutor, original_rows_unchanged  # noqa: E402
+from app.business_definitions import BUSINESS_PROJECTIONS  # noqa: E402
+from scripts.validate_native_copy_lifecycle import (  # noqa: E402
+    InMemoryProvider, NativeExecutor, _backup_database, _file_sha256,
+    _publish_email_pair, _reserve_fixture_task_ids, original_rows_unchanged,
+)
 
 
 def prepare(root):
     root = root.resolve()
-    assert root.parent == Path('/private/tmp') and root.name.startswith('ceo-native-copy.')
+    assert root.parent == Path('/tmp').resolve() and root.name.startswith('ceo-native-copy.')
     metadata = json.loads((root / 'source-meta.json').read_text())
-    assert hashlib.sha256((root / 'source.sqlite3').read_bytes()).hexdigest() == metadata['sha256']
+    source = root / 'source.sqlite3'
+    assert _file_sha256(source) == metadata['sha256']
     db = root / 'candidate.sqlite3'
     assert not db.exists()
-    shutil.copyfile(root / 'source.sqlite3', db)
+    shutil.copyfile(source, db)
+    published_pair = _publish_email_pair(ROOT, db)
+    target_baseline = root / 'pre-native-target.sqlite3'
+    _backup_database(db, target_baseline)
+    target_baseline_sha256 = _file_sha256(target_baseline)
+    task_id_reservation = _reserve_fixture_task_ids(db)
+    assert _file_sha256(source) == metadata['sha256']
     workspace = root / 'workspace'
     workspace.mkdir()
     manifest = root / 'service-mcp.json'
@@ -38,7 +49,10 @@ def prepare(root):
         PYTHONDONTWRITEBYTECODE='1')
     from app.store import AutoReplyStore
     from app.agent_runtime_config import load_runtime_config
-    return AutoReplyStore(db), workspace, load_runtime_config(os.environ), metadata
+    preparation = {'published_pair': published_pair,
+                   'target_baseline_sha256': target_baseline_sha256,
+                   'task_id_reservation': task_id_reservation}
+    return AutoReplyStore(db), workspace, load_runtime_config(os.environ), metadata, preparation
 
 
 class LocalTextExecutor:
@@ -171,7 +185,7 @@ def work_summary(store, workspace, config):
         projection=json.loads(projection_row[1])
         assert len(projection['task_decisions'])==1
         applied=projection['task_decisions'][0]
-        business=db.execute('select id,title from business_tasks where id=?',(applied['task_id'],)).fetchall()
+        business=db.execute(f'select id,title from ({BUSINESS_PROJECTIONS["task"]}) where id=?',(applied['task_id'],)).fetchall()
         assert db.execute('select source_ref from business_task_signals where id=?',(applied['signal_id'],)).fetchone()[0]==key
         state=db.execute("select body_compacted,body_sha256,body_bytes,payload_json from tasks where record_type='work_summary_inputs' and legacy_key=?",(str(input_id),)).fetchone()
         assert len(business)==1 and state[0]==1 and state[1] and state[2]>0 and state[3]=='{}'
@@ -221,13 +235,15 @@ def main():
     parser.add_argument('--owned-temp-root',type=Path,required=True)
     parser.add_argument('--case',choices=('scheduled','work_summary','workbench'),required=True)
     args=parser.parse_args()
-    store,workspace,config,metadata=prepare(args.owned_temp_root)
+    store,workspace,config,metadata,preparation=prepare(args.owned_temp_root)
     report=globals()[args.case](store,workspace,config)
-    report['original_tables_unchanged']=original_rows_unchanged(args.owned_temp_root/'source.sqlite3',store.path)
+    target_baseline = args.owned_temp_root/'pre-native-target.sqlite3'
+    report['original_tables_unchanged']=original_rows_unchanged(target_baseline,store.path)
     with store._connect() as db:
         assert db.execute('pragma quick_check').fetchone()[0]=='ok'
-    assert hashlib.sha256((args.owned_temp_root/'source.sqlite3').read_bytes()).hexdigest()==metadata['sha256']
-    report.update(source=metadata,passed=True)
+    assert _file_sha256(target_baseline)==preparation['target_baseline_sha256']
+    assert _file_sha256(args.owned_temp_root/'source.sqlite3')==metadata['sha256']
+    report.update(source=metadata,**preparation,passed=True)
     (args.owned_temp_root/'native-result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
     print('acceptance_pass',json.dumps(report,ensure_ascii=False),flush=True)
 

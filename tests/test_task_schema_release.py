@@ -419,7 +419,7 @@ def test_task_publication_failure_inverses_before_old_start_and_keeps_replacemen
         checkout, state, database_path=path,
         stop=lambda: events.append("stop"), restart=start,
         health=lambda: failure != "health" or starts > 1,
-        database_publication=lambda: publication,
+        database_publication=lambda _backup: publication,
         dependency_sync=lambda: fail_at("dependencies"),
         verification=lambda: fail_at("verification"),
     )

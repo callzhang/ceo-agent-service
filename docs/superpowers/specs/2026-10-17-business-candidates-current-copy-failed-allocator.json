@@ -1,0 +1,48 @@
+{
+  "status": "failed",
+  "reviewed_freeze_sha256": "6321dab1f5ac2cb504b2fe223ddc2506a65efb8f8eda7b49e15ebd26de50dbb6",
+  "session_id": 80832,
+  "exit_code": 1,
+  "source_access": "URI mode=ro/query_only online backup; all migrations/writes on owned disposable copy",
+  "genuine_predecessor_head": "83c1d7f030bb16cb6ef1fc729efc322be409dda2",
+  "source_ordinary_tables": 116,
+  "retained_fact_families": 38,
+  "first_cold_target_ordinary_tables": 25,
+  "first_cold_pass_elapsed_seconds": 298.44,
+  "first_phase_passed": [
+    "paired forward",
+    "retained38family values/types/nativeROWIDs/publicwaters",
+    "first cold current constructor process"
+  ],
+  "approved_retirement_exception": "work_projects.memory_context_json cancelled by original field map; excluded from retained-field digests; source preflight975rows/992510B, not a newly measured full allocation receipt",
+  "failed_phase": "paired inverse verification after synthetic current Business/WeChat/Feedback/Provider/Error/TaskDelivery writes",
+  "traceback": [
+    "outer release.rollback()",
+    "app/action_email_schema_release.py:630 self._verify_source(db)",
+    "app/action_email_schema_release.py:452 capture_business_source(db)",
+    "app/business_schema_release.py:231 ValueError(mixed Business allocator source)"
+  ],
+  "hypothesis": "Three manually named candidate Business allocator aliases survive candidate inverse after native waters restored; base Business9 inverse owns only its9aliases; capture_business_source correctly rejects leftover business:% aliases",
+  "minimal_red_reproduction_author_report": {
+    "test": "test_inverse_retires_only_candidate_aliases_after_all_three_deleted_highwaters",
+    "profiles": [
+      "actual",
+      "fresh"
+    ],
+    "result": "2 failed/0.91s before app fix",
+    "native_candidate_deleted_highwaters": [
+      201,
+      202,
+      203
+    ],
+    "old9_negative_insert_delete_and_private_water_preserved": true,
+    "first_surviving_alias": "business:attention_item=201"
+  },
+  "temp_root": "/private/tmp/business-candidates-current-copy.uz__lji7",
+  "temp_root_removed": true,
+  "raw_bodies_or_database_archive_persisted": false,
+  "production_database_write": false,
+  "outbound_sends": 0,
+  "real_backend_calls": 0,
+  "limits": "No completed inverse/genuineold/reforward/secondcold/capacity receipt. First-target allocation existed only in failed process memory; no exact final dbstat result is claimed. Original reviewed freeze remains historical, sameauthor repair+sameSPEC/QUALITY rereview+new actual copy required."
+}

@@ -18,6 +18,7 @@ from uuid import uuid4
 import pytest
 
 from app.agent_context import AgentTaskContext
+from app.business_definitions import BUSINESS_PROJECTIONS
 from app.agent_contracts import ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator
 from app.agent_result import AgentError
@@ -336,7 +337,10 @@ def test_work_summary_input_applies_business_result_and_keeps_provenance(copied_
     done = store.get_work_summary_input(input_id)
     assert done.status.value == "done"
     with store._connect() as db:
-        business = db.execute("select id from business_tasks where title=?", (source_ref,)).fetchall()
+        business = db.execute(
+            f'select id from ({BUSINESS_PROJECTIONS["task"]}) where title=?',
+            (source_ref,),
+        ).fetchall()
         row = db.execute("select payload_json,body_compacted,body_sha256,body_bytes,source_ref from tasks where record_type='work_summary_inputs' and id=?", (input_id,)).fetchone()
         run = db.execute(f"select status from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?", (input_id,)).fetchone()
     assert len(business) == 1 and run[0] == "completed"

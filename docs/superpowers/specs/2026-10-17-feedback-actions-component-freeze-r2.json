@@ -1,0 +1,15 @@
+{
+  "observed_at": "2026-10-17T14:40:39.032803+00:00",
+  "scope": "r2 frozen test-only fixed pre-edit fourDDL object hash oracle after exactSHA RAMsource reconstruction; sameapp; author18pass50.10s; SPEC review inprogress",
+  "sha256": {
+    "app/action_feedback_definitions.py": "21cc41b7e5d93539930c59b18c595f8e0015a807c19efe76c4679d5e00c567ee",
+    "app/action_feedback_storage.py": "b195a8205d5702cb6466a0ad678d4b4db6d591025ab49374e307daf2327b2999",
+    "app/action_storage.py": "dd986eec3a5f16d677ce29faad819a3e732592d092f1f9306f19cf55a222c6dc",
+    "app/action_followup_sync_storage.py": "316c105846bbc97264c33d8e50ff4f5d86c3f884207f151f884d9c3a2c77c3b4",
+    "tests/test_action_feedback_storage.py": "22108565953a33d772b792ddbebc536bc27d4fbbf7c4c36731683ea902505802",
+    "docs/architecture.md": "78cb70b4952c4fc0caaff0b4c88debbedd6f619a16b49243c55f22d4b7f7c186",
+    "docs/runtime-mechanism.md": "296ad0efc7c6b5c0d9c624a1686fd5d2f74c8653b3efd1693de1abafe78afa0c",
+    "docs/superpowers/specs/2026-10-17-feedback-actions-source-metadata.json": "1d47f6b105a1759a0278676196af889e7d0454b13e03fcfdaf638cd5014ed205",
+    "docs/superpowers/plans/2026-10-17-feedback-actions-component-plan.md": "5187cb8a4c87552c878c23ec1c901286df9cd11276c58dcb9b505e45cf385f2c"
+  }
+}

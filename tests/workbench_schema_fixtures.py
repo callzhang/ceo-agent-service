@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 import sqlite3
+import os
+import subprocess
+import sys
 
 SOURCE = json.loads(
     (Path(__file__).parent / "fixtures/store13-workbench-schema.json").read_text()
@@ -17,17 +20,24 @@ CHILDREN = ("workbench_attachments", "workbench_artifacts", "workbench_confirmat
 
 
 def source_database(path):
+    from tests.configs_source_fixtures import capture
+
     db = sqlite3.connect(path)
     for state in SOURCE["tables"].values():
         for kind, _, sql in state["objects"]:
             if kind == "table":
                 db.execute(sql)
-    for state in SOURCE["tables"].values():
-        for kind, _, sql in state["objects"]:
+    for name, state in SOURCE["tables"].items():
+        # The object capture is name-sorted. SQLite reports newest indexes
+        # first; restore the actual Config profile's schedule index order.
+        objects = reversed(state["objects"]) if name == "scheduled_tasks" else state["objects"]
+        for kind, _, sql in objects:
             if kind != "table" and sql:
                 db.execute(sql)
+    # Companion State declarations must also be genuine. The original row's
+    # key, value and timestamp stay unchanged under the frozen native shape.
+    db.execute(capture()["fresh"]["tables"]["service_state"]["sql"])
     db.executescript("""
-        create table service_state(key text primary key,value text,updated_at text);
         insert into service_state values('store_schema_version','2026-10-11.3','source time');
         insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled)
             values(7,'schedule','prompt','* * * * *','UTC','route',1);
@@ -99,7 +109,18 @@ def source_database(path):
 
 
 def rows(db, table):
-    return db.execute(f'select * from "{table}" order by rowid').fetchall()
+    without_rowid = db.execute(
+        "select wr from pragma_table_list(?) where schema='main'", (table,)
+    ).fetchone()[0]
+    if without_rowid:
+        primary_key = [row[1] for row in sorted(
+            (row for row in db.execute(f'pragma table_info("{table}")') if row[5]),
+            key=lambda row: row[5],
+        )]
+        order = ",".join(f'"{column}"' for column in primary_key)
+    else:
+        order = "rowid"
+    return db.execute(f'select * from "{table}" order by {order}').fetchall()
 
 
 def fingerprint(db):
@@ -130,18 +151,49 @@ def fingerprint(db):
     )
 
 
-def full_source_database(path, auxiliary_path):
-    """Independent source13 scope plus unrelated current Store declarations."""
-    from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
+def full_source_database(path, auxiliary_path, published_source):
+    """Independent source13 scope plus archived Store and Email declarations."""
+    from app.store import _INITIALIZED_STORE_PATHS
 
-    AutoReplyStore(auxiliary_path)
+    # The captured source13 scheduling declarations belong to the actual
+    # profile. Start its companion account table from the same frozen profile,
+    # before the archived constructor fills the remaining Email declarations.
+    # A fresh account table plus actual schedules is not a historical schema.
+    from tests.configs_source_fixtures import capture
+
+    with sqlite3.connect(path) as source:
+        source.execute(capture()["actual"]["tables"]["email_accounts"]["sql"])
+
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; from app.email_store import EmailStore; import sys; EmailStore(Path(sys.argv[1]))", str(path)],
+        cwd=published_source,
+        env={**os.environ, "PYTHONPATH": str(published_source)},
+        check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; from app.store import AutoReplyStore; import sys; AutoReplyStore(Path(sys.argv[1]))", str(auxiliary_path)],
+        cwd=published_source,
+        env={**os.environ, "PYTHONPATH": str(published_source)},
+        check=True, capture_output=True, text=True,
+    )
     with sqlite3.connect(auxiliary_path) as auxiliary:
         objects = auxiliary.execute(
-            "select type,name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,name"
+            "select type,name,tbl_name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,rowid"
         ).fetchall()
+    # The source13 reply and Email declarations below are actual-profile.
+    # Their companion follow-up declarations must be the paired actual set,
+    # rather than fresh tables from the auxiliary constructor. Only schema
+    # objects are copied from that database; there are no rows to replace.
+    followup_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-14-database-redesign-followup-sync-source.json').read_text())['actual']['tables']
+    paired_action_sources = {
+        **json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-17-task-delivery-source-metadata.json').read_text())['actual'],
+        **{name: state['declaration'] for name, state in json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-17-feedback-actions-source-metadata.json').read_text())['actual'].items()},
+    }
     db = source_database(path)
     names = {row[0] for row in db.execute("select name from sqlite_master")}
-    for kind, name, sql in objects:
+    for kind, name, owner, sql in objects:
+        if owner in followup_source or owner in paired_action_sources:
+            continue
         if (
             name not in names
             and not name.startswith("sqlite_")
@@ -160,7 +212,31 @@ def full_source_database(path, auxiliary_path):
                 for table in SOURCE["tables"]
             ):
                 db.execute(sql)
-    # The current auxiliary Store owns actions, but source13 still used the
+    for state in followup_source.values():
+        db.execute(state['sql'])
+    for state in followup_source.values():
+        for obj in (*reversed(state['indexes']), *state['triggers']):
+            if obj['sql']:
+                db.execute(obj['sql'])
+    for state in paired_action_sources.values():
+        db.execute(next(sql for kind, _, _, sql in state['objects'] if kind == 'table'))
+    for state in paired_action_sources.values():
+        objects_by_name = {name: sql for _, name, _, sql in state['objects']}
+        for index in reversed(state['indexes']):
+            sql = objects_by_name.get(index['list'][1])
+            if sql:
+                db.execute(sql)
+        for kind, _, _, sql in state['objects']:
+            if kind == 'trigger':
+                db.execute(sql)
+    claims = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json").read_text())["tables"]["email_unsubscribe_claims"]["declaration"]
+    assert db.execute("select count(*) from email_unsubscribe_claims").fetchone() == (0,)
+    db.execute("drop table email_unsubscribe_claims")
+    db.execute(claims["sql"])
+    for obj in reversed(claims["indexes"]):
+        if obj["sql"]:
+            db.execute(obj["sql"])
+    # The archived auxiliary Store owns actions, but source13 still used the
     # six independently captured candidate declarations. Keep this a real old
     # schema instead of copying a new table into a database with an old marker.
     candidate_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5a-inventory.json').read_text())['tables']
@@ -178,7 +254,7 @@ def full_source_database(path, auxiliary_path):
             if obj['type'] == 'table':
                 db.execute(obj['sql'])
     # Old source13 independently retained native receipts, even after the
-    # auxiliary current constructor has retired their physical declarations.
+    # auxiliary archived constructor has retired their physical declarations.
     receipt_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5b-inventory.json').read_text())['tables']
     for name in ("external_action_results", "agent_effect_intents", "agent_execution_receipts"):
         state = receipt_source[name]

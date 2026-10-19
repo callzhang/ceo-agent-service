@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.agent_cron.commands import SERVICE_COMMAND_OPTIONS
+from app.schedules_definitions import schedule_projection
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,7 @@ def scheduled_run_filter_sql(alias: str = "runs") -> str:
     ``dispatch_status`` indexes, which would read all 74,000 dispatched rows.
     """
     commands = ", ".join(_sql_text(name) for name in SCHEDULED_COMMANDS_SHOWN_ON_SUCCESS)
+    schedules = f"({schedule_projection()})"
     routine = " and ".join(
         f"{alias}.skip_or_error_reason not like {_sql_text(reason + '%')}"
         for reason in SCHEDULED_ROUTINE_SKIP_REASONS
@@ -173,10 +175,10 @@ def scheduled_run_filter_sql(alias: str = "runs") -> str:
     return (
         f"({alias}.dispatch_status='failed'"
         f" or ({alias}.scheduled_task_id in"
-        f" (select id from scheduled_tasks where command='')"
+        f" (select id from {schedules} where command='')"
         f" and +{alias}.dispatch_status='skipped' and {routine})"
         f" or ({alias}.scheduled_task_id in"
-        f" (select id from scheduled_tasks where command in ({commands}))"
+        f" (select id from {schedules} where command in ({commands}))"
         f" and +{alias}.dispatch_status='dispatched'"
         f" and {alias}.execution_kind='service_command'"
         f" and {alias}.execution_id in ({commands})))"

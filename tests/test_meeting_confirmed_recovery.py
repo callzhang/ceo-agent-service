@@ -79,14 +79,20 @@ def test_restore_cas_rejects_source_change_and_ignores_unrelated_claim(tmp_path)
     result_json = MeetingDeliveryResult(target_kind="direct", target_id="u-a", target_title="A",
         resolved_mentions=[], unresolved_mention_names=[], send_result=receipt,
         message_text=prepared.final_body).model_dump_json()
+    from app.task8_storage import task8_set_parts
+    from app.state_storage import insert_state
     with store._connect() as db:
-        db.execute("update tasks set source_json=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
+        db.execute("update tasks set " + task8_set_parts("meeting_alignment_jobs", {}, update_sql={"source_json": "?"}).sql + " where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
                    ('{"event":"different"}', job_id))
     assert not store.restore_confirmed_meeting_delivery(job, key=key, prepared=prepared,
         receipt=receipt, result_json=result_json)
     job = store.get_meeting_alignment_job(job_id)
     with store._connect() as db:
-        db.execute("insert into dispatcher_claim_leases(adapter_name,source_id,owner,owner_pid,generation,lease_expires_at,terminal_at,last_error,created_at,updated_at) "
-                   "values ('scheduled',?,'unrelated',1,1,'2099-01-01','','','2026-10-12','2026-10-12')", (str(job_id),))
+        db.execute("begin immediate")
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": "scheduled", "source_id": str(job_id), "owner": "unrelated",
+            "owner_pid": 1, "generation": 1, "lease_expires_at": "2099-01-01",
+            "terminal_at": "", "last_error": "", "created_at": "2026-10-12", "updated_at": "2026-10-12",
+        })
     assert store.restore_confirmed_meeting_delivery(job, key=key, prepared=prepared,
         receipt=receipt, result_json=result_json)

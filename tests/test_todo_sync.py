@@ -5,9 +5,12 @@ from pathlib import Path
 import pytest
 
 import app.todo_sync as todo_sync
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import DwsError
+from app.state_definitions import state_projection
 from app.store import AutoReplyStore
+from app.state_storage import update_state
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_task_todo_sync_outbox,
@@ -195,7 +198,8 @@ def test_business_task_allows_only_one_active_external_todo_link(tmp_path):
     assert second == first
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from business_task_dingtalk_links where business_task_id=? "
+            f"select count(*) from ({SYNC_ACTION_PROJECTIONS['business_task_dingtalk_links']}) "
+            "where business_task_id=? "
             "and status in ('creating','active')", (task_id,)
         ).fetchone()[0] == 1
 
@@ -296,7 +300,11 @@ def test_business_task_outbox_idempotency_key_is_task_keyed(tmp_path):
     )
 
     with store._connect() as db:
-        rows = db.execute("select * from business_task_todo_sync_outbox").fetchall()
+        from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+
+        rows = db.execute(
+            f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']})"
+        ).fetchall()
     assert len(rows) == 1
     assert rows[0]["business_task_id"] == business_task_id
 
@@ -404,8 +412,24 @@ def test_completion_scan_keeps_legacy_rows_history_only(tmp_path):
     )
     with store._connect() as db:
         legacy_before = {
-            table: [tuple(row) for row in db.execute(f"select * from {table} order by id")]
-            for table in ("work_projects", "work_todos", "work_updates", "work_todo_dingtalk_links")
+            "business_legacy": [
+                tuple(row)
+                for row in db.execute(
+                    "select * from business where record_type in ('work_project','work_todo') "
+                    "order by id"
+                )
+            ],
+            "work_updates": [
+                tuple(row) for row in db.execute(
+                    f"select * from ({SYNC_ACTION_PROJECTIONS['work_updates']}) order by id"
+                )
+            ],
+            "work_todo_dingtalk_links": [
+                tuple(row)
+                for row in db.execute(
+                    f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) order by id"
+                )
+            ],
         }
     dws = FakeTodoDws()
     dws.completed_task_ids = ["legacy-dt-task", "business-dt-task"]
@@ -414,8 +438,24 @@ def test_completion_scan_keeps_legacy_rows_history_only(tmp_path):
 
     with store._connect() as db:
         legacy_after = {
-            table: [tuple(row) for row in db.execute(f"select * from {table} order by id")]
-            for table in legacy_before
+            "business_legacy": [
+                tuple(row)
+                for row in db.execute(
+                    "select * from business where record_type in ('work_project','work_todo') "
+                    "order by id"
+                )
+            ],
+            "work_updates": [
+                tuple(row) for row in db.execute(
+                    f"select * from ({SYNC_ACTION_PROJECTIONS['work_updates']}) order by id"
+                )
+            ],
+            "work_todo_dingtalk_links": [
+                tuple(row)
+                for row in db.execute(
+                    f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) order by id"
+                )
+            ],
         }
     assert legacy_after == legacy_before
     assert store.get_work_todo(legacy_todo_id).status.value == "open"
@@ -537,11 +577,20 @@ def test_claimed_task_todo_outbox_terminal_write_is_fenced_by_generation(
     class ClaimLosingDws(FakeTodoDws):
         def create_todo_task(self, **kwargs):
             result = super().create_todo_task(**kwargs)
-            with store._connect() as db:
-                db.execute(
-                    "update dispatcher_claim_leases set generation=generation+1 "
+            with store._immediate_write_transaction() as db:
+                lease = db.execute(
+                    f"select generation from ({state_projection('dispatcher_claim_leases')}) "
                     "where adapter_name=? and source_id=?",
-                    (envelope.adapter_name, envelope.source_id),
+                    (envelope.adapter_name, str(envelope.source_id)),
+                ).fetchone()
+                assert lease is not None
+                update_state(
+                    db,
+                    "dispatcher_claim_leases",
+                    int(envelope.source_id),
+                    {"generation": int(lease[0]) + 1},
+                    where_sql="adapter_name=? and source_id=?",
+                    parameters=(envelope.adapter_name, str(envelope.source_id)),
                 )
             return result
 
@@ -593,30 +642,10 @@ def test_task_todo_outbox_receipt_write_failure_never_blindly_replays(tmp_path, 
     )
 
 
-def test_legacy_task_todo_outbox_migrates_retry_cap_without_status_violation(tmp_path):
+def test_task_todo_outbox_retry_cap_keeps_terminal_status_valid(tmp_path):
     store = _store(tmp_path)
-    with store._connect() as db:
-        db.execute("drop table task_todo_sync_outbox")
-        db.execute(
-            """
-            create table task_todo_sync_outbox (
-                id integer primary key autoincrement,
-                operation_key text not null unique,
-                work_todo_id integer not null,
-                operation text not null check(operation in ('create', 'complete')),
-                evidence_json text not null default '{}',
-                status text not null default 'queued'
-                    check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
-                lease_owner text not null default '', lease_expires_at text not null default '',
-                receipt_json text not null default '{}', error text not null default '',
-                created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
-                completed_at text not null default ''
-            )
-            """
-        )
-    store._initialize()
     _, todo_id = _project_and_todo(store)
-    store.enqueue_task_todo_sync_outbox(operation_key="legacy", work_todo_id=todo_id, operation="create")
+    store.enqueue_task_todo_sync_outbox(operation_key="retry-cap", work_todo_id=todo_id, operation="create")
     for now in ("2026-06-27 10:00:00", "2026-06-27 10:02:00", "2026-06-27 10:05:00"):
         item = store.claim_task_todo_sync_outbox(owner="worker", now=now)
         assert item is not None
@@ -1457,39 +1486,8 @@ def test_outbox_create_still_fails_when_dingtalk_rejects_the_create(tmp_path):
     assert failed[0]["error"] == "dingtalk_todo_effect_not_delivered"
 
 
-def test_legacy_task_todo_outbox_gains_skipped_status_without_losing_rows(tmp_path):
+def test_task_todo_outbox_skipped_status_is_retained_in_actions(tmp_path):
     store = _store(tmp_path)
-    with store._connect() as db:
-        db.execute("drop table task_todo_sync_outbox")
-        db.execute(
-            """
-            create table task_todo_sync_outbox (
-                id integer primary key autoincrement,
-                operation_key text not null unique,
-                work_todo_id integer not null,
-                operation text not null check(operation in ('create', 'complete')),
-                evidence_json text not null default '{}',
-                status text not null default 'queued'
-                    check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
-                lease_owner text not null default '', lease_expires_at text not null default '',
-                receipt_json text not null default '{}', error text not null default '',
-                attempt_count integer not null default 0, next_attempt_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                completed_at text not null default ''
-            )
-            """
-        )
-        db.execute(
-            "insert into task_todo_sync_outbox (operation_key, work_todo_id, operation, status) "
-            "values ('legacy-failed', 7, 'create', 'failed')"
-        )
-
-    store._initialize()
-    store._initialize()
-
-    rows = store.list_task_todo_sync_outbox()
-    assert [row["operation_key"] for row in rows] == ["legacy-failed"]
     _, todo_id = _project_and_todo(store, deadline_at="")
     store.enqueue_task_todo_sync_outbox(
         operation_key="new-ineligible", work_todo_id=todo_id, operation="create"

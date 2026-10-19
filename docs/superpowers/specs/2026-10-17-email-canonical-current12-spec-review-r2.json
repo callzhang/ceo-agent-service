@@ -1,0 +1,36 @@
+{
+  "recorded_at": "2026-10-18T02:05:56.030924+00:00",
+  "status": "spec_approved_quality_pending",
+  "freeze_sha256": "1be1ab809a81c58eed59f82e7258418e0b8f4969c6406e32e093e82c1e454edf",
+  "reviewer": "/root/email_canonical_current12_spec",
+  "verdict": "APPROVE scoped R2 test-only repair",
+  "independent_tests": {
+    "passed": 2,
+    "elapsed_seconds": 46.98,
+    "nodes": [
+      "tests/test_email_store.py::test_processed_model_rescan_preserves_business_snapshot_plan_and_actions",
+      "tests/test_email_action_external_consumers.py::test_current_plan_poll_and_retry_window_on_target"
+    ]
+  },
+  "retained_assertions": [
+    "rescan locator and immutable business snapshot",
+    "plan/action/training assertions",
+    "retry window and claim result",
+    "1200 unrelated replies",
+    "indexed record_type lookup and unique classification alias point lookup",
+    "no classification scan and VM steps below300000",
+    "plan retirement"
+  ],
+  "all_pins_before_after_match": {
+    "files": 20,
+    "requirements": 36,
+    "runtime_python": 373,
+    "json_assets": 12
+  },
+  "temporary_directory_removed": true,
+  "root_reverified": true,
+  "remaining_current_test_closure_required": true,
+  "whole_email_test_file_passed": false,
+  "actual_copy_or_capacity_accepted": false,
+  "deployed": false
+}

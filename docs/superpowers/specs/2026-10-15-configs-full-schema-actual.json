@@ -1,0 +1,106 @@
+{
+  "scope": "Frozen copy pure Email/Business/Provider/config coordinator roundtrip. No constructor, marker activation, provider, native CLI, network or real sends.",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "target_ordinary_tables": 82,
+  "source_variant": "actual_email52",
+  "counts": {
+    "email_accounts": 2,
+    "email_category_configs": 11,
+    "email_category_description_revisions": 24,
+    "email_category_folder_bindings": 22,
+    "email_model_mode_transitions": 0,
+    "email_model_promotion_configs": 4,
+    "email_training_snapshots": 122,
+    "managed_skills": 21,
+    "managed_skill_revisions": 172,
+    "runtime_feedback_iteration_capabilities": 19,
+    "runtime_skill_bindings": 241,
+    "runtime_skill_configs": 19,
+    "scheduled_task_config_versions": 69,
+    "scheduled_task_skill_refs": 34,
+    "wechat_reply_scopes": 4,
+    "scheduled_tasks": 15,
+    "managed_skill_export_receipts": 1939,
+    "runtime_skill_load_receipts": 4105
+  },
+  "source_rows": {
+    "email_accounts": 2,
+    "email_category_configs": 11,
+    "email_category_description_revisions": 24,
+    "email_category_folder_bindings": 22,
+    "email_model_mode_transitions": 0,
+    "email_model_promotion_configs": 4,
+    "email_training_snapshots": 122,
+    "managed_skills": 21,
+    "managed_skill_revisions": 172,
+    "runtime_feedback_iteration_capabilities": 19,
+    "runtime_skill_bindings": 241,
+    "runtime_skill_configs": 19,
+    "scheduled_task_config_versions": 69,
+    "scheduled_task_skill_refs": 34,
+    "wechat_reply_scopes": 4,
+    "scheduled_tasks": 15,
+    "managed_skill_export_receipts": 1939,
+    "runtime_skill_load_receipts": 4105,
+    "email_training_snapshot_observations": 0
+  },
+  "retained_before": {
+    "actions": {
+      "count": 61310,
+      "typed_sha256": "f0891f5f8294142ced1cec616f8a3f7ef3ed764752ad158df5ae56d6ec614c44"
+    },
+    "runs": {
+      "count": 231340,
+      "typed_sha256": "a706271f933986898eff06036645c253cee55f7dfc498c9d1e8c12f312ae321b"
+    }
+  },
+  "retained_after": {
+    "actions": {
+      "count": 61311,
+      "typed_sha256": "88575b63c62dae88e3d5cbc2bc4714e84d32ea4ad5ff7b0a9273ea4791597c67"
+    },
+    "runs": {
+      "count": 231341,
+      "typed_sha256": "e511e5546ba315bfdefc028add440c6ee6144134bd5742dce1866c2cf11ba648"
+    }
+  },
+  "source_schema_exactly_restored": true,
+  "markers_unchanged": true,
+  "foreign_keys_before": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "foreign_keys_after": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "quick_check": "ok",
+  "new_fact_checks": 7,
+  "owned_database_temp_absent": true,
+  "source_unchanged": true,
+  "elapsed_seconds": 137.278,
+  "executed_module_sha256": {
+    "configs_schema_release": "232789388da284ed2967e920407eb7d9dc9f94c7ac401d05fc3bd58a6cdb7ff0",
+    "configs_schema_transfer": "5b3015ef0497e38b6242e8dc724fb7800fa1e62a4bab61eac96441a159f515f5",
+    "configs_run_schema": "3d911e9ffc223ba4ad1579ce87d7271f6f806cd8c9191657774f1bc94c79881d",
+    "action_storage": "538cf0fd0175ea1567306d71667147b851142e12fa4e2b223eaa69497e15a4c9",
+    "action_email_storage": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+    "business_schema_release": "2f61b469c0f65742e946f90533ac9ca4639775d44238c7c09e1719b5f0379e78",
+    "provider_state_schema_release": "7422971f430892d6e89ce7d7d24dc97f17954f3352d62bbc97704eee9a7873e5"
+  },
+  "reviewed_code_commit": "a9b66a45",
+  "independent_spec": "35 focused cases and additional in-memory refusal probes passed",
+  "independent_quality": "35 focused cases and additional cross-variant type/ID/water probes passed",
+  "table_count_definition": "PRAGMA main.table_list type=table, sqlite_* excluded; virtual and shadow tables excluded. Intermediate unselected candidate count, not the final ten-table target.",
+  "digest_definition": "SHA256 of protocol-5 pickled SQLite row tuples streamed in ROWID order, including ROWID and every stored field; transferred Skill action kinds excluded from retained-action comparisons.",
+  "verification_boundary": "New facts checked after config inverse; whole-sequence inverse separately checked exact main schema, unchanged markers and original FK findings. No old-code constructor/current caller or native CLI acceptance in this proof.",
+  "owned_proof_workspace_absent": true
+}

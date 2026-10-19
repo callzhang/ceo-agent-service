@@ -1,6 +1,10 @@
+from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.task12_storage import task12_projection
+
 from app.store import REPLY_TASK_CURRENT_SQL
 from app.work_summary_payload import decode_work_summary_payload
 import json
@@ -136,6 +140,9 @@ from app.feedback_events import (
 )
 from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
+from app.email_canonical_storage import email_classification_projection
+from app.email_publication_sources import current_email_actions_available
+from app.action_storage import email_action_projection
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -158,6 +165,7 @@ from app.store import (
     ReplyTask,
     SentReply,
 )
+from app.action_error_definitions import error_projection
 from app.setup_wizard import (
     build_wizard_status,
     check_setup_step,
@@ -189,8 +197,17 @@ from app.action_storage import (
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     reply_action_projection,
-    validated_reply_variant,
+    task_delivery_projection,
+    _reply_variant_for,
 )
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+OKR_REQUEST_SQL = task20_projection('okr_review_requests')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+WECHAT_DELIVERY_SQL = task_delivery_projection('wechat_deliveries')
+MEETING_MEMORY_WRITE_SQL = task_delivery_projection('meeting_memory_write_events')
+TASK_MEMORY_WRITE_SQL = task_delivery_projection('task_memory_write_events')
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -2600,7 +2617,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
             physical_table = ("tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
-                              else "actions" if table in ("reply_attempts", "memory_write_events") else table)
+                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "work_todo_dingtalk_links", "meeting_memory_write_events", "wechat_deliveries") else table)
             if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
@@ -2640,9 +2657,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "latest_error": _queue_latest_error(db, table, status_column, error_column),
                 }
             )
-        if _sqlite_table_exists(db, "email_actions") and _sqlite_table_exists(
-            db, "email_classifications"
-        ):
+        if current_email_actions_available(db):
             snapshots.append(_read_status_queue(_email_action_queue_snapshot, db))
         if _sqlite_table_exists(db, "tasks"):
             snapshots.append(_read_status_queue(_email_unsubscribe_task_queue_snapshot, db))
@@ -2652,15 +2667,10 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
 
 def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Count only typed work-summary rows without reading their payloads."""
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='work_summary_inputs' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('work_summary_inputs', 'status')},'')) as status, count(*) as count from tasks where record_type='work_summary_inputs' group by lower(coalesce({task20_column('work_summary_inputs', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='work_summary_inputs' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='work_summary_inputs' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('work_summary_inputs', 'updated_at')} as updated_at from tasks where record_type='work_summary_inputs' order by {task20_column('work_summary_inputs', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('work_summary_inputs', 'error')} as error from tasks where record_type='work_summary_inputs' and lower({task20_column('work_summary_inputs', 'status')})='failed' and trim(coalesce({task20_column('work_summary_inputs', 'error')},''))<>'' order by {task20_column('work_summary_inputs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "Work items",
         "table": "work_summary_inputs",
@@ -2675,15 +2685,10 @@ def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, obje
 
 
 def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='meeting_alignment_jobs' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},'')) as status, count(*) as count from tasks where record_type='meeting_alignment_jobs' group by lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='meeting_alignment_jobs' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='meeting_alignment_jobs' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'updated_at')} as updated_at from tasks where record_type='meeting_alignment_jobs' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'error')} as error from tasks where record_type='meeting_alignment_jobs' and lower({task20_column('meeting_alignment_jobs', 'status')})='failed' and trim(coalesce({task20_column('meeting_alignment_jobs', 'error')},''))<>'' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "Meeting jobs", "table": "meeting_alignment_jobs", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2695,15 +2700,10 @@ def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _okr_review_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='okr_review_requests' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('okr_review_requests', 'status')},'')) as status, count(*) as count from tasks where record_type='okr_review_requests' group by lower(coalesce({task20_column('okr_review_requests', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='okr_review_requests' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='okr_review_requests' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('okr_review_requests', 'updated_at')} as updated_at from tasks where record_type='okr_review_requests' order by {task20_column('okr_review_requests', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('okr_review_requests', 'error')} as error from tasks where record_type='okr_review_requests' and lower({task20_column('okr_review_requests', 'status')})='failed' and trim(coalesce({task20_column('okr_review_requests', 'error')},''))<>'' order by {task20_column('okr_review_requests', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "OKR reviews", "table": "okr_review_requests", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2760,12 +2760,12 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
 def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize only the current task projection for each business object."""
 
-    current_projection = """
+    current_projection = f"""
         from tasks as tasks
-        left join business_object_tasks as current_business_object
-          on current_business_object.business_object_key=tasks.business_object_key
+        left join ({task12_projection('business_object_tasks')}) as current_business_object
+          on current_business_object.business_object_key=tasks.{task20_column('reply_tasks', 'business_object_key')}
         where tasks.record_type='reply_tasks' and (
-            trim(tasks.business_object_key)=''
+            trim(tasks.{task20_column('reply_tasks', 'business_object_key')})=''
             or current_business_object.reply_task_id is null
             or current_business_object.reply_task_id=tasks.id
         )
@@ -2773,8 +2773,8 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     rows = db.execute(
         f"""
         with current as materialized (
-            select tasks.id, lower(coalesce(tasks.status, '')) as status,
-                   tasks.updated_at, tasks.error
+            select tasks.id, lower(coalesce(tasks.{task20_column('reply_tasks', 'status')}, '')) as status,
+                   tasks.{task20_column('reply_tasks', 'updated_at')} as updated_at, tasks.{task20_column('reply_tasks', 'error')} as error
             {current_projection}
         ), counts as (
             select status, count(*) as count from current group by status
@@ -2813,9 +2813,9 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Project only actions the worker can still execute for the current plan."""
 
-    current_plan = """
-        from email_actions as a
-        cross join email_classifications as c on c.id=a.classification_id
+    current_plan = f"""
+        from ({email_action_projection('email_actions')}) as a
+         cross join ({email_classification_projection()}) as c on c.id=a.classification_id
         where a.action_plan_id=c.current_action_plan_id
           and c.status='processed'
     """
@@ -2920,7 +2920,7 @@ def _email_unsubscribe_task_queue_snapshot(
 def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     rows = []
     with store._connect() as db:
-        if not _sqlite_table_exists(db, "service_state"):
+        if not _sqlite_table_exists(db, "state"):
             return {
                 "status": "unavailable",
                 "updated_at": "",
@@ -2930,12 +2930,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
                 "checks": [],
             }
         rows = db.execute(
-            """
-            select key, value, updated_at
-            from service_state
-            where key like 'email_worker_health:%'
-            order by key
-            """
+            '\n            select key, value, updated_at\n            from (' + state_projection('service_state') + ")\n            where key like 'email_worker_health:%'\n            order by key\n            "
         ).fetchall()
     parsed_rows: list[tuple[str, dict[str, object], str]] = []
     safe_integer_fields = {
@@ -3100,14 +3095,14 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
                     when a.channel='wechat' and lower(a.send_status)='failed'
                      and exists (
-                        select 1 from wechat_deliveries d
+                        select 1 from ({WECHAT_DELIVERY_SQL}) d
                         join ({REPLY_TASK_SQL}) t on t.id=d.reply_task_id
                         where t.channel=a.channel and t.conversation_id=a.conversation_id
                           and d.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
                           and d.execution_generation=t.execution_generation
                           and d.status in ('failed', 'send_unknown')
-                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery
+                          and d.id=(select max(current_delivery.id) from ({WECHAT_DELIVERY_SQL}) current_delivery
                                     where current_delivery.reply_task_id=t.id
                                       and current_delivery.execution_generation=t.execution_generation)
                      ) then 'failed'
@@ -3145,7 +3140,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                         )
                         or exists (
                             select 1
-                            from business_object_tasks current_business_object
+                            from ({task12_projection('business_object_tasks')}) current_business_object
                             join ({REPLY_TASK_SQL}) current_task
                               on current_task.id=current_business_object.reply_task_id
                             where current_business_object.business_object_key=(
@@ -3182,7 +3177,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task
-                  join business_object_tasks as current_business_object
+                  join ({task12_projection('business_object_tasks')}) as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
                   where historical_task.channel=a.channel
@@ -3243,7 +3238,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    source = reply_action_projection("memory_write_events", validated_reply_variant(db))
+    source = reply_action_projection("memory_write_events", _reply_variant_for(db))
     rows = db.execute(
         f"select lower(coalesce(status,'')) as status,count(*) as count "
         f"from ({source}) group by lower(coalesce(status,'')) order by status"
@@ -3290,7 +3285,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
                          || wechat_deliveries.error
                 else ''
             end) as latest_error
-        from wechat_deliveries
+        from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
         join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
         where wechat_deliveries.execution_generation=
               reply_tasks.execution_generation
@@ -3310,7 +3305,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     _, _, latest_error = latest_error.partition(chr(31))
     latest_row = db.execute(
         f"""select max(wechat_deliveries.updated_at) as value
-           from wechat_deliveries
+           from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
            join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
            where wechat_deliveries.execution_generation=
                  reply_tasks.execution_generation"""
@@ -3440,8 +3435,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
         state = db.execute(
-            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
-        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
+            'select cursor_json,last_success_at,last_error from (' + state_projection('daily_scan_state') + ") where scanner_name='oa_pending'"
+        ).fetchone() if _sqlite_table_exists(db, "state") else None
         pending_keys = json.loads(state["cursor_json"]).get(
             "pending_business_object_keys", []
         ) if state is not None else []
@@ -3487,8 +3482,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            reply_tasks.trigger_message_id
                     from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                     where reply_tasks.id in (
-                        select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status
-                        where record_type='reply_tasks' and lower(status)='failed'
+                        select cast(legacy_key as integer) from tasks indexed by idx_task20_published_1
+                        where record_type='reply_tasks' and lower({task20_column('reply_tasks', 'status')})='failed'
                     )
                       and reply_tasks.channel='email'
                       and json_valid(reply_tasks.trigger_message_json)
@@ -3525,12 +3520,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                           and current_run.execution_generation=reply_tasks.execution_generation
                         order by current_run.id desc limit 1) as current_run_error
                 from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                left join business_object_tasks current_business_object
+                left join ({task12_projection('business_object_tasks')}) current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status where record_type='reply_tasks' and lower(status) = 'failed'
+                    select cast(legacy_key as integer) from tasks indexed by idx_task20_published_1 where record_type='reply_tasks' and lower({task20_column('reply_tasks', 'status')}) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null
@@ -3597,11 +3592,20 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
-            if not _sqlite_table_exists(db, "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests") else table):
+            physical_table = (
+                "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
+                else "actions" if table in ("follow_up_drafts", "wechat_deliveries")
+                else table
+            )
+            if not _sqlite_table_exists(db, physical_table):
                 continue
             source_table = (f"({WORK_SUMMARY_INPUT_SQL})" if table == "work_summary_inputs"
                             else f"({MEETING_JOB_SQL})" if table == "meeting_alignment_jobs"
-                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests" else table)
+                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests"
+                            else f"({SYNC_ACTION_PROJECTIONS[table]})" if table in SYNC_ACTION_PROJECTIONS
+                            else f"({WECHAT_DELIVERY_SQL})" if table == "wechat_deliveries"
+                            else table)
+            source_alias = " as wechat_deliveries" if table == "wechat_deliveries" else ""
             status_placeholders = ",".join("?" for _ in statuses)
             current_generation_filter = (
                 f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
@@ -3619,7 +3623,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             candidate_sql = (
                 f"select cast(legacy_key as integer) from tasks "
                 f"where record_type='work_summary_inputs' "
-                f"and lower({status_column}) in ({status_placeholders})"
+                f"and lower({task20_column('work_summary_inputs', status_column)}) in ({status_placeholders})"
                 if table == "work_summary_inputs"
                 else f"select id from {source_table} "
                      f"where lower({status_column}) in ({status_placeholders})"
@@ -3628,7 +3632,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
-                from {source_table}
+                from {source_table}{source_alias}
                 where id in (
                     {candidate_sql}
                 )
@@ -3662,7 +3666,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if _sqlite_table_exists(db, "email_agent_classification_tasks"):
-            email_task_sql = """
+            email_task_sql = f"""
                 select task_id as id, status,
                        coalesce(
                            nullif(json_extract(input_json, '$.message.sender.email'), ''),
@@ -3674,10 +3678,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            stable_message_identity
                        ) as summary,
                        updated_at, error
-                from email_agent_classification_tasks
+                from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
                 where rowid in (
-                    select rowid from email_agent_classification_tasks
-                    where lower(status)='failed'
+                    select cast(legacy_key as integer) from tasks
+                    where record_type='email_agent_classification_tasks'
+                      and {task20_column('email_agent_classification_tasks', 'status')}='failed'
                 )
                 order by updated_at desc, task_id desc
             """
@@ -3698,14 +3703,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "email_actions")
-            and _sqlite_table_exists(db, "email_classifications")
+            current_email_actions_available(db)
         ):
             # Mirror the status page: a failed action is attention-worthy only
             # once it is outside its retry window, so both surfaces agree.
             # Drive compact failed-row selection before large classification
-            # payloads. rowid preserves legacy nullable action IDs unchanged.
-            email_action_sql = """
+            # payloads. Source rowid preserves nullable public action IDs.
+            email_action_sql = f"""
                 select a.action_id as id, a.status,
                        coalesce(nullif(c.sender, ''), a.account_id) as context,
                        coalesce(
@@ -3714,12 +3718,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            a.action_type
                        ) as summary,
                        a.updated_at, a.error
-                from email_actions as a
-                cross join email_classifications as c on c.id=a.classification_id
+                from ({email_action_projection('email_actions', include_rowid=True)}) as a
+                cross join ({email_classification_projection()}) as c on c.id=a.classification_id
                 where a.action_plan_id=c.current_action_plan_id
                   and c.status='processed'
                   and a.rowid in (
-                      select rowid from email_actions
+                      select rowid from ({email_action_projection('email_actions', include_rowid=True)})
                       where lower(status)='failed'
                   )
                   and not (
@@ -3746,15 +3750,15 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "meeting_memory_write_events")
+            _sqlite_table_exists(db, "actions")
             and _sqlite_table_exists(db, "tasks")
         ):
-            meeting_memory_sql = """
+            meeting_memory_sql = f"""
                 select events.id, events.status,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as context,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
+                       coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as context,
+                       coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as summary,
                        events.updated_at, events.error
-                from meeting_memory_write_events as events
+                from ({MEETING_MEMORY_WRITE_SQL}) as events
                 join tasks as jobs on jobs.id=events.meeting_job_id
                     and jobs.record_type='meeting_alignment_jobs'
                 where lower(events.status)='failed'
@@ -3781,14 +3785,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "task_memory_write_events")
+            _sqlite_table_exists(db, "actions")
             and _sqlite_table_exists(db, "tasks")
         ):
             task_memory_sql = f"""
                 select events.id, events.status, events.reply_task_id,
                        tasks.channel, tasks.conversation_title,
                        events.updated_at, events.error
-                from task_memory_write_events as events
+                from ({TASK_MEMORY_WRITE_SQL}) as events
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id
                 where lower(events.status)='failed'
                 order by events.updated_at desc, events.id desc
@@ -3815,7 +3819,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "error": str(row["error"] or ""),
                     }
                 )
-        if _sqlite_table_exists(db, "errors"):
+        if _sqlite_table_exists(db, "actions"):
             recovered_statuses = tuple(RECOVERED_REPLY_ATTEMPT_STATUSES)
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)
             for row in db.execute(
@@ -3823,12 +3827,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 select error_event.id, error_event.conversation_id,
                        error_event.message_id, error_event.kind,
                        error_event.detail, error_event.created_at
-                from errors error_event
+                from ({error_projection(unresolved=True)}) error_event
                 where coalesce(error_event.resolved_at, '') = ''
                   and error_event.kind <> 'codex_capacity_pause'
                   and not exists (
                     select 1
-                    from errors newer_error
+                    from ({error_projection(unresolved=True)}) newer_error
                     where newer_error.conversation_id=error_event.conversation_id
                       and coalesce(newer_error.message_id, '')=
                           coalesce(error_event.message_id, '')
@@ -3963,7 +3967,7 @@ def _human_decision_attention_rows(
         join ({REPLY_TASK_SQL}) task on task.id=c.task_id
           and task.execution_generation=c.execution_generation
           and task.status='needs_human'
-        join business_object_tasks current_object
+        join ({task12_projection('business_object_tasks')}) current_object
           on current_object.business_object_key=task.business_object_key
           and current_object.reply_task_id=task.id
         left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
@@ -4003,6 +4007,8 @@ def _human_decision_attention_rows(
 
 
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
+    if table == "email_agent_classification_tasks":
+        table = "tasks"
     row = db.execute(
         "select 1 from sqlite_master where type='table' and name=?",
         (table,),
@@ -4015,6 +4021,7 @@ def _queue_status_counts(
     table: str,
     status_column: str,
 ) -> dict[str, int]:
+    table = _queue_relation(table)
     rows = db.execute(
         f"""
         select lower(coalesce({status_column}, '')) as status, count(*) as count
@@ -4046,7 +4053,7 @@ def _queue_retryable_count(
         row = db.execute(
             f"""
             select count(*) as count
-            from {table}
+            from {_queue_relation(table)}
             where lower({status_column})='failed'
               and ({code_predicate})
             """,
@@ -4057,6 +4064,7 @@ def _queue_retryable_count(
 
 
 def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:
+    table = _queue_relation(table)
     row = db.execute(
         f"select {column} as value from {table} order by {column} desc limit 1"
     ).fetchone()
@@ -4069,17 +4077,16 @@ def _queue_latest_error(
     status_column: str,
     error_column: str,
 ) -> str:
-    columns = _sqlite_table_columns(db, table)
+    tie_column = "task_id" if table == "email_agent_classification_tasks" else "id"
+    table = _queue_relation(table)
     order_sql = "updated_at desc"
-    if "id" in columns:
-        order_sql += ", id desc"
+    order_sql += f", {tie_column} desc"
     row = db.execute(
         f"""
         select {error_column} as value
         from {table}
-        where rowid in (
-            select rowid from {table} where lower({status_column})='failed'
-        ) and trim(coalesce({error_column}, ''))<>''
+        where lower({status_column})='failed'
+          and trim(coalesce({error_column}, ''))<>''
         order by {order_sql}
         limit 1
         """
@@ -4087,7 +4094,19 @@ def _queue_latest_error(
     return "" if row is None else str(row["value"] or "")
 
 
+def _queue_relation(table: str) -> str:
+    if table == "email_agent_classification_tasks":
+        return f"({task12_projection(table, include_rowid=True)})"
+    if table in SYNC_ACTION_PROJECTIONS:
+        return f"({SYNC_ACTION_PROJECTIONS[table]})"
+    if table in ("meeting_memory_write_events", "task_memory_write_events", "wechat_deliveries"):
+        return f"({task_delivery_projection(table)})"
+    return table
+
+
 def _sqlite_table_columns(db: sqlite3.Connection, table: str) -> set[str]:
+    if table == "email_agent_classification_tasks":
+        return set(TASK20_FIELDS[table]) if _sqlite_table_exists(db, table) else set()
     return {str(row["name"]) for row in db.execute(f"pragma table_info({table})")}
 
 
@@ -7727,7 +7746,6 @@ def _task_project_search_values(project, todos) -> list[str]:
         project.blocker,
         project.next_step,
         project.source_conversations_json,
-        project.memory_context_json,
     ]
     for todo in todos:
         values.extend(
@@ -7830,7 +7848,6 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
             if draft_rows
             else ""
         )
-        + f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
     )
     return (
         200,
@@ -10425,6 +10442,21 @@ def create_audit_app(
                 audit_email_store = EmailStore(db_path, validate_rows=False)
             return audit_email_store
 
+    audit_email_source_reader = None
+
+    def get_audit_email_source_reader():
+        nonlocal audit_email_source_reader
+        from app.email_source_reader import build_email_source_reader
+        from app.config import effective_env_values
+
+        store = get_audit_email_store()
+        with audit_email_store_lock:
+            if audit_email_source_reader is None:
+                audit_email_source_reader = build_email_source_reader(
+                    store, environment_factory=effective_env_values,
+                )
+            return audit_email_source_reader
+
     from app.workbench.api import register_workbench_routes
     from app.workbench.executor import WorkbenchExecutor
     from app.workbench.runtime import RuntimeRegistry
@@ -10674,6 +10706,7 @@ def create_audit_app(
 
     if email_learning_factory is None:
         from app.email_classifier_learning import EmailClassifierLearningService
+        from app.email_selected_training_reader import EmailSelectedTrainingReader
         from app.email_model_registry import EmailModelRegistry
 
         email_model_root = db_path.parent / "email-models"
@@ -10686,6 +10719,9 @@ def create_audit_app(
                     get_audit_email_store(),
                     registry=EmailModelRegistry(email_model_root),
                     retrain_state_path=email_model_root / "retrain-state.json",
+                    selected_training_reader=EmailSelectedTrainingReader(
+                        get_audit_email_store(), source_reader=get_audit_email_source_reader(),
+                    ),
                 )
             return email_learning_service
 
@@ -10708,6 +10744,7 @@ def create_audit_app(
         history_chart_factory=render_history_chart,
         email_store_factory=get_audit_email_store,
         email_learning_factory=email_learning_factory,
+        email_source_reader_factory=get_audit_email_source_reader,
         dws_factory=lambda: DwsClient(
             ding_robot_code=ding_robot_code,
             ding_robot_name=ding_robot_name,

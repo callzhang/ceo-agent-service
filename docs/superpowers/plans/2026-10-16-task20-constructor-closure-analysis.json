@@ -1,0 +1,2149 @@
+{
+  "recorded_utc": "2026-10-16T20:06:09.435742+00:00",
+  "status": "bounded_constructor_and_publication_research_only_no_selection",
+  "worktree": "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service",
+  "head": "185a627c508b5b1a60e310283aa4e16e22cbdadd",
+  "source_hashes": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/workbench/store.py": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+    "app/workbench_storage.py": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/email_store.py": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+    "app/email_current_schema.py": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
+    "app/email_classification_schema.py": "1dc0b37896aff86987a3ca6e724269a849b23e688f23fd55e2dd6e44a66447f7",
+    "app/task_schema_release.py": "76f138bd66987b7f76f3e9d06bdc89a7bd261f6a88749d2b4755c81ecc2498a3",
+    "app/state_publication_sources.py": "ae115ec3b00feb3193b4ff9a7b4fc22485387d30373730003b896d46890f2b3b",
+    "app/action_email_schema_release.py": "e9ba587757d2cf271119a2a2ff877d877a716727c0cd7eba6f7dc3ccc309564d",
+    "app/store_schema_release.py": "60079684637e007a72c879e690f3acf23f34e156635fe6cc80bb1d392f6b8c45",
+    "docs/superpowers/specs/2026-10-16-tasks20-field-map.json": "7a92267c2e8a35b21cf430290722bc400d2b38c9c3b047694ea090eeb7a121f8",
+    "docs/superpowers/specs/2026-10-16-tasks12-native-source.json": "ce785f845f9425a78e5313d9552da60cf4a6ed41a543cbaf13d81a6be80709a7",
+    "docs/superpowers/specs/2026-10-16-task8-native-source.json": "44f386b8d35acb23af0ef8597963ac9a67094a153f78dce02f61ba52a9f688e0",
+    "docs/superpowers/plans/2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "docs/superpowers/plans/2026-10-16-task8-workbench-caller-proposal.patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
+    "docs/superpowers/plans/2026-10-16-task12-email-native-caller-proposal.patch": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc",
+    "docs/superpowers/plans/2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+    "docs/superpowers/plans/2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d",
+    "docs/superpowers/plans/2026-10-16-task12-workbench-children-caller-proposal.patch": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7",
+    "docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415",
+    "docs/superpowers/plans/2026-10-16-task20-console-readers-caller-proposal.patch": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df",
+    "docs/superpowers/plans/2026-10-16-task20-remaining-readers-caller-proposal.patch": "618c2033a0ca47185819dad4a24a9f4f6409d1d368a1655bc8da4b13efa8898c"
+  },
+  "scope": {
+    "application_edits": false,
+    "test_edits": false,
+    "database_file_opened": false,
+    "provider_or_network": false,
+    "native_cli": false,
+    "runtime_selection": false,
+    "sqlite_metadata_only_in_memory": true,
+    "source_oracles_preserved": true
+  },
+  "current_marker_pair": {
+    "store": "2026-10-14.1",
+    "email": 52,
+    "source_store": "2026-10-13.5",
+    "source_email": 51,
+    "role": "existing unpublished paired candidate; no new version proposed"
+  },
+  "source_owners": [
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore.__init__",
+      "line": 1852,
+      "end_line": 1865,
+      "source_sha256": "0a9d0cec2e915aaaeaf8d66e4461a50f0f3ebdb9cd4804eab46772a56e939fc8",
+      "ast_sha256": "eea117c7894801f21a5dd498b5cb26432f1cd6df0eb00f8fd1f052c930c83a40"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._ensure_initialized",
+      "line": 1867,
+      "end_line": 1891,
+      "source_sha256": "866ccae85def8df19566a89bf1a15774c31ee6dc93fc928e48d323b07cc8441d",
+      "ast_sha256": "9b0700fd64484af798883f68f09e3bff84189bae1c74f1eb58739436d905f112"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._cached_initialized_path_is_healthy",
+      "line": 1893,
+      "end_line": 1908,
+      "source_sha256": "05749300c2dced6963c5cc92b420ea91f7b9208db0af476bd4e12f9780836d1e",
+      "ast_sha256": "d8f27540560f977703d353858236b11b2a7a0b6d4d2c514c54db5bd0cf1977c0"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._require_supported_store_bootstrap_source",
+      "line": 8492,
+      "end_line": 8556,
+      "source_sha256": "0f16f5e812f7315172fd9ac8c5b2f2ef97aefb4c97adbdc816fe48f3604883c1",
+      "ast_sha256": "6d9d8ba39b7c5085ef2949c56399727508996e4d5fec8dd87ab17dfa3ef60e04"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._schema_is_current",
+      "line": 2528,
+      "end_line": 2556,
+      "source_sha256": "0470ecbf360ebbf2e1051342d9948dfadd7e6d4135b60d54288ae476162bf8a3",
+      "ast_sha256": "a46a76dca57f083c4b5f86d0878cf493c92f2679d922ec762870cc670b006870"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._schema_manifest_is_current_in_connection",
+      "line": 2418,
+      "end_line": 2501,
+      "source_sha256": "85117373ba6729fb69ccc6337c3d527cf47daf6095c8bd6df12ec5c63595e2ae",
+      "ast_sha256": "1e02d276292d4623f172e6d4a56ad3dad8ea7c0df7e349af8653e191a345ebab"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "line": 2723,
+      "end_line": 4206,
+      "source_sha256": "477813148429c25b59b5ce285cbf488a630fa4e1411309e32850e542f7a906ce",
+      "ast_sha256": "1bcbbc197cd9a365d8f3e68339f9676e0798d6f2041ff347d48c2201da377d18"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._open_connection",
+      "line": 2678,
+      "end_line": 2702,
+      "source_sha256": "207d65e2f9213e465a73aaf1d132703f760d9274e0e1b9a9187b1e6391547781",
+      "ast_sha256": "649577b0e2178fafaf0105a68704756a6b5c30656ad603dcee7277b2650efd10"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._feedback_processing_round_backfill_needed",
+      "line": 1911,
+      "end_line": 1995,
+      "source_sha256": "5a27e485f536cf7c038fc9ab825e256763cc6913ef1676a086d41246f2c0363c",
+      "ast_sha256": "672fdd09e558bb19dff10ddfcd85de9a8807416398c1cce8c5399aee70b3fed4"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._backfill_feedback_processing_rounds",
+      "line": 1998,
+      "end_line": 2149,
+      "source_sha256": "821219788de81849fbe90a45f41d9447b025037720d5a82b843404f1a58b1e55",
+      "ast_sha256": "6c2efc57dfff9469dc4d33fb101d70b14cfd685660110a6bd63f9f90a4791ec6"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._reconcile_feedback_processing_round_backfill",
+      "line": 2151,
+      "end_line": 2157,
+      "source_sha256": "1fbbb7fa34aa715f339363fde49e0e26e4d7053938cd72a46cfb24b5ab1e6f17",
+      "ast_sha256": "c38839bc45f296f7ebafb2af39379110c91243c7b111e78049698541463d8a11"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._feedback_processing_round_storage_is_valid",
+      "line": 2192,
+      "end_line": 2206,
+      "source_sha256": "bf5aa98f62a3ec2369a2ac863262f025feecb6e80141ebe9d9a054906f9e1f09",
+      "ast_sha256": "e7daaae7ec1587bacf0d85156f3cc5930cef6407b00ac23293a6d72a73b388fe"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._validate_feedback_processing_round_storage",
+      "line": 2209,
+      "end_line": 2216,
+      "source_sha256": "a036727e9bb538add1bbc874f1a6a6ae4dd5617d71236605917654c08c56bca9",
+      "ast_sha256": "0c717ecac99326789acf9356008006e1bc16ecb943086464508531445755e06d"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._feedback_processing_round_guard_state_is_valid",
+      "line": 2351,
+      "end_line": 2379,
+      "source_sha256": "d0862d51590e46d5057d56844962821e2297d142227d9beca6833f5fde228a64",
+      "ast_sha256": "c6d6340f26ef95f0eaf908f379153d7535fe2dff5463da9f20cbc2a4ecb74bb1"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._replace_feedback_processing_round_guards_atomically",
+      "line": 2219,
+      "end_line": 2240,
+      "source_sha256": "9e0d827934fbae77898681dc790b375e612d209d192b315b624184102af3fdd0",
+      "ast_sha256": "a9e91f59c2c6527dab5fe09409b33924ce40275f1317f27f99bc8d6ce3be7bdd"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._replace_feedback_iteration_decision_immutability_guards_atomically",
+      "line": 2323,
+      "end_line": 2348,
+      "source_sha256": "d522b22edf76356173e81650d5c358f2934e18a0c4c741de566502454c8c5bfc",
+      "ast_sha256": "b0f33a7ad79f1ffdb9ce4aaa6ada0512bd62be9b062dba10d80438e35db665a9"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._migrate_oa_notification_events",
+      "line": 8450,
+      "end_line": 8488,
+      "source_sha256": "9ed521d570327975049516e2a9111870538618dd291e694de2813e85e9c1f18d",
+      "ast_sha256": "a8a484bea997fa99fca2d7fcbf25917e51695282daf118773ba5b62d8a0e60b0"
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._migrate_removed_runtime",
+      "line": 8226,
+      "end_line": 8293,
+      "source_sha256": "ad719de461902f6d1f7b4b26a024a2d82d2c45eba671c4590bf1fb982adeed3d",
+      "ast_sha256": "7cc9f4803336ef221f46c91c5d6f1980d808cadc32d81884ac57a6a867de9fd2"
+    },
+    {
+      "file": "app/workbench/store.py",
+      "owner": "WorkbenchStore.__init__",
+      "line": 188,
+      "end_line": 195,
+      "source_sha256": "3a749bb92a3019da106a653115642d54edb8f59ea215b14ddcf2d3c423463829",
+      "ast_sha256": "aa0713a6b2b53000aeb578c7e49e9914f6dab6cee2dccecb867cf93ed48cf85d"
+    },
+    {
+      "file": "app/workbench/store.py",
+      "owner": "WorkbenchStore._connect",
+      "line": 198,
+      "end_line": 204,
+      "source_sha256": "9199c8029bc63d80b9fe09e81906adef9ef3a9f77baf4485a1820d544d25b94c",
+      "ast_sha256": "3328fbf4c3ce7028428c3e3ffbc412b0b64ce00d3b609b6a00cc8e400d495d58"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "create_workbench_auxiliary_schema",
+      "line": 496,
+      "end_line": 524,
+      "source_sha256": "d0ed67a699b6e9307356dfa6995ac38769a1330829b765bb6f478f59d52a4449",
+      "ast_sha256": "d574d5cec2f8dc868271ae9b08ee56597c3a9733cf8f98707a50332bcc8e4225"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "_current_auxiliary_objects",
+      "line": 909,
+      "end_line": 920,
+      "source_sha256": "ab344fb653ab40cc01090bfa6e7ec381b81330dbab59f5b619cfcc53e50eddb2",
+      "ast_sha256": "c31fb0a75840fb00a0d17f492d6cd031a560021e36e502577f7a1c6d0e019f98"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "workbench_schema_is_current",
+      "line": 923,
+      "end_line": 955,
+      "source_sha256": "359fde6e0a09ec3f72ede784cc786b22706b4763ceaf51efac4e2ec6cf19db3d",
+      "ast_sha256": "8b336249e9d8bf389d237f441f2baf0104455042169e9ec63ab45c8a2c0f9751"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "_validate_source",
+      "line": 527,
+      "end_line": 560,
+      "source_sha256": "12fbb72d1d01f6eaf0234d1a072eb457892c4011a1fee706de93265a539f3f42",
+      "ast_sha256": "057aeb279354d7098ce062b605445e081830bc2f87a80c42f34db4b0fa91ae3f"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "migrate_workbench_schema",
+      "line": 630,
+      "end_line": 708,
+      "source_sha256": "5b3986c25885b7a2af63322770a20522293080645b8f909561bdf5523ece0a50",
+      "ast_sha256": "c37220bbab159a9e7a373bca9d029036b2db2904428b3cfbe699323f071b4fb8"
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "restore_workbench_schema",
+      "line": 711,
+      "end_line": 858,
+      "source_sha256": "19f73d0a45007f413bd61c0b9d13297db70bc5ce6018f76843c12de82eaa8095",
+      "ast_sha256": "dfbf1d6fa16aa6c56c8e2b61d9a792425a5f0e62be586df91462e27381a53a5c"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "create_task_schema",
+      "line": 659,
+      "end_line": 675,
+      "source_sha256": "d6a369ed60d380e9ca63298828b82d02cc3d4476a8684201af8179395eaeecb5",
+      "ast_sha256": "027fd1c407c34eca6568a9560b0b3531ba4b6f9309230d429202e179a5fc9974"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "_declared_task_objects",
+      "line": 679,
+      "end_line": 687,
+      "source_sha256": "ef55c3db09fc7efc5d75739889675f12b0c002e89155c03a073f51245d1cb899",
+      "ast_sha256": "fb84cd51975bffcb57ae43f135b3eb639983d68dac59514768d759965c5764f9"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "task_schema_is_current",
+      "line": 690,
+      "end_line": 720,
+      "source_sha256": "df5f26f09faf1a8a1a95624bad87887c97693ff0be3619edc7c7f151c733b28d",
+      "ast_sha256": "600e9d2785325d3abf24d046042d2f05a318fb94efa26e1fc0cb2f44c6690f54"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "capture_task_schema",
+      "line": 734,
+      "end_line": 804,
+      "source_sha256": "5431e249000d6e861dc43a12a35d065426d855f77e8e854b6722b7bf3e962018",
+      "ast_sha256": "837c221d669610710cf74a6f6a0d551b58cdb43bacee0a4feaadd0ebccf75fb0"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "install_task_child_guards",
+      "line": 833,
+      "end_line": 863,
+      "source_sha256": "1e72993be3949c6456b236f4669b3abe54cf598268f784e98a00fd4eccf8d660",
+      "ast_sha256": "aca7819df050ba00257225dbb26688538a60b6422b6aa7a1754798c12c309efc"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "migrate_task_schema",
+      "line": 905,
+      "end_line": 1031,
+      "source_sha256": "c8c350b5bfed872f0a67243e35cc5f834082f31513c04d47f6159bdc0384bea2",
+      "ast_sha256": "dc2d4c42245ebf3b3b3c8c6ed710688d2d7f4f4f8c5046ed87cae949f5d4099f"
+    },
+    {
+      "file": "app/task_storage.py",
+      "owner": "restore_task_schema",
+      "line": 1034,
+      "end_line": 1125,
+      "source_sha256": "269ab3c6eab75d28b9b08612fed91160df5184b5fb7602dcc8548363a22eb6f1",
+      "ast_sha256": "13f43e7934ddb5aa495c9ad15551f9609b584d79e43369b93667fd9195f3670b"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore.__init__",
+      "line": 3043,
+      "end_line": 3067,
+      "source_sha256": "073c3e7eba1eafb34e4b724c7a794f3520721e84d4c691a12a8f9e4278338a98",
+      "ast_sha256": "e0b84d3d048f7e7afd1d0fbde496c8e1b0c69eaadd30f81d74891eeacd7d38ce"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._open_connection",
+      "line": 3069,
+      "end_line": 3074,
+      "source_sha256": "d83a656065a1862d0e1f327c6b91264708caeea40ddc71713676f2b2cb38331c",
+      "ast_sha256": "3e225610234767c453e81dc8d5d83214dc51978d014ff3de08035d2a1937aff1"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._initialize",
+      "line": 3195,
+      "end_line": 3222,
+      "source_sha256": "3475be549fb822250f259667a628823948967a22833e66b413291e54174a7800",
+      "ast_sha256": "337d97e54cbcb01abf22b7c155caae1273165decb90358eec682fdeee6f7bc83"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._validate_schema_shape",
+      "line": 6967,
+      "end_line": 7244,
+      "source_sha256": "cfdddf41f66ca763acb42d8565b8e065518eb26e62372dffce33f914213a27d2",
+      "ast_sha256": "8365b0609a2394595454ff22cc8e764d9fb17d253a50e920afb93154db55e256"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._validate_durable_state",
+      "line": 7246,
+      "end_line": 7260,
+      "source_sha256": "9413f69e28fccd47fd5b5f3c2320a9366315a54387f53a4cd5cd8a2ff679002a",
+      "ast_sha256": "e35fc6e58ffa4e35a2f2b0a7ebb147bc236aa1e8f3a598779b4f7c9ba6cf1cd1"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._create_task10_historical_tables",
+      "line": 5900,
+      "end_line": 5955,
+      "source_sha256": "50a58008cf8a9e8224923a9ab1aea39a6b29bbc7ca4227f8e16d7aee43ed08b9",
+      "ast_sha256": "729e33ed9cb80ae9d90cae194973c426de9a257645c8e69d958693ac04bd7045"
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._create_indexes_and_triggers",
+      "line": 6576,
+      "end_line": 6894,
+      "source_sha256": "50d493ccfbe96cba005d3327b88f355ad96a21751063d1adf10764109f67644c",
+      "ast_sha256": "c06e31e4c3f6c7580be6b67bf2b0a2eaf85b8a336dfdc850e9f41124c8031ec2"
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "owner": "create_current_email_non_action_schema",
+      "line": 397,
+      "end_line": 421,
+      "source_sha256": "8efb812b8c91ebabe4bb473afca2cd0ef4de5479de2eb8fdbd489d178bca88db",
+      "ast_sha256": "bf5fd3d860e52e9cbecca826f727fb93119ef7deb2ad2c1bff1a7772a3214a5e"
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "owner": "create_current_email_runtime_schema",
+      "line": 424,
+      "end_line": 446,
+      "source_sha256": "bd690d1e8940e121664f34822ac3932882741c88279bba8ef8b362a949f201aa",
+      "ast_sha256": "8e5c765eb607ead94e60bdcd1cfa3dd46a2ce418ee0b45625124a93afbc8cdd2"
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "owner": "create_current_email_migration_ledger",
+      "line": 449,
+      "end_line": 451,
+      "source_sha256": "aaf5eb6dc4a1942a98fc2da2c554dd7baaed8585e5ae9db985852dc2ab9d0172",
+      "ast_sha256": "ad0af4f493d4673cec2ac1706f20ee92a84cde587e0dc6dfa46b72bd95f35316"
+    },
+    {
+      "file": "app/email_classification_schema.py",
+      "owner": "create_current_email_classifications",
+      "line": 40,
+      "end_line": 48,
+      "source_sha256": "9109910c4bb22108a30b73f2232d9ae5061c04c629a06c60b00382c4a162ed9e",
+      "ast_sha256": "178c4ccaca8fc6616f06aaa0eb5ceb8f191f71026a6b0963e892be7153cb8f0a"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "owner": "publication_task_sources",
+      "line": 31,
+      "end_line": 64,
+      "source_sha256": "4d48206e8a90bbb4af048b152bfe0e655e5995ef99e7592bd76eaece91f3e5d7",
+      "ast_sha256": "8168d765c214b214cfd7d17b9cad6c0c66b3aa6809c4151927d3dbd260b2bdce"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "owner": "publication_meeting_sources",
+      "line": 67,
+      "end_line": 96,
+      "source_sha256": "1e9702db172088036544e5aad4c1570a4ec7a78cfac800abd23579a28cf9623c",
+      "ast_sha256": "1e0eee0440234c21cb495cd6d733b742b510910aa8ab92af66d9208d7e056c65"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "owner": "TaskSchemaRelease",
+      "line": 128,
+      "end_line": 210,
+      "source_sha256": "eb926a5112f3a4b8029ac2af4565656494d40f242853d5117f7e49fdf1acb4dd",
+      "ast_sha256": "dff52d457de1345d8f18938ff5ece02a2cd82a360d26a32959f38633b9f1dac6"
+    },
+    {
+      "file": "app/task_schema_release.py",
+      "owner": "prepare_task_schema_release",
+      "line": 213,
+      "end_line": 229,
+      "source_sha256": "34d4801fc3f6088d8a5d9c1586ea73830779c07dfd13e0630dff0865ae8acbca",
+      "ast_sha256": "b2e214ab3e28465e1ea694c2fa6ccf3cfcbeacf92532271faeb9d2ce85c690d1"
+    },
+    {
+      "file": "app/state_publication_sources.py",
+      "owner": "publication_store_version",
+      "line": 8,
+      "end_line": 36,
+      "source_sha256": "7fc34b468934e50256349b2ba3a5f2e919e36b972d70c9c975c3a57d36657d6d",
+      "ast_sha256": "ec8f543c53cd0425835d4101051442c5b7b92ac6997ad0bb09c69fae4ff92c34"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "require_current_email_pair",
+      "line": 211,
+      "end_line": 251,
+      "source_sha256": "983b6af0a8c015fc159f33c4d6f65204a3e19c7c264a04314bb68b4cd81e39ae",
+      "ast_sha256": "5dab2b85cf9c59e1f0a73b4a29569a24d60c97b40e863ae8d81861cec2f8f2ff"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "_markers",
+      "line": 254,
+      "end_line": 264,
+      "source_sha256": "04651a452466a0a1c9bca4661d10efe7294278126c39b34dfbc3ce2254044ca3",
+      "ast_sha256": "4873bb5664f2ba2d6ff75ed08a5805b7414646fecee201f5bc113049485b26af"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "email_inverse_metadata",
+      "line": 267,
+      "end_line": 270,
+      "source_sha256": "e5b8353d3d7f217f055fa79014c7b31aac687a0f110d36a03d3815570dd8d46b",
+      "ast_sha256": "130ba6a6797a90244f64b1de7fa5fa70ccdb648b82791b61d8e69ece73e8721d"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "_inverse_metadata",
+      "line": 273,
+      "end_line": 280,
+      "source_sha256": "0bc8ce0129911a8287d64549ee1e18c8c0012d08973eb39b35b6be03f3ff8a7b",
+      "ast_sha256": "0b1aa41c35b81eb461712da26eefe7bdd562d4ddde47fbf88f90d8368d146ddf"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "_migrate_pair",
+      "line": 326,
+      "end_line": 340,
+      "source_sha256": "2491db64ea7c7214c5cbd3ccfa1dfbf2047acbb5aea064225847b7cc063052e2",
+      "ast_sha256": "7369a6335ab96dcaf0f57a923953fbd39211c129ae9cd0025b8e7dfcc437021a"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "ActionEmailSchemaRelease._verify_source",
+      "line": 359,
+      "end_line": 371,
+      "source_sha256": "232ba9eb8bf486252a2b4131533958f25631d4d688a1738ed84560fa3b0a7276",
+      "ast_sha256": "b46b3cdeeb0cd632d87e9cde4ee28f1397c628adc47ec400e4cfee6eb9722f33"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "ActionEmailSchemaRelease._verify_target",
+      "line": 373,
+      "end_line": 405,
+      "source_sha256": "d2bec0ab8c7d0ebb9b5d7179fa8d045e35b0f6f65212e1f01b1020e28c08dcbb",
+      "ast_sha256": "37bf610792c2ce8cee691707022d451cae2ae41ab978684cf12b75403b60895a"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "ActionEmailSchemaRelease.apply",
+      "line": 411,
+      "end_line": 447,
+      "source_sha256": "8fdf47259f2c5c9d2343baad50f8c4c9991f13572d411be24f51459e78576292",
+      "ast_sha256": "a7e18d4671723e74df57fd09d25bc0d2608a1120536c593f43d058ce1e5fb6e1"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "ActionEmailSchemaRelease.rollback",
+      "line": 454,
+      "end_line": 484,
+      "source_sha256": "6f8e051cd14dcac0cd11a91ef33e57d49d5b0f8ce48385c554c25a679b49e16f",
+      "ast_sha256": "a73e1f59bad16e2e90c8b5fa68f836be87401788382cb15dfca0abe36200bb7f"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "_paired_initializer",
+      "line": 496,
+      "end_line": 509,
+      "source_sha256": "621b5aae1afe47719735147ead8d02106e4e75fdd2c23380e0820a7626edd31e",
+      "ast_sha256": "be8d2638670ae579cfecb186b3ffaf939442434e5564dc69876a4b116e4632ae"
+    },
+    {
+      "file": "app/action_email_schema_release.py",
+      "owner": "prepare_action_email_schema_release",
+      "line": 512,
+      "end_line": 541,
+      "source_sha256": "1d8d8a7b0cf888540de416cae32193149546ebb41bc0753ba57910d23776620c",
+      "ast_sha256": "15a960b3be142925b29ecfaeafe4d6d1d472aa59af159fe99e44f2c77e93a438"
+    },
+    {
+      "file": "app/task20_definitions.py",
+      "owner": "task20_column",
+      "line": 553,
+      "end_line": 557,
+      "source_sha256": "1b566693ec96be64cf14f7bed9b3d42223ff2920ef05d27fa950f6765ab1b38b",
+      "ast_sha256": "b6bd7498806c153164ba427e39f20b39989bd94d641cf09c4244decb155bb311"
+    },
+    {
+      "file": "app/task20_definitions.py",
+      "owner": "_definitions",
+      "line": 660,
+      "end_line": 925,
+      "source_sha256": "277ba2225877519c13b64faba3c8fd21c07ab0fb8cda0c3b846e89c227329916",
+      "ast_sha256": "b21fb4544867cb4c0fa951e5dbe9950cd3b933799b26ba5475fd20549d18951c"
+    },
+    {
+      "file": "app/task20_definitions.py",
+      "owner": "create_task20_schema",
+      "line": 931,
+      "end_line": 934,
+      "source_sha256": "0991410a403c3d0c904b8076a11ef7026ea959993acbec1367a5bd5b01e0fd94",
+      "ast_sha256": "bfd1c9588fde4f2703c8a079c038d22dfcf3cdb766f8be88999f9ea9983e176b"
+    },
+    {
+      "file": "app/task20_definitions.py",
+      "owner": "initialize_task8_sequence",
+      "line": 938,
+      "end_line": 951,
+      "source_sha256": "43f26dd2bad6d0a609592d66df11a8c4f4d293e660c8f18b02882781e74c0ea7",
+      "ast_sha256": "d54bad8d391e22806c7cb88f6384c0c86ac05ad33b61c49a85afc55e8170994e"
+    },
+    {
+      "file": "app/task20_definitions.py",
+      "owner": "task20_projection",
+      "line": 954,
+      "end_line": 978,
+      "source_sha256": "9a6bc86ad9a43700739668c157e098731232df52f2f916d2a464b5e8faffe292",
+      "ast_sha256": "db8e86807177adfa6f5d35fe59bd93d555a7bf6bb811d4b4fe50d9fc1d65c93a"
+    },
+    {
+      "file": "app/task8_storage.py",
+      "owner": "register_task8_functions",
+      "line": 47,
+      "end_line": 49,
+      "source_sha256": "d537b98f615d5e163b5e10619466f1a1c434ab32fe59456b6e7a268fb7442dc3",
+      "ast_sha256": "1db6d0589fb8013c509ab0324c88cfe70e336c20a800b76a2b7e8cdca6c4f1f6"
+    }
+  ],
+  "literal_ddl_occurrences": [
+    {
+      "file": "app/store.py",
+      "owner": "<module>",
+      "literal_line": 675,
+      "statement_line": 676,
+      "literal_end_line": 685,
+      "sql": "CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert\nbefore insert on feedback_processing_rounds\nwhen typeof(new.round_number) <> 'integer' or new.round_number <= 0\nbegin\n    select raise(\n        abort,\n        'feedback_processing_round_number_must_be_positive'\n    );\nend",
+      "sql_sha256": "59cb6d48f82fe488aec32d510a2d7d59c5eb2e935505e418021d3908befd8240",
+      "mentions": [
+        "feedback_processing_rounds"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "<module>",
+      "literal_line": 686,
+      "statement_line": 687,
+      "literal_end_line": 696,
+      "sql": "CREATE TRIGGER trg_feedback_processing_round_integer_v2_update\nbefore update of round_number on feedback_processing_rounds\nwhen typeof(new.round_number) <> 'integer' or new.round_number <= 0\nbegin\n    select raise(\n        abort,\n        'feedback_processing_round_number_must_be_positive'\n    );\nend",
+      "sql_sha256": "4d948659027e71f11ad305d8d6ba2e41efd092fdd3b2816809d475fbf0b7ca2a",
+      "mentions": [
+        "feedback_processing_rounds"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "<module>",
+      "literal_line": 830,
+      "statement_line": 831,
+      "literal_end_line": 836,
+      "sql": "CREATE TRIGGER trg_feedback_iteration_decisions_immutable_update\nbefore update on feedback_iteration_decisions\nbegin\n    select raise(abort, 'feedback iteration decisions are append-only');\nend",
+      "sql_sha256": "a6c1fb3ecb4401f244efae7e8ad27d71a65cad43a9139bd0ee1af14926b79294",
+      "mentions": [
+        "feedback_iteration_decisions"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "<module>",
+      "literal_line": 837,
+      "statement_line": 838,
+      "literal_end_line": 843,
+      "sql": "CREATE TRIGGER trg_feedback_iteration_decisions_immutable_delete\nbefore delete on feedback_iteration_decisions\nbegin\n    select raise(abort, 'feedback iteration decisions are append-only');\nend",
+      "sql_sha256": "357dfa7fbf9cab1defd27b99cae6bc35de7221edaf64211fd1ce3349feeb8adf",
+      "mentions": [
+        "feedback_iteration_decisions"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._migrate_oa_notification_events",
+      "literal_line": 8452,
+      "statement_line": 8453,
+      "literal_end_line": 8487,
+      "sql": "create table if not exists oa_notification_events (\n                id integer primary key autoincrement,\n                event_kind text not null check(\n                    event_kind in ('system_notification', 'chat_reminder')\n                ),\n                requires_reply integer not null default 0,\n                process_instance_id text not null default '',\n                task_id text not null default '',\n                channel text not null default 'dingtalk',\n                conversation_id text not null,\n                conversation_title text not null default '',\n                trigger_message_id text not null,\n                trigger_create_time text not null default '',\n                trigger_sender text not null default '',\n                trigger_text text not null default '',\n                trigger_message_json text not null default '{}',\n                oa_url text not null default '',\n                status text not null default 'pending' check(\n                    status in ('pending', 'adopted', 'sending', 'sent', 'failed', 'ignored')\n                ),\n                claimed_attempt_id integer not null default 0,\n                result_attempt_id integer not null default 0,\n                last_error text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp,\n                sent_at text not null default '',\n                unique(channel, conversation_id, trigger_message_id)\n            );",
+      "sql_sha256": "0078ac26d264738406a236a1360457878cb466cdfb17f10bb19c9d6359782e38",
+      "mentions": [
+        "oa_notification_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._migrate_oa_notification_events",
+      "literal_line": 8452,
+      "statement_line": 8481,
+      "literal_end_line": 8487,
+      "sql": "create index if not exists idx_oa_notification_events_case_status\n                on oa_notification_events(\n                    process_instance_id, task_id, requires_reply, status, id\n                );",
+      "sql_sha256": "5dcdc30dd1fbbfff8dbbd2afb9c8bcd07f508d9c39d3266a34bdd48db7724f25",
+      "mentions": [
+        "oa_notification_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._migrate_oa_notification_events",
+      "literal_line": 8452,
+      "statement_line": 8485,
+      "literal_end_line": 8487,
+      "sql": "create index if not exists idx_oa_notification_events_claim\n                on oa_notification_events(status, claimed_attempt_id, id);",
+      "sql_sha256": "cd51d6eaea82bfdb292349a1b90c23aeac5565e2ee9cdb8f2ba8e937af442d7a",
+      "mentions": [
+        "oa_notification_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 4084,
+      "statement_line": 4085,
+      "literal_end_line": 4096,
+      "sql": "create table if not exists wechat_memory_import_jobs (\n                    id integer primary key autoincrement,\n                    import_run_id text not null,\n                    account_id text not null,\n                    status text not null default 'running'\n                        check(status in ('running', 'completed', 'failed')),\n                    error text not null default '',\n                    created_at text not null default current_timestamp,\n                    finished_at text not null default '',\n                    updated_at text not null default current_timestamp\n                )",
+      "sql_sha256": "14d5da536aef79b8248c684d21715a88a2532435229f6d55be34e0661361d4ea",
+      "mentions": [
+        "wechat_memory_import_jobs"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 4099,
+      "statement_line": 4099,
+      "literal_end_line": 4100,
+      "sql": "create index if not exists idx_wechat_memory_import_jobs_status on wechat_memory_import_jobs(status, id)",
+      "sql_sha256": "d455d431c6377b256477e772b0167a619d43817d477c2d43a0558a3285e602f1",
+      "mentions": [
+        "wechat_memory_import_jobs"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2773,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists feedback_processing_batches (\n                    batch_id text primary key,\n                    status text not null default 'pending'\n                        check (status in ('pending', 'processing', 'resolved')),\n                    requested_count integer not null default 0,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    resolved_at text not null default ''\n                );",
+      "sql_sha256": "70cd75452f936fe92b8a07065b73d0f80cdd9f932e970251acb4d737ce76cc8c",
+      "mentions": [
+        "feedback_processing_batches"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2782,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists feedback_processing_items (\n                    feedback_key text primary key,\n                    current_round_id integer not null default 0,\n                    batch_id text not null default '',\n                    status text not null default 'pending'\n                        check (status in ('pending', 'processing', 'resolved')),\n                    workbench_task_id text not null default '',\n                    workbench_turn_id text not null default '',\n                    attempt_id integer not null default 0,\n                    agent_run_id integer not null default 0,\n                    commit_sha text not null default '',\n                    test_evidence_json text not null default '{}',\n                    restart_evidence_json text not null default '{}',\n                    health_evidence_json text not null default '{}',\n                    note text not null default '',\n                    resolved_at text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                );",
+      "sql_sha256": "f3002c23478525ac5dff1fe2265f9288780021fb7bda955438adda006c1e76fc",
+      "mentions": [
+        "feedback_processing_items"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2801,
+      "literal_end_line": 3056,
+      "sql": "create index if not exists idx_feedback_processing_items_status\n                    on feedback_processing_items(status);",
+      "sql_sha256": "2c823576909ea5804efda49beabb7bb0d2a4e5262ab5006f106204b0b4f14130",
+      "mentions": [
+        "feedback_processing_items"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2803,
+      "literal_end_line": 3056,
+      "sql": "create index if not exists idx_feedback_processing_items_batch\n                    on feedback_processing_items(batch_id);",
+      "sql_sha256": "39232f451a6e01eb2b583a37ff9e76b476c49eb2db61ffd7676f95350ce3746c",
+      "mentions": [
+        "feedback_processing_items"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2805,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists feedback_iteration_decisions (\n                    id integer primary key autoincrement,\n                    batch_id text not null,\n                    workbench_task_id text not null,\n                    workbench_turn_id text not null,\n                    decision_json text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(batch_id) references feedback_processing_batches(batch_id)\n                );",
+      "sql_sha256": "9dc08a037792f5dd68b54da3697e2a93e9153b3a24c32ea91e8c44f211d257ef",
+      "mentions": [
+        "feedback_iteration_decisions",
+        "feedback_processing_batches"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2814,
+      "literal_end_line": 3056,
+      "sql": "create index if not exists idx_feedback_iteration_decisions_batch\n                    on feedback_iteration_decisions(batch_id, id);",
+      "sql_sha256": "acc1d2970c41f0d25fa397590dbe115f5e24351ee05a6f8874512ae89aa566cc",
+      "mentions": [
+        "feedback_iteration_decisions"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2816,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists feedback_iteration_decision_items (\n                    decision_id integer not null,\n                    feedback_key text not null,\n                    round_id integer not null,\n                    primary key(decision_id, feedback_key),\n                    foreign key(decision_id) references feedback_iteration_decisions(id),\n                    foreign key(feedback_key) references feedback_processing_items(feedback_key),\n                    foreign key(round_id) references feedback_processing_rounds(id)\n                );",
+      "sql_sha256": "6b94f1372b4f6fa5d61badebb73ccf42591b4dcb197b5887f2006887043b72b2",
+      "mentions": [
+        "feedback_iteration_decisions",
+        "feedback_processing_items",
+        "feedback_processing_rounds"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2827,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists feedback_processing_rounds (\n                    id integer primary key autoincrement,\n                    feedback_key text not null,\n                    round_number integer not null\n                        check (\n                            typeof(round_number) = 'integer'\n                            and round_number > 0\n                        ),\n                    batch_id text not null default '',\n                    status text not null\n                        check (status in ('processing', 'resolved')),\n                    workbench_task_id text not null default '',\n                    workbench_turn_id text not null default '',\n                    attempt_id integer not null default 0,\n                    agent_run_id integer not null default 0,\n                    commit_sha text not null default '',\n                    test_evidence_json text not null default '{}',\n                    restart_evidence_json text not null default '{}',\n                    health_evidence_json text not null default '{}',\n                    backlog_evidence_json text not null default '{}',\n                    scope_receipt_json text not null default '{}',\n                    receipt_version integer not null default 1\n                        check (receipt_version in (1, 2)),\n                    note text not null default '',\n                    started_at text not null default '',\n                    resolved_at text not null default '',\n                    reopened_at text not null default '',\n                    reopen_reason text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    unique (feedback_key, round_number),\n                    unique (feedback_key, batch_id)\n                );",
+      "sql_sha256": "8b981ba48d34269239a1e8b2d890cb19fbb54da3b057925b63e7ef0ae5b24f32",
+      "mentions": [
+        "feedback_processing_rounds"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2860,
+      "literal_end_line": 3056,
+      "sql": "create index if not exists idx_feedback_processing_rounds_feedback\n                    on feedback_processing_rounds(feedback_key, round_number desc);",
+      "sql_sha256": "3657e29d80fda7f75502c39a8b31e4d9bb80cc0eebd1adf90ab6b3bb4c5e5f67",
+      "mentions": [
+        "feedback_processing_rounds"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2862,
+      "literal_end_line": 3056,
+      "sql": "create index if not exists idx_feedback_processing_rounds_batch\n                    on feedback_processing_rounds(batch_id);",
+      "sql_sha256": "87e23174f0f0720ff100320544cd4579ea2fe3791d296036948d8c2f9b9680ae",
+      "mentions": [
+        "feedback_processing_rounds"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2948,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists business_object_tasks (\n                    business_object_key text primary key,\n                    reply_task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    foreign key(reply_task_id) references tasks(id)\n                );",
+      "sql_sha256": "bcba18ebdb86cf8d6e6bf3900bd9a88efbb7560d1223ab63cb984eb0a4a63b71",
+      "mentions": [
+        "business_object_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2978,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists wechat_memory_import_jobs (\n                    id integer primary key autoincrement,\n                    import_run_id text not null,\n                    account_id text not null,\n                    status text not null default 'running'\n                        check(status in ('running', 'completed', 'failed')),\n                    error text not null default '',\n                    created_at text not null default current_timestamp,\n                    finished_at text not null default '',\n                    updated_at text not null default current_timestamp\n                );",
+      "sql_sha256": "a6ab13356ec098b0f47c7189ae1145adc88c8fc86b338fd4c5b2a38318624253",
+      "mentions": [
+        "wechat_memory_import_jobs"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 2989,
+      "literal_end_line": 3056,
+      "sql": "create index if not exists idx_wechat_memory_import_jobs_status\n                    on wechat_memory_import_jobs(status, id);",
+      "sql_sha256": "45080c9b2a49fe4a9e7a2ec654439dde8bc5941d830ac929ba9da6025ae3faa1",
+      "mentions": [
+        "wechat_memory_import_jobs"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "owner": "AutoReplyStore._initialize",
+      "literal_line": 2750,
+      "statement_line": 3044,
+      "literal_end_line": 3056,
+      "sql": "create table if not exists okr_review_items (\n                    id integer primary key autoincrement,\n                    request_id integer not null,\n                    objective_title text not null,\n                    objective_weight real not null default 0,\n                    kr_title text not null,\n                    kr_weight real not null default 0,\n                    item_json text not null default '{}',\n                    created_at text not null default current_timestamp\n                );",
+      "sql_sha256": "d20f3e00fdf46ca1fe589bcf013c8f8b94409d30e687b73a4c6ad3bbfba424ac",
+      "mentions": [
+        "okr_review_items"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "<module>",
+      "literal_line": 267,
+      "statement_line": 267,
+      "literal_end_line": 268,
+      "sql": "CREATE INDEX idx_workbench_attachments_task_created_id on workbench_attachments(task_id, created_at, id)",
+      "sql_sha256": "df776be660fe372a1773843208fcac1527eb50a7a5e3d723d70b50bc753096e7",
+      "mentions": [
+        "workbench_attachments"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "<module>",
+      "literal_line": 273,
+      "statement_line": 273,
+      "literal_end_line": 274,
+      "sql": "CREATE UNIQUE INDEX idx_workbench_attachments_task_request on workbench_attachments(task_id, client_request_id)",
+      "sql_sha256": "ec075b610584afae1b963ef9fb3393e10d3213e80bbcf9deb5b66398fcda26a9",
+      "mentions": [
+        "workbench_attachments"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "<module>",
+      "literal_line": 279,
+      "statement_line": 279,
+      "literal_end_line": 290,
+      "sql": "CREATE TABLE workbench_attachments (\n                    id text primary key,\n                    task_id text not null,\n                    client_request_id text not null,\n                    filename text not null,\n                    media_type text not null,\n                    size_bytes integer not null check(size_bytes >= 0),\n                    content_sha256 text not null,\n                    storage_path text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references workbench_tasks(id)\n                )",
+      "sql_sha256": "c736c201e6a85417cdd9b09568516255d2f14ebdcdd8d6328274b25a3f633af9",
+      "mentions": [
+        "workbench_attachments"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "<module>",
+      "literal_line": 297,
+      "statement_line": 297,
+      "literal_end_line": 298,
+      "sql": "CREATE INDEX idx_workbench_artifacts_created_id_turn on workbench_artifacts(created_at, id, turn_id)",
+      "sql_sha256": "44a68409855c1540b6dd390563594e3c06d5b9ccde9fd6fc6f12e14399210c5d",
+      "mentions": [
+        "workbench_artifacts"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "<module>",
+      "literal_line": 303,
+      "statement_line": 303,
+      "literal_end_line": 304,
+      "sql": "CREATE INDEX idx_workbench_artifacts_turn_created_id on workbench_artifacts(turn_id, created_at, id)",
+      "sql_sha256": "3b4a647c4a9b75a1cae8079a51d8fe3d12cbbd749448ba9f7774a2fe49235a35",
+      "mentions": [
+        "workbench_artifacts"
+      ]
+    },
+    {
+      "file": "app/workbench_storage.py",
+      "owner": "<module>",
+      "literal_line": 309,
+      "statement_line": 309,
+      "literal_end_line": 317,
+      "sql": "CREATE TABLE workbench_artifacts (\n                    id text primary key,\n                    turn_id text not null,\n                    label text not null,\n                    path text not null,\n                    media_type text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(turn_id) references workbench_turns(id)\n                )",
+      "sql_sha256": "7d9f0af79536d912d0f4f3642488a6bda535eb66deeaf3982aadb9f9bf12a3a3",
+      "mentions": [
+        "workbench_artifacts"
+      ]
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._create_base_tables",
+      "literal_line": 3612,
+      "statement_line": 3613,
+      "literal_end_line": 3631,
+      "sql": "create table if not exists email_agent_classification_tasks (\n                task_id text primary key check(trim(task_id) != ''),\n                channel text not null check(channel='email'),\n                stable_message_identity text not null unique\n                    check(trim(stable_message_identity) != ''),\n                status text not null\n                    check(status in ('pending','running','done','failed')),\n                owner text not null default '',\n                generation integer not null default 0 check(generation >= 0),\n                attempt_count integer not null default 0 check(attempt_count >= 0),\n                lease_expires_at text not null default '',\n                available_at text not null default '',\n                input_json text not null check(json_valid(input_json)),\n                result_json text not null default 'null' check(json_valid(result_json)),\n                error text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp\n            )",
+      "sql_sha256": "904d27d21fb8b6c015d8f61882daac94702d21d585ee94af2535d1c63fd130fc",
+      "mentions": [
+        "email_agent_classification_tasks"
+      ]
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._create_task10_historical_tables",
+      "literal_line": 5937,
+      "statement_line": 5938,
+      "literal_end_line": 5954,
+      "sql": "create table if not exists email_historical_candidates (\n                account_id text not null,\n                folder text not null,\n                model_id text not null,\n                stable_message_identity text not null,\n                normalized_text text not null,\n                provider_message_json text not null check(json_valid(provider_message_json)),\n                uidvalidity integer not null,\n                uid integer not null,\n                state text not null check(state in ('pending','deferred','terminal')),\n                reason text not null default '',\n                attempted_at text not null default '',\n                next_retry_at text not null default '',\n                updated_at text not null,\n                primary key(account_id, folder, model_id, stable_message_identity)\n            )",
+      "sql_sha256": "96676ea3c0b215829525ffb9ed62adf0ace4bd6ae64b68b60710664dbd8fc5ad",
+      "mentions": [
+        "email_historical_candidates"
+      ]
+    },
+    {
+      "file": "app/email_store.py",
+      "owner": "EmailStore._create_indexes_and_triggers",
+      "literal_line": 6578,
+      "statement_line": 6579,
+      "literal_end_line": 6583,
+      "sql": "create index if not exists idx_email_agent_classification_tasks_status\n            on email_agent_classification_tasks(\n                status, available_at, lease_expires_at, task_id\n            )",
+      "sql_sha256": "5b8342a7c53774bbee41a97ab7ca58bc94c5d88dbf56d5489ed314a443c8937d",
+      "mentions": [
+        "email_agent_classification_tasks"
+      ]
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "owner": "<module>",
+      "literal_line": 16,
+      "statement_line": 16,
+      "literal_end_line": 33,
+      "sql": "CREATE TABLE email_agent_classification_tasks (\n                task_id text primary key check(trim(task_id) != ''),\n                channel text not null check(channel='email'),\n                stable_message_identity text not null unique\n                    check(trim(stable_message_identity) != ''),\n                status text not null\n                    check(status in ('pending','running','done','failed')),\n                owner text not null default '',\n                generation integer not null default 0 check(generation >= 0),\n                attempt_count integer not null default 0 check(attempt_count >= 0),\n                lease_expires_at text not null default '',\n                available_at text not null default '',\n                input_json text not null check(json_valid(input_json)),\n                result_json text not null default 'null' check(json_valid(result_json)),\n                error text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp\n            )",
+      "sql_sha256": "8c08e7f99f10d78de9ed358260d12272bb5220a87829fbe21a070b722b6c71d4",
+      "mentions": [
+        "email_agent_classification_tasks"
+      ]
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "owner": "<module>",
+      "literal_line": 284,
+      "statement_line": 284,
+      "literal_end_line": 299,
+      "sql": "CREATE TABLE email_historical_candidates (\n                account_id text not null,\n                folder text not null,\n                model_id text not null,\n                stable_message_identity text not null,\n                normalized_text text not null,\n                provider_message_json text not null check(json_valid(provider_message_json)),\n                uidvalidity integer not null,\n                uid integer not null,\n                state text not null check(state in ('pending','deferred','terminal')),\n                reason text not null default '',\n                attempted_at text not null default '',\n                next_retry_at text not null default '',\n                updated_at text not null,\n                primary key(account_id, folder, model_id, stable_message_identity)\n            )",
+      "sql_sha256": "0ff836ede42acf909d5c3f6a7cc24b60c32047c9fc41242b4e9a7e7c6778f2fa",
+      "mentions": [
+        "email_historical_candidates"
+      ]
+    },
+    {
+      "file": "app/email_current_schema.py",
+      "owner": "<module>",
+      "literal_line": 305,
+      "statement_line": 305,
+      "literal_end_line": 309,
+      "sql": "CREATE INDEX idx_email_agent_classification_tasks_status\n            on email_agent_classification_tasks(\n                status, available_at, lease_expires_at, task_id\n            )",
+      "sql_sha256": "75b6370e75a932a2c1f30ae8ad27cf5f9c88f2688da58135b6121f29aba23b20",
+      "mentions": [
+        "email_agent_classification_tasks"
+      ]
+    }
+  ],
+  "workbench_current_source_auxiliary_generator": {
+    "children": [
+      "workbench_attachments",
+      "workbench_artifacts",
+      "workbench_confirmations"
+    ],
+    "search_table": "create table codex_session_search_index (\n    id integer primary key autoincrement,\n    session_id text not null unique,\n    source_type text not null default '',\n    source_id text not null default '',\n    title text not null default '',\n    created_at text not null default current_timestamp,\n    updated_at text not null default current_timestamp\n)",
+    "search_index": "create index idx_codex_session_search_source on codex_session_search_index(source_type,source_id)",
+    "search_fts": "create virtual table codex_session_search_fts using fts5(\n    title, content='codex_session_search_index', content_rowid='id')",
+    "retire_only": [
+      "workbench_artifacts",
+      "workbench_attachments"
+    ],
+    "retain": [
+      "workbench_confirmations",
+      "codex_session_search_index",
+      "codex_session_search_fts"
+    ]
+  },
+  "email_current_factory_native_queue_entries": [
+    [
+      "email_agent_classification_tasks",
+      "CREATE TABLE email_agent_classification_tasks (\n                task_id text primary key check(trim(task_id) != ''),\n                channel text not null check(channel='email'),\n                stable_message_identity text not null unique\n                    check(trim(stable_message_identity) != ''),\n                status text not null\n                    check(status in ('pending','running','done','failed')),\n                owner text not null default '',\n                generation integer not null default 0 check(generation >= 0),\n                attempt_count integer not null default 0 check(attempt_count >= 0),\n                lease_expires_at text not null default '',\n                available_at text not null default '',\n                input_json text not null check(json_valid(input_json)),\n                result_json text not null default 'null' check(json_valid(result_json)),\n                error text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp\n            )"
+    ],
+    [
+      "email_historical_candidates",
+      "CREATE TABLE email_historical_candidates (\n                account_id text not null,\n                folder text not null,\n                model_id text not null,\n                stable_message_identity text not null,\n                normalized_text text not null,\n                provider_message_json text not null check(json_valid(provider_message_json)),\n                uidvalidity integer not null,\n                uid integer not null,\n                state text not null check(state in ('pending','deferred','terminal')),\n                reason text not null default '',\n                attempted_at text not null default '',\n                next_retry_at text not null default '',\n                updated_at text not null,\n                primary key(account_id, folder, model_id, stable_message_identity)\n            )"
+    ]
+  ],
+  "email_current_factory_native_queue_index_entries": [
+    [
+      "idx_email_agent_classification_tasks_status",
+      "CREATE INDEX idx_email_agent_classification_tasks_status\n            on email_agent_classification_tasks(\n                status, available_at, lease_expires_at, task_id\n            )\n            "
+    ]
+  ],
+  "email_finite_schema_map_owners": [
+    {
+      "name": "_REQUIRED_COLUMN_CONTRACTS",
+      "line": 248,
+      "end_line": 614,
+      "classification_key_lines": [
+        312
+      ],
+      "source_sha256": "c9a218b7830775742ae6811a49737fe6f17bff163368da839f1022d2aa3a2e0e"
+    },
+    {
+      "name": "_REQUIRED_TABLE_CHECKS",
+      "line": 618,
+      "end_line": 859,
+      "classification_key_lines": [
+        646
+      ],
+      "source_sha256": "3a2d31e1986464812fc66e25a199a5bac7994570825f28ec6b03b19869ed97d2"
+    },
+    {
+      "name": "_REQUIRED_PRIMARY_KEYS",
+      "line": 868,
+      "end_line": 901,
+      "classification_key_lines": [
+        874
+      ],
+      "source_sha256": "c0c2eb4ba1213d9727d91aa95913580ab252b3cc105f2d612f555ca8e3be2a60"
+    },
+    {
+      "name": "_REQUIRED_UNIQUE_KEYS",
+      "line": 902,
+      "end_line": 917,
+      "classification_key_lines": [
+        904
+      ],
+      "source_sha256": "2e0a945cd541a1f68b3fcdeb43cd5d26e2ef0dfdc07077e7edbf01b795bdf46b"
+    },
+    {
+      "name": "_REQUIRED_INDEXES",
+      "line": 987,
+      "end_line": 1040,
+      "classification_key_lines": [
+        1001
+      ],
+      "source_sha256": "fec3ab4fb8edd9f14bbda9660d7a01e3b516d976ab3a650d9784ba86235ff0ab"
+    }
+  ],
+  "required_table_names_to_retire": [
+    "feedback_processing_batches",
+    "feedback_processing_items",
+    "feedback_processing_rounds",
+    "wechat_memory_import_jobs",
+    "business_object_tasks",
+    "oa_notification_events",
+    "workbench_attachments",
+    "workbench_artifacts",
+    "feedback_iteration_decisions"
+  ],
+  "required_index_names_owned_by_retired12_or_old_wide_tasks": [
+    "idx_reply_tasks_business_object_key",
+    "idx_feedback_processing_items_status",
+    "idx_feedback_processing_items_batch",
+    "idx_feedback_processing_rounds_feedback",
+    "idx_feedback_processing_rounds_batch",
+    "idx_oa_notification_events_case_status",
+    "idx_oa_notification_events_claim",
+    "idx_weekly_okr_analysis_jobs_identity",
+    "idx_wechat_memory_import_jobs_status",
+    "idx_workbench_artifacts_turn_created_id",
+    "idx_workbench_turns_task_created_id",
+    "idx_workbench_turns_task_sequence",
+    "idx_workbench_tasks_updated_id",
+    "idx_workbench_attachments_task_created_id",
+    "idx_workbench_attachments_task_request",
+    "idx_feedback_iteration_decisions_batch"
+  ],
+  "target_counts": {
+    "source_fields": 267,
+    "stored_columns": 7,
+    "virtual_generated_columns": 268,
+    "indexes": 51,
+    "triggers": 31
+  },
+  "native_index_generator_crosswalk": [
+    {
+      "source_kind": "business_object_tasks",
+      "source_index": "sqlite_autoindex_business_object_tasks_1",
+      "unique": true,
+      "fields": [
+        [
+          "business_object_key",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_0"
+    },
+    {
+      "source_kind": "email_agent_classification_tasks",
+      "source_index": "idx_email_agent_classification_tasks_status",
+      "unique": false,
+      "fields": [
+        [
+          "status",
+          false
+        ],
+        [
+          "available_at",
+          false
+        ],
+        [
+          "lease_expires_at",
+          false
+        ],
+        [
+          "task_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_1"
+    },
+    {
+      "source_kind": "email_agent_classification_tasks",
+      "source_index": "sqlite_autoindex_email_agent_classification_tasks_2",
+      "unique": true,
+      "fields": [
+        [
+          "stable_message_identity",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_2"
+    },
+    {
+      "source_kind": "email_agent_classification_tasks",
+      "source_index": "sqlite_autoindex_email_agent_classification_tasks_1",
+      "unique": true,
+      "fields": [
+        [
+          "task_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_3"
+    },
+    {
+      "source_kind": "email_historical_candidates",
+      "source_index": "sqlite_autoindex_email_historical_candidates_1",
+      "unique": true,
+      "fields": [
+        [
+          "account_id",
+          false
+        ],
+        [
+          "folder",
+          false
+        ],
+        [
+          "model_id",
+          false
+        ],
+        [
+          "stable_message_identity",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_4"
+    },
+    {
+      "source_kind": "feedback_iteration_decisions",
+      "source_index": "idx_feedback_iteration_decisions_batch",
+      "unique": false,
+      "fields": [
+        [
+          "batch_id",
+          false
+        ],
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_5"
+    },
+    {
+      "source_kind": "feedback_processing_batches",
+      "source_index": "sqlite_autoindex_feedback_processing_batches_1",
+      "unique": true,
+      "fields": [
+        [
+          "batch_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_6"
+    },
+    {
+      "source_kind": "feedback_processing_items",
+      "source_index": "idx_feedback_processing_items_batch",
+      "unique": false,
+      "fields": [
+        [
+          "batch_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_7"
+    },
+    {
+      "source_kind": "feedback_processing_items",
+      "source_index": "idx_feedback_processing_items_status",
+      "unique": false,
+      "fields": [
+        [
+          "status",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_8"
+    },
+    {
+      "source_kind": "feedback_processing_items",
+      "source_index": "sqlite_autoindex_feedback_processing_items_1",
+      "unique": true,
+      "fields": [
+        [
+          "feedback_key",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_9"
+    },
+    {
+      "source_kind": "feedback_processing_rounds",
+      "source_index": "idx_feedback_processing_rounds_batch",
+      "unique": false,
+      "fields": [
+        [
+          "batch_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_10"
+    },
+    {
+      "source_kind": "feedback_processing_rounds",
+      "source_index": "idx_feedback_processing_rounds_feedback",
+      "unique": false,
+      "fields": [
+        [
+          "feedback_key",
+          false
+        ],
+        [
+          "round_number",
+          true
+        ]
+      ],
+      "target_index": "idx_task20_native_11"
+    },
+    {
+      "source_kind": "feedback_processing_rounds",
+      "source_index": "sqlite_autoindex_feedback_processing_rounds_2",
+      "unique": true,
+      "fields": [
+        [
+          "feedback_key",
+          false
+        ],
+        [
+          "batch_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_12"
+    },
+    {
+      "source_kind": "feedback_processing_rounds",
+      "source_index": "sqlite_autoindex_feedback_processing_rounds_1",
+      "unique": true,
+      "fields": [
+        [
+          "feedback_key",
+          false
+        ],
+        [
+          "round_number",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_13"
+    },
+    {
+      "source_kind": "oa_notification_events",
+      "source_index": "idx_oa_notification_events_claim",
+      "unique": false,
+      "fields": [
+        [
+          "status",
+          false
+        ],
+        [
+          "claimed_attempt_id",
+          false
+        ],
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_14"
+    },
+    {
+      "source_kind": "oa_notification_events",
+      "source_index": "idx_oa_notification_events_case_status",
+      "unique": false,
+      "fields": [
+        [
+          "process_instance_id",
+          false
+        ],
+        [
+          "task_id",
+          false
+        ],
+        [
+          "requires_reply",
+          false
+        ],
+        [
+          "status",
+          false
+        ],
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_15"
+    },
+    {
+      "source_kind": "oa_notification_events",
+      "source_index": "sqlite_autoindex_oa_notification_events_1",
+      "unique": true,
+      "fields": [
+        [
+          "channel",
+          false
+        ],
+        [
+          "conversation_id",
+          false
+        ],
+        [
+          "trigger_message_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_16"
+    },
+    {
+      "source_kind": "wechat_memory_import_jobs",
+      "source_index": "idx_wechat_memory_import_jobs_status",
+      "unique": false,
+      "fields": [
+        [
+          "status",
+          false
+        ],
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_17"
+    },
+    {
+      "source_kind": "workbench_artifacts",
+      "source_index": "idx_workbench_artifacts_turn_created_id",
+      "unique": false,
+      "fields": [
+        [
+          "turn_id",
+          false
+        ],
+        [
+          "created_at",
+          false
+        ],
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_18"
+    },
+    {
+      "source_kind": "workbench_artifacts",
+      "source_index": "idx_workbench_artifacts_created_id_turn",
+      "unique": false,
+      "fields": [
+        [
+          "created_at",
+          false
+        ],
+        [
+          "id",
+          false
+        ],
+        [
+          "turn_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_19"
+    },
+    {
+      "source_kind": "workbench_artifacts",
+      "source_index": "sqlite_autoindex_workbench_artifacts_1",
+      "unique": true,
+      "fields": [
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_20"
+    },
+    {
+      "source_kind": "workbench_attachments",
+      "source_index": "idx_workbench_attachments_task_request",
+      "unique": true,
+      "fields": [
+        [
+          "task_id",
+          false
+        ],
+        [
+          "client_request_id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_21"
+    },
+    {
+      "source_kind": "workbench_attachments",
+      "source_index": "idx_workbench_attachments_task_created_id",
+      "unique": false,
+      "fields": [
+        [
+          "task_id",
+          false
+        ],
+        [
+          "created_at",
+          false
+        ],
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_22"
+    },
+    {
+      "source_kind": "workbench_attachments",
+      "source_index": "sqlite_autoindex_workbench_attachments_1",
+      "unique": true,
+      "fields": [
+        [
+          "id",
+          false
+        ]
+      ],
+      "target_index": "idx_task20_native_23"
+    }
+  ],
+  "published_index_generator_crosswalk": [
+    {
+      "source_kind": "reply_tasks",
+      "unique": true,
+      "fields": [
+        "channel",
+        "conversation_id",
+        "trigger_message_id"
+      ],
+      "target_index": "idx_task20_published_0"
+    },
+    {
+      "source_kind": "reply_tasks",
+      "unique": false,
+      "fields": [
+        "status",
+        "id"
+      ],
+      "target_index": "idx_task20_published_1"
+    },
+    {
+      "source_kind": "reply_tasks",
+      "unique": false,
+      "fields": [
+        "channel",
+        "status",
+        "id"
+      ],
+      "target_index": "idx_task20_published_2"
+    },
+    {
+      "source_kind": "reply_tasks",
+      "unique": false,
+      "fields": [
+        "business_object_key"
+      ],
+      "target_index": "idx_task20_published_3"
+    },
+    {
+      "source_kind": "reply_task_inputs",
+      "unique": true,
+      "fields": [
+        "channel",
+        "conversation_id",
+        "trigger_message_id",
+        "input_revision_key"
+      ],
+      "target_index": "idx_task20_published_4"
+    },
+    {
+      "source_kind": "reply_task_inputs",
+      "unique": false,
+      "fields": [
+        "reply_task_id",
+        "id"
+      ],
+      "target_index": "idx_task20_published_5"
+    },
+    {
+      "source_kind": "work_summary_inputs",
+      "unique": true,
+      "fields": [
+        "source_type",
+        "source_ref"
+      ],
+      "target_index": "idx_task20_published_6"
+    },
+    {
+      "source_kind": "work_summary_inputs",
+      "unique": false,
+      "fields": [
+        "status",
+        "id"
+      ],
+      "target_index": "idx_task20_published_7"
+    },
+    {
+      "source_kind": "work_summary_inputs",
+      "unique": false,
+      "fields": [
+        "updated_at",
+        "id"
+      ],
+      "target_index": "idx_task20_published_8"
+    },
+    {
+      "source_kind": "meeting_alignment_jobs",
+      "unique": true,
+      "fields": [
+        "meeting_id"
+      ],
+      "target_index": "idx_task20_published_9"
+    },
+    {
+      "source_kind": "meeting_alignment_jobs",
+      "unique": false,
+      "fields": [
+        "status",
+        "available_at",
+        "eligible_at",
+        "id"
+      ],
+      "target_index": "idx_task20_published_10"
+    },
+    {
+      "source_kind": "okr_review_requests",
+      "unique": true,
+      "fields": [
+        "conversation_id",
+        "trigger_message_id"
+      ],
+      "target_index": "idx_task20_published_11"
+    },
+    {
+      "source_kind": "okr_review_requests",
+      "unique": false,
+      "fields": [
+        "status",
+        "id"
+      ],
+      "target_index": "idx_task20_published_12"
+    },
+    {
+      "source_kind": "weekly_okr_analysis_jobs",
+      "unique": true,
+      "fields": [
+        "week_end",
+        "manager_user_id",
+        "source_digest"
+      ],
+      "target_index": "idx_task20_published_13"
+    },
+    {
+      "source_kind": "workbench_tasks",
+      "unique": false,
+      "fields": [
+        "updated_at",
+        "id"
+      ],
+      "target_index": "idx_task20_published_14"
+    },
+    {
+      "source_kind": "workbench_turns",
+      "unique": true,
+      "fields": [
+        "client_request_id"
+      ],
+      "target_index": "idx_task20_published_15"
+    },
+    {
+      "source_kind": "workbench_turns",
+      "unique": false,
+      "fields": [
+        "status",
+        "created_at",
+        "id"
+      ],
+      "target_index": "idx_task20_published_16"
+    },
+    {
+      "source_kind": "workbench_turns",
+      "unique": false,
+      "fields": [
+        "status",
+        "lease_expires_at"
+      ],
+      "target_index": "idx_task20_published_17"
+    },
+    {
+      "source_kind": "workbench_turns",
+      "unique": false,
+      "fields": [
+        "task_id",
+        "created_at",
+        "id"
+      ],
+      "target_index": "idx_task20_published_18"
+    },
+    {
+      "source_kind": "workbench_turns",
+      "unique": true,
+      "fields": [
+        "task_id",
+        "task_sequence"
+      ],
+      "target_index": "idx_task20_published_19"
+    }
+  ],
+  "retained_feedback_target_endpoints": [
+    {
+      "child": "feedback_iteration_decision_items",
+      "child_column": "decision_id",
+      "parent_table": "tasks",
+      "parent_column": "feedback_iteration_decisions__id",
+      "unique_index": "idx_task20_endpoint_feedback_iteration_decisions"
+    },
+    {
+      "child": "feedback_iteration_decision_items",
+      "child_column": "feedback_key",
+      "parent_table": "tasks",
+      "parent_column": "feedback_processing_items__feedback_key",
+      "unique_index": "idx_task20_endpoint_feedback_processing_items"
+    },
+    {
+      "child": "feedback_iteration_decision_items",
+      "child_column": "round_id",
+      "parent_table": "tasks",
+      "parent_column": "feedback_processing_rounds__id",
+      "unique_index": "idx_task20_endpoint_feedback_processing_rounds"
+    }
+  ],
+  "verification": {
+    "target_generated_by_existing_task20_generator_only": true,
+    "memory_only_sqlite_connect_enforced": true,
+    "source_files_hashes_pinned": true,
+    "all_twelve_captured_table_ddl_present": true,
+    "all_nine_caller_patches_hash_pinned": true,
+    "no_caller_conversion_redone": true
+  },
+  "native_source_declaration_authority": {
+    "path": "docs/superpowers/specs/2026-10-16-tasks12-native-source.json",
+    "sha256": "ce785f845f9425a78e5313d9552da60cf4a6ed41a543cbaf13d81a6be80709a7",
+    "json_key": "tables",
+    "tables": {
+      "business_object_tasks": {
+        "objects_json_key": "tables.business_object_tasks.objects",
+        "objects_sha256": "5c27b30027e9193f59ebd753a54330fa54178a4171ced326581ba85b62fa9e9b",
+        "table_ddl_sha256": "94f9bc29490d49e752b320334442a2a115d4a4403184c77af5673139b7a5e8e1"
+      },
+      "email_agent_classification_tasks": {
+        "objects_json_key": "tables.email_agent_classification_tasks.objects",
+        "objects_sha256": "178a9d160500eb7983396cc9117926dde02581b3a5ed5dbe5b78fe4487f844b8",
+        "table_ddl_sha256": "8c08e7f99f10d78de9ed358260d12272bb5220a87829fbe21a070b722b6c71d4"
+      },
+      "email_historical_candidates": {
+        "objects_json_key": "tables.email_historical_candidates.objects",
+        "objects_sha256": "f1490096e0b6a42e8e0ef117d59c7cd81cd8f7a16bd560bb5c86084ed2084dcf",
+        "table_ddl_sha256": "0ff836ede42acf909d5c3f6a7cc24b60c32047c9fc41242b4e9a7e7c6778f2fa"
+      },
+      "feedback_iteration_decisions": {
+        "objects_json_key": "tables.feedback_iteration_decisions.objects",
+        "objects_sha256": "b29d00df029e9339f6b7fe7dc42ef2ec02475924d2fff29135b3ec24b69fb462",
+        "table_ddl_sha256": "2bfc2e8919cae177ad536b82d50a0a1dd62c8217cb8cdc3650a6ff6f3594333f"
+      },
+      "feedback_processing_batches": {
+        "objects_json_key": "tables.feedback_processing_batches.objects",
+        "objects_sha256": "ef6653bbcf5609ea1beec7e9359de62bca0d5b82f60a4c2fc4f3bab21e965e95",
+        "table_ddl_sha256": "29f7a2d9b5e0bebb7cac9c303f6ce274bc38113a23d2fded2063aae8767d2654"
+      },
+      "feedback_processing_items": {
+        "objects_json_key": "tables.feedback_processing_items.objects",
+        "objects_sha256": "6dce4e5973be883d86a61ae77d7974c297210b92add81c2ad0f4828b6f796e96",
+        "table_ddl_sha256": "4af0fbc683fd53ad6d90405dc7f50ab8e1615ad393f4fe6822905f8bf10c87aa"
+      },
+      "feedback_processing_rounds": {
+        "objects_json_key": "tables.feedback_processing_rounds.objects",
+        "objects_sha256": "5ce51e1fc3f7003fd14d8ca7ea66698fb9effca113a6dc2cfc82aeb6129aa77e",
+        "table_ddl_sha256": "ebabb4fe22d3bead5d411d57329a426dd036683bdc7d8e7fdb1f3176a43b4a09"
+      },
+      "oa_notification_events": {
+        "objects_json_key": "tables.oa_notification_events.objects",
+        "objects_sha256": "51ddffb12df792fb78ebfcca480047201a6a8ae0076505ce57a91c23e3f7673e",
+        "table_ddl_sha256": "905a33f277a2690aabfc4e7d6bd8a9d9d48861f2631cb6b053a1f18b798fe452"
+      },
+      "okr_review_items": {
+        "objects_json_key": "tables.okr_review_items.objects",
+        "objects_sha256": "5afc9dbd1870c59af96cbf312b3eb6485116be4e8895d5e25e809f7f4c9c7978",
+        "table_ddl_sha256": "9e7b83fa9d395dea220bab9a939c950bcd15003ff747f8723c28b96afcc7fdfd"
+      },
+      "wechat_memory_import_jobs": {
+        "objects_json_key": "tables.wechat_memory_import_jobs.objects",
+        "objects_sha256": "525d6719acab5ac2084b7b1d0095ff3aecf908873936a1fba4fc8357f58723f3",
+        "table_ddl_sha256": "ef4034cc211b426e3f3de4e491200a13a55cfa8a35341d93e405b826435245f6"
+      },
+      "workbench_artifacts": {
+        "objects_json_key": "tables.workbench_artifacts.objects",
+        "objects_sha256": "ba1c17a2da1c63b95425f39f850bed75765a6a47c8be92af62fa293362d82452",
+        "table_ddl_sha256": "7ff8bf286f63ac24abce99cc39f37b90d6f0f30e10be7f0daac5ebfd1fd3d503"
+      },
+      "workbench_attachments": {
+        "objects_json_key": "tables.workbench_attachments.objects",
+        "objects_sha256": "4b25a054f9454e7cea5ab28692425b462d95418da3b2598a9bc625d045e9ed21",
+        "table_ddl_sha256": "2570d1e020c0cba89b405ba4468c5af7cb2930916ed16e7e1985d114c651e6a2"
+      }
+    }
+  },
+  "retained_feedback_declaration_authority": {
+    "path": "docs/superpowers/specs/2026-10-16-tasks12-native-source.json",
+    "json_key": "retained_coupled_schema_metadata",
+    "families": {
+      "feedback_iteration_decision_items": {
+        "objects_json_key": "retained_coupled_schema_metadata.feedback_iteration_decision_items.objects",
+        "objects_sha256": "7b82939594e8de140d51fedcb042f0f945bc26b8cba76573a98b8e6a6cc45d5b"
+      },
+      "feedback_processing_transitions": {
+        "objects_json_key": "retained_coupled_schema_metadata.feedback_processing_transitions.objects",
+        "objects_sha256": "97ac923a10f9bb5493e9de7229c1e961e11a8f0447ccafbf828d5abac963c01f"
+      },
+      "feedback_events": {
+        "objects_json_key": "retained_coupled_schema_metadata.feedback_events.objects",
+        "objects_sha256": "1ba34dc91fa047d2c83535da6f1b06d847a63aae5fd8429e816026dca94f6422"
+      }
+    }
+  },
+  "old_wide_tasks_generator": {
+    "path": "app/task_storage.py",
+    "call": "create_task_schema(db, include_workbench=True)",
+    "objects_sha256": "475dc89f587cd980eaeaf5d12e5faaccbdd51f50951db840bc3b205421281b2d"
+  },
+  "workbench_source_auxiliary_generator_metadata": {
+    "workbench_attachments": {
+      "object_names": [
+        {
+          "type": "index",
+          "name": "idx_workbench_attachments_task_created_id"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_attachments_task_request"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_workbench_attachments_1"
+        },
+        {
+          "type": "table",
+          "name": "workbench_attachments"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_workbench_attachments_task_id_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_workbench_attachments_task_id_update"
+        }
+      ],
+      "objects_sha256": "4b25a054f9454e7cea5ab28692425b462d95418da3b2598a9bc625d045e9ed21"
+    },
+    "workbench_artifacts": {
+      "object_names": [
+        {
+          "type": "index",
+          "name": "idx_workbench_artifacts_created_id_turn"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_artifacts_turn_created_id"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_workbench_artifacts_1"
+        },
+        {
+          "type": "table",
+          "name": "workbench_artifacts"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_workbench_artifacts_turn_id_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_workbench_artifacts_turn_id_update"
+        }
+      ],
+      "objects_sha256": "ba1c17a2da1c63b95425f39f850bed75765a6a47c8be92af62fa293362d82452"
+    },
+    "workbench_confirmations": {
+      "object_names": [
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_created_id_turn"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_legacy_execution_lease_recovery"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_legacy_execution_owner_recovery"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_legacy_proposer_recovery"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_proposer_recovery"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_ready_intents"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_recovery"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_turn_created_id"
+        },
+        {
+          "type": "index",
+          "name": "idx_workbench_confirmations_turn_status"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_workbench_confirmations_1"
+        },
+        {
+          "type": "table",
+          "name": "workbench_confirmations"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_workbench_confirmations_turn_id_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_tasks_child_workbench_confirmations_turn_id_update"
+        }
+      ],
+      "objects_sha256": "8437142f98cd058b372507d5df5f0c50c7f3ddc320123e5809e044bacf85c44b"
+    },
+    "codex_session_search_index": {
+      "object_names": [
+        {
+          "type": "index",
+          "name": "idx_codex_session_search_source"
+        },
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_codex_session_search_index_1"
+        },
+        {
+          "type": "table",
+          "name": "codex_session_search_index"
+        }
+      ],
+      "objects_sha256": "e2a48f0b6a6aa09f8a027fcc2fda00bb7aa2dfd6337d6b145cdde06a93f9394f"
+    },
+    "codex_session_search_fts": {
+      "object_names": [
+        {
+          "type": "table",
+          "name": "codex_session_search_fts"
+        }
+      ],
+      "objects_sha256": "e7144492d879b4d8f40423927a7151c10989c3b5ba28afe117718ddb0f35be3e"
+    }
+  },
+  "target_field_map_reference": {
+    "path": "docs/superpowers/specs/2026-10-16-tasks20-field-map.json",
+    "json_key": "field_map",
+    "fields": 267,
+    "new_fields": 134,
+    "generator": "app/task20_definitions.py:TASK20_COLUMNS/TASK20_FIELDS/TASK20_PAYLOAD_FIELDS/task20_column",
+    "per_kind_field_count": {
+      "reply_tasks": 26,
+      "reply_task_inputs": 17,
+      "work_summary_inputs": 14,
+      "meeting_alignment_jobs": 23,
+      "okr_review_requests": 16,
+      "weekly_okr_analysis_jobs": 11,
+      "workbench_tasks": 7,
+      "workbench_turns": 19,
+      "business_object_tasks": 4,
+      "email_agent_classification_tasks": 14,
+      "email_historical_candidates": 13,
+      "feedback_iteration_decisions": 6,
+      "feedback_processing_batches": 6,
+      "feedback_processing_items": 16,
+      "feedback_processing_rounds": 23,
+      "oa_notification_events": 21,
+      "okr_review_items": 8,
+      "wechat_memory_import_jobs": 8,
+      "workbench_artifacts": 6,
+      "workbench_attachments": 9
+    }
+  },
+  "target_generated_object_manifest": {
+    "index": {
+      "idx_task20_active_turn": "2a52c0636ddfcce6c5a97a8732861ed414138531ec5d71d2552cb939626d64bb",
+      "idx_task20_batch_endpoint": "67adc3cd4c7ca9168f28a841c80c8984151c7237ad4ee06e08fe640207cbe0bb",
+      "idx_task20_endpoint_feedback_iteration_decisions": "2675e82c998a168ed1b3c6b7733ad09bd325604acdb6faeca1430b47bb34f169",
+      "idx_task20_endpoint_feedback_processing_items": "124d7fd958ddd8832c63e78c09ace5807906f7ff5929036d61cdeb4eff44aa61",
+      "idx_task20_endpoint_feedback_processing_rounds": "8615fb712212d508abcea34a2a639996d1b46ece0dbf3e3d10f3800ad1526db7",
+      "idx_task20_native_0": "17480eb79791d447434daec5a4739ca48a54ad2061396cf19ad285782399eb5e",
+      "idx_task20_native_1": "184df129851833ee88afab43acab6ec85f314c2848861fb045c99bf0cfb3e563",
+      "idx_task20_native_10": "253f143b565c44f514adff8f18a824fb9891328b29ea36aed3c49e168ea2610b",
+      "idx_task20_native_11": "e8cce891db193e7ac56ec5e624f25f6bdb68e842ffe5fa8e1f8e2c65c3c19987",
+      "idx_task20_native_12": "e89308590e64dfce4f04b79f7e7b649c0c9f5f9d102a0da8d493f590bd3ae6f6",
+      "idx_task20_native_13": "5455d20a8416fde494239fba9806cfe81500431e05d1921deea627f9b3d125fd",
+      "idx_task20_native_14": "8fa2282fd4292fc0a07293ceef7884c378eaaad44c45d98aca858aeacef89764",
+      "idx_task20_native_15": "964c9fa604f5e435252210c90b88c2e2d2aca2f6651e7256f7d7ea52c5e36ec4",
+      "idx_task20_native_16": "c7ac1ce842022a5f541a0bb7c1386d79523b1bf0de1871debb6af2145e156ad3",
+      "idx_task20_native_17": "5e35e429ec732b50bff007f16e6af45488878ac870047f338818136b25c4d459",
+      "idx_task20_native_18": "77d6abf37d88d4328354a7d783e1d52118b507ef781ec9446389839a7b92fd8c",
+      "idx_task20_native_19": "9f202e3b07fb0015c1a89e5e5ad9ab905efd0d65d8e14b771af74ff26648ed94",
+      "idx_task20_native_2": "cd8fd9c1e5ff4b7948c6f6e8150eb25e325393cb2047a93a5df3393d728e5d2e",
+      "idx_task20_native_20": "888a258848382c4016edd6b0fb7c0405f5ee084900ca9d054120694da0e26305",
+      "idx_task20_native_21": "5ef84805c0f02a2adea7cb11255d673e83b91b3bf9a3fed7c2ca0779eb5f8a6e",
+      "idx_task20_native_22": "bf1b3169dbdc8501efcd41e0034395cb0b5fef89e3208e3edb1fb8f486434c07",
+      "idx_task20_native_23": "63e3419ef83f0bfb9f5ad8bbec0e09da313121b93bc41ea0f158e16bbc69979d",
+      "idx_task20_native_3": "668a95d21388f185ef7b4eb457cbb09b4e46ad97502b395f99a00ba021ec528d",
+      "idx_task20_native_4": "8887bcf9f65d30fa71dc25ea607f95b0c54e1f991b7096a4941cc4a9f7d04ee4",
+      "idx_task20_native_5": "08fdfa4c19cb6bbfed97a1c2f0abd9065eea1f5e2b19c807b35b2493d514141b",
+      "idx_task20_native_6": "fed7d1d8eed44825268c32c68ee6236c507f907df6c6a3007a87b4b3da8d9886",
+      "idx_task20_native_7": "1f245f84f31fbf37a50bcc782c84c2417cae37eab6197cf3e93322eb9eda268d",
+      "idx_task20_native_8": "7f45ce224f8530b2bf238d3b36b62f4aafddf73ff0862ca0370b08bc7a9d9f40",
+      "idx_task20_native_9": "a19ae55e2dc0a0f046786806b5ccf3547749a7eacc49eb32c2e974fc3d878af0",
+      "idx_task20_numeric_identity": "2d71230602d3787bf03f76f5e83969099b3d4c245e3d8f4067e653635042d867",
+      "idx_task20_published_0": "d36d21c90091bdaa1cfd22bde4b1c3cd4b0bae634b85f553c05ef1fde37ae161",
+      "idx_task20_published_1": "d1f97b2c7c2bf02c8efa729d1669793e1ebfeae01409052036f8515ff5fd3b8f",
+      "idx_task20_published_10": "7a38ae829fe1298407a12e3ed3c7231535b17d0601e9b8e8d6d230464f078be0",
+      "idx_task20_published_11": "7cf93f07d14515070cac8b2b7bb13868e08413f8289a577ae9f5f7771c136957",
+      "idx_task20_published_12": "262fd7fad78be36ce0a4dc8b383de08b60eafb89c7290292e74c0d9c45c42380",
+      "idx_task20_published_13": "92bb041c243213e06222476d9e1170ccba7d610b38cdeaafaeb883829e275cca",
+      "idx_task20_published_14": "8be5d95a2e9b6cc0ec78b2fd54550e9f9b17e935f7dc4b34060cb969c503bbc9",
+      "idx_task20_published_15": "5de5789e20330b85d93e1870cedbb8bade44c82131107f6539f4bc1dfffd9c46",
+      "idx_task20_published_16": "aa62de4ad876d00e903017ff8b267e91e963414c2abe758e474d47e4e22d34bb",
+      "idx_task20_published_17": "fdaef623af0ea65ac55525d95283fd068eab1a0dc1680cf0f120a68c09f221c4",
+      "idx_task20_published_18": "3a38b8a3acd1ba1e6d2dc9fee37e2dcb8cbbf2a854d86b01f626f3cc6c17a32b",
+      "idx_task20_published_19": "81ccf847b0af5759aa0c86c6679b3dfd9cb5f02e2b4b7fd924ea2b7dd445b3cc",
+      "idx_task20_published_2": "b5cb276ead2c49d63891b7df0d3c6179621e9bd78308b0ef5cdaee5dabb66370",
+      "idx_task20_published_3": "4abaa8a1ff26960a6eeebdb017541a74c571ff1520b3eba4b7f672c98ed9b2ba",
+      "idx_task20_published_4": "d27a12948a9276cadd7bf4b6d65ee7a4e38c9ae120404f2fe2fc92f428f08f6e",
+      "idx_task20_published_5": "ff3dcc9a895fe0f829176e07d00b20cbd59b24279c19e6c56194dfd98a3ce707",
+      "idx_task20_published_6": "5e5cc408b5dd10246aa5571ed0d5f82ac7351240705c3ed79161f60087215e65",
+      "idx_task20_published_7": "d09504cd814ebeca9020e707369d3c1f84bf3593371a2a8c35e6f4feeefc49d6",
+      "idx_task20_published_8": "99121059f674d9c277de7f3f74be33d0064cef12ec49a65ea189b47bea9c1021",
+      "idx_task20_published_9": "e39a1b93936a958c5a945730021d6eebd2042ef6002ae3593e4e73ef37f17cce",
+      "idx_task20_text_identity": "9c08b16d6b2c9bb273fc09eee7fbc4992cc0a98b253b302109f6568f8d25bd49"
+    },
+    "table": {
+      "tasks": "903e2952423e3398a6268e14d40ef2a8ea8e6333956ff50b96791933b9ea600d"
+    },
+    "trigger": {
+      "trg_task12_parent_after_business_object_tasks": "30c1f684a3ce20556ab0adbb1edbc4ce93b18cecbc238930a4d39564c86dd55a",
+      "trg_task12_parent_after_workbench_artifacts": "e72d4df2cb1de8216028e01ba378172dd8fd3d5a69926ef382b85b261f71c1bf",
+      "trg_task12_parent_after_workbench_attachments": "dc2044294cf3535ea369e725506af82ea91d3d2b64e0d7985eb93c9a599d99d4",
+      "trg_task12_sequence_feedback_iteration_decisions": "ebe8ce8d0f0a9c95d9c814c43693ea9fa535d2dce7bb1b5b5cd7515413fc776f",
+      "trg_task12_sequence_feedback_processing_rounds": "cf8a5b9ef0db18985cbfc29359c68b1a4a0979a6af59a7a96da035e089863b60",
+      "trg_task12_sequence_oa_notification_events": "7dcf232359ac9872a922ce70ddc6988efc7ef49f88132f17e5e3d709a7854126",
+      "trg_task12_sequence_okr_review_items": "44bd4db657a701c7ce681e59e18aec2a5c3f80f830df60e050d55d3d7074cdcc",
+      "trg_task12_sequence_wechat_memory_import_jobs": "9825c52f1ba339e299d40e0ea5e444fd2a0a9aa131ae4eb0c07c0a56aec47a78",
+      "trg_task20_claimed_input_id_insert": "0730f5a874a28c230d7f20774f9440de52478ce7755b9091ae64010ddf48110b",
+      "trg_task20_claimed_input_id_update": "d2d3995cfc8c0208830523aeb7b0c2303402ed9930ec8dcd3e234c722fe5a98e",
+      "trg_task20_current_input_id_insert": "551e921fb0de51575db4393207aa15f57131e329c2cd9d80dedb0a850d799780",
+      "trg_task20_current_input_id_update": "9f930113199afcb64a26e8add0caf74428ea560915c4a8e8cec050193ed29b61",
+      "trg_task20_decision_delete": "cae533085cb777a313513ae4bc4df7bf88cf53319d8dda0764678129b43c0b2d",
+      "trg_task20_decision_update": "f9960b4f33dc0481e30b505517ca1fe04f6fb46e9ad48eece327ea380f0fd68b",
+      "trg_task20_parent_business_object_tasks_insert": "9cb3fe7d52cad7d6bce4dbf5e3b3e3364bbb0d4b0724aab4d125d389c8a252b3",
+      "trg_task20_parent_business_object_tasks_update": "368214ab6ad10699193eaef928159c0fc0d3b79e2f466587a6f691e20265cc88",
+      "trg_task20_parent_feedback_iteration_decisions_insert": "a77f8293d44a1e73d39d9f5d6f4b89d9c4e2530707ed426edea55c0cce0a876b",
+      "trg_task20_parent_feedback_iteration_decisions_update": "4751bf34be4461e6cd5f517893fe92057c4b9159d9b50819abb3610645982e77",
+      "trg_task20_parent_reply_task_inputs_insert": "97f0368a7fdc077189b10ab2da310e35b3cb554af16aa9e03b9b90091b49730b",
+      "trg_task20_parent_reply_task_inputs_update": "a1a25ceec93a8b1ff75d8199642f086bd697ee1c18899cdaa46986263c7bf388",
+      "trg_task20_parent_workbench_artifacts_insert": "4a139b5b897cbd779635743bf73a3feda96ad9d2c72b4bdc5ce2b4b48d8cd40b",
+      "trg_task20_parent_workbench_artifacts_update": "65288ccf0817e8c727f14c8bfbf35d2d285beb4bf156558c473795b1f65abdf5",
+      "trg_task20_parent_workbench_attachments_insert": "e859a47f7c9ea6b19746cac09af4c82dfdb90f44bfe76dd3c16137ba4a3ad471",
+      "trg_task20_parent_workbench_attachments_update": "d0f19899ee1506c0eca9739f8fb7c1cf5ac12c566952c605c88a030d0d38ea79",
+      "trg_task20_parent_workbench_turns_insert": "a595d26abe662652d18d45cd9452de0106ab1554e44291518b1670b1768ef1db",
+      "trg_task20_parent_workbench_turns_update": "dbd303d77ed0b5c02ddd1133991620adc01bb3449fd61682d04132c2cef8bfe8",
+      "trg_task20_public_key": "d6c78fe692e94af57f2dcfdaa73735c3648347e96811129e7a2818531ee9bab6",
+      "trg_task20_round_insert": "398f89212fd6749f85fd29cf6ca919582a007b84de4255228bf3f677b238024a",
+      "trg_task20_round_update": "5440afbb091ec5c9642e367b4b5793bb31978e9f8c359ed4cdbeb3626e375b52",
+      "trg_task20_type": "b23afb6ce52cdeb679406b0a75266518e91a9c4a1802943cc097c78271fe3f48",
+      "trg_task8_sequence": "c5cc2115bd5b997dd0194211525d66e3d85c0178941f97ba8e9b9a4c57763032"
+    }
+  },
+  "target_metadata_hashes": {
+    "target_table_xinfo": "23c4f3e32e4a04210e58938f1e5e9a4ca738d5e492bc32364d0c2f248ae0d583",
+    "target_index_xinfo": "5d3421e823ccb6780bd6a6f818e2d9eaf96a5c64b03df161fbe9e79cb30e12c2",
+    "target_foreign_key_list": "040b1454e8eddf5bcc4839f43be5fcb6298aec00235c8165b6de9d5bc0e593c2"
+  },
+  "target_generator_reference": {
+    "path": "app/task20_definitions.py",
+    "owner": "create_task20_schema",
+    "line": 931,
+    "table_constant": "TASK20_TABLE_DDL",
+    "index_constant": "TASK20_INDEX_DDL",
+    "trigger_constant": "TASK20_TRIGGER_DDL",
+    "stored_columns": [
+      "id",
+      "record_type",
+      "legacy_key",
+      "payload_json",
+      "parent_id",
+      "current_input_id",
+      "claimed_input_id"
+    ],
+    "table_sql_sha256": "903e2952423e3398a6268e14d40ef2a8ea8e6333956ff50b96791933b9ea600d"
+  },
+  "existing_child_guard_metadata_probe": {
+    "kind": "existing functions and exact retained child DDL with only3approvedFKendpoint substitutions; memory SQLite metadata only",
+    "source_child_table_ddl_sha256": "8264cde6d420cc3595283585a015abc823e1b8242682627c3b78829061b47138",
+    "translated_child_table_ddl_sha256": "83da77c17843cfd4be7e6b8b76294e2ea3bdf9d40ee207d9a9b264077273b1fe",
+    "existing_installer": "app/task_storage.py:install_task_child_guards:833",
+    "wrong_generated_trigger_count": 6,
+    "wrong_generated_triggers": [
+      {
+        "name": "trg_tasks_child_feedback_iteration_decision_items_decision_id_insert",
+        "sql_sha256": "ac4cded7aa9da708c11e5e989d424f08a22559ac465e7dfeffd3575ebbf733e8"
+      },
+      {
+        "name": "trg_tasks_child_feedback_iteration_decision_items_decision_id_update",
+        "sql_sha256": "417b674a8f8308c2ba8c56f4f5e878f9206d1ebfc1cd09090f08315f48e34a3b"
+      },
+      {
+        "name": "trg_tasks_child_feedback_iteration_decision_items_feedback_key_insert",
+        "sql_sha256": "08d2ddea52ff3b9a3296e56e9ac6c0cc91e86a41edec5ea368567b46466ab600"
+      },
+      {
+        "name": "trg_tasks_child_feedback_iteration_decision_items_feedback_key_update",
+        "sql_sha256": "55f973a2d5f8b05a6bd9b7faf7a75891563e56d499aedd67a1ae6f2c11f6c12f"
+      },
+      {
+        "name": "trg_tasks_child_feedback_iteration_decision_items_round_id_insert",
+        "sql_sha256": "88bd7f2b254666f65e4348cda81d406c7902da54f84b2e6df80a51664430a83c"
+      },
+      {
+        "name": "trg_tasks_child_feedback_iteration_decision_items_round_id_update",
+        "sql_sha256": "81e790b122f71b405c677a8d8ad5e1e9c4086f33bd946bf0f747e6d801beebc5"
+      }
+    ],
+    "observed": "existing generic installer generates six guards testing physical tasks.id and reply_tasks for generated public endpoints; no business rows or public methods executed",
+    "one_observed_trigger_sql": "CREATE TRIGGER trg_tasks_child_feedback_iteration_decision_items_decision_id_insert before insert on \"feedback_iteration_decision_items\" when new.\"decision_id\" is not null and exists(select 1 from tasks where id=new.\"decision_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+  },
+  "metadata_digest_encoding": "SHA256 of json.dumps(value,sort_keys=True,separators=(comma,colon),ensure_ascii=False).encode(UTF8); raw SQL digests use exact UTF8 SQL text"
+}

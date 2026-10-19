@@ -1,0 +1,374 @@
+{
+  "native_identity": {
+    "kind": "state-native-identity-and-check-contract-probe",
+    "input_sha256": "604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff",
+    "variants": {
+      "actual": {
+        "tables": {
+          "channel_login_reservations": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "codex_session_locks": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "conversation_runtime_sessions": {
+            "columns": 5,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "conversations": {
+            "columns": 9,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "corpus_sources": {
+            "columns": 2,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "daily_scan_state": {
+            "columns": 5,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "dispatcher_claim_leases": {
+            "columns": 10,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "email_historical_traversals": {
+            "columns": 6,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "email_scan_cursors": {
+            "columns": 6,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "org_cache_metadata": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "org_user_profiles": {
+            "columns": 11,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "runtime_route_pauses": {
+            "columns": 5,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "seen_messages": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "service_state": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "setup_wizard_steps": {
+            "columns": 6,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "wechat_read_state": {
+            "columns": 11,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          }
+        },
+        "checks": [
+          {
+            "table": "dispatcher_claim_leases",
+            "column": "generation",
+            "invalid_value": -1,
+            "refused": true
+          },
+          {
+            "table": "email_scan_cursors",
+            "column": "uidvalidity",
+            "invalid_value": 0,
+            "refused": true
+          },
+          {
+            "table": "email_scan_cursors",
+            "column": "last_seen_uid",
+            "invalid_value": -1,
+            "refused": true
+          }
+        ],
+        "historical_cursor_allows_null_uidvalidity_and_negative_last_seen_uid": true,
+        "single_chat_accepts_two": true,
+        "quick_check": "ok"
+      },
+      "fresh": {
+        "tables": {
+          "channel_login_reservations": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "codex_session_locks": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "conversation_runtime_sessions": {
+            "columns": 5,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "conversations": {
+            "columns": 5,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "corpus_sources": {
+            "columns": 2,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "daily_scan_state": {
+            "columns": 5,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "dispatcher_claim_leases": {
+            "columns": 10,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "email_historical_traversals": {
+            "columns": 6,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "email_scan_cursors": {
+            "columns": 6,
+            "primary_key_nullable_single": false,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "org_cache_metadata": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "org_user_profiles": {
+            "columns": 11,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "runtime_route_pauses": {
+            "columns": 5,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "seen_messages": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "service_state": {
+            "columns": 3,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "setup_wizard_steps": {
+            "columns": 6,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          },
+          "wechat_read_state": {
+            "columns": 11,
+            "primary_key_nullable_single": true,
+            "signed_zero_rowid_and_reuse": true,
+            "duplicate_nonnull_pk_refused": true,
+            "foreign_keys": 0,
+            "triggers": 0
+          }
+        },
+        "checks": [
+          {
+            "table": "dispatcher_claim_leases",
+            "column": "generation",
+            "invalid_value": -1,
+            "refused": true
+          },
+          {
+            "table": "email_scan_cursors",
+            "column": "uidvalidity",
+            "invalid_value": 0,
+            "refused": true
+          },
+          {
+            "table": "email_scan_cursors",
+            "column": "last_seen_uid",
+            "invalid_value": -1,
+            "refused": true
+          }
+        ],
+        "historical_cursor_allows_null_uidvalidity_and_negative_last_seen_uid": true,
+        "single_chat_accepts_two": true,
+        "quick_check": "ok"
+      }
+    },
+    "scope": "Committed metadata only, original actual/fresh DDL in disposable in-memory SQLite, synthetic values only; no current app imports or actual database access."
+  },
+  "archived_public_lease_baseline": {
+    "source_commit": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+    "tests": [
+      "tests/test_consumer_dispatcher.py::test_scheduled_renew_ceil_updates_source_and_ledger_together",
+      "tests/test_consumer_dispatcher.py::test_release_returns_each_claim_to_its_fact_table_without_copying_payload",
+      "tests/test_consumer_dispatcher.py::test_legacy_source_leases_recover_with_fencing_and_monotonic_generation"
+    ],
+    "passed": 3,
+    "pytest_seconds": 3.55,
+    "elapsed_seconds": 6.651,
+    "owned_temporary_absent": true,
+    "scope": "Genuine archived source baseline only: scheduled public renewal, release through five adapters and owner/generation recovery. No target-state acceptance or actual source access."
+  },
+  "unused_conversation_field_values": {
+    "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "source_access": "mode=ro; query_only; one read transaction; closed",
+    "table": "conversations",
+    "rows": 523,
+    "fields": {
+      "in_handoff": {
+        "integer": 523,
+        "non_null": 523,
+        "nonempty_nonzero": 0
+      },
+      "handoff_message_id": {
+        "null": 523,
+        "non_null": 0,
+        "nonempty_nonzero": 0
+      },
+      "handoff_message_create_time": {
+        "null": 523,
+        "non_null": 0,
+        "nonempty_nonzero": 0
+      },
+      "manual_clear_message_id": {
+        "null": 523,
+        "non_null": 0,
+        "nonempty_nonzero": 0
+      }
+    },
+    "boundary": "Frozen source only. No live production read; no row value export; no retirement selected."
+  },
+  "boundary": "Previously executed source-only preflight, preserved as metadata. No state target or retirement selected; not rerun in this recording step.",
+  "proposal_validation": {
+    "native_cases_passed": 172,
+    "pytest_seconds": 1,
+    "wrapper_seconds": 1.104,
+    "negative_controls": {
+      "nullable_key_tightening": "2 intended failures",
+      "text_affinity_alteration": "2 intended failures",
+      "generation_check_removal": "2 intended failures"
+    },
+    "owned_temporaries_absent": true,
+    "scope": "Disposable source-oracle proposal only; repository source test not implemented yet."
+  }
+}

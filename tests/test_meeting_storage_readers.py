@@ -1,5 +1,7 @@
 """Meeting Store readers preserve public IDs across typed storage."""
 
+from tests.test_email_legacy_schema import published_source as published_source
+
 from datetime import datetime, timezone
 import sqlite3
 
@@ -7,15 +9,20 @@ import pytest
 
 from app.run_storage import insert_run
 from app.store import AutoReplyStore
-from app.task_storage import insert_task, task_id_expression
+from app.action_storage import task_delivery_projection
+from app.task_storage import task_id_expression
+from app.task8_storage import task8_insert_parts
 from tests.test_meeting_task_storage import meeting_source
 from tests.test_task_storage_readers import original_rows_source13
-from tests.workbench_caller_fixtures import advance_source16_to_store17, advance_source17_to_store19
+from tests.workbench_caller_fixtures import advance_source16_to_store17, advance_source17_to_current_store
+
+MMW_SQL = task_delivery_projection("meeting_memory_write_events")
+CLAIMS_SQL = task_delivery_projection("meeting_alignment_delivery_claims")
 
 
 def _job(store: AutoReplyStore, *, legacy_key: int, status: str = "pending") -> int:
     with store._connect() as db:
-        cursor = insert_task(db, "meeting_alignment_jobs", {
+        parts = task8_insert_parts("meeting_alignment_jobs", {
             "legacy_key": legacy_key,
             "meeting_id": f"meeting-{legacy_key}",
             "title": "Review",
@@ -24,6 +31,10 @@ def _job(store: AutoReplyStore, *, legacy_key: int, status: str = "pending") -> 
             "status": status,
             "final_message": "Decision" if status == "sent" else "",
         })
+        cursor = db.execute(
+            f"insert into tasks ({parts.columns}) values ({parts.values})",
+            parts.parameters,
+        )
         return int(cursor.lastrowid)
 
 
@@ -42,11 +53,11 @@ def test_meeting_public_job_id_controls_claims_and_delivery_fk(tmp_path):
     assert ready is not None and ready.id == 700 and ready.delivery_claim_token
     with store._connect() as db:
         assert db.execute(
-            "select job_id from meeting_alignment_delivery_claims"
+            f"select job_id from ({CLAIMS_SQL})"
         ).fetchone()[0] == physical
     store.release_ready_to_send_meeting_alignment_claims([ready])
     with store._connect() as db:
-        assert db.execute("select count(*) from meeting_alignment_delivery_claims").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({CLAIMS_SQL})").fetchone()[0] == 0
 
 
 def test_successor_claim_token_survives_stale_release_with_divergent_id(tmp_path):
@@ -65,7 +76,7 @@ def test_successor_claim_token_survives_stale_release_with_divergent_id(tmp_path
     store.release_ready_to_send_meeting_alignment_claims([first])
     with store._connect() as db:
         assert db.execute(
-            "select claim_token from meeting_alignment_delivery_claims where job_id=?",
+            f"select claim_token from ({CLAIMS_SQL}) where job_id=?",
             (physical,),
         ).fetchone()[0] == second.delivery_claim_token
     assert store.get_meeting_alignment_job(700).locked_at == second.locked_at
@@ -100,7 +111,7 @@ def test_meeting_run_and_memory_event_project_public_parent(tmp_path):
     assert event.meeting_job_id == 700
     with store._connect() as db:
         assert db.execute(
-            "select meeting_job_id from meeting_memory_write_events where id=?", (event.id,)
+            f"select meeting_job_id from ({MMW_SQL}) where id=?", (event.id,)
         ).fetchone()[0] == physical
     claimed = store.claim_due_meeting_memory_write_events(
         now="2026-10-12T00:00:00+00:00", limit=1, owner="worker", lease_seconds=60
@@ -122,9 +133,55 @@ def test_bulk_memory_enqueue_uses_physical_fk_and_public_dto(tmp_path):
     )
     assert [event.meeting_job_id for event in events] == [700, 800]
     with store._connect() as db:
-        assert [row[0] for row in db.execute(
-            "select meeting_job_id from meeting_memory_write_events order by id"
-        )] == physical_ids
+        rows = db.execute(
+            f"select id,meeting_job_id,execution_generation from ({MMW_SQL}) order by id"
+        ).fetchall()
+        assert [row["meeting_job_id"] for row in rows] == physical_ids
+        assert [row["id"] for row in rows] == [1, 2]
+        assert len({row["execution_generation"] for row in rows}) == 2
+        assert db.execute(
+            "select seq from sqlite_sequence where name='actions:meeting_memory_write_events'"
+        ).fetchone()[0] == 2
+
+
+def test_bulk_memory_enqueue_atomic_abort_and_allocator_capacity(tmp_path):
+    store = AutoReplyStore(tmp_path / "store.db")
+    physical_ids = [_job(store, legacy_key=key, status="sent") for key in (700, 800)]
+    with store._connect() as db:
+        db.execute(
+            "create trigger abort_second_memory_event before insert on actions "
+            "when new.record_type='meeting_memory_write_events' "
+            "and new.td_meeting_job_id=%d "
+            "begin select raise(abort,'second row'); end" % physical_ids[1]
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="second row"):
+        store.enqueue_sent_meeting_memory_write_events()
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from actions where record_type='meeting_memory_write_events'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select seq from sqlite_sequence where name='actions:meeting_memory_write_events'"
+        ).fetchone() is None
+        db.execute("drop trigger abort_second_memory_event")
+    assert store.enqueue_sent_meeting_memory_write_events() == 2
+    assert store.enqueue_sent_meeting_memory_write_events() == 0
+    _job(store, legacy_key=900, status="sent")
+    with store._connect() as db:
+        db.execute(
+            "update sqlite_sequence set seq=9223372036854775807 "
+            "where name='actions:meeting_memory_write_events'"
+        )
+    with pytest.raises(sqlite3.OperationalError) as error:
+        store.enqueue_sent_meeting_memory_write_events()
+    assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+    with store._connect() as db:
+        assert db.execute(
+            f"select count(*) from ({MMW_SQL})"
+        ).fetchone()[0] == 2
+        assert db.execute(
+            "select seq from sqlite_sequence where name='actions:meeting_memory_write_events'"
+        ).fetchone()[0] == 9223372036854775807
 
 
 def test_group_history_and_calendar_result_keep_public_job_projection(tmp_path):
@@ -146,10 +203,14 @@ def test_group_history_and_calendar_result_keep_public_job_projection(tmp_path):
 def test_meeting_run_public_id_can_differ_from_physical_and_wrong_type_is_excluded(tmp_path):
     store = AutoReplyStore(tmp_path / "store.db")
     with store._connect() as db:
-        wrong_type = insert_task(db, "work_summary_inputs", {
+        parts = task8_insert_parts("work_summary_inputs", {
             "legacy_key": 700, "source_type": "test", "source_ref": "decoy",
             "payload_json": "{}",
-        }).lastrowid
+        })
+        wrong_type = db.execute(
+            f"insert into tasks ({parts.columns}) values ({parts.values})",
+            parts.parameters,
+        ).lastrowid
     physical = _job(store, legacy_key=700)
     assert wrong_type != physical
     with store._connect() as db:
@@ -176,11 +237,11 @@ def test_meeting_run_public_id_can_differ_from_physical_and_wrong_type_is_exclud
     assert store.has_later_meeting_alignment_run(700, 900)
 
 
-def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_path):
+def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_path, published_source):
     path = tmp_path / "source.db"
-    original_rows_source13(path, meeting_source)
+    original_rows_source13(path, published_source, meeting_source)
     advance_source16_to_store17(path)
-    advance_source17_to_store19(path)
+    advance_source17_to_current_store(path, published_source)
     store = AutoReplyStore(path)
 
     orphan = store.get_meeting_alignment_run_metadata(2298)

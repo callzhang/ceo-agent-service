@@ -99,7 +99,7 @@ def _validate_actions(db, include_postfix):
     kinds = storage.ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else storage.ALL_ACTION_TYPES
     observed = 0
     for kind in kinds:
-        rows = db.execute(storage.ACTION_PROJECTIONS[kind]).fetchall()
+        rows = db.execute(storage._projection(kind)).fetchall()
         for row in rows:
             storage._check_fields(kind, dict(zip(storage.SOURCE_COLUMNS[kind], row, strict=True)))
         observed += len(rows)
@@ -153,7 +153,7 @@ def _postfix_rows(db, target=False):
             if [row[0] for row in db.execute(f'pragma integrity_check({kind})')] != ['ok']:
                 raise ValueError(f'invalid postfix source values: {kind}')
         fields = storage.SOURCE_COLUMNS[kind]
-        source = f'({storage.ACTION_PROJECTIONS[kind]})' if target else kind
+        source = f'({storage._projection(kind)})' if target else kind
         rows[kind] = [dict(zip(fields, row, strict=True)) for row in db.execute(
             f"select {','.join(fields)} from {source} order by channel,delivery_key")]
         for values in rows[kind]:

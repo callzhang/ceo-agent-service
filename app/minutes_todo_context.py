@@ -63,13 +63,21 @@ def _todo_entries(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def todo_transcript_excerpts(todos_payload: Any, paragraphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def todo_transcript_excerpts(
+    todos_payload: Any, paragraphs: list[dict[str, Any]], *,
+    transcript_excerpt_format: str = "sentence_v1",
+) -> list[dict[str, Any]]:
     """One excerpt per action item whose position in the recording is known.
 
     An action item without a positive `createdTime`, or one past the end of the
     transcript, has no excerpt: its position is not known, and guessing one would
     put unrelated speech next to it.
     """
+    if transcript_excerpt_format not in ("sentence_v1", "paragraph_v1"):
+        raise ValueError("unknown transcript excerpt format")
+    # These are explicit historical source serializations, never alternative
+    # guesses tried after a body mismatch. New producer calls use sentence_v1.
+    lines = _lines if transcript_excerpt_format == "sentence_v1" else _paragraph_lines
     timed = [
         (start, end, paragraph)
         for paragraph in paragraphs
@@ -90,7 +98,7 @@ def todo_transcript_excerpts(todos_payload: Any, paragraphs: list[dict[str, Any]
         excerpts.append({
             "todo": title,
             "created_ms": created,
-            "lines": [line for _start, _end, paragraph in window for line in _lines(paragraph)],
+            "lines": [line for _start, _end, paragraph in window for line in lines(paragraph)],
         })
     return excerpts
 
@@ -108,3 +116,10 @@ def _lines(paragraph: dict[str, Any]) -> list[str]:
     speaker = str(paragraph.get("nickName") or "").strip()
     text = str(paragraph.get("paragraph") or "").strip()
     return [f"{speaker}：{sentence.strip()}" for sentence in _SENTENCE_END.split(text) if sentence.strip()] or [f"{speaker}：{text}"]
+
+
+def _paragraph_lines(paragraph: dict[str, Any]) -> list[str]:
+    """Exact pre-sentence-split producer serialization (f3faae9f)."""
+    speaker = str(paragraph.get("nickName") or "").strip()
+    text = str(paragraph.get("paragraph") or "").strip()
+    return [f"{speaker}：{text}"]

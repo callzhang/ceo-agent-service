@@ -325,7 +325,7 @@ def test_migrated_attempt_public_lookup_and_mutation_use_legacy_namespace(tmp_pa
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-13.5"
+            == "2026-10-14.1"
         )
     reopened = AutoReplyStore(store.path)
     assert reopened.get_agent_runtime_attempt(7).status == "failed"
@@ -762,7 +762,7 @@ def test_fresh_store_bootstrap_on_email_only_database_keeps_email_schema_and_row
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-13.5"
+            == "2026-10-14.1"
         )
 
 

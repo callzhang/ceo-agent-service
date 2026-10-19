@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-16",
+  "scope": "unselected State Store lifecycle/recovery proposal",
+  "reviewed_head": "3a895433",
+  "dao_patch_sha256": "50b6d019225761995b922c59e5406d42445fbfbfb958a9f8232b224468a152c1",
+  "lifecycle_patch_sha256": "159213ceb3dfb44a90ca8162f5cc24611727dfbaa9578a0bcc0e8b7bc52f08aa",
+  "dao_store_sha256": "062e5aac9e7c7b1c0eac918fb74e293266998f0874de95bce2243de7410fd8fc",
+  "candidate_store_sha256": "356b8c93020e947d05833b37aedfed4c1f203c36890213c0734c2faf98921f90",
+  "changed_existing_methods": 20,
+  "existing_prior_dao_methods": 27,
+  "signatures_unchanged": true,
+  "other_method_asts_unchanged": true,
+  "additional_import": "update_state_rows",
+  "runtime": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4"
+  },
+  "spec": {
+    "verdict": "PASS_proposal_only",
+    "observations": 106,
+    "per_variant": {
+      "rename": 3,
+      "recovery": 7,
+      "recovery_late_abort": 3,
+      "sessions_hash_legacy": 20,
+      "locks": 10,
+      "pauses": 10
+    },
+    "variants": [
+      "actual",
+      "fresh"
+    ],
+    "limits": [
+      "lightweight connection harness",
+      "skip compaction follows original active runtime-attempt early return",
+      "no file connection lifecycle or retry contention"
+    ]
+  },
+  "quality": {
+    "verdict": "PASS_proposal_only",
+    "independent_paired_scenarios": 44,
+    "simultaneous_owner_scenarios": 24,
+    "acquire_calls": 96,
+    "blocked_writer_scenarios": 6,
+    "blocked_writer_calls": 12,
+    "session_scalar_scenarios": 12,
+    "late_legacy_mirror_abort_scenarios": 2,
+    "all_owned_temporary_directories_removed": true
+  },
+  "runtime_selected": false,
+  "complete_store_state_closure": false,
+  "not_proven": [
+    "constructors",
+    "combined actual copied database",
+    "complete service workflows",
+    "native CLI",
+    "final ten core tables plus ledger",
+    "production schema change"
+  ],
+  "continuation": "Preserve published main454bb72a by isolated-branch normal merge, regenerate proposals with exact reviewed method bytes and updated source hashes, then complete remaining Store and external State caller/constructor/publication closure together."
+}

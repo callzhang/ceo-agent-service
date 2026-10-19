@@ -1090,11 +1090,6 @@ class EmailModelRegistry:
             online = _read_online_control(self)
             if online.get("model_id"):
                 protected.add(str(online["model_id"]))
-            for transition in reversed(online.get("mode_transitions", [])):
-                previous_id = transition.get("target_model_id")
-                if previous_id and previous_id != online.get("model_id"):
-                    protected.add(str(previous_id))
-                    break
             candidates = [
                 record for record in models
                 if record.status == "candidate" and record.metadata.model_id not in protected

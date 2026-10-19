@@ -11,7 +11,6 @@ class StrictModel(BaseModel):
 class TurnStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
-    WAITING_CONFIRMATION = "waiting_confirmation"
     COMPLETED = "completed"
     STOPPED = "stopped"
     FAILED = "failed"
@@ -55,7 +54,6 @@ class WorkbenchEvent(StrictModel):
         "tool_completed",
         "file_changed",
         "artifact_created",
-        "confirmation_required",
         "status_changed",
         "turn_completed",
         "turn_failed",
@@ -82,28 +80,3 @@ class WorkbenchAttachment(StrictModel):
     created_at: str
 
 
-class ConfirmationStatus(StrEnum):
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    CANCELLED = "cancelled"
-    EXECUTED = "executed"
-    FAILED = "failed"
-
-
-class WorkbenchConfirmation(StrictModel):
-    id: str
-    turn_id: str
-    action_kind: str
-    target: str
-    summary: str
-    risk: str
-    canonical_capability: str = ""
-    canonical_operation: str = ""
-    canonical_targets_json: str = "[]"
-    arguments_json: str
-    status: ConfirmationStatus
-    decision_requested: str = ""
-    decision_requested_at: str = ""
-    result_json: str = ""
-    created_at: str
-    decided_at: str = ""

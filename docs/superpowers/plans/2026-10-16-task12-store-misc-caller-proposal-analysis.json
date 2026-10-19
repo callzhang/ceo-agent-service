@@ -1,0 +1,767 @@
+{
+  "status": "complete unselected proposal; static copied-code verification only",
+  "python": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python",
+  "python_version": "3.13.12 (main, Mar 25 2026, 02:48:22) [Clang 22.1.1 ]",
+  "source_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+  "existing8_candidate_sha256": "f4b3b9ddf3341c48b9fe77b6fbfa81fbd376f3549fe4d086f45efe2a37950bec",
+  "candidate_sha256": "705c8f0e73ff9df17cb5f8118da96e99f0b520f9b0c4b6895e67b05a94cdd849",
+  "prerequisite_patch": "docs/superpowers/plans/2026-10-16-task8-store-caller-proposal.patch",
+  "prerequisite_patch_sha256": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+  "patch_sha256": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+  "verification": {
+    "sequential_apply_check": true,
+    "candidate_byte_exact": true,
+    "ast_parse": true,
+    "pinned_compile": true,
+    "constructor_free_import": true,
+    "ruff": true,
+    "all_method_signatures_decorators_return_annotations_exact": true,
+    "native_transaction_sites_context_managers_exact": true,
+    "total_methods": 779,
+    "new_changed_methods": 19,
+    "unrelated_existing8_candidate_method_asts_exact": 760,
+    "prior8_changed_methods": 91,
+    "prior8_changed_methods_exact": 86,
+    "prior8_mixed_methods_extended": [
+      "AutoReplyStore._ensure_business_reply_task",
+      "AutoReplyStore._runtime_operation_parent_exists",
+      "AutoReplyStore.reconcile_valid_needs_human_projections",
+      "AutoReplyStore.replace_pending_single_chat_reply_task_trigger",
+      "AutoReplyStore.skip_failed_reply_tasks_superseded_by_terminal_business_object"
+    ],
+    "set_parts_calls": 5,
+    "insert_task12_calls": 6,
+    "projection_calls": 19,
+    "native_runtime_table_reference_residuals": [],
+    "native_returning_in_scope": 0,
+    "lastrowid_contracts": [
+      "record_okr_review_item",
+      "begin_wechat_memory_import_job"
+    ],
+    "source_mutation_statement_count": 14,
+    "public_method_or_database_execution": false,
+    "all_non_store_module_statements_exact_except_new_import": true,
+    "all_prior_task8_helper_call_asts_exact": true,
+    "auto_reply_store_direct_method_count": 776,
+    "codex_session_lock_direct_method_count": 3,
+    "line_basis": "record SQL line anchors are after existing8 prerequisite; source_method_line points to original ce66 source",
+    "direct_four_family_mutations": 13,
+    "mixed_existing8_mutation_with_new_projection": 1,
+    "native_projection_occurrences_by_kind": {
+      "business_object_tasks": 14,
+      "oa_notification_events": 3,
+      "wechat_memory_import_jobs": 2,
+      "okr_review_items": 0
+    }
+  },
+  "changed_methods": [
+    {
+      "name": "AutoReplyStore._ensure_business_reply_task",
+      "original_line": 9094,
+      "prerequisite_line": 9100,
+      "candidate_line": 9101
+    },
+    {
+      "name": "AutoReplyStore._operation_logs_base_query",
+      "original_line": 29687,
+      "prerequisite_line": 29302,
+      "candidate_line": 29194
+    },
+    {
+      "name": "AutoReplyStore._runtime_operation_parent_exists",
+      "original_line": 10344,
+      "prerequisite_line": 10275,
+      "candidate_line": 10206
+    },
+    {
+      "name": "AutoReplyStore.adopt_oa_notification_events",
+      "original_line": 9329,
+      "prerequisite_line": 9301,
+      "candidate_line": 9264
+    },
+    {
+      "name": "AutoReplyStore.begin_wechat_memory_import_job",
+      "original_line": 27984,
+      "prerequisite_line": 27599,
+      "candidate_line": 27497
+    },
+    {
+      "name": "AutoReplyStore.claim_oa_reminder_target",
+      "original_line": 9376,
+      "prerequisite_line": 9348,
+      "candidate_line": 9295
+    },
+    {
+      "name": "AutoReplyStore.count_current_unresolved_problem_attempts",
+      "original_line": 24617,
+      "prerequisite_line": 24302,
+      "candidate_line": 24200
+    },
+    {
+      "name": "AutoReplyStore.finish_wechat_memory_import_job",
+      "original_line": 28001,
+      "prerequisite_line": 27616,
+      "candidate_line": 27510
+    },
+    {
+      "name": "AutoReplyStore.get_reply_task_for_business_object",
+      "original_line": 14203,
+      "prerequisite_line": 14035,
+      "candidate_line": 13965
+    },
+    {
+      "name": "AutoReplyStore.list_current_unresolved_problem_attempt_summaries",
+      "original_line": 24498,
+      "prerequisite_line": 24183,
+      "candidate_line": 24081
+    },
+    {
+      "name": "AutoReplyStore.list_current_unresolved_problem_attempts",
+      "original_line": 24371,
+      "prerequisite_line": 24056,
+      "candidate_line": 23954
+    },
+    {
+      "name": "AutoReplyStore.list_pending_oa_reminder_targets",
+      "original_line": 9349,
+      "prerequisite_line": 9321,
+      "candidate_line": 9278
+    },
+    {
+      "name": "AutoReplyStore.mark_oa_reminder_failed",
+      "original_line": 9405,
+      "prerequisite_line": 9377,
+      "candidate_line": 9313
+    },
+    {
+      "name": "AutoReplyStore.mark_oa_reminder_sent",
+      "original_line": 9390,
+      "prerequisite_line": 9362,
+      "candidate_line": 9303
+    },
+    {
+      "name": "AutoReplyStore.reconcile_valid_needs_human_projections",
+      "original_line": 23305,
+      "prerequisite_line": 23004,
+      "candidate_line": 22902
+    },
+    {
+      "name": "AutoReplyStore.record_oa_notification_event",
+      "original_line": 9266,
+      "prerequisite_line": 9238,
+      "candidate_line": 9229
+    },
+    {
+      "name": "AutoReplyStore.record_okr_review_item",
+      "original_line": 17728,
+      "prerequisite_line": 17458,
+      "candidate_line": 17388
+    },
+    {
+      "name": "AutoReplyStore.replace_pending_single_chat_reply_task_trigger",
+      "original_line": 18423,
+      "prerequisite_line": 18115,
+      "candidate_line": 18025
+    },
+    {
+      "name": "AutoReplyStore.skip_failed_reply_tasks_superseded_by_terminal_business_object",
+      "original_line": 23405,
+      "prerequisite_line": 23102,
+      "candidate_line": 23000
+    }
+  ],
+  "source_mutations": [
+    {
+      "method": "AutoReplyStore._ensure_business_reply_task",
+      "line": 9161,
+      "source_sql": "delete from business_object_tasks where business_object_key=?",
+      "parameters_ast": "(provisional_key,)"
+    },
+    {
+      "method": "AutoReplyStore._ensure_business_reply_task",
+      "line": 9165,
+      "source_sql": "insert into business_object_tasks (business_object_key, reply_task_id) values (?, ?)",
+      "parameters_ast": "(key, task_id)"
+    },
+    {
+      "method": "AutoReplyStore._ensure_business_reply_task",
+      "line": 9180,
+      "source_sql": "insert into business_object_tasks (business_object_key, reply_task_id) values (?, ?)",
+      "parameters_ast": "(key, task_id)"
+    },
+    {
+      "method": "AutoReplyStore.record_oa_notification_event",
+      "line": 9264,
+      "source_sql": "\n                insert or ignore into oa_notification_events (\n                    event_kind, requires_reply, process_instance_id, task_id,\n                    channel, conversation_id, conversation_title,\n                    trigger_message_id, trigger_create_time, trigger_sender,\n                    trigger_text, trigger_message_json, oa_url, status\n                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+      "parameters_ast": "(event_kind, int(reply_required), process_instance_id.strip(), task_id.strip(), channel, conversation_id, conversation_title, trigger_message_id, trigger_create_time, trigger_sender, trigger_text, trigger_message_json, oa_url, 'pending' if reply_required else 'ignored')"
+    },
+    {
+      "method": "AutoReplyStore.adopt_oa_notification_events",
+      "line": 9309,
+      "source_sql": "\n                update oa_notification_events\n                set task_id=?, status='adopted', updated_at=current_timestamp\n                where requires_reply=1 and process_instance_id=?\n                  and status in ('pending', 'adopted')\n                  and (task_id='' or task_id=?)\n                ",
+      "parameters_ast": "(node_id, process_id, node_id)"
+    },
+    {
+      "method": "AutoReplyStore.claim_oa_reminder_target",
+      "line": 9350,
+      "source_sql": "\n                update oa_notification_events\n                set status='sending', claimed_attempt_id=?, updated_at=current_timestamp\n                where id=? and requires_reply=1\n                  and status in ('pending', 'adopted')\n                  and claimed_attempt_id=0\n                ",
+      "parameters_ast": "(attempt_id, event_id)"
+    },
+    {
+      "method": "AutoReplyStore.mark_oa_reminder_sent",
+      "line": 9366,
+      "source_sql": "\n                update oa_notification_events\n                set status='sent', result_attempt_id=?, sent_at=current_timestamp,\n                    updated_at=current_timestamp\n                where id=? and status='sending' and claimed_attempt_id=?\n                ",
+      "parameters_ast": "(result_attempt_id, event_id, attempt_id)"
+    },
+    {
+      "method": "AutoReplyStore.mark_oa_reminder_failed",
+      "line": 9381,
+      "source_sql": "\n                update oa_notification_events\n                set status='adopted', claimed_attempt_id=0, last_error=?,\n                    updated_at=current_timestamp\n                where id=? and status='sending' and claimed_attempt_id=?\n                ",
+      "parameters_ast": "(error, event_id, attempt_id)"
+    },
+    {
+      "method": "AutoReplyStore.record_okr_review_item",
+      "line": 17469,
+      "source_sql": "\n                insert into okr_review_items (\n                    request_id,\n                    objective_title,\n                    objective_weight,\n                    kr_title,\n                    kr_weight,\n                    item_json\n                )\n                values (?, ?, ?, ?, ?, ?)\n                ",
+      "parameters_ast": "(request_id, objective_title, objective_weight, kr_title, kr_weight, item_json)"
+    },
+    {
+      "method": "AutoReplyStore.replace_pending_single_chat_reply_task_trigger",
+      "line": 18206,
+      "source_sql": "update business_object_tasks set reply_task_id=? where reply_task_id in ()",
+      "parameters_ast": "(task_id, *duplicate_ids)"
+    },
+    {
+      "method": "AutoReplyStore.replace_pending_single_chat_reply_task_trigger",
+      "line": 18226,
+      "source_sql": "insert or ignore into business_object_tasks (business_object_key, reply_task_id) values (?, ?)",
+      "parameters_ast": "(reply_business_object_key(channel=channel, conversation_id=conversation_id, trigger_message_id=trigger_message_id), task_id)"
+    },
+    {
+      "method": "AutoReplyStore.skip_failed_reply_tasks_superseded_by_terminal_business_object",
+      "line": 23119,
+      "source_sql": "Existing8 native UPDATE tasks as historical; business_object_tasks current_mapping EXISTS source relation only is replaced in this proposal.",
+      "parameters_ast": null
+    },
+    {
+      "method": "AutoReplyStore.begin_wechat_memory_import_job",
+      "line": 27609,
+      "source_sql": "insert into wechat_memory_import_jobs (import_run_id, account_id, status) values (?, ?, 'running')",
+      "parameters_ast": "(import_run_id, account_id)"
+    },
+    {
+      "method": "AutoReplyStore.finish_wechat_memory_import_job",
+      "line": 27632,
+      "source_sql": "update wechat_memory_import_jobs set status=?, error=?, finished_at=current_timestamp, updated_at=current_timestamp where id=? and status='running'",
+      "parameters_ast": "(status, error, job_id)"
+    }
+  ],
+  "coverage": {
+    "runtime_owners": [
+      "_ensure_business_reply_task",
+      "record_oa_notification_event",
+      "adopt_oa_notification_events",
+      "list_pending_oa_reminder_targets",
+      "claim_oa_reminder_target",
+      "mark_oa_reminder_sent",
+      "mark_oa_reminder_failed",
+      "_runtime_operation_parent_exists",
+      "get_reply_task_for_business_object",
+      "record_okr_review_item",
+      "replace_pending_single_chat_reply_task_trigger",
+      "reconcile_valid_needs_human_projections",
+      "skip_failed_reply_tasks_superseded_by_terminal_business_object",
+      "list_current_unresolved_problem_attempts",
+      "list_current_unresolved_problem_attempt_summaries",
+      "count_current_unresolved_problem_attempts",
+      "begin_wechat_memory_import_job",
+      "finish_wechat_memory_import_job",
+      "_operation_logs_base_query"
+    ],
+    "historical_owners": [
+      {
+        "method": "_initialize",
+        "line": 2733,
+        "end_line": 4216
+      },
+      {
+        "method": "_migrate_oa_notification_events",
+        "line": 8455,
+        "end_line": 8493
+      }
+    ],
+    "records": [
+      {
+        "method": "_ensure_business_reply_task",
+        "line": 9130,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 9094,
+        "source_projection_anchors": [
+          "select reply_task_id from business_object_tasks where business_object_key=?"
+        ]
+      },
+      {
+        "method": "_ensure_business_reply_task",
+        "line": 9136,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 9094,
+        "source_projection_anchors": [
+          "select business_object_key, reply_task_id from business_object_tasks where business_object_key like ?"
+        ]
+      },
+      {
+        "method": "_ensure_business_reply_task",
+        "line": 9147,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 9094,
+        "source_projection_anchors": [
+          "select reply_task_id from business_object_tasks where business_object_key=?"
+        ]
+      },
+      {
+        "method": "_ensure_business_reply_task",
+        "line": 9161,
+        "operation": "delete",
+        "kind": "business_object_tasks",
+        "source_where": "business_object_key=?",
+        "source_method_line": 9094
+      },
+      {
+        "method": "_ensure_business_reply_task",
+        "line": 9165,
+        "operation": "insert",
+        "kind": "business_object_tasks",
+        "fields": [
+          "business_object_key",
+          "reply_task_id"
+        ],
+        "source_mode": "plain",
+        "returning": false,
+        "source_lastrowid": false,
+        "source_method_line": 9094
+      },
+      {
+        "method": "_ensure_business_reply_task",
+        "line": 9180,
+        "operation": "insert",
+        "kind": "business_object_tasks",
+        "fields": [
+          "business_object_key",
+          "reply_task_id"
+        ],
+        "source_mode": "plain",
+        "returning": false,
+        "source_lastrowid": false,
+        "source_method_line": 9094
+      },
+      {
+        "method": "record_oa_notification_event",
+        "line": 9264,
+        "operation": "insert",
+        "kind": "oa_notification_events",
+        "fields": [
+          "event_kind",
+          "requires_reply",
+          "process_instance_id",
+          "task_id",
+          "channel",
+          "conversation_id",
+          "conversation_title",
+          "trigger_message_id",
+          "trigger_create_time",
+          "trigger_sender",
+          "trigger_text",
+          "trigger_message_json",
+          "oa_url",
+          "status"
+        ],
+        "source_mode": "or ignore",
+        "returning": false,
+        "source_lastrowid": false,
+        "source_method_line": 9266
+      },
+      {
+        "method": "record_oa_notification_event",
+        "line": 9291,
+        "operation": "projection_read",
+        "kinds": [
+          "oa_notification_events"
+        ],
+        "source_method_line": 9266,
+        "source_projection_anchors": [
+          "select id from oa_notification_events"
+        ]
+      },
+      {
+        "method": "adopt_oa_notification_events",
+        "line": 9309,
+        "operation": "payload_update",
+        "kind": "oa_notification_events",
+        "fields": [
+          "task_id",
+          "status",
+          "updated_at"
+        ],
+        "source_where": "requires_reply=1 and process_instance_id=?\n                  and status in ('pending', 'adopted')\n                  and (task_id='' or task_id=?)\n                ",
+        "source_rhs": {
+          "task_id": "?",
+          "status": "'adopted'",
+          "updated_at": "current_timestamp"
+        },
+        "source_method_line": 9329
+      },
+      {
+        "method": "list_pending_oa_reminder_targets",
+        "line": 9329,
+        "operation": "projection_read",
+        "kinds": [
+          "oa_notification_events"
+        ],
+        "source_method_line": 9349,
+        "source_projection_anchors": [
+          "select * from oa_notification_events"
+        ]
+      },
+      {
+        "method": "list_pending_oa_reminder_targets",
+        "line": 9340,
+        "operation": "projection_read",
+        "kinds": [
+          "oa_notification_events"
+        ],
+        "source_method_line": 9349,
+        "source_projection_anchors": [
+          "select * from oa_notification_events"
+        ]
+      },
+      {
+        "method": "claim_oa_reminder_target",
+        "line": 9350,
+        "operation": "payload_update",
+        "kind": "oa_notification_events",
+        "fields": [
+          "status",
+          "claimed_attempt_id",
+          "updated_at"
+        ],
+        "source_where": "id=? and requires_reply=1\n                  and status in ('pending', 'adopted')\n                  and claimed_attempt_id=0\n                ",
+        "source_rhs": {
+          "status": "'sending'",
+          "claimed_attempt_id": "?",
+          "updated_at": "current_timestamp"
+        },
+        "source_method_line": 9376
+      },
+      {
+        "method": "mark_oa_reminder_sent",
+        "line": 9366,
+        "operation": "payload_update",
+        "kind": "oa_notification_events",
+        "fields": [
+          "status",
+          "result_attempt_id",
+          "sent_at",
+          "updated_at"
+        ],
+        "source_where": "id=? and status='sending' and claimed_attempt_id=?\n                ",
+        "source_rhs": {
+          "status": "'sent'",
+          "result_attempt_id": "?",
+          "sent_at": "current_timestamp",
+          "updated_at": "current_timestamp"
+        },
+        "source_method_line": 9390
+      },
+      {
+        "method": "mark_oa_reminder_failed",
+        "line": 9381,
+        "operation": "payload_update",
+        "kind": "oa_notification_events",
+        "fields": [
+          "status",
+          "claimed_attempt_id",
+          "last_error",
+          "updated_at"
+        ],
+        "source_where": "id=? and status='sending' and claimed_attempt_id=?\n                ",
+        "source_rhs": {
+          "status": "'adopted'",
+          "claimed_attempt_id": "0",
+          "last_error": "?",
+          "updated_at": "current_timestamp"
+        },
+        "source_method_line": 9405
+      },
+      {
+        "method": "_runtime_operation_parent_exists",
+        "line": 10373,
+        "operation": "projection_read",
+        "kinds": [
+          "wechat_memory_import_jobs"
+        ],
+        "source_method_line": 10344,
+        "source_projection_anchors": [
+          "select 1 from wechat_memory_import_jobs where id=? and status='running'"
+        ]
+      },
+      {
+        "method": "get_reply_task_for_business_object",
+        "line": 14040,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 14203,
+        "source_projection_anchors": [
+          "select tasks.* from business_object_tasks as current_object"
+        ]
+      },
+      {
+        "method": "record_okr_review_item",
+        "line": 17469,
+        "operation": "insert",
+        "kind": "okr_review_items",
+        "fields": [
+          "request_id",
+          "objective_title",
+          "objective_weight",
+          "kr_title",
+          "kr_weight",
+          "item_json"
+        ],
+        "source_mode": "plain",
+        "returning": false,
+        "source_lastrowid": true,
+        "source_method_line": 17728
+      },
+      {
+        "method": "replace_pending_single_chat_reply_task_trigger",
+        "line": 18206,
+        "operation": "structural_bulk_update",
+        "kind": "business_object_tasks",
+        "fields": [
+          "reply_task_id"
+        ],
+        "source_where": "reply_task_id in (__OLD_EXPRESSION_0__)",
+        "source_method_line": 18423
+      },
+      {
+        "method": "replace_pending_single_chat_reply_task_trigger",
+        "line": 18226,
+        "operation": "insert",
+        "kind": "business_object_tasks",
+        "fields": [
+          "business_object_key",
+          "reply_task_id"
+        ],
+        "source_mode": "or ignore",
+        "returning": false,
+        "source_lastrowid": false,
+        "source_method_line": 18423
+      },
+      {
+        "method": "reconcile_valid_needs_human_projections",
+        "line": 23011,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 23305,
+        "source_projection_anchors": [
+          "and exists(select 1 from business_object_tasks current_object"
+        ]
+      },
+      {
+        "method": "skip_failed_reply_tasks_superseded_by_terminal_business_object",
+        "line": 23120,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 23405,
+        "source_projection_anchors": [
+          "from business_object_tasks as current_mapping"
+        ]
+      },
+      {
+        "method": "skip_failed_reply_tasks_superseded_by_terminal_business_object",
+        "line": 23137,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 23405,
+        "source_projection_anchors": [
+          "join business_object_tasks as current_mapping"
+        ]
+      },
+      {
+        "method": "list_current_unresolved_problem_attempts",
+        "line": 24062,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 24371,
+        "source_projection_anchors": [
+          "join business_object_tasks as current_business_object",
+          "from business_object_tasks as current_business_object"
+        ]
+      },
+      {
+        "method": "list_current_unresolved_problem_attempt_summaries",
+        "line": 24188,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 24498,
+        "source_projection_anchors": [
+          "join business_object_tasks as current_business_object",
+          "from business_object_tasks as current_business_object"
+        ]
+      },
+      {
+        "method": "count_current_unresolved_problem_attempts",
+        "line": 24305,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 24617,
+        "source_projection_anchors": [
+          "join business_object_tasks as current_business_object",
+          "from business_object_tasks as current_business_object"
+        ]
+      },
+      {
+        "method": "begin_wechat_memory_import_job",
+        "line": 27609,
+        "operation": "insert",
+        "kind": "wechat_memory_import_jobs",
+        "fields": [
+          "import_run_id",
+          "account_id",
+          "status"
+        ],
+        "source_mode": "plain",
+        "returning": false,
+        "source_lastrowid": true,
+        "source_method_line": 27984
+      },
+      {
+        "method": "finish_wechat_memory_import_job",
+        "line": 27623,
+        "operation": "projection_read",
+        "kinds": [
+          "wechat_memory_import_jobs"
+        ],
+        "source_method_line": 28001,
+        "source_projection_anchors": [
+          "select status, error from wechat_memory_import_jobs where id=?"
+        ]
+      },
+      {
+        "method": "finish_wechat_memory_import_job",
+        "line": 27632,
+        "operation": "payload_update",
+        "kind": "wechat_memory_import_jobs",
+        "fields": [
+          "status",
+          "error",
+          "finished_at",
+          "updated_at"
+        ],
+        "source_where": "id=? and status='running'",
+        "source_rhs": {
+          "status": "?",
+          "error": "?",
+          "finished_at": "current_timestamp",
+          "updated_at": "current_timestamp"
+        },
+        "source_method_line": 28001
+      },
+      {
+        "method": "_operation_logs_base_query",
+        "line": 29315,
+        "operation": "projection_read",
+        "kinds": [
+          "business_object_tasks"
+        ],
+        "source_method_line": 29687,
+        "source_projection_anchors": [
+          "from business_object_tasks as current_business_object"
+        ]
+      }
+    ]
+  },
+  "historical_and_manifest_obligations": [
+    {
+      "owner": "AutoReplyStore._initialize",
+      "original_line": 2723,
+      "reason": "Original multi-statement native schema script and separate WeChat DDL/index writer intentionally exact. Root must replace current final constructor selection coherently; retain historical factory source."
+    },
+    {
+      "owner": "AutoReplyStore._migrate_oa_notification_events",
+      "original_line": 8450,
+      "reason": "Historical OA create/index DDL remains exact; root must not call it after final retirement."
+    },
+    {
+      "owner": "module manifest constants",
+      "reason": "REQUIRED_TABLES/index/current-schema dictionaries retain native family references; original module statements are untouched apart from imports. Complete Tasks20 release must replace final manifest selection coherently without rewriting historical profiles."
+    },
+    {
+      "owner": "Store._open_connection and EmailStore._open_connection",
+      "reason": "Register exact ceo_native_json/Tasks8 scalar codec at both constructors with paired cutover; no constructor change here."
+    },
+    {
+      "owner": "earlier8 historical consumers",
+      "reason": "Preserve the prerequisite obligations for _initialize and _migrate_removed_runtime, whose global reply source projection changes are already declared in the8 proposal."
+    }
+  ],
+  "external_direct_sql_dependencies": [
+    {
+      "path": "app/quality_gate.py",
+      "lines": [
+        530
+      ]
+    },
+    {
+      "path": "app/reply_task_deferral.py",
+      "lines": [
+        148
+      ]
+    },
+    {
+      "path": "app/rule_question_retirement.py",
+      "lines": [
+        68
+      ]
+    },
+    {
+      "path": "app/audit_web.py",
+      "lines": [
+        2765,
+        3143,
+        3180,
+        3484,
+        3902
+      ]
+    }
+  ],
+  "scope_limits": [
+    "No app/test edits or constructor invocation.",
+    "No real database/provider/native CLI/network/main/push/deploy.",
+    "Feedback four, Workbench children two, Email two, whole-release source copy/current-fact inverse/predecessor/reforward/public/native/UI/final11 remain root-owned.",
+    "Static literal/JoinedStr inventory is independently expanded from actual source; it is not a universal dynamic-SQL or public-method execution proof."
+  ]
+}

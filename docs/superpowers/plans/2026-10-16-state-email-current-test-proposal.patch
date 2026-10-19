@@ -1,0 +1,28 @@
+--- a/tests/test_email_store.py
++++ b/tests/test_email_store.py
+@@ -17,0 +18 @@
++from app.state_definitions import state_projection
+@@ -7336 +7337 @@
+-    assert len(_fetchall(database, "select * from email_scan_cursors")) == 0
++    assert len(_fetchall(database, "select * from (" + state_projection("email_scan_cursors") + ")")) == 0
+--- a/tests/test_email_unsubscribe_direct.py
++++ b/tests/test_email_unsubscribe_direct.py
+@@ -1090,0 +1091 @@
++    from app.state_storage import insert_state
+@@ -1095,4 +1096,5 @@
+-        db.execute(
+-            "insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values (?,?,?,?)",
+-            (adapter, str(task.id), "owner", "2099-01-01T00:00:00Z"),
+-        )
++        db.execute("begin")
++        insert_state(db, "dispatcher_claim_leases", {
++            "adapter_name": adapter, "source_id": str(task.id),
++            "owner": "owner", "lease_expires_at": "2099-01-01T00:00:00Z",
++        })
+--- a/tests/test_email_action_validation.py
++++ b/tests/test_email_action_validation.py
+@@ -13,0 +14 @@
++from app.state_schema_release import capture_state_source, migrate_state_schema
+@@ -87,0 +89,2 @@
++        state_metadata = capture_state_source(db)
++        migrate_state_schema(db, state_metadata)

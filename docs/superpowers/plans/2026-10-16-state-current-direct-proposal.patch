@@ -1,0 +1,90 @@
+--- a/app/processing_reaction.py
++++ b/app/processing_reaction.py
+@@ -2,0 +3 @@
++from app.state_definitions import state_projection
+@@ -85 +86 @@
+-                    db.execute('delete from service_state where key=?', (key,))
++                    db.execute("delete from state where record_type='service_state' and key=?", (key,))
+@@ -94 +95 @@
+-                    rows = db.execute('select value from service_state where key like ?',
++                    rows = db.execute('select value from (' + state_projection('service_state') + ') where key like ?',
+--- a/app/quality_gate.py
++++ b/app/quality_gate.py
+@@ -10,0 +11 @@
++from app.state_definitions import state_projection
+@@ -137 +138 @@
+-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
++        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state"}
+@@ -869 +870 @@
+-            f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True))})"
++            f"({reply_action_projection('memory_write_events', validated_reply_variant(db, include_email=True, include_skill_config_receipts=True))})"
+@@ -966 +967 @@
+-        db, "select count(*) from daily_scan_state where trim(last_error) != ''"
++        db, 'select count(*) from (' + state_projection('daily_scan_state') + ") where trim(last_error) != ''"
+@@ -970,3 +971 @@
+-        """select count(*) from daily_scan_state
+-           where scanner_name='ai_minutes'
+-             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1""",
++        'select count(*) from (' + state_projection('daily_scan_state') + ")\n           where scanner_name='ai_minutes'\n             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1",
+@@ -976,5 +975 @@
+-        """select count(*) from daily_scan_state
+-           where scanner_name='oa_pending'
+-             and json_array_length(
+-                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')
+-             ) > 0""",
++        'select count(*) from (' + state_projection('daily_scan_state') + ")\n           where scanner_name='oa_pending'\n             and json_array_length(\n                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')\n             ) > 0",
+@@ -986 +981 @@
+-        "select count(*) from wechat_read_state where lower(capability_status) not in ('ready','')",
++        'select count(*) from (' + state_projection('wechat_read_state') + ") where lower(capability_status) not in ('ready','')",
+@@ -1056 +1051 @@
+-        "select value from service_state where key=?",
++        'select value from (' + state_projection('service_state') + ') where key=?',
+@@ -1106 +1101 @@
+-           from runtime_route_pauses paused
++           from ({state_projection('runtime_route_pauses')}) paused
+@@ -1132 +1127 @@
+-        "select value from service_state where key='codex_capacity_pause'"
++        'select value from (' + state_projection('service_state') + ") where key='codex_capacity_pause'"
+--- a/app/audit_web.py
++++ b/app/audit_web.py
+@@ -0,0 +1 @@
++from app.state_definitions import state_projection
+@@ -2922 +2923 @@
+-        if not _sqlite_table_exists(db, "service_state"):
++        if not _sqlite_table_exists(db, "state"):
+@@ -2932,6 +2933 @@
+-            """
+-            select key, value, updated_at
+-            from service_state
+-            where key like 'email_worker_health:%'
+-            order by key
+-            """
++            '\n            select key, value, updated_at\n            from (' + state_projection('service_state') + ")\n            where key like 'email_worker_health:%'\n            order by key\n            "
+@@ -3245 +3241 @@
+-    source = reply_action_projection("memory_write_events", validated_reply_variant(db, include_email=True))
++    source = reply_action_projection("memory_write_events", validated_reply_variant(db, include_email=True, include_skill_config_receipts=True))
+@@ -3441,2 +3437,2 @@
+-            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
+-        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
++            'select cursor_json,last_success_at,last_error from (' + state_projection('daily_scan_state') + ") where scanner_name='oa_pending'"
++        ).fetchone() if _sqlite_table_exists(db, "state") else None
+--- a/app/rule_question_retirement.py
++++ b/app/rule_question_retirement.py
+@@ -1,0 +2,2 @@
++from app.state_definitions import state_projection
++from app.state_storage import insert_state
+@@ -94 +96 @@
+-    saved = db.execute("select value from service_state where key=?", (key,)).fetchone()
++    saved = db.execute('select value from (' + state_projection('service_state') + ') where key=?', (key,)).fetchone()
+@@ -116,2 +118,2 @@
+-        db.execute("insert into service_state(key,value) values (?,?)",
+-                   (key, json.dumps(receipt, ensure_ascii=False, sort_keys=True)))
++        insert_state(db, "service_state",
++                     {"key": key, "value": json.dumps(receipt, ensure_ascii=False, sort_keys=True)})
+--- a/app/reply_task_deferral.py
++++ b/app/reply_task_deferral.py
+@@ -7,0 +8 @@
++from app.state_definitions import state_projection
+@@ -172 +173 @@
+-    claims = db.execute("select * from dispatcher_claim_leases where source_id=? and adapter_name in ('reply','scheduled_execution')", (str(task_id),)).fetchall()
++    claims = db.execute('select * from (' + state_projection('dispatcher_claim_leases') + ") where source_id=? and adapter_name in ('reply','scheduled_execution')", (str(task_id),)).fetchall()

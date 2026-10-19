@@ -58,13 +58,6 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
         "made optional, and never mentions system_actions, failure_code or "
         "external_dependency_failed, which the model now carries",
     ),
-    "project_memory_context.schema.json": (
-        "app.task_models",
-        "ProjectMemoryContext",
-        "file requires memories/query/summary and names its item definition "
-        "memory_context_item; the model makes every field optional and names "
-        "it ProjectMemoryContextItem",
-    ),
     "task_agent_decision.schema.json": (
         "app.task_models",
         "TaskAgentDecision",

@@ -1,0 +1,406 @@
+{
+  "observed_at": "2026-10-17T19:38:13.448444+00:00",
+  "source": "readonly URI mode=ro/query_only single transaction; genuine source Tasks8 only",
+  "source_counts": {
+    "meeting_alignment_jobs": 757,
+    "okr_review_requests": 20,
+    "reply_task_inputs": 8296,
+    "reply_tasks": 7576,
+    "weekly_okr_analysis_jobs": 169,
+    "work_summary_inputs": 9112,
+    "workbench_tasks": 20,
+    "workbench_turns": 37
+  },
+  "codec_function_ast_sha256": {
+    "_encoded_sqlite_value": "8d6c974211d091bead038e1157249c0e921567cf99cec2815aad63758aa57e69",
+    "_encoded_native_sqlite_value": "e2a818acb5820448f22703825ae346d46e40b20e8b91d2883c9604ef19ac9093",
+    "_native_payload": "939a428d4a64fb58235f684c3e1b6990b8c0accfac698b20c75d63b38a9fe9a2"
+  },
+  "task20_definition_sha256": "1000c4baeaaad66444b75ceeba1264d626239647e0186c8ee839dfc089b91784",
+  "source_facts_sha256": {
+    "reply_tasks": "c3883d3d73150c11495a450776c62c3f77f943e51a8691865c6662aad3516d58",
+    "reply_task_inputs": "6abfb6a4edc92a932668849f20524a616b09015036e62d6434bb40e68c000ecb",
+    "work_summary_inputs": "d529ec782d2c8d1972d3c9f8efc72303b6a71cc1766c6beb4655ac48f8ecc829",
+    "meeting_alignment_jobs": "71e40e1266af01660ace429b31d4bcf38b97691f5bcf0af58d9b78b642f64184",
+    "okr_review_requests": "2a84c308012c0fa38ea87b1e203415dbb8c5d0a47fdda7b9809de5eaa12752b3",
+    "weekly_okr_analysis_jobs": "afdca843b840da3b990d37251110641e43ab1fc86eef8ea3cd92d09abfb92722",
+    "workbench_tasks": "202c14c503aaa91616413f3173b32b38e9c27cfb1637bc7634b9b848fe94f4c7",
+    "workbench_turns": "2a9ec72c1c8454d36fa28db04dc2635f3154223286f594e50a5171d96caac526"
+  },
+  "totals": {
+    "rows": 25987,
+    "payload_utf8_bytes": 47940607,
+    "cells": 436500,
+    "native_scalar_payload_bytes": 38336291,
+    "source_wide_physical_columns": 2130934,
+    "json_key_separator_bytes": 7512883,
+    "encoded_value_bytes": 40427724,
+    "value_representation_overhead_bytes": 2091433,
+    "nullable_null_cells": 5424,
+    "nullable_null_omission_candidate_bytes": 92208,
+    "empty_null_zero_omission_upper_bound_bytes": 2301408
+  },
+  "by_kind": {
+    "reply_tasks": {
+      "rows": 7576,
+      "payload_utf8_bytes": 5640103,
+      "cells": 174248,
+      "native_scalar_payload_bytes": 2199586,
+      "source_wide_physical_columns": 621232,
+      "json_key_separator_bytes": 3128888,
+      "encoded_value_bytes": 2511215,
+      "value_representation_overhead_bytes": 311629,
+      "nullable_null_cells": 4668,
+      "nullable_null_omission_candidate_bytes": 79356,
+      "empty_null_zero_omission_upper_bound_bytes": 1294055
+    },
+    "reply_task_inputs": {
+      "rows": 8296,
+      "payload_utf8_bytes": 11080657,
+      "cells": 124440,
+      "native_scalar_payload_bytes": 8150930,
+      "source_wide_physical_columns": 680272,
+      "json_key_separator_bytes": 2356064,
+      "encoded_value_bytes": 8724593,
+      "value_representation_overhead_bytes": 573663,
+      "nullable_null_cells": 0,
+      "nullable_null_omission_candidate_bytes": 0,
+      "empty_null_zero_omission_upper_bound_bytes": 720528
+    },
+    "work_summary_inputs": {
+      "rows": 9112,
+      "payload_utf8_bytes": 5991968,
+      "cells": 118456,
+      "native_scalar_payload_bytes": 3998872,
+      "source_wide_physical_columns": 747184,
+      "json_key_separator_bytes": 1722168,
+      "encoded_value_bytes": 4269800,
+      "value_representation_overhead_bytes": 270928,
+      "nullable_null_cells": 0,
+      "nullable_null_omission_candidate_bytes": 0,
+      "empty_null_zero_omission_upper_bound_bytes": 226027
+    },
+    "meeting_alignment_jobs": {
+      "rows": 757,
+      "payload_utf8_bytes": 22216476,
+      "cells": 16654,
+      "native_scalar_payload_bytes": 21262359,
+      "source_wide_physical_columns": 62074,
+      "json_key_separator_bytes": 264193,
+      "encoded_value_bytes": 21952283,
+      "value_representation_overhead_bytes": 689924,
+      "nullable_null_cells": 756,
+      "nullable_null_omission_candidate_bytes": 12852,
+      "empty_null_zero_omission_upper_bound_bytes": 46560
+    },
+    "okr_review_requests": {
+      "rows": 20,
+      "payload_utf8_bytes": 2924605,
+      "cells": 300,
+      "native_scalar_payload_bytes": 2678930,
+      "source_wide_physical_columns": 1640,
+      "json_key_separator_bytes": 5120,
+      "encoded_value_bytes": 2919485,
+      "value_representation_overhead_bytes": 240555,
+      "nullable_null_cells": 0,
+      "nullable_null_omission_candidate_bytes": 0,
+      "empty_null_zero_omission_upper_bound_bytes": 539
+    },
+    "weekly_okr_analysis_jobs": {
+      "rows": 169,
+      "payload_utf8_bytes": 55559,
+      "cells": 1690,
+      "native_scalar_payload_bytes": 27505,
+      "source_wide_physical_columns": 13858,
+      "json_key_separator_bytes": 24674,
+      "encoded_value_bytes": 30885,
+      "value_representation_overhead_bytes": 3380,
+      "nullable_null_cells": 0,
+      "nullable_null_omission_candidate_bytes": 0,
+      "empty_null_zero_omission_upper_bound_bytes": 8175
+    },
+    "workbench_tasks": {
+      "rows": 20,
+      "payload_utf8_bytes": 4429,
+      "cells": 120,
+      "native_scalar_payload_bytes": 2329,
+      "source_wide_physical_columns": 1640,
+      "json_key_separator_bytes": 1860,
+      "encoded_value_bytes": 2569,
+      "value_representation_overhead_bytes": 240,
+      "nullable_null_cells": 0,
+      "nullable_null_omission_candidate_bytes": 0,
+      "empty_null_zero_omission_upper_bound_bytes": 444
+    },
+    "workbench_turns": {
+      "rows": 37,
+      "payload_utf8_bytes": 26810,
+      "cells": 592,
+      "native_scalar_payload_bytes": 15780,
+      "source_wide_physical_columns": 3034,
+      "json_key_separator_bytes": 9916,
+      "encoded_value_bytes": 16894,
+      "value_representation_overhead_bytes": 1114,
+      "nullable_null_cells": 0,
+      "nullable_null_omission_candidate_bytes": 0,
+      "empty_null_zero_omission_upper_bound_bytes": 5080
+    }
+  },
+  "top_field_encoded_entries": [
+    {
+      "kind": "meeting_alignment_jobs",
+      "field": "source_json",
+      "cells": 757,
+      "encoded_entry_bytes": 12249582,
+      "native_value_bytes": 11910033,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "meeting_alignment_jobs",
+      "field": "decision_json",
+      "cells": 757,
+      "encoded_entry_bytes": 5477933,
+      "native_value_bytes": 5296414,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "input_provenance_json",
+      "cells": 8296,
+      "encoded_entry_bytes": 4907346,
+      "native_value_bytes": 4377092,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "okr_review_requests",
+      "field": "okr_source_json",
+      "cells": 20,
+      "encoded_entry_bytes": 2912208,
+      "native_value_bytes": 2671871,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "meeting_alignment_jobs",
+      "field": "send_result_json",
+      "cells": 757,
+      "encoded_entry_bytes": 2125630,
+      "native_value_bytes": 2023189,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "trigger_message_json",
+      "cells": 8296,
+      "encoded_entry_bytes": 1945367,
+      "native_value_bytes": 1711219,
+      "null_cells": 0,
+      "empty_text_cells": 8229,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "work_summary_inputs",
+      "field": "error",
+      "cells": 9112,
+      "encoded_entry_bytes": 1680710,
+      "native_value_bytes": 1589576,
+      "null_cells": 0,
+      "empty_text_cells": 4709,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "meeting_alignment_jobs",
+      "field": "final_message",
+      "cells": 757,
+      "encoded_entry_bytes": 1242859,
+      "native_value_bytes": 1220394,
+      "null_cells": 0,
+      "empty_text_cells": 161,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "work_summary_inputs",
+      "field": "source_ref",
+      "cells": 9112,
+      "encoded_entry_bytes": 1130351,
+      "native_value_bytes": 993671,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "business_object_key",
+      "cells": 8296,
+      "encoded_entry_bytes": 929737,
+      "native_value_bytes": 730633,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_tasks",
+      "field": "business_object_key",
+      "cells": 7576,
+      "encoded_entry_bytes": 861493,
+      "native_value_bytes": 679669,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "work_summary_inputs",
+      "field": "body_sha256",
+      "cells": 9112,
+      "encoded_entry_bytes": 728960,
+      "native_value_bytes": 583168,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "conversation_id",
+      "cells": 8296,
+      "encoded_entry_bytes": 490714,
+      "native_value_bytes": 324794,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "trigger_message_id",
+      "cells": 8296,
+      "encoded_entry_bytes": 481494,
+      "native_value_bytes": 290686,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_tasks",
+      "field": "conversation_id",
+      "cells": 7576,
+      "encoded_entry_bytes": 454552,
+      "native_value_bytes": 303032,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_tasks",
+      "field": "trigger_message_id",
+      "cells": 7576,
+      "encoded_entry_bytes": 443275,
+      "native_value_bytes": 269027,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "work_summary_inputs",
+      "field": "source_created_at",
+      "cells": 9112,
+      "encoded_entry_bytes": 434792,
+      "native_value_bytes": 234328,
+      "null_cells": 0,
+      "empty_text_cells": 32,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "meeting_alignment_jobs",
+      "field": "participants_json",
+      "cells": 757,
+      "encoded_entry_bytes": 416701,
+      "native_value_bytes": 346731,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "trigger_create_time",
+      "cells": 8296,
+      "encoded_entry_bytes": 372846,
+      "native_value_bytes": 173742,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_tasks",
+      "field": "trigger_create_time",
+      "cells": 7576,
+      "encoded_entry_bytes": 341309,
+      "native_value_bytes": 159485,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "work_summary_inputs",
+      "field": "created_at",
+      "cells": 9112,
+      "encoded_entry_bytes": 309808,
+      "native_value_bytes": 173128,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "work_summary_inputs",
+      "field": "updated_at",
+      "cells": 9112,
+      "encoded_entry_bytes": 309808,
+      "native_value_bytes": 173128,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "conversation_title",
+      "cells": 8296,
+      "encoded_entry_bytes": 308747,
+      "native_value_bytes": 117939,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "meeting_alignment_jobs",
+      "field": "calendar_summary_result_json",
+      "cells": 757,
+      "encoded_entry_bytes": 301363,
+      "native_value_bytes": 268669,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    },
+    {
+      "kind": "reply_task_inputs",
+      "field": "created_at",
+      "cells": 8296,
+      "encoded_entry_bytes": 282064,
+      "native_value_bytes": 157624,
+      "null_cells": 0,
+      "empty_text_cells": 0,
+      "zero_integer_cells": 0
+    }
+  ],
+  "elapsed_seconds": 5.862,
+  "production_write": false,
+  "raw_row_or_payload_persisted": false,
+  "encoding_or_policy_changed": false,
+  "limits": "Exact existing Task20 serialization bytes on genuine source Tasks8 only, not all20families or fullSQLite page allocation/index delta. Native scalar byte estimate excludes record headers/varints/overflow/paging; it is not equivalent to old table file size. Nullable NULL removal is a byte candidate only: current schema requires every key, so not an implemented or accepted new encoding. Empty/null/zero removal is an upper bound without assuming field defaults. Not a storage saving or performance claim."
+}

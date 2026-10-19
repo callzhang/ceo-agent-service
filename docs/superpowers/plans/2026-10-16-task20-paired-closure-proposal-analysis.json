@@ -1,0 +1,35 @@
+{
+  "scope": "Complete unselected four-file candidate after nine callers and Store constructor; no DB or runtime selection",
+  "prerequisite_patch_hashes": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task8-workbench-caller-proposal.patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26",
+    "2026-10-16-task12-email-native-caller-proposal.patch": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc",
+    "2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+    "2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d",
+    "2026-10-16-task12-workbench-children-caller-proposal.patch": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7",
+    "2026-10-16-task20-external-writers-caller-proposal.patch": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415",
+    "2026-10-16-task20-console-readers-caller-proposal.patch": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df",
+    "2026-10-16-task20-remaining-readers-caller-proposal.patch": "618c2033a0ca47185819dad4a24a9f4f6409d1d368a1655bc8da4b13efa8898c",
+    "2026-10-16-task20-store-constructor-proposal.patch": "013079516002034a88f015629ce333577601128b21ced9bc88c8532310f3f57d"
+  },
+  "files": {
+    "app/email_store.py": {
+      "before": "27042bcf1233ddf31c0843e337d1aeb8863091aa3ab85d9e6bc9b7970c2f90e6",
+      "after": "e0e61309164202bcaaeb677ed23cc8dbaca36c1c43d288e61b419c88cdc21ca5"
+    },
+    "app/email_current_schema.py": {
+      "before": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
+      "after": "b00aba3e66453311707bf0bd9213acb1713b3b0c3fc3fcb7130851427db0eed4"
+    },
+    "app/task_schema_release.py": {
+      "before": "76f138bd66987b7f76f3e9d06bdc89a7bd261f6a88749d2b4755c81ecc2498a3",
+      "after": "054ff56bcef746d5717810331b66cbf5dc9aed45d8dc5ca5b26d11e37d254667"
+    },
+    "app/action_email_schema_release.py": {
+      "before": "e9ba587757d2cf271119a2a2ff877d877a716727c0cd7eba6f7dc3ccc309564d",
+      "after": "758f361905f4beeb1e615c301ee8103dd2eda1cce6fe13846a37e2c5a70ae196"
+    }
+  },
+  "patch_sha256": "f579a40c384e846f4a65c0de82af8244ff1e87dd82c9da7802bf96b4a182eb52",
+  "compile_ruff_apply_reverse_reapply": "pass"
+}

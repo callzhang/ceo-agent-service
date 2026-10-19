@@ -1,0 +1,110 @@
+--- /dev/null
++++ b/tests/test_workbench_confirmation_retirement.py
+@@ -0,0 +1,107 @@
++from datetime import datetime, timezone
++from inspect import signature
++from pathlib import Path
++import sqlite3
++from types import SimpleNamespace
++
++import pytest
++
++import app.workbench.models as models
++from app.workbench.executor import WorkbenchExecutor
++from app.workbench.runtime import RuntimeEvent, RuntimeRegistry
++
++
++def test_current_workbench_contract_removes_confirmation_resources():
++    assert not hasattr(models, "ConfirmationStatus")
++    assert not hasattr(models, "WorkbenchConfirmation")
++    assert {item.value for item in models.TurnStatus} == {
++        "queued", "running", "completed", "stopped", "failed"
++    }
++    assert not hasattr(WorkbenchExecutor, "confirm")
++    assert not hasattr(WorkbenchExecutor, "cancel")
++    assert not {
++        "confirmation_lease_seconds", "confirmation_heartbeat_interval_seconds",
++        "classifier", "write_runner"
++    }.intersection(signature(WorkbenchExecutor).parameters)
++
++
++def test_runtime_rejects_retired_confirmation_event():
++    with pytest.raises(ValueError):
++        RuntimeEvent("confirmation_required", {})
++
++
++def test_recovery_only_recovers_expired_turns_with_original_clock(tmp_path: Path):
++    calls = []
++    store = SimpleNamespace(
++        path=tmp_path / "unused.sqlite3",
++        recover_expired_turns=lambda **kwargs: calls.append(kwargs) or 7,
++    )
++    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
++    try:
++        assert executor.recover(now="2026-08-13T00:00:02Z") == 7
++        assert calls == [{"now": datetime(2026, 8, 13, 0, 0, 2, tzinfo=timezone.utc)}]
++    finally:
++        assert executor.close()
++
++
++def test_recovery_keeps_transient_sqlite_lock_retry(tmp_path: Path, monkeypatch):
++    calls = []
++
++    def recover_expired_turns(*, now):
++        calls.append(now)
++        if len(calls) == 1:
++            raise sqlite3.OperationalError("database is locked")
++        return 2
++
++    store = SimpleNamespace(path=tmp_path / "unused.sqlite3", recover_expired_turns=recover_expired_turns)
++    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
++    monkeypatch.setattr("app.workbench.executor.time.sleep", lambda seconds: None)
++    try:
++        assert executor.recover(now="2026-08-13T00:00:02Z") == 2
++        assert len(calls) == 2
++        assert len(set(calls)) == 1
++    finally:
++        assert executor.close()
++
++
++def test_recovery_keeps_non_lock_sqlite_errors(tmp_path: Path):
++    def recover_expired_turns(*, now):
++        raise sqlite3.OperationalError("no such table: tasks")
++
++    store = SimpleNamespace(path=tmp_path / "unused.sqlite3", recover_expired_turns=recover_expired_turns)
++    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
++    try:
++        with pytest.raises(sqlite3.OperationalError, match="no such table"):
++            executor.recover()
++    finally:
++        assert executor.close()
++
++
++def test_recovery_requeues_expired_turn_without_touching_live_or_stopped_turns(tmp_path: Path):
++    from app.workbench.store import WorkbenchStore
++    from app.task8_storage import task8_set_parts
++
++    store = WorkbenchStore(tmp_path / "workbench.sqlite3")
++    turns = []
++    for index in range(3):
++        task = store.create_task(title=f"Task {index}", runtime_kind="fake")
++        turns.append(store.create_turn(
++            task.id, user_text="work", client_request_id=f"request-{index}",
++        ))
++        with store._connect() as db:
++            parts = task8_set_parts("workbench_turns", {"created_at": f"2026-08-12 00:00:0{index}"})
++            db.execute(
++                f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
++                (*parts.parameters, turns[-1].id),
++            )
++    assert store.claim_next_turn(owner="dead", lease_seconds=1, now="2026-08-13T00:00:00Z").id == turns[0].id
++    assert store.claim_next_turn(owner="live", lease_seconds=10, now="2026-08-13T00:00:00Z").id == turns[1].id
++    store.request_stop(turns[2].id)
++    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
++    try:
++        assert executor.recover(now="2026-08-13T00:00:02Z") == 1
++        assert [store.get_turn(turn.id).status for turn in turns] == [
++            models.TurnStatus.QUEUED, models.TurnStatus.RUNNING, models.TurnStatus.STOPPED
++        ]
++    finally:
++        assert executor.close()

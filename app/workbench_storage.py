@@ -920,15 +920,26 @@ def _current_auxiliary_objects():
         }
 
 
-def workbench_schema_is_current(db, *, allow_missing_objects=False):
+def workbench_schema_is_current(db, *, allow_missing_objects=False, mapped_runs=False):
+    if mapped_runs:
+        from app.configs_run_schema import _declarations, _objects
+        expected_runs = _declarations(mapped=True)
+        actual_runs = _objects(db)
+        run_current = (
+            actual_runs.get("runs") == expected_runs["runs"]
+            and set(actual_runs) <= set(expected_runs)
+            and all(actual_runs.get(name, sql) == sql if allow_missing_objects
+                    else actual_runs.get(name) == sql
+                    for name, sql in expected_runs.items())
+        )
+    else:
+        run_current = run_schema_is_current(
+            db, include_task_runs=True, include_workbench=True,
+            allow_missing_objects=allow_missing_objects,
+        )
     if not task_schema_is_current(
         db, include_workbench=True, allow_missing_objects=allow_missing_objects
-    ) or not run_schema_is_current(
-        db,
-        include_task_runs=True,
-        include_workbench=True,
-        allow_missing_objects=allow_missing_objects,
-    ):
+    ) or not run_current:
         return False
     for table, expected in _current_auxiliary_objects().items():
         actual = {o["name"]: o for o in _schema_objects(db, table)}

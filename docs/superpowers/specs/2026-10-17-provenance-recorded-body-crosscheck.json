@@ -1,0 +1,170 @@
+{
+  "observed_at_utc": "2026-10-18T01:01:34.660411+00:00",
+  "scope": "Finite current23 gap hashes vs197 recorded verified body identities only; no native/provider reads",
+  "source_access": "URI mode=ro/query_only transaction",
+  "proof_pins": {
+    "2026-10-15-database-redesign-business-native-source-recovery.json": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+    "2026-10-17-business-native-source-additional-recovery.json": "803f78d34564275edc1a296a076122478b2aa45069a610e6fefcc6ecb66e1d1a",
+    "2026-10-17-business-native-source-new7-recovery.json": "59217b6280dfa1561cf10317b7dd4b0cfeebbf2a62f7e6cf27642fd385737c96",
+    "2026-10-15-business-minutes-canonical-source-probe.json": "2145cb71f6496f6e4aa0c6b02a4ed58c9b60557596b45eaa9b93699058f095ff",
+    "2026-10-17-business-weekly-current4-source-probe.json": "28c489d3bd62ff4f40b4d2daf1fe37a6eb48d93fe0fa55b6bf2953388e9146fd",
+    "2026-10-17-business-console-source-recovery.json": "9d2875aa1686b42e5d038cae2f2ffd2c8abbfb48b9a1043896095df58f8f0ed0"
+  },
+  "recorded_verified_identities": 197,
+  "current_gap_documents": 23,
+  "current_gap_utf8_bytes": 582786,
+  "rows": [
+    {
+      "source_document_id": 12,
+      "utf8_body_bytes": 9527,
+      "utf8_body_sha256": "53b954c7a4d4ebfe1c356787d6777ec60f05ccaa23426a522be4b04b5464b71a",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 30,
+      "utf8_body_bytes": 337,
+      "utf8_body_sha256": "10f3e749ef837fe0e9c3c92b0cd9d312bd64e3a69adc0fce753bffc5ca469605",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 31,
+      "utf8_body_bytes": 14368,
+      "utf8_body_sha256": "35efcc59e27b8e45d621bd09b7e7d4c4beee9d0cb598389497fd1ebdefa09dd4",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 46,
+      "utf8_body_bytes": 45424,
+      "utf8_body_sha256": "7706608ae619b676bf984febe1c05d8357282d03974ce062ffefb5a4e2d1437a",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 49,
+      "utf8_body_bytes": 25363,
+      "utf8_body_sha256": "06e3b12d8d429381bcb7b72a27bdc95fd535767c722106bb911bf234e9492a10",
+      "same_recorded_verified_body_ids": [
+        48
+      ]
+    },
+    {
+      "source_document_id": 50,
+      "utf8_body_bytes": 19742,
+      "utf8_body_sha256": "eb6ec41e93585390856847faec192ce5efe17f8ae3546ade888d3926fb42f238",
+      "same_recorded_verified_body_ids": [
+        43,
+        44,
+        45
+      ]
+    },
+    {
+      "source_document_id": 51,
+      "utf8_body_bytes": 45424,
+      "utf8_body_sha256": "7706608ae619b676bf984febe1c05d8357282d03974ce062ffefb5a4e2d1437a",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 52,
+      "utf8_body_bytes": 48658,
+      "utf8_body_sha256": "dc0bf458552033321865986fb170db5b94790f9d792761f843ae714c765dc8f1",
+      "same_recorded_verified_body_ids": [
+        47
+      ]
+    },
+    {
+      "source_document_id": 66,
+      "utf8_body_bytes": 63562,
+      "utf8_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 68,
+      "utf8_body_bytes": 63562,
+      "utf8_body_sha256": "5835dbdbc7ba7d45be466bc3b1d397fe1e6e88aec07a9021ce992666cac8c756",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 90,
+      "utf8_body_bytes": 18642,
+      "utf8_body_sha256": "1b79e5a12527ed45add06980f654a4c73c4ff7ab263d3950d4de1a7b5672e529",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 94,
+      "utf8_body_bytes": 17801,
+      "utf8_body_sha256": "9b5ac2e01c6a282f0f59f82e054ea05c0df69224d17b2213faf7dbf6282aa322",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 95,
+      "utf8_body_bytes": 18640,
+      "utf8_body_sha256": "243aa1bd73feff3084993ededb2d25f0164476f433280eec00cc40b66781294e",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 96,
+      "utf8_body_bytes": 23817,
+      "utf8_body_sha256": "dfdcdd9643a09f72e008282485ca8d3f28d56131599caf2fb8801524bbc7b3cd",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 97,
+      "utf8_body_bytes": 16113,
+      "utf8_body_sha256": "04bb3ec06e953a23ff99e7d8ce336b8fb56e53352cb31baf1c1a6cf6bae27a08",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 99,
+      "utf8_body_bytes": 18646,
+      "utf8_body_sha256": "3ba68acdc9e386d9780031bf11e1f83bf00bc40d27f40658893a5c14230149f0",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 100,
+      "utf8_body_bytes": 17809,
+      "utf8_body_sha256": "c20cbb4512c57a0eca83deac35081b57582df7fe1b9b0cee8fb23d03a41cbd36",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 101,
+      "utf8_body_bytes": 23821,
+      "utf8_body_sha256": "7facd552785407e17a6a7b449407de690f4d04772db18e5732895e400039e11a",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 114,
+      "utf8_body_bytes": 18642,
+      "utf8_body_sha256": "a2e6a72408631cf8e7195a1273ebb6c1354f6c8e1385afa630a048ea6052d88e",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 115,
+      "utf8_body_bytes": 17801,
+      "utf8_body_sha256": "0602e10f4db8addfc49a9996443780f10e735a9abef8483528ae8a9aabcf5caa",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 118,
+      "utf8_body_bytes": 18640,
+      "utf8_body_sha256": "1283a425035453244463afdb049e0e10d49a673a19195d704e9308f6b86170f5",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 119,
+      "utf8_body_bytes": 18640,
+      "utf8_body_sha256": "1283a425035453244463afdb049e0e10d49a673a19195d704e9308f6b86170f5",
+      "same_recorded_verified_body_ids": []
+    },
+    {
+      "source_document_id": 120,
+      "utf8_body_bytes": 17807,
+      "utf8_body_sha256": "2b60b79cf40ce31eeb41cbf962905be3d7d8b93d5fd7e22e750d7c41b7e2f7bc",
+      "same_recorded_verified_body_ids": []
+    }
+  ],
+  "candidate_reusable_body_coordinates": 3,
+  "current_reader_availability_proven": false,
+  "body_retirement": false,
+  "raw_bodies_printed_or_persisted": false,
+  "source_or_provider_writes": false,
+  "external_sends": false
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
+from app.configs_definitions import config_projection
+from app.schedules_storage import update_schedule
 
 import json
 import sqlite3
@@ -72,7 +74,7 @@ def _create_task(
     )
 
 
-def test_schema_manifest_creates_scheduled_task_tables_and_indexes(
+def test_schema_manifest_creates_current_schedules_and_config_indexes(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
@@ -92,14 +94,14 @@ def test_schema_manifest_creates_scheduled_task_tables_and_indexes(
         }
 
     assert {
-        "scheduled_tasks",
-        "scheduled_task_skill_refs",
+        "schedules",
+        "configs",
         "runs",
     } <= tables
     assert {
-        "idx_scheduled_tasks_migration_key",
-        "idx_scheduled_tasks_enabled",
-        "idx_scheduled_task_skill_refs_position",
+        "idx_schedules_migration_key",
+        "idx_schedules_enabled",
+        "idx_configs_schedule_ref_position",
         "idx_scheduled_task_runs_scheduled_instant",
         "idx_scheduled_task_runs_dispatch",
         "idx_scheduled_task_runs_claim",
@@ -258,45 +260,16 @@ def test_capability_backfill_reads_latest_user_fields_inside_write_transaction(
         )
 
     with user_store._immediate_write_transaction() as db:
-        db.execute(
-            """
-            update scheduled_tasks
-               set name=?, prompt=?, cron_expression=?, runtime_id=?,
-                   runtime_options_json=?, working_directory=?,
-                   version=version + 1, updated_at=?
-             where id=?
-            """,
-            (
-                "最新用户名称",
-                "最新用户 Prompt",
-                "0 15 * * * *",
-                "latest-user-runtime",
-                '{"model":"latest-user-model"}',
-                "/latest/user/workspace",
-                (NOW + timedelta(minutes=1)).isoformat(),
-                task.id,
-            ),
-        )
-        db.execute(
-            "delete from scheduled_task_skill_refs where scheduled_task_id=?",
-            (task.id,),
-        )
-        db.execute(
-            """
-            insert into scheduled_task_skill_refs (
-                scheduled_task_id, skill_source, skill_name,
-                managed_skill_id, managed_revision_id, position
-            ) values (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                task.id,
-                latest_ref.skill_source,
-                latest_ref.skill_name,
-                latest_ref.managed_skill_id,
-                latest_ref.managed_revision_id,
-                latest_ref.position,
-            ),
-        )
+        assert update_schedule(db, task.id, task.version, {
+            "name": "最新用户名称",
+            "prompt": "最新用户 Prompt",
+            "cron_expression": "0 15 * * * *",
+            "runtime_id": "latest-user-runtime",
+            "runtime_options_json": '{"model":"latest-user-model"}',
+            "working_directory": "/latest/user/workspace",
+            "updated_at": (NOW + timedelta(minutes=1)).isoformat(),
+        }) == 1
+        user_store._replace_scheduled_task_skill_refs(db, task.id, (latest_ref,))
         thread = threading.Thread(target=migrate)
         thread.start()
         assert started.wait(timeout=1)
@@ -889,7 +862,7 @@ def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
     )
     with sqlite3.connect(store.path) as db:
         db.execute(
-            f"update scheduled_task_config_versions set snapshot_json='{{}}' where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)",
+            f"update configs set payload_json=json_set(payload_json,'$.snapshot_json','{{}}') where record_type='scheduled_task_config_versions' and legacy_key=cast((select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?) as text)",
             (run.id,),
         )
 
@@ -971,7 +944,7 @@ def test_run_snapshot_rejects_semantically_tampered_skill_refs(
     tampered_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     with sqlite3.connect(store.path) as db:
         db.execute(
-            f"update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)",
+            f"update configs set payload_json=json_set(payload_json,'$.snapshot_json',?) where record_type='scheduled_task_config_versions' and legacy_key=cast((select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?) as text)",
             (tampered_json, run.id),
         )
 
@@ -1161,23 +1134,24 @@ def test_command_task_round_trips_and_rejects_mixed_execution_forms(
 
 
 
-def test_current_schema_version_still_migrates_missing_command_column(
+def test_current_schema_refuses_missing_schedule_command_column(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "current-version-missing-command.sqlite3"
     previous = AutoReplyStore(db_path)
-    task = _create_task(previous)
+    _create_task(previous)
     with previous._connect() as db:
-        db.execute("alter table scheduled_tasks drop column command")
+        db.execute("alter table schedules drop column command")
         db.execute(
             "update service_state set value=? where key=?",
             (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
-    migrated = AutoReplyStore(db_path)
-
-    assert migrated.get_scheduled_task(task.id).command == ""
+    with pytest.raises(sqlite3.IntegrityError, match="malformed current Store-first config declaration"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert "command" not in {row[1] for row in db.execute("pragma table_info(schedules)")}
 
 
 
@@ -1209,7 +1183,7 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     assert adopted.updated_at == NOW + timedelta(minutes=1)
     with store._connect() as db:
         refs = db.execute(
-            "select count(*) from scheduled_task_skill_refs where scheduled_task_id=?",
+            f"select count(*) from ({config_projection('scheduled_task_skill_refs')}) where scheduled_task_id=?",
             (legacy.id,),
         ).fetchone()[0]
     assert refs == 0
@@ -1311,7 +1285,7 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
     )
     with store._connect() as db:
         db.execute(
-            f"update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)",
+            f"update configs set payload_json=json_set(payload_json,'$.snapshot_json',?) where record_type='scheduled_task_config_versions' and legacy_key=cast((select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?) as text)",
             ("{not valid json", run.id),
         )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -1322,7 +1296,7 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
 
     with reopened._connect() as db:
         stored = db.execute(
-            f"select snapshot_json from scheduled_task_config_versions where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)", (run.id,)
+            f"select snapshot_json from ({config_projection('scheduled_task_config_versions')}) where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)", (run.id,)
         ).fetchone()
     assert stored["snapshot_json"] == "{not valid json"
     # Healthy rows stay readable alongside the corrupt one.
@@ -1382,6 +1356,7 @@ def test_scheduled_mutations_preserve_public_id_when_physical_id_differs(tmp_pat
     with store._connect() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
+        db.execute("begin immediate")
         physical_id = insert_run(
             db,
             "scheduled_task_runs",

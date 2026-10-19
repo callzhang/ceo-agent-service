@@ -3,9 +3,25 @@ from pathlib import Path
 import pytest
 
 from app.audit_web import _queue_attention_rows
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, ERROR_SQL
 from app.run_storage import insert_run
-from app.task_storage import REPLY_TASK_SQL, task_physical_id
+from app.task_storage import task_physical_id
+from app.schedules_storage import insert_schedule
+from app.scheduled_config_storage import intern_scheduled_config
+from app.task8_storage import task8_set_parts
+from app.task20_definitions import task20_projection
+from app.action_storage import insert_error_action
+
+
+def _schedule(db, identity):
+    assert insert_schedule(db, dict(id=identity, name="Report", prompt="p",
+        cron_expression="0 * * * *", timezone="UTC", runtime_id="", enabled=1)) == identity
+
+
+def _set_reply_task(db, public_id, values):
+    parts = task8_set_parts("reply_tasks", values, payload_source="tasks.payload_json")
+    db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+               (*parts.parameters, task_physical_id(db, "reply_tasks", public_id)))
 
 
 @pytest.mark.parametrize("source", ["reply", "error"])
@@ -33,24 +49,15 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
         channel="scheduled",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", completed.id),))
+        _set_reply_task(db, completed.id, {"status": "done"})
         if source == "reply":
-            db.execute(
-                "update tasks set status='failed', error='failed' where record_type='reply_tasks' and id=?",
-                (task_physical_id(db, "reply_tasks", failed.id),),
-            )
+            _set_reply_task(db, failed.id, {"status": "failed", "error": "failed"})
         else:
-            db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", failed.id),))
-            db.execute(
-                "insert into errors(conversation_id,message_id,kind,detail) values ('unrelated-chat','message','read','failed')"
-            )
-        db.execute(
-            "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (1,'Report','p','0 * * * *','UTC','',1)"
-        )
-        db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
-        snapshot_id = db.execute(
-            "select id from scheduled_task_config_versions where snapshot_json='{}'"
-        ).fetchone()[0]
+            _set_reply_task(db, failed.id, {"status": "done"})
+            insert_error_action(db, {"conversation_id":"unrelated-chat", "message_id":"message",
+                                     "kind":"read", "detail":"failed"})
+        _schedule(db, 1)
+        snapshot_id = intern_scheduled_config(db, "{}")
         for index in range(20000):
             insert_run(db, 'scheduled_task_runs', {
                 'event_id': f"event-{index}",
@@ -115,23 +122,14 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
         for run_id in (10, later_id)
     ]
     with store._connect() as db:
-        db.execute(
-            "update tasks set status=? where record_type='reply_tasks' and id=?",
-            ("failed" if source == "reply" else "done", task_physical_id(db, "reply_tasks", tasks[0].id)),
-        )
-        db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (status, task_physical_id(db, "reply_tasks", tasks[1].id)))
+        _set_reply_task(db, tasks[0].id, {"status": "failed" if source == "reply" else "done"})
+        _set_reply_task(db, tasks[1].id, {"status": status})
         if source == "error":
-            db.execute(
-                "insert into errors(conversation_id,message_id,kind,detail) values ('scheduled-task-run:10','event-10','read','failed')"
-            )
-        db.executemany(
-            "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (?,'Report','p','0 * * * *','UTC','',1)",
-            [(1,), (2,)],
-        )
-        db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
-        snapshot_id = db.execute(
-            "select id from scheduled_task_config_versions where snapshot_json='{}'"
-        ).fetchone()[0]
+            insert_error_action(db, {"conversation_id":"scheduled-task-run:10", "message_id":"event-10",
+                                     "kind":"read", "detail":"failed"})
+        _schedule(db, 1)
+        _schedule(db, 2)
+        snapshot_id = intern_scheduled_config(db, "{}")
         for run_id, event_id, scheduled_id, dispatch_status, execution_kind, execution_id in (
             (10, 'event-10', 1, 'dispatched', 'reply_task', str(tasks[0].id)),
             (later_id, f'event-{later_id}', schedule_id, dispatch, kind, str(tasks[1].id)),
@@ -159,7 +157,7 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
     assert bool(matches) is not covered
     with store._connect() as db:
         assert db.execute(
-            f"select status from ({REPLY_TASK_SQL}) where id=?", (tasks[0].id,)
+            f"select status from ({task20_projection('reply_tasks')}) where id=?", (tasks[0].id,)
         ).fetchone()[0] == ("failed" if source == "reply" else "done")
         if source == "error":
-            assert db.execute("select resolved_at from errors").fetchone()[0] == ""
+            assert db.execute(f"select resolved_at from ({ERROR_SQL})").fetchone()[0] == ""

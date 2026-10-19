@@ -1,0 +1,984 @@
+--- a/frontend/src/api.test.ts
++++ b/frontend/src/api.test.ts
+@@ -1,6 +1,7 @@
+ import { afterEach, describe, expect, it, vi } from "vitest";
+ 
+-import { ApiError, createTask, getTimeline, listTasks } from "./api";
++import { ApiError, createTask, getStats, getTimeline, listTasks } from "./api";
++import * as workbenchApi from "./api";
+ 
+ const publicTask = {
+   id: "1b8a4717-07fe-45e7-950c-df5bbc56d8aa",
+@@ -136,9 +137,9 @@
+         task: publicTask,
+         turns: [],
+         events: [{ id: 0, turn_id: "turn", sequence: 1, event_type: "text_delta", payload: { text: "bad" }, created_at: "" }],
+-        attachments: [], artifacts: [], confirmations: [], next_cursor: "", has_more: false,
++        attachments: [], artifacts: [], next_cursor: "", has_more: false,
+         events_has_more: false, events_next_cursor: 0, artifacts_has_more: false, artifacts_next_cursor: "",
+-        confirmations_has_more: false, confirmations_next_cursor: "", attachments_has_more: false, attachments_next_cursor: "",
++        attachments_has_more: false, attachments_next_cursor: "",
+       }), { status: 200, headers: { "Content-Type": "application/json" } })),
+     );
+ 
+@@ -164,9 +165,9 @@
+         task: publicTask,
+         turns: [],
+         events: [{ id: 1, turn_id: "turn", sequence: 1, event_type: "tool_completed", payload, created_at: "2026-08-14 00:00:02" }],
+-        attachments: [], artifacts: [], confirmations: [], next_cursor: "", has_more: false,
++        attachments: [], artifacts: [], next_cursor: "", has_more: false,
+         events_has_more: false, events_next_cursor: 0, artifacts_has_more: false, artifacts_next_cursor: "",
+-        confirmations_has_more: false, confirmations_next_cursor: "", attachments_has_more: false, attachments_next_cursor: "",
++        attachments_has_more: false, attachments_next_cursor: "",
+       }), { status: 200, headers: { "Content-Type": "application/json" } })),
+     );
+ 
+@@ -174,4 +175,40 @@
+ 
+     expect(timeline.events[0].payload).toEqual(payload);
+   });
++
++  it("removes the retired confirmation client exports", () => {
++    expect(workbenchApi).not.toHaveProperty("confirmAction");
++    expect(workbenchApi).not.toHaveProperty("cancelAction");
++  });
++
++  it("accepts the timeline contract without a confirmation resource and keeps remaining cursors", async () => {
++    const payload = {
++      task: publicTask, turns: [], events: [], attachments: [], artifacts: [],
++      next_cursor: "turns", has_more: true, events_has_more: true, events_next_cursor: 9,
++      artifacts_has_more: true, artifacts_next_cursor: "artifacts",
++      attachments_has_more: true, attachments_next_cursor: "attachments",
++    };
++    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
++      status: 200, headers: { "Content-Type": "application/json" },
++    })));
++    expect(await getTimeline(publicTask.id, { before: "turns", eventBefore: 9, artifactAfter: "artifacts", attachmentAfter: "attachments" })).toEqual(payload);
++    expect(fetch).toHaveBeenCalledWith(
++      `/api/workbench/tasks/${publicTask.id}/timeline?before=turns&event_before=9&artifact_after=artifacts&attachment_after=attachments`,
++      expect.anything(),
++    );
++  });
++
++  it("accepts statistics without confirmation counts or the retired waiting status", async () => {
++    const payload = {
++      tasks: { total: 1, active: 1, archived: 0 },
++      turns: { queued: 0, running: 1, completed: 0, stopped: 0, failed: 0 },
++      events: { tool_completed: 1 }, attachments: 2, artifacts: 3,
++      duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
++    };
++    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
++      status: 200, headers: { "Content-Type": "application/json" },
++    })));
++    expect(await getStats()).toEqual(payload);
++  });
++
+ });
+--- a/frontend/src/events.test.ts
++++ b/frontend/src/events.test.ts
+@@ -204,15 +204,41 @@
+       event(12, "tool_started", { tool: "read", tool_call_id: "call-1" }),
+       event(13, "tool_completed", { tool: "read", tool_call_id: "call-1", status: "completed" }),
+       event(14, "artifact_created", { artifact_id: "artifact-1" }),
+-      event(15, "confirmation_required", { confirmation_id: "confirmation-1" }),
+     ]).events);
+ 
+     expect(blocks.map((block) => block.key)).toEqual([
+       "event:10",
+       "event:12",
+       "event:14",
+-      "confirmation:confirmation-1",
+     ]);
++  });
++
++  it("removes the retired confirmation SSE subscription while keeping native events", () => {
++    const source = new FakeEventSource("unused");
++    const connection = new EventStreamConnection({
++      turnId: "turn-1", after: 0, eventSourceFactory: () => source,
++      onEvent: vi.fn(), onConnectionError: vi.fn(),
++    });
++    connection.start();
++    try {
++      expect([...source.listeners.keys()]).toEqual([
++        "text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed",
++        "artifact_created", "status_changed", "turn_completed", "turn_failed",
++      ]);
++    } finally {
++      connection.close();
++    }
++  });
++
++  it("rejects retired confirmation events and progress fields while preserving native tool review output", () => {
++    const retired = { ...event(1, "status_changed", { status: "running" }), event_type: "confirmation_required", payload: { confirmation_id: "old" } } as unknown as WorkbenchEvent;
++    expect(createEventState([retired]).events).toEqual([]);
++    for (const eventType of ["status_changed", "turn_failed"] as const) {
++      expect(parseStreamEvent(JSON.stringify(event(2, eventType, { status: "failed", confirmation_id: "old" })), eventType)).toBeNull();
++    }
++    expect(parseStreamEvent(JSON.stringify(event(3, "status_changed", { status: "running", confirmation_status: "executed" })), "status_changed")).toBeNull();
++    const tool = event(4, "tool_completed", { tool_call_id: "native-review", kind: "command", output: "native auto_review approved", provider_item: { type: "command_execution", review: { status: "approved" } } });
++    expect(parseStreamEvent(JSON.stringify(tool), "tool_completed")).toEqual(tool);
+   });
+ 
+   it("rejects fields and value types outside the public event payload schema", () => {
+--- a/frontend/src/components/ConversationTimeline.test.tsx
++++ b/frontend/src/components/ConversationTimeline.test.tsx
+@@ -4,7 +4,6 @@
+ import { describe, expect, it, vi } from "vitest";
+ 
+ import { ArtifactList } from "./ArtifactList";
+-import { ConfirmationCard } from "./ConfirmationCard";
+ import {
+   activeTurnScrollIndex,
+   assistantTurnKey,
+@@ -16,28 +15,22 @@
+ 
+ const turn = {
+   id: "turn-1", task_id: "task-1", client_request_id: "request-1", user_text: "请生成 **报告**",
+-  status: "waiting_confirmation" as const, stop_requested: false, final_text: "", error_code: "", error_detail: "",
++  status: "running" as const, stop_requested: false, final_text: "", error_code: "", error_detail: "",
+   started_at: "2026-08-13 10:00:00", completed_at: "", created_at: "2026-08-13 10:00:00", updated_at: "2026-08-13 10:00:01",
+ };
+ 
+ const timeline: Timeline = {
+-  task: { id: "task-1", title: "报告", runtime_kind: "codex", archived_at: "", state: "waiting_confirmation", created_at: "", updated_at: "" },
++  task: { id: "task-1", title: "报告", runtime_kind: "codex", archived_at: "", state: "running", created_at: "", updated_at: "" },
+   turns: [turn],
+   events: [
+     { id: 1, turn_id: turn.id, sequence: 1, event_type: "text_delta", payload: { text: "[官网](https://example.com) [坏链接](javascript:alert(1))\n\n```ts\nconst ok = true\n```\n<div>raw</div>" }, created_at: "" },
+     { id: 2, turn_id: turn.id, sequence: 2, event_type: "tool_started", payload: { tool: "read", tool_call_id: "tool-1", summary: "/Users/private/secret api_key=visible-secret" }, created_at: "" },
+-    { id: 3, turn_id: turn.id, sequence: 3, event_type: "confirmation_required", payload: { confirmation_id: "confirmation-1" }, created_at: "" },
+     { id: 4, turn_id: turn.id, sequence: 4, event_type: "artifact_created", payload: { artifact_id: "artifact-1" }, created_at: "" },
+   ],
+   attachments: [],
+   artifacts: [{ id: "artifact-1", turn_id: turn.id, label: "结果.txt", media_type: "text/plain", created_at: "", download_url: "/private/wrong" }],
+-  confirmations: [{
+-    id: "confirmation-1", turn_id: turn.id, action_kind: "send", target: "fallback", summary: "发送消息", risk: "外部可见",
+-    canonical_capability: "dingtalk-chat", canonical_operation: "发送群消息", canonical_targets: ["CEO 群"], status: "pending",
+-    decision_requested: "confirm", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
+-  }],
+   next_cursor: "older", has_more: true, events_has_more: true, events_next_cursor: 1,
+-  artifacts_has_more: false, artifacts_next_cursor: "", confirmations_has_more: false, confirmations_next_cursor: "",
++  artifacts_has_more: false, artifacts_next_cursor: "",
+   attachments_has_more: false, attachments_next_cursor: "",
+ };
+ 
+@@ -67,18 +60,16 @@
+     }));
+     render(
+       <ConversationTimeline
+-        timeline={{ ...timeline, turns, events: [], confirmations: [], artifacts: [] }}
+-        activeTurnId={null}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
++        timeline={{ ...timeline, turns, events: [], artifacts: [] }}
++        activeTurnId={null}
+       />,
+     );
+ 
+     expect(document.querySelectorAll(".conversation-turn").length).toBeLessThanOrEqual(12);
+   });
+ 
+-  it("renders ordered safe markdown, execution, confirmation and artifact blocks", () => {
+-    render(<ConversationTimeline timeline={timeline} activeTurnId={turn.id} onConfirm={vi.fn()} onCancel={vi.fn()} />);
++  it("renders ordered safe markdown, execution and artifact blocks", () => {
++    render(<ConversationTimeline timeline={timeline} activeTurnId={turn.id} />);
+ 
+     expect(screen.getByText("请生成 **报告**")).toBeInTheDocument();
+     const safe = screen.getByRole("link", { name: "官网" });
+@@ -89,8 +80,7 @@
+     expect(screen.queryByText("raw")).not.toBeInTheDocument();
+     expect(screen.getByText(/\/Users\/private\/secret/)).toBeInTheDocument();
+     expect(screen.getByText(/visible-secret/)).toBeInTheDocument();
+-    expect(screen.getByText("发送群消息")).toBeInTheDocument();
+-    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
++    expect(screen.queryByText("历史确认记录（只读）")).not.toBeInTheDocument();
+     const artifact = screen.getByRole("link", { name: /结果.txt/ });
+     expect(artifact).toHaveAttribute("href", "/api/workbench/tasks/task-1/turns/turn-1/artifacts/artifact-1/download");
+     expect(artifact).toHaveAttribute("target", "_blank");
+@@ -114,12 +104,10 @@
+             },
+             created_at: "",
+           }],
+-          confirmations: [],
++
+           artifacts: [],
+         }}
+         activeTurnId={turn.id}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />,
+     );
+ 
+@@ -130,7 +118,7 @@
+   });
+ 
+   it("shows every turn lifecycle state in Chinese", () => {
+-    const states = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"] as const;
++    const states = ["queued", "running", "completed", "stopped", "failed"] as const;
+     const turns = states.map((status, index) => ({
+       ...turn,
+       id: `turn-${status}`,
+@@ -139,9 +127,9 @@
+       status,
+       error_detail: status === "failed" ? "公开错误" : "",
+     }));
+-    render(<ConversationTimeline timeline={{ ...timeline, turns, events: [], confirmations: [], artifacts: [] }} activeTurnId="turn-running" onConfirm={vi.fn()} onCancel={vi.fn()} />);
+-
+-    for (const label of ["已排队", "执行中", "等待确认", "已完成", "已停止", "执行失败：公开错误"]) {
++    render(<ConversationTimeline timeline={{ ...timeline, turns, events: [], artifacts: [] }} activeTurnId="turn-running" />);
++
++    for (const label of ["已排队", "执行中", "已完成", "已停止", "执行失败：公开错误"]) {
+       expect(screen.getByText(label)).toBeInTheDocument();
+     }
+   });
+@@ -157,8 +145,6 @@
+           events_has_more: true,
+         }}
+         activeTurnId={null}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />,
+     );
+ 
+@@ -179,12 +165,10 @@
+             payload: { text: "![tracking pixel](https://tracker.example/pixel.png) [documentation](https://example.com/docs)" },
+             created_at: "",
+           }],
+-          confirmations: [],
++
+           artifacts: [],
+         }}
+         activeTurnId={turn.id}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />,
+     );
+ 
+@@ -203,8 +187,6 @@
+           events: [{ id: 21, turn_id: stopped.id, sequence: 21, event_type: "text_delta", payload: { text: "分页片段" }, created_at: "" }],
+         }}
+         activeTurnId={null}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />,
+     );
+ 
+@@ -220,12 +202,10 @@
+           ...timeline,
+           turns: [failed],
+           events: [{ id: 40, turn_id: failed.id, sequence: 40, event_type: "tool_started", payload: { tool: "read", tool_call_id: "tool-40", summary: "读取文件" }, created_at: "" }],
+-          confirmations: [],
++
+           artifacts: [],
+         }}
+         activeTurnId={null}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />,
+     );
+ 
+@@ -244,10 +224,8 @@
+     };
+     render(
+       <ConversationTimeline
+-        timeline={{ ...timeline, turns: [failed], events: [], confirmations: [], artifacts: [] }}
+-        activeTurnId={null}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
++        timeline={{ ...timeline, turns: [failed], events: [], artifacts: [] }}
++        activeTurnId={null}
+       />,
+     );
+ 
+@@ -261,10 +239,8 @@
+     const events = [{ id: 41, turn_id: turn.id, sequence: 41, event_type: "tool_started" as const, payload: { tool: "read", tool_call_id: "tool-41", summary: "读取文件" }, created_at: "" }];
+     const renderTimeline = (status: TurnStatus) => (
+       <ConversationTimeline
+-        timeline={{ ...timeline, turns: [{ ...turn, status }], events, confirmations: [], artifacts: [] }}
++        timeline={{ ...timeline, turns: [{ ...turn, status }], events, artifacts: [] }}
+         activeTurnId={turn.id}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />
+     );
+     const { rerender } = render(renderTimeline("running"));
+@@ -275,7 +251,7 @@
+     };
+ 
+     expect(execution().getByText("执行中")).toBeInTheDocument();
+-    for (const status of ["queued", "waiting_confirmation"] as const) {
++    for (const status of ["queued"] as const) {
+       rerender(renderTimeline(status));
+       expect(execution().getByText("执行中")).toBeInTheDocument();
+       expect(execution().queryByText("已中止")).not.toBeInTheDocument();
+@@ -301,12 +277,10 @@
+             { id: 44, turn_id: stopped.id, sequence: 44, event_type: "tool_started", payload: { tool: "shell", tool_call_id: "tool-44", summary: "运行命令" }, created_at: "" },
+             { id: 45, turn_id: stopped.id, sequence: 45, event_type: "tool_completed", payload: { tool: "shell", tool_call_id: "tool-44", status: "failed", summary: "命令失败" }, created_at: "" },
+           ],
+-          confirmations: [],
++
+           artifacts: [],
+         }}
+         activeTurnId={null}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+       />,
+     );
+ 
+@@ -315,56 +289,6 @@
+     expect(within(executions[0] as HTMLElement).getByText("失败")).toBeInTheDocument();
+     expect(within(executions[1] as HTMLElement).getByText("已完成")).toBeInTheDocument();
+     expect(screen.queryByText("已中止")).not.toBeInTheDocument();
+-  });
+-});
+-
+-describe("ConfirmationCard", () => {
+-  it("renders legacy confirmations as read-only history", () => {
+-    const confirmation = timeline.confirmations[0];
+-    const onConfirm = vi.fn();
+-    const onCancel = vi.fn();
+-    render(
+-      <ConfirmationCard confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} />,
+-    );
+-
+-    expect(screen.getByText("历史确认记录（只读）")).toBeInTheDocument();
+-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+-    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
+-    expect(onConfirm).not.toHaveBeenCalled();
+-    expect(onCancel).not.toHaveBeenCalled();
+-  });
+-
+-  it("does not resume persisted legacy decision intents", () => {
+-    const { rerender } = render(
+-      <ConfirmationCard
+-        confirmation={{ ...timeline.confirmations[0], decision_requested: "confirm", proposer_quiesced: true }}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+-      />,
+-    );
+-    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
+-    rerender(
+-      <ConfirmationCard
+-        confirmation={{ ...timeline.confirmations[0], decision_requested: "cancel", proposer_quiesced: true }}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+-      />,
+-    );
+-    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
+-  });
+-
+-  it("shows persisted confirmation outcomes instead of an in-progress label", () => {
+-    render(
+-      <ConfirmationCard
+-        confirmation={{ ...timeline.confirmations[0], status: "executed", decision_requested: "confirm", proposer_quiesced: true }}
+-        onConfirm={vi.fn()}
+-        onCancel={vi.fn()}
+-      />,
+-    );
+-
+-    expect(screen.getByText("操作已执行")).toBeInTheDocument();
+-    expect(screen.queryByText("正在执行已确认操作")).not.toBeInTheDocument();
+-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+   });
+ });
+ 
+--- a/frontend/src/components/TaskList.test.tsx
++++ b/frontend/src/components/TaskList.test.tsx
+@@ -20,7 +20,7 @@
+ function task(
+   id: string,
+   title: string,
+-  state: "idle" | "queued" | "running" | "waiting_confirmation" | "completed" | "stopped" | "failed",
++  state: "idle" | "queued" | "running" | "completed" | "stopped" | "failed",
+   updatedAt: string,
+ ) {
+   return {
+@@ -241,7 +241,6 @@
+           task("idle", "Idle", "idle", "2026-08-13 10:00:00"),
+           task("queued", "Queued", "queued", "2026-08-13 10:00:00"),
+           task("running", "Running", "running", "2026-08-13 10:00:00"),
+-          task("confirm", "Confirm", "waiting_confirmation", "2026-08-13 10:00:00"),
+           task("done", "Done", "completed", "2026-08-13 10:00:00"),
+           task("stopped", "Stopped", "stopped", "2026-08-13 10:00:00"),
+           task("failed", "Failed", "failed", "2026-08-13 10:00:00"),
+@@ -254,7 +253,7 @@
+       />,
+     );
+ 
+-    for (const label of ["空闲", "排队中", "执行中", "等待确认", "已完成", "已停止", "失败"]) {
++    for (const label of ["空闲", "排队中", "执行中", "已完成", "已停止", "失败"]) {
+       expect(screen.getByText(label)).toBeInTheDocument();
+     }
+   });
+--- a/frontend/src/presentation.test.ts
++++ b/frontend/src/presentation.test.ts
+@@ -48,7 +48,6 @@
+     ["idle", "空闲"],
+     ["queued", "排队中"],
+     ["running", "执行中"],
+-    ["waiting_confirmation", "等待确认"],
+     ["completed", "已完成"],
+     ["stopped", "已停止"],
+     ["failed", "失败"],
+--- a/frontend/src/app.test.tsx
++++ b/frontend/src/app.test.tsx
+@@ -10,8 +10,6 @@
+   getTimeline: vi.fn(),
+   getStats: vi.fn(),
+   runtimeCapabilities: vi.fn(),
+-  confirmAction: vi.fn(),
+-  cancelAction: vi.fn(),
+   uploadAttachment: vi.fn(),
+   createTurn: vi.fn(),
+   stopTurn: vi.fn(),
+@@ -70,15 +68,12 @@
+     events: [],
+     attachments: [],
+     artifacts: [],
+-    confirmations: [],
+     next_cursor: "",
+     has_more: false,
+     events_has_more: false,
+     events_next_cursor: 0,
+     artifacts_has_more: false,
+     artifacts_next_cursor: "",
+-    confirmations_has_more: false,
+-    confirmations_next_cursor: "",
+     attachments_has_more: false,
+     attachments_next_cursor: "",
+   };
+@@ -96,8 +91,7 @@
+   } }]);
+   api.getStats.mockResolvedValue({
+     tasks: { total: 2, active: 2, archived: 0 },
+-    turns: { queued: 0, running: 0, waiting_confirmation: 0, completed: 0, stopped: 0, failed: 0 },
+-    confirmations: { pending: 0, confirmed: 0, cancelled: 0, executed: 0, failed: 0 },
++    turns: { queued: 0, running: 0, completed: 0, stopped: 0, failed: 0 },
+     events: {}, attachments: 0, artifacts: 0,
+     duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
+   });
+@@ -1086,8 +1080,6 @@
+       events_next_cursor: 90,
+       artifacts_has_more: true,
+       artifacts_next_cursor: "artifact-cursor",
+-      confirmations_has_more: true,
+-      confirmations_next_cursor: "confirmation-cursor",
+       attachments_has_more: true,
+       attachments_next_cursor: "attachment-cursor",
+     };
+@@ -1104,14 +1096,6 @@
+       })
+       .mockResolvedValueOnce({
+         ...emptyTimeline(first, [stopped]),
+-        confirmations: [{
+-          id: "confirmation-page-2", turn_id: stopped.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
+-          canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "executed",
+-          decision_requested: "confirm", decision_requested_at: "", proposer_quiesced: true, created_at: "", decided_at: "",
+-        }],
+-      })
+-      .mockResolvedValueOnce({
+-        ...emptyTimeline(first, [stopped]),
+         attachments: [{ id: "attachment-page-2", task_id: first.id, filename: "image.png", media_type: "image/png", size_bytes: 10, created_at: "" }],
+       });
+     window.history.replaceState({}, "", `/?task=${first.id}`);
+@@ -1124,45 +1108,14 @@
+     await user.click(screen.getByRole("button", { name: "加载更多产物" }));
+     await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(3, first.id, expect.objectContaining({ artifactAfter: "artifact-cursor" })));
+ 
+-    await user.click(screen.getByRole("button", { name: "加载更多确认" }));
+-    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(4, first.id, expect.objectContaining({ confirmationAfter: "confirmation-cursor" })));
++    expect(screen.queryByRole("button", { name: "加载更多确认" })).not.toBeInTheDocument();
+ 
+     await user.click(screen.getByRole("button", { name: "加载更多附件" }));
+-    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(5, first.id, expect.objectContaining({ attachmentAfter: "attachment-cursor" })));
++    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(4, first.id, expect.objectContaining({ attachmentAfter: "attachment-cursor" })));
+     expect(await screen.findByText("任务已有 1 个附件")).toBeInTheDocument();
+   });
+ 
+-  it("shows legacy confirmations as read-only history", async () => {
+-    vi.stubGlobal("EventSource", class {
+-      onopen = null;
+-      onerror = null;
+-      addEventListener() {}
+-      close() {}
+-    });
+-    const waiting: Turn = {
+-      id: "turn-confirm", task_id: first.id, client_request_id: "confirm", user_text: "发送消息", status: "waiting_confirmation",
+-      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+-    };
+-    const confirmation = {
+-      id: "confirmation-1", turn_id: waiting.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
+-      canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
+-      decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
+-    };
+-    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+-    api.getTimeline.mockResolvedValueOnce({
+-        ...emptyTimeline(first, [waiting]),
+-        confirmations: [confirmation],
+-        events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: confirmation.id }, created_at: "" }],
+-      });
+-    window.history.replaceState({}, "", `/?task=${first.id}`);
+-    render(<App />);
+-
+-    expect(await screen.findByText("历史确认记录（只读）")).toBeInTheDocument();
+-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+-    expect(api.confirmAction).not.toHaveBeenCalled();
+-  });
+-
+-  it("coalesces a confirmation progress event into an authoritative timeline refresh", async () => {
++  it("coalesces artifact progress into an authoritative timeline refresh", async () => {
+     const sources: ProgressSource[] = [];
+     class ProgressSource {
+       onopen: ((event: Event) => void) | null = null;
+@@ -1183,52 +1136,45 @@
+     }
+     vi.stubGlobal("EventSource", ProgressSource);
+     const waiting: Turn = {
+-      id: "turn-progress", task_id: first.id, client_request_id: "progress", user_text: "发送消息", status: "waiting_confirmation",
++      id: "turn-progress", task_id: first.id, client_request_id: "progress", user_text: "发送消息", status: "running",
+       stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+-    };
+-    const pending = {
+-      id: "confirmation-progress", turn_id: waiting.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
+-      canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
+-      decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
+     };
+     const authoritative = deferred<Timeline>();
+     api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+     api.getTimeline
+       .mockResolvedValueOnce({
+         ...emptyTimeline(first, [waiting]),
+-        confirmations: [pending],
+-        events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: pending.id }, created_at: "" }],
++        events: [],
+       })
+       .mockReturnValueOnce(authoritative.promise);
+     window.history.replaceState({}, "", `/?task=${first.id}`);
+     await act(async () => { render(<App />); });
+ 
+-    expect(await screen.findByText("旧版待确认操作不会再执行")).toBeInTheDocument();
++    expect(await screen.findByText("发送消息")).toBeInTheDocument();
+     await waitFor(() => expect(sources).toHaveLength(1));
+ 
+-    sources[0].emit("status_changed", 2, waiting.id, {
+-      status: "queued",
+-      confirmation_id: pending.id,
+-      confirmation_status: "executed",
+-    });
+-    sources[0].emit("status_changed", 3, waiting.id, {
+-      status: "running",
+-      confirmation_id: pending.id,
+-    });
+-
+-    expect(await screen.findByText("操作已执行")).toBeInTheDocument();
+-    expect(screen.queryByText("旧版待确认操作不会再执行")).not.toBeInTheDocument();
++    sources[0].emit("artifact_created", 2, waiting.id, { artifact_id: "artifact-progress-1" });
++    sources[0].emit("artifact_created", 3, waiting.id, { artifact_id: "artifact-progress-2" });
+     await waitFor(() => expect(api.getTimeline).toHaveBeenCalledTimes(2));
+     await act(async () => authoritative.resolve({
+       ...emptyTimeline({ ...first, state: "running" }, [{ ...waiting, status: "running" }]),
+-      confirmations: [{ ...pending, status: "executed", proposer_quiesced: true }],
++      events: [
++        { id: 2, turn_id: waiting.id, sequence: 2, event_type: "artifact_created", payload: { artifact_id: "artifact-progress-1" }, created_at: "" },
++        { id: 3, turn_id: waiting.id, sequence: 3, event_type: "artifact_created", payload: { artifact_id: "artifact-progress-2" }, created_at: "" },
++      ],
++      artifacts: [
++        { id: "artifact-progress-1", turn_id: waiting.id, label: "新产物一", media_type: "text/plain", created_at: "", download_url: "/ignored" },
++        { id: "artifact-progress-2", turn_id: waiting.id, label: "新产物二", media_type: "text/plain", created_at: "", download_url: "/ignored" },
++      ],
+     }));
+ 
+     await waitFor(() => expect(within(screen.getByRole("button", { name: "打开任务 销售策略" })).getByText("执行中")).toBeInTheDocument());
+-    expect(screen.getByText("操作已执行")).toBeInTheDocument();
+-  });
+-
+-  it("drops a scheduled confirmation refresh after switching tasks", async () => {
++    const conversation = within(screen.getByTestId("conversation-timeline"));
++    expect(conversation.getByRole("link", { name: /新产物一/ })).toHaveAttribute("href", `/api/workbench/tasks/${first.id}/turns/${waiting.id}/artifacts/artifact-progress-1/download`);
++    expect(conversation.getByRole("link", { name: /新产物二/ })).toHaveAttribute("href", `/api/workbench/tasks/${first.id}/turns/${waiting.id}/artifacts/artifact-progress-2/download`);
++  });
++
++  it("drops a scheduled artifact refresh after switching tasks", async () => {
+     const sources: SwitchSource[] = [];
+     class SwitchSource {
+       onopen: ((event: Event) => void) | null = null;
+@@ -1248,7 +1194,7 @@
+     }
+     vi.stubGlobal("EventSource", SwitchSource);
+     const waiting: Turn = {
+-      id: "turn-stale-progress", task_id: first.id, client_request_id: "stale-progress", user_text: "会切换的等待回合", status: "waiting_confirmation",
++      id: "turn-stale-progress", task_id: first.id, client_request_id: "stale-progress", user_text: "会切换的等待回合", status: "running",
+       stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+     };
+     const staleRefresh = deferred<Timeline>();
+@@ -1267,7 +1213,7 @@
+ 
+     await screen.findByText("会切换的等待回合");
+     await waitFor(() => expect(sources).toHaveLength(1));
+-    sources[0].emit("status_changed", 1, waiting.id, { status: "queued", confirmation_id: "confirmation-stale" });
++    sources[0].emit("artifact_created", 1, waiting.id, { artifact_id: "artifact-stale" });
+     fireEvent.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
+     await screen.findByText("开始新的对话");
+     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+--- a/tests/test_workbench_api.py
++++ b/tests/test_workbench_api.py
+@@ -47,12 +47,6 @@
+ 
+         def stop(self, turn_id):
+             return store.request_stop(turn_id)
+-
+-        def confirm(self, confirmation_id):
+-            raise AssertionError(f"unexpected confirmation: {confirmation_id}")
+-
+-        def cancel(self, confirmation_id):
+-            raise AssertionError(f"unexpected cancellation: {confirmation_id}")
+ 
+         def close(self):
+             return True
+@@ -488,22 +482,18 @@
+     assert cross_task.status_code == 400
+ 
+ 
+-def test_timeline_does_not_read_confirmation_quiescence_after_snapshot(
+-    tmp_path: Path, monkeypatch
+-):
++def test_timeline_excludes_retired_confirmation_resource(tmp_path: Path):
+     store = WorkbenchStore(tmp_path / "worker.sqlite3")
+     _complete_setup(store)
+-    task = store.create_task(title="Snapshot confirmations", runtime_kind="codex")
+-
+-    def fail_separate_read(*_args, **_kwargs):
+-        raise AssertionError("quiescence must come from timeline snapshot")
+-
+-    monkeypatch.setattr(WorkbenchStore, "confirmation_quiescence", fail_separate_read)
+-
++    task = store.create_task(title="Snapshot resources", runtime_kind="codex")
+     with _client(tmp_path) as client:
+         response = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+-
+     assert response.status_code == 200
++    assert set(response.json()) == {
++        "task", "turns", "events", "attachments", "artifacts", "next_cursor",
++        "has_more", "events_has_more", "events_next_cursor", "artifacts_has_more",
++        "artifacts_next_cursor", "attachments_has_more", "attachments_next_cursor",
++    }
+ 
+ 
+ def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):
+@@ -562,7 +552,6 @@
+     store.request_stop(turn.id)
+     attachment_id = str(uuid4())
+     artifact_id = str(uuid4())
+-    confirmation_id = str(uuid4())
+     with store._connect() as db:
+         db.execute(
+             "update tasks\n               set title=?,runtime_kind=?,created_at=?,updated_at=? where record_type='workbench_tasks' and legacy_key=?",
+@@ -616,27 +605,6 @@
+                 "text/plain",
+             ),
+         )
+-        db.execute(
+-            """insert into workbench_confirmations
+-               (id,turn_id,action_kind,target,summary,risk,
+-                canonical_capability,canonical_operation,canonical_targets_json,
+-                arguments_json,status,decision_requested)
+-               values(?,?,?,?,?,?,?,?,?,?,?,?)""",
+-            (
+-                confirmation_id,
+-                task_physical_id(db, "workbench_turns", turn.id),
+-                "tool=/usr/bin/send",
+-                "Bearer target-secret",
+-                "write /home/private/message.txt",
+-                "api_key=legacy-secret",
+-                "cap=/Volumes/private/cap",
+-                "op=/Applications/private/op",
+-                json.dumps(["/dev/private", "Bearer canonical-secret"]),
+-                "{}",
+-                "pending",
+-                "",
+-            ),
+-        )
+ 
+     with _client(tmp_path) as client:
+         timeline = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+@@ -655,9 +623,7 @@
+         "created-secret",
+         "completed-secret",
+         "client-secret",
+-        "target-secret",
+         "artifact-secret",
+-        "canonical-secret",
+     ):
+         assert preserved in rendered
+ 
+@@ -765,68 +731,18 @@
+     assert consumed is False
+ 
+ 
+-def test_legacy_confirmation_endpoints_are_read_only(tmp_path: Path):
+-    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+-    _complete_setup(store)
+-    task = store.create_task(title="Confirm", runtime_kind="codex")
+-    turn = store.create_turn(task.id, user_text="Confirm", client_request_id="confirm")
+-    assert store.claim_next_turn(owner="seed") is not None
+-    confirmation = store.create_confirmation(
+-        turn.id,
+-        action_kind="reviewed_cli",
+-        target="target",
+-        summary="summary",
+-        risk="risk",
+-        arguments_json={},
+-        owner="seed",
+-    )
+-
+-    class RecordingExecutor:
+-        workspace = tmp_path
+-        called = False
+-
+-        def recover(self): return 0
+-        def run_once(self): return []
+-        def close(self): return True
+-        def confirm(self, confirmation_id):
+-            self.called = True
+-            raise AssertionError(f"unexpected legacy confirmation: {confirmation_id}")
+-
+-        def cancel(self, confirmation_id):
+-            self.called = True
+-            raise AssertionError(f"unexpected legacy cancellation: {confirmation_id}")
+-
+-    executor = RecordingExecutor()
+-
+-    app = create_audit_app(
+-        store.path,
+-        workbench_asset_dir=tmp_path / "assets",
+-        workbench_workspace=tmp_path,
+-        workbench_executor=executor,
+-    )
+-
+-    async def exercise():
+-        transport = httpx.ASGITransport(app=app)
+-        async with httpx.AsyncClient(
+-            transport=transport,
+-            base_url="http://127.0.0.1:8765",
+-            headers={"Host": "127.0.0.1:8765"},
+-        ) as client:
+-            confirm_response = await client.post(
+-                f"/api/workbench/tasks/{task.id}/turns/{turn.id}/confirmations/{confirmation.id}/confirm",
+-                json={},
++def test_legacy_confirmation_endpoints_are_absent(tmp_path: Path):
++    with _client(tmp_path) as client:
++        task = client.post(
++            "/api/workbench/tasks", json={"title": "Native", "runtime_kind": "codex"}
++        ).json()
++        for action in ("confirm", "cancel"):
++            response = client.post(
++                f"/api/workbench/tasks/{task['id']}/turns/{uuid4()}"
++                f"/confirmations/{uuid4()}/{action}", json={},
+             )
+-            cancel_response = await client.post(
+-                f"/api/workbench/tasks/{task.id}/turns/{turn.id}/confirmations/{confirmation.id}/cancel",
+-                json={},
+-            )
+-            return confirm_response, cancel_response
+-
+-    confirm_response, cancel_response = asyncio.run(exercise())
+-    assert confirm_response.status_code == cancel_response.status_code == 410
+-    assert confirm_response.json()["detail"] == "Historical confirmations are read-only"
+-    assert cancel_response.json()["detail"] == "Historical confirmations are read-only"
+-    assert executor.called is False
++            assert response.status_code == 404
++            assert response.json() == {"detail": "Not Found"}
+ 
+ 
+ def test_slow_sse_snapshot_does_not_block_unrelated_async_request(
+@@ -1011,7 +927,7 @@
+     }
+ 
+ 
+-def test_nested_turn_and_confirmation_resources_do_not_leak_across_tasks(
++def test_nested_turn_resources_do_not_leak_across_tasks(
+     tmp_path: Path,
+ ):
+     with _client(tmp_path) as client:
+@@ -1049,11 +965,11 @@
+     assert stats.json()["turns"] == {
+         "queued": 0,
+         "running": 0,
+-        "waiting_confirmation": 0,
+         "completed": 0,
+         "stopped": 0,
+         "failed": 0,
+     }
++    assert "confirmations" not in stats.json()
+     assert "database_path" not in stats.json()
+ 
+ 
+--- /dev/null
++++ b/tests/test_workbench_confirmation_retirement_api.py
+@@ -0,0 +1,166 @@
++"""Workbench's retired confirmation surface, without a database or runtime."""
++
++from pathlib import Path
++from types import SimpleNamespace
++from uuid import uuid4
++
++from fastapi import FastAPI
++from fastapi.testclient import TestClient
++import pytest
++
++from app.workbench.api import (
++    _public_event,
++    _resource_cursor,
++    _turn_cursor,
++    register_workbench_routes,
++)
++from app.workbench.models import (
++    WorkbenchArtifact,
++    WorkbenchAttachment,
++    WorkbenchEvent,
++    WorkbenchTask,
++    WorkbenchTurn,
++)
++
++
++@pytest.fixture
++def surface(tmp_path: Path):
++    timestamp = "2026-10-16 00:00:00"
++    task = WorkbenchTask(
++        id=str(uuid4()), title="Native work", runtime_kind="codex",
++        created_at=timestamp, updated_at=timestamp,
++    )
++    turn = WorkbenchTurn(
++        id=str(uuid4()), task_id=task.id, client_request_id="request",
++        task_sequence=4, user_text="Inspect", status="stopped",
++        created_at=timestamp, updated_at=timestamp,
++    )
++    artifact = WorkbenchArtifact(
++        id=str(uuid4()), turn_id=turn.id, label="Output", path="unused",
++        media_type="text/plain", created_at=timestamp,
++    )
++    attachment = WorkbenchAttachment(
++        id=str(uuid4()), task_id=task.id, filename="input.txt",
++        media_type="text/plain", size_bytes=4, created_at=timestamp,
++    )
++    calls = []
++    counts = {
++        "tasks": {"total": 1, "active": 1, "archived": 0},
++        "turns": {key: 0 for key in ("queued", "running", "completed", "stopped", "failed")},
++        "events": {"tool_completed": 1}, "attachments": 1, "artifacts": 1,
++        "duration": {"completed_count": 0, "total_seconds": 0.0, "average_seconds": 0.0},
++    }
++
++    def snapshot(task_id, **kwargs):
++        calls.append((task_id, kwargs))
++        return task, [turn], [], [attachment], [artifact], {
++            "task_state": "stopped", "has_more": True,
++            "events_has_more": True, "events_next_cursor": 12,
++            "artifacts_has_more": True, "attachments_has_more": True,
++        }
++
++    app = FastAPI()
++    store = SimpleNamespace(
++        path=tmp_path / "unused.sqlite3", timeline_snapshot=snapshot,
++        workbench_stats=lambda: counts,
++    )
++    executor = SimpleNamespace(workspace=tmp_path)
++    registry = SimpleNamespace(kinds=lambda: [])
++    register_workbench_routes(
++        app, store, executor, registry, tmp_path / "assets",
++        mutation_guard=lambda request: None,
++    )
++    return app, task, turn, artifact, attachment, calls, counts
++
++
++def test_removed_confirmation_routes_are_plain_404_and_absent_from_openapi(surface):
++    app, task, turn, *_ = surface
++    schema = app.openapi()
++    assert not any("confirmation" in path for path in schema["paths"])
++    with TestClient(app, raise_server_exceptions=False) as client:
++        for identifier in (str(uuid4()), "not-a-uuid"):
++            for action in ("confirm", "cancel"):
++                response = client.post(
++                    f"/api/workbench/tasks/{task.id}/turns/{turn.id}"
++                    f"/confirmations/{identifier}/{action}", json={},
++                )
++                assert response.status_code == 404
++                assert response.json() == {"detail": "Not Found"}
++    schema = app.openapi()
++    assert not any("confirmation" in path for path in schema["paths"])
++    assert "PublicConfirmation" not in schema["components"]["schemas"]
++    parameters = schema["paths"]["/api/workbench/tasks/{task_id}/timeline"]["get"]["parameters"]
++    assert {item["name"] for item in parameters} == {
++        "task_id", "turn_limit", "event_limit", "before", "event_before",
++        "artifact_after", "attachment_after",
++    }
++
++
++def test_timeline_consumes_six_tuple_and_preserves_other_resources_and_cursors(surface):
++    app, task, turn, artifact, attachment, calls, _ = surface
++    with TestClient(app, raise_server_exceptions=False) as client:
++        response = client.get(
++            f"/api/workbench/tasks/{task.id}/timeline",
++            params={
++                "turn_limit": 2, "event_limit": 3,
++                "before": _turn_cursor(task.id, turn), "event_before": 9,
++                "artifact_after": _resource_cursor(artifact),
++                "attachment_after": _resource_cursor(attachment),
++            },
++        )
++    assert response.status_code == 200
++    payload = response.json()
++    assert set(payload) == {
++        "task", "turns", "events", "attachments", "artifacts", "next_cursor",
++        "has_more", "events_has_more", "events_next_cursor",
++        "artifacts_has_more", "artifacts_next_cursor", "attachments_has_more",
++        "attachments_next_cursor",
++    }
++    assert payload["task"]["id"] == task.id
++    assert payload["turns"][0]["id"] == turn.id
++    assert payload["attachments"][0]["id"] == attachment.id
++    assert payload["artifacts"][0]["id"] == artifact.id
++    assert payload["next_cursor"] == _turn_cursor(task.id, turn)
++    assert payload["events_next_cursor"] == 12
++    assert payload["artifacts_next_cursor"] == _resource_cursor(artifact)
++    assert payload["attachments_next_cursor"] == _resource_cursor(attachment)
++    assert calls == [(task.id, {
++        "turn_limit": 2, "event_limit": 3, "before_sequence": 4, "event_before": 9,
++        "artifact_after": (artifact.created_at, artifact.id),
++        "attachment_after": (attachment.created_at, attachment.id),
++    })]
++
++
++def test_stats_exposes_only_retained_counts(surface):
++    app, *_, counts = surface
++    with TestClient(app, raise_server_exceptions=False) as client:
++        response = client.get("/api/workbench/stats")
++    assert response.status_code == 200
++    assert response.json() == counts
++
++
++@pytest.mark.parametrize("kind", ["status_changed", "turn_failed"])
++def test_status_payload_drops_legacy_confirmation_fields_only(tmp_path, kind):
++    event = WorkbenchEvent(
++        id=1, turn_id=str(uuid4()), sequence=1, event_type=kind,
++        payload={
++            "status": "failed", "code": "runtime_error",
++            "confirmation_id": "retired", "confirmation_status": "executed",
++        }, created_at="2026-10-16 00:00:00",
++    )
++    assert _public_event(event, tmp_path).payload == {
++        "status": "failed", "code": "runtime_error",
++    }
++
++
++def test_native_tool_review_payload_is_preserved(tmp_path):
++    payload = {
++        "tool_call_id": "native-review", "kind": "command",
++        "output": "native auto_review approved",
++        "provider_item": {"type": "command_execution", "review": {"status": "approved"}},
++    }
++    event = WorkbenchEvent(
++        id=1, turn_id=str(uuid4()), sequence=1, event_type="tool_completed",
++        payload=payload, created_at="2026-10-16 00:00:00",
++    )
++    assert _public_event(event, tmp_path).payload == payload

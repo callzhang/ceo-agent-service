@@ -1,3 +1,6 @@
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_candidate_definitions import candidate_projection
+from app.action_business_definitions import business_action_projection
 import hashlib
 import json
 import logging
@@ -84,6 +87,7 @@ from app.task_source_documents import (
     source_document_key,
     source_is_observed,
 )
+from app.business_source_reader import PreparedSources, RequestSourceReader
 from app.project_context_service import ProjectContextService
 from app.fxiaoke_customer_lookup import CrmCustomerLookup, lookup_account_customers
 
@@ -356,6 +360,7 @@ class TaskAgentCodexRunner:
             extract_codex_audit_events_from_session
         )
         self.last_session_id: str | None = None
+        self.last_runtime_attempt_id: int | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
@@ -370,6 +375,7 @@ class TaskAgentCodexRunner:
         continuation_session_id: str | None = None,
     ) -> TaskAgentDecision:
         self.last_session_id = None
+        self.last_runtime_attempt_id = None
         self.last_audit_tool_events = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
@@ -407,6 +413,7 @@ class TaskAgentCodexRunner:
         payload = json.loads(result.value)
         decision = TaskAgentDecision.model_validate(payload["decision"])
         self.last_session_id = result.session_id or None
+        self.last_runtime_attempt_id = result.attempt_id
         self.last_transcript_start_line = result.transcript_start
         self.last_transcript_end_line = result.transcript_end
         session_events = []
@@ -876,7 +883,44 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     return title
 
 
-def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
+def _bind_current_source(signal, *, native_provenance=None, provider_locator=None):
+    from app.business_source_reader import SourceVersionBinding
+    return replace(signal, source_binding=SourceVersionBinding.from_signal(
+        signal, native_provenance=native_provenance, provider_locator=provider_locator))
+
+
+def _work_item_source_coordinates(store, runner, work_item):
+    from app import native_trajectory
+    attempt_id = getattr(runner.codex, "last_runtime_attempt_id", None)
+    if attempt_id is None:
+        return None, None
+    attempt = store.get_agent_runtime_attempt(attempt_id)
+    if attempt is None or attempt.status != "completed":
+        raise ValueError("completed source runtime attempt is missing")
+    if attempt.runtime_kind in ("codex_cli", "claude_cli"):
+        try:
+            locator = native_trajectory.locate_native_source_body(
+                work_item.summary, runtime_kind=attempt.runtime_kind,
+                session_uuid=attempt.session_id, start_line=attempt.transcript_start,
+                end_line=attempt.transcript_end)
+        except native_trajectory.NativeSourceMissing:
+            pass
+        else:
+            return locator, None
+    # Only after the actual native turn has no full original do we retain the
+    # existing producer's upstream coordinates. No provider is called here.
+    source = _project_source_signal(work_item)
+    if source.source_type == "ai_minutes":
+        from app.business_minutes_source_reader import minutes_provider_locator
+        return None, minutes_provider_locator(source)
+    from app.business_weekly_source_reader import WEEKLY_SOURCE_TYPES, weekly_provider_locator
+    if source.source_type in WEEKLY_SOURCE_TYPES:
+        return None, weekly_provider_locator(source)
+    return None, None
+
+
+def _task_source_signal(work_item: WorkItem, item: TaskDecision, *,
+                        native_provenance=None, provider_locator=None) -> SourceSignal:
     import hashlib
 
     if item.evidence_origin == "current":
@@ -1009,7 +1053,7 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
                 sort_keys=True,
             ),
         )
-    return SourceSignal(
+    signal = SourceSignal(
         source_type=work_item.source.type.value,
         source_ref=work_item.source.ref,
         evidence_text=work_item.summary,
@@ -1050,6 +1094,8 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
             sort_keys=True,
         ),
     )
+    return _bind_current_source(signal, native_provenance=native_provenance,
+                                provider_locator=provider_locator)
 
 
 def _task_date_inputs(
@@ -1290,17 +1336,13 @@ def _confirmed_official_project_anchors(
     return {
         int(row["anchor_id"])
         for row in db.execute(
-            """select link.anchor_id from business_task_anchor_links link
-               join business_anchors anchor on anchor.id=link.anchor_id
-               join business_projects project on project.canonical_anchor_id=link.anchor_id
-               where link.task_id=? and link.status='confirmed' and link.active=1
-                 and anchor.anchor_type='project' and anchor.active=1""",
+            f'select link.anchor_id from ({business_action_projection("business_task_anchor_links")}) link\n               join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n               join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=link.anchor_id\n               where link.task_id=? and link.status=\'confirmed\' and link.active=1\n                 and anchor.anchor_type=\'project\' and anchor.active=1',
             (task_id,),
         ).fetchall()
     }
 
 
-def _project_source_signal(work_item: WorkItem) -> SourceSignal:
+def _project_source_signal(work_item: WorkItem, *, native_provenance=None, provider_locator=None) -> SourceSignal:
     """One observed source version can support Project facts without a Task."""
     link, group, person, description = _source_locator(work_item)
     fields = dict(
@@ -1317,7 +1359,7 @@ def _project_source_signal(work_item: WorkItem) -> SourceSignal:
             else BusinessActorKind.UNKNOWN
         ),
     )
-    return SourceSignal(
+    signal = SourceSignal(
         **fields,
         dedupe_key=f"project-source:{source_document_key(**fields)}",
         conversation_title=group,
@@ -1331,6 +1373,8 @@ def _project_source_signal(work_item: WorkItem) -> SourceSignal:
             sort_keys=True,
         ),
     )
+    return _bind_current_source(signal, native_provenance=native_provenance,
+                                provider_locator=provider_locator)
 
 
 def _project_citations(decision: TaskAgentDecision):
@@ -1351,6 +1395,152 @@ def _project_citations(decision: TaskAgentDecision):
             yield from assessment.attention_proposal.evidence
 
 
+def _prepare_decision_sources(
+    store: AutoReplyStore, decision: TaskAgentDecision, *, source_reader: RequestSourceReader | None = None
+) -> PreparedSources:
+    """Collect finite historical IDs before any Task domain writer starts."""
+    ids = {proof.signal_id for proof in _project_citations(decision)
+           if proof.signal_id is not None}
+    task_proofs: dict[int, set[int]] = {}
+    for item in decision.task_decisions:
+        if item.acceptance_target_signal_id is not None:
+            ids.add(item.acceptance_target_signal_id)
+            if item.task_id is not None:
+                task_proofs.setdefault(item.task_id, set()).add(
+                    item.acceptance_target_signal_id
+                )
+        proposal = item.identity_proposal
+        if proposal is None:
+            continue
+        proof = proposal.identity_evidence
+        ids.update((proof.source_signal_id, proof.target_signal_id))
+        task_proofs.setdefault(proposal.source_task_id, set()).add(proof.source_signal_id)
+        task_proofs.setdefault(proposal.target_task_id, set()).add(proof.target_signal_id)
+        if proof.basis != "same_source_item_same_owner":
+            continue
+        for task_id, signal_id in (
+            (proposal.source_task_id, proof.source_signal_id),
+            (proposal.target_task_id, proof.target_signal_id),
+        ):
+            task = store.get_business_task(task_id)
+            signal = store.get_business_task_signal(signal_id)
+            if task is None or signal is None:
+                continue
+            owner_ref = str(_task_owner_identity_evidence(task).get("source_ref") or "")
+            owner_signal = store.get_business_task_signal_for_task_source_ref(
+                task_id=task_id, source_ref=owner_ref, source_type=signal.source_type
+            )
+            if owner_signal is not None:
+                ids.add(owner_signal.id)
+                task_proofs.setdefault(task_id, set()).add(owner_signal.id)
+    card_snapshots: dict[int, tuple[object, tuple[int, ...]] | None] = {}
+    project_link_snapshots: dict[int, set[int]] = {}
+    for assessment in decision.project_assessments:
+        if assessment.existing_attention_id is None:
+            continue
+        with store._connect() as db:
+            card = store.get_business_attention_item_in_transaction(
+                item_id=assessment.existing_attention_id, _db=db
+            )
+        if card is None:
+            card_snapshots[assessment.existing_attention_id] = None
+            continue
+        with store._connect() as db:
+            members = tuple(sorted(
+                link.task_id for link in store.list_business_attention_tasks_in_transaction(
+                    attention_item_id=card.id, _db=db
+                )
+            ))
+            project_row = db.execute(
+                f'select id from ({BUSINESS_PROJECTIONS["project"]}) '
+                'where canonical_anchor_id=?', (card.anchor_id,)
+            ).fetchone()
+            if project_row is not None:
+                project_id = int(project_row["id"])
+                proof_ids = {
+                    proof.get("signal_id")
+                    for proof in json.loads(card.assessment_json).get("evidence", [])
+                    if isinstance(proof, dict) and isinstance(proof.get("signal_id"), int)
+                }
+                rows = db.execute(
+                    f"select signal_id from ({business_action_projection('business_project_evidence')}) "
+                    "where project_id=?", (project_id,)
+                ).fetchall()
+                project_link_snapshots.setdefault(project_id, set()).update(
+                    int(row["signal_id"]) for row in rows if int(row["signal_id"]) in proof_ids
+                )
+        card_snapshots[card.id] = (card, members)
+        for proof in json.loads(card.assessment_json).get("evidence", []):
+            signal_id = proof.get("signal_id") if isinstance(proof, dict) else None
+            if isinstance(signal_id, int) and signal_id > 0:
+                ids.add(signal_id)
+    prepared = PreparedSources.load(store, ids, reader=source_reader)
+    for task_id, signal_ids in task_proofs.items():
+        links = tuple(sorted(
+            (row.signal_id, row.evidence_role.value)
+            for row in store.list_business_task_evidence(task_id)
+            if row.signal_id in signal_ids
+        ))
+        prepared.task_evidence_links[task_id] = (frozenset(signal_ids), links)
+    prepared.attention_cards = card_snapshots
+    prepared.project_evidence_links = {
+        project_id: frozenset(signal_ids)
+        for project_id, signal_ids in project_link_snapshots.items()
+    }
+    return prepared
+
+
+def _assert_prepared_relationships(
+    store: AutoReplyStore, prepared: PreparedSources, db: sqlite3.Connection
+) -> None:
+    """Reject a changed historical relationship before any decision write."""
+    for task_id, (signal_ids, expected) in prepared.task_evidence_links.items():
+        actual = tuple(sorted(
+            (row.signal_id, row.evidence_role.value)
+            for row in store.list_business_task_evidence_in_transaction(
+                task_id=task_id, _db=db
+            ) if row.signal_id in signal_ids
+        ))
+        if actual != expected:
+            raise ValueError("historical Task evidence link changed before apply")
+    _assert_prepared_attention_relationships(store, prepared, db)
+
+
+def _assert_prepared_attention_relationships(
+    store: AutoReplyStore, prepared: PreparedSources, db: sqlite3.Connection,
+    *, card_ids: frozenset[int] | None = None,
+    project_ids: frozenset[int] | None = None,
+) -> None:
+    """Recheck retained card proofs without replaying this decision's new Task links."""
+    for card_id, expected in prepared.attention_cards.items():
+        if card_ids is not None and card_id not in card_ids:
+            continue
+        card = store.get_business_attention_item_in_transaction(item_id=card_id, _db=db)
+        if card is None:
+            actual = None
+        else:
+            members = tuple(sorted(
+                link.task_id for link in store.list_business_attention_tasks_in_transaction(
+                    attention_item_id=card.id, _db=db
+                )
+            ))
+            actual = (card, members)
+        if actual != expected:
+            raise ValueError("existing Attention evidence or membership changed before apply")
+    for project_id, signal_ids in prepared.project_evidence_links.items():
+        if project_ids is not None and project_id not in project_ids:
+            continue
+        if not signal_ids:
+            continue
+        rows = db.execute(
+            f"select signal_id from ({business_action_projection('business_project_evidence')}) "
+            "where project_id=?", (project_id,)
+        ).fetchall()
+        actual = {int(row["signal_id"]) for row in rows}
+        if not signal_ids.issubset(actual):
+            raise ValueError("existing Project evidence link changed before apply")
+
+
 def _validate_current_project_citation(citation, *, work_item: WorkItem) -> None:
     if citation.source_ref != work_item.source.ref:
         raise ValueError(
@@ -1369,14 +1559,15 @@ def _resolve_project_citation(
     *,
     work_item: WorkItem,
     db: sqlite3.Connection,
+    prepared_sources: PreparedSources,
     current_signal_id: int | None = None,
 ) -> SourceCitation:
     if citation.signal_id is None:
         _validate_current_project_citation(citation, work_item=work_item)
         signal_id = current_signal_id
     else:
-        signal = store.get_business_task_signal_in_transaction(
-            signal_id=citation.signal_id, _db=db
+        signal, body = prepared_sources.require_body(
+            store, citation.signal_id, db=db
         )
         if signal is None:
             raise ValueError("historical Project evidence signal does not exist")
@@ -1388,7 +1579,7 @@ def _resolve_project_citation(
             raise ValueError(
                 "Project evidence must be observed original source, not cited provenance"
             )
-        if not source_contains_quote(signal.evidence_text, citation.source_excerpt):
+        if not source_contains_quote(body, citation.source_excerpt):
             raise ValueError("historical Project quote is absent from original source")
         signal_id = signal.id
     return SourceCitation(
@@ -1398,7 +1589,7 @@ def _resolve_project_citation(
     )
 
 
-def _resolved_context(store, context, *, work_item, db, current_signal_id):
+def _resolved_context(store, context, *, work_item, db, current_signal_id, prepared_sources):
     if context is None:
         return None
 
@@ -1412,6 +1603,7 @@ def _resolved_context(store, context, *, work_item, db, current_signal_id):
                         work_item=work_item,
                         db=db,
                         current_signal_id=current_signal_id,
+                        prepared_sources=prepared_sources,
                     )
                     for proof in value.evidence
                 ]
@@ -1433,6 +1625,7 @@ def _resolved_context(store, context, *, work_item, db, current_signal_id):
                             work_item=work_item,
                             db=db,
                             current_signal_id=current_signal_id,
+                            prepared_sources=prepared_sources,
                         )
                         for proof in value.evidence
                     ]
@@ -1445,7 +1638,7 @@ def _resolved_context(store, context, *, work_item, db, current_signal_id):
 
 def _official_project(store, anchor_id, *, db):
     row = db.execute(
-        "select p.id from business_projects p join business_anchors a on a.id=p.canonical_anchor_id "
+        f'select p.id from ({BUSINESS_PROJECTIONS["project"]}) p join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id=p.canonical_anchor_id '
         "where a.id=? and a.anchor_type='project' and a.active=1",
         (anchor_id,),
     ).fetchone()
@@ -1462,10 +1655,12 @@ def _validate_stored_project_assessments(
     *,
     work_item: WorkItem,
     db: sqlite3.Connection,
+    prepared_sources: PreparedSources,
 ) -> None:
     """Verify original citations and existing identities before domain writes."""
     for citation in _project_citations(decision):
-        _resolve_project_citation(store, citation, work_item=work_item, db=db)
+        _resolve_project_citation(store, citation, work_item=work_item, db=db,
+                                  prepared_sources=prepared_sources)
 
     project_anchors: dict[int, int | None] = {}
     for index, project in enumerate(decision.project_decisions):
@@ -1497,8 +1692,8 @@ def _validate_stored_project_assessments(
                     "report Project registration must match the cited report registry row and source authority"
                 )
         matches = db.execute(
-            "select p.canonical_anchor_id from business_projects p "
-            "join business_anchors a on a.id=p.canonical_anchor_id "
+            f'select p.canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]}) p '
+            f'join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id=p.canonical_anchor_id '
             "where p.title=? and a.active=1 and a.anchor_type='project' limit 2",
             (proposal.title,),
         ).fetchall()
@@ -1623,7 +1818,8 @@ def _validate_stored_project_assessments(
                 raise ValueError(
                     "existing Attention card lacks stored original assessment evidence"
                 )
-            _resolve_project_citation(store, original, work_item=work_item, db=db)
+            _resolve_project_citation(store, original, work_item=work_item, db=db,
+                                      prepared_sources=prepared_sources)
             verified.add(
                 (original.signal_id, original.source_ref, original.source_excerpt)
             )
@@ -1671,9 +1867,17 @@ def apply_task_agent_decision(
     now: str = "",
     crm_customer_lookups: dict[int, CrmCustomerLookup] | None = None,
     _db: sqlite3.Connection | None = None,
+    prepared_sources: PreparedSources | None = None,
+    source_native_provenance: dict[str, object] | None = None,
+    source_provider_locator: dict[str, object] | None = None,
 ) -> TaskAgentApplyResult:
     """Persist all source-grounded task decisions, atomically when _db is supplied."""
     _validate_task_agent_decision(decision, work_item=work_item, now=now)
+    if prepared_sources is None:
+        if _db is not None:
+            raise ValueError("historical source map was not prepared before writer")
+        prepared_sources = _prepare_decision_sources(
+            store, decision, source_reader=store.business_source_reader(provider_reader=dws))
     service = TaskSemanticService(store)
     resolution = BusinessResolutionService(store)
     task_ids: list[int] = []
@@ -1687,13 +1891,21 @@ def apply_task_agent_decision(
 
     def apply(db: sqlite3.Connection) -> None:
         nonlocal current_signal_id
+        _assert_prepared_relationships(store, prepared_sources, db)
         _validate_stored_project_assessments(
-            store, decision, work_item=work_item, db=db
+            store, decision, work_item=work_item, db=db,
+            prepared_sources=prepared_sources,
         )
         if any(proof.signal_id is None for proof in _project_citations(decision)):
+            project_signal = _project_source_signal(work_item, native_provenance=source_native_provenance, provider_locator=source_provider_locator)
             current_signal_id = service._signal_id_or_create(
-                signal=_project_source_signal(work_item), db=db, now=service._now()
+                signal=project_signal, db=db, now=service._now()
             )
+            current_fact = store.get_business_task_signal_in_transaction(
+                signal_id=current_signal_id, _db=db
+            )
+            assert current_fact is not None
+            prepared_sources.add_current(current_fact, project_signal.evidence_text)
         projects_by_index = {}
         for index, project_decision in enumerate(decision.project_decisions):
             if project_decision.anchor_id is not None:
@@ -1722,6 +1934,7 @@ def apply_task_agent_decision(
                     work_item=work_item,
                     db=db,
                     current_signal_id=current_signal_id,
+                    prepared_sources=prepared_sources,
                 )
                 customer_candidates = [
                     ProjectCrmCustomerCandidate(
@@ -1750,6 +1963,7 @@ def apply_task_agent_decision(
                 work_item=work_item,
                 db=db,
                 current_signal_id=current_signal_id,
+                prepared_sources=prepared_sources,
             )
             citations = [
                 _resolve_project_citation(
@@ -1758,6 +1972,7 @@ def apply_task_agent_decision(
                     work_item=work_item,
                     db=db,
                     current_signal_id=current_signal_id,
+                    prepared_sources=prepared_sources,
                 )
                 for proof in project_decision.evidence
             ]
@@ -1765,7 +1980,8 @@ def apply_task_agent_decision(
                 citations.extend(ProjectContextService._citations(context))
             ids = tuple(sorted({proof.signal_id for proof in citations}))
             revision_id = ProjectContextService(store).apply(
-                project_id=project.id, context=context, signal_ids=ids, db=db
+                project_id=project.id, context=context, signal_ids=ids, db=db,
+                prepared_sources=prepared_sources,
             )
             applied_projects.append(
                 AppliedProjectDecision(
@@ -1800,6 +2016,7 @@ def apply_task_agent_decision(
                     work_item=work_item,
                     db=db,
                     current_signal_id=current_signal_id,
+                    prepared_sources=prepared_sources,
                 )
                 for proof in item.project_link_evidence
             ]
@@ -1869,11 +2086,9 @@ def apply_task_agent_decision(
                     None,
                 )
                 target_signal = (
-                    store.get_business_task_signal(item.acceptance_target_signal_id)
-                    if db is None
-                    else store.get_business_task_signal_in_transaction(
-                        signal_id=item.acceptance_target_signal_id, _db=db
-                    )
+                    prepared_sources.require_fact(
+                        store, item.acceptance_target_signal_id, db=db
+                    ) if item.acceptance_target_signal_id is not None else None
                 )
                 linked_assignment = cited is not None and cited.evidence_role in {
                     BusinessEvidenceRole.ASSIGNMENT.value,
@@ -1910,7 +2125,7 @@ def apply_task_agent_decision(
                         f"Acceptance for task {item.task_id} was not applied: cited assignment, exact reply link, conversation, or owner identity did not match."
                     )
                     continue
-            signal = _task_source_signal(work_item, item)
+            signal = _task_source_signal(work_item, item, native_provenance=source_native_provenance, provider_locator=source_provider_locator)
             date_facts = _task_date_inputs(
                 item, work_item, is_acceptance=item.transition == "apply_acceptance"
             )
@@ -2024,6 +2239,7 @@ def apply_task_agent_decision(
                             work_item=work_item,
                             db=db,
                             current_signal_id=current_signal_id,
+                            prepared_sources=prepared_sources,
                         )
                         for proof in item.suggestion.responsibility_evidence
                     ],
@@ -2034,6 +2250,7 @@ def apply_task_agent_decision(
                             work_item=work_item,
                             db=db,
                             current_signal_id=current_signal_id,
+                            prepared_sources=prepared_sources,
                         )
                         for proof in item.suggestion.basis_evidence
                     ],
@@ -2049,6 +2266,7 @@ def apply_task_agent_decision(
                         task_id=item.task_id,
                     ),
                     _db=db,
+                    prepared_sources=prepared_sources,
                 )
             elif item.action == "record_candidate":
                 result = service.record_candidate(
@@ -2114,11 +2332,13 @@ def apply_task_agent_decision(
                             date_facts=date_facts,
                         ),
                         _db=db,
+                        prepared_sources=prepared_sources,
                     )
                 elif item.transition == "merge_identity":
                     proposal = item.identity_proposal
                     assert proposal is not None
-                    _validate_identity_proposal(store, proposal, db=db)
+                    _validate_identity_proposal(store, proposal, db=db,
+                                                prepared_sources=prepared_sources)
                     identity = IdentityEvidence(
                         same_external_task_id=proposal.identity_evidence.basis
                         == "same_external_task_id",
@@ -2185,9 +2405,9 @@ def apply_task_agent_decision(
                 )
             ):
                 existing_dates = db.execute(
-                    """select date_type, value_at, raw_phrase, source_signal_id,
+                    f"""select date_type, value_at, raw_phrase, source_signal_id,
                               actor_kind, actor_user_id, actor_name
-                       from business_task_date_evidence where task_id=?""",
+                       from ({business_action_projection('business_task_date_evidence')}) where task_id=?""",
                     (result.task_id,),
                 ).fetchall()
                 existing_date_effects = {
@@ -2219,6 +2439,11 @@ def apply_task_agent_decision(
                         "replayed create/promotion has new date evidence; update the existing Task explicitly"
                     )
             task_id = result.task_id
+            current_fact = store.get_business_task_signal_in_transaction(
+                signal_id=result.signal_id, _db=db
+            )
+            assert current_fact is not None
+            prepared_sources.add_current(current_fact, signal.evidence_text)
             task_ids.append(task_id)
             affected_task_ids.append(task_id)
             task_after = store.get_business_task_in_transaction(task_id=task_id, _db=db)
@@ -2241,22 +2466,19 @@ def apply_task_agent_decision(
                     "source_excerpt": item.source_excerpt,
                     "reason": item.update_summary or "Source confirms Task completion.",
                 }
-                db.execute(
-                    "update business_task_follow_ups set status='completed', "
-                    "evidence_check_json=?, suppressed_reason=?, updated_at=current_timestamp "
-                    "where business_task_id=? and status in ('draft','approved','sent')",
-                    (
-                        json.dumps(completion_evidence, ensure_ascii=False),
-                        completion_evidence["reason"],
-                        task_id,
-                    ),
+                store.complete_business_task_follow_ups(
+                    business_task_id=task_id,
+                    evidence_check_json=json.dumps(completion_evidence, ensure_ascii=False),
+                    suppressed_reason=completion_evidence["reason"],
+                    _db=db,
                 )
-                linked_todo = db.execute(
-                    "select 1 from business_task_dingtalk_links where business_task_id=? "
-                    "and status in ('creating','active') limit 1",
-                    (task_id,),
-                ).fetchone()
-                if linked_todo is not None:
+                linked_todos = store.list_business_task_dingtalk_links(
+                    business_task_id=task_id,
+                    statuses=("creating", "active"),
+                    limit=1,
+                    _db=db,
+                )
+                if linked_todos:
                     store.enqueue_business_task_todo_sync_outbox(
                         operation_key=f"task-agent:{summary_input_id}:business-task:{task_id}:complete",
                         business_task_id=task_id,
@@ -2300,7 +2522,7 @@ def apply_task_agent_decision(
                 and task_after.commitment_status.value == "accepted"
                 and task_after.owner_user_id.strip()
                 and db.execute(
-                    "select 1 from business_task_date_evidence where task_id=? "
+                    f"select 1 from ({business_action_projection('business_task_date_evidence')}) where task_id=? "
                     "and date_type='committed_deadline_at' and trim(value_at)<>'' limit 1",
                     (task_id,),
                 ).fetchone()
@@ -2345,7 +2567,7 @@ def apply_task_agent_decision(
                     cluster_id = cluster.cluster_id
                     if (
                         db.execute(
-                            "select 1 from business_work_cluster_tasks where cluster_id=? and task_id=?",
+                            f"select 1 from ({business_action_projection('business_work_cluster_tasks')}) where cluster_id=? and task_id=?",
                             (cluster_id, task_id),
                         ).fetchone()
                         is None
@@ -2369,20 +2591,20 @@ def apply_task_agent_decision(
                 project = projects_by_index.get(item.project.project_decision_index)
                 if registration is not None and registration.authority != "meeting_decision" and project is not None:
                     existing_candidate = db.execute(
-                        "select id from business_project_candidates "
+                        f"select id from ({candidate_projection('project_candidate')}) "
                         "where cluster_id=? and title=? and status='proposed' limit 1",
                         (cluster_id, project.title),
                     ).fetchone()
                     if existing_candidate is not None:
                         changed_members = [int(row["task_id"]) for row in db.execute(
-                            "select member.task_id from business_work_cluster_tasks member "
-                            "left join business_task_anchor_links link on link.task_id=member.task_id "
+                            f"select member.task_id from ({business_action_projection('business_work_cluster_tasks')}) member "
+                            f"left join ({business_action_projection('business_task_anchor_links')}) link on link.task_id=member.task_id "
                             "and link.anchor_id=? where member.cluster_id=? "
                             "and (link.id is null or link.status<>'confirmed' or link.active=0)",
                             (project.canonical_anchor_id, cluster_id),
                         )]
                         registration_signal_id = service._signal_id_or_create(
-                            signal=_project_source_signal(work_item), db=db, now=service._now()
+                            signal=_project_source_signal(work_item, native_provenance=source_native_provenance, provider_locator=source_provider_locator), db=db, now=service._now()
                         )
                         resolution.confirm_project_candidate(
                             candidate_id=int(existing_candidate["id"]), project_id=project.id,
@@ -2392,8 +2614,8 @@ def apply_task_agent_decision(
                         project_links.update(
                             (int(link["task_id"]), project.canonical_anchor_id)
                             for link in db.execute(
-                                "select link.task_id from business_task_anchor_links link "
-                                "join business_work_cluster_tasks member on member.task_id=link.task_id "
+                                f"select link.task_id from ({business_action_projection('business_task_anchor_links')}) link "
+                                f"join ({business_action_projection('business_work_cluster_tasks')}) member on member.task_id=link.task_id "
                                 "where member.cluster_id=? and link.anchor_id=? "
                                 "and link.status='confirmed' and link.active=1",
                                 (cluster_id, project.canonical_anchor_id),
@@ -2402,7 +2624,7 @@ def apply_task_agent_decision(
             candidate = item.project_candidate_proposal
             if candidate is not None:
                 existing = db.execute(
-                    "select id from business_project_candidates "
+                    f"select id from ({candidate_projection('project_candidate')}) "
                     "where cluster_id=? and title=? and status='proposed' limit 1",
                     (candidate.cluster_id, candidate.title),
                 ).fetchone()
@@ -2477,6 +2699,7 @@ def apply_task_agent_decision(
                     work_item=work_item,
                     db=db,
                     current_signal_id=current_signal_id,
+                    prepared_sources=prepared_sources,
                 )
                 for proof in proofs
             ]
@@ -2539,7 +2762,8 @@ def apply_task_agent_decision(
         if recorded_run_id is not None:
             _save_projection_receipt(store, recorded_run_id, receipt)
         receipt = _project_task_attention(
-            store, result.attention_proposals, result.affected_task_ids, receipt=receipt
+            store, result.attention_proposals, result.affected_task_ids, receipt=receipt,
+            prepared_sources=prepared_sources,
         )
         receipt = _finalize_assessment_results(
             store,
@@ -2598,6 +2822,7 @@ def _project_task_attention(
     affected_task_ids: tuple[int, ...],
     *,
     receipt: TaskAttentionProjectionReceipt,
+    prepared_sources: PreparedSources,
 ) -> TaskAttentionProjectionReceipt:
     applied_ids: set[int] = set()
     projection = BusinessAttentionProjection(store)
@@ -2607,6 +2832,12 @@ def _project_task_attention(
         try:
             with store.business_task_transaction() as db:
                 project = _official_project(store, applied.anchor_id, db=db)
+                existing_card_id = getattr(applied.assessment, "existing_attention_id", None)
+                _assert_prepared_attention_relationships(
+                    store, prepared_sources, db,
+                    card_ids=frozenset({existing_card_id}) if existing_card_id is not None else frozenset(),
+                    project_ids=frozenset({project.id}),
+                )
                 task_ids = set(applied.task_ids)
                 eligible = set(
                     projection._current_eligible_task_ids(
@@ -2654,10 +2885,10 @@ def _project_task_attention(
                         if proof.signal_id is not None
                         else applied.signal_id
                     )
-                    signal = store.get_business_task_signal_in_transaction(
-                        signal_id=signal_id, _db=db
+                    signal, body = prepared_sources.require_body(
+                        store, signal_id, db=db
                     )
-                    if signal is None or signal.source_ref != proof.source_ref:
+                    if signal.source_ref != proof.source_ref:
                         raise ValueError(
                             "attention evidence signal/source_ref does not match"
                         )
@@ -2666,7 +2897,7 @@ def _project_task_attention(
                             "attention evidence must be observed original source, not cited provenance"
                         )
                     if not source_contains_quote(
-                        signal.evidence_text, proof.source_excerpt
+                        body, proof.source_excerpt
                     ):
                         raise ValueError(
                             "attention quote is absent from original source"
@@ -2718,7 +2949,7 @@ def _project_task_attention(
                         sort_keys=True,
                     ),
                 )
-            attention_id = projection.upsert(effective)
+                attention_id = projection.upsert(effective, _db=db)
         except ValueError as exc:
             receipt.outcomes.append(
                 TaskAttentionProjectionOutcome(
@@ -3022,7 +3253,8 @@ def _report_item_occurrences(source_body: str, expected_item: str) -> int:
 
 
 def _validate_identity_proposal(
-    store, proposal, *, db: sqlite3.Connection | None
+    store, proposal, *, db: sqlite3.Connection | None,
+    prepared_sources: PreparedSources,
 ) -> None:
     def get_task(task_id: int):
         if db is None:
@@ -3037,9 +3269,7 @@ def _validate_identity_proposal(
     def get_signal(signal_id: int):
         if db is None:
             return store.get_business_task_signal(signal_id)
-        return store.get_business_task_signal_in_transaction(
-            signal_id=signal_id, _db=db
-        )
+        return prepared_sources.require_fact(store, signal_id, db=db)
 
     def get_task_source_signal(task_id: int, source_ref: str, source_type: str):
         if db is None:
@@ -3108,17 +3338,29 @@ def _validate_identity_proposal(
         target_owner_signal = get_task_source_signal(
             target_task.id, target_owner_ref, target_signal.source_type
         )
+        if db is None:
+            raise ValueError("identity original check requires domain transaction")
+        _, source_original = prepared_sources.require_body(
+            store, source_signal.id, db=db
+        )
+        _, target_original = prepared_sources.require_body(
+            store, target_signal.id, db=db
+        )
         source_item = _canonical_report_item(str(source_owner.get("excerpt") or ""))
         target_item = _canonical_report_item(str(target_owner.get("excerpt") or ""))
-        source_body = _report_item_source_body(source_signal.evidence_text).strip()
-        target_body = _report_item_source_body(target_signal.evidence_text).strip()
+        source_body = _report_item_source_body(source_original).strip()
+        target_body = _report_item_source_body(target_original).strip()
         source_owner_body = (
-            _report_item_source_body(source_owner_signal.evidence_text).strip()
+            _report_item_source_body(prepared_sources.require_body(
+                store, source_owner_signal.id, db=db
+            )[1]).strip()
             if source_owner_signal is not None
             else ""
         )
         target_owner_body = (
-            _report_item_source_body(target_owner_signal.evidence_text).strip()
+            _report_item_source_body(prepared_sources.require_body(
+                store, target_owner_signal.id, db=db
+            )[1]).strip()
             if target_owner_signal is not None
             else ""
         )
@@ -3239,13 +3481,15 @@ def process_work_item(
         if session_lease is not None:
             session_lease.assert_owned()
         work_item = WorkItem.model_validate_json(work_input.payload_json)
-        semantic_context = retrieve_task_semantic_context(store, work_item)
+        source_reader = store.business_source_reader(provider_reader=dws)
+        semantic_context = retrieve_task_semantic_context(store, work_item, source_reader=source_reader)
         context_prompt = render_task_semantic_context(
             semantic_context, work_item=work_item
         )
         active_run_id = store.begin_task_agent_run(work_input.id)
         memory_issue = memory_connector_config_issue()
         repair_context = None
+        prepared_sources = None
         for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
             if session_lease is not None:
                 session_lease.assert_owned()
@@ -3263,10 +3507,16 @@ def process_work_item(
             )
             try:
                 _validate_task_agent_decision(decision, work_item=work_item, now=now)
+                try:
+                    prepared_sources = _prepare_decision_sources(store, decision, source_reader=source_reader)
+                except ValueError as exc:
+                    raise RepairableTaskDecisionValidationError(str(exc)) from exc
                 with store._connect() as db:
                     try:
+                        _assert_prepared_relationships(store, prepared_sources, db)
                         _validate_stored_project_assessments(
-                            store, decision, work_item=work_item, db=db
+                            store, decision, work_item=work_item, db=db,
+                            prepared_sources=prepared_sources,
                         )
                     except ValueError as exc:
                         raise RepairableTaskDecisionValidationError(str(exc)) from exc
@@ -3283,6 +3533,7 @@ def process_work_item(
                 continue
             break
         session_id = getattr(runner.codex, "last_session_id", None) or ""
+        source_native, source_provider = _work_item_source_coordinates(store, runner, work_item)
         if session_lease is not None:
             session_lease.assert_owned()
         crm_customer_lookups = {
@@ -3290,6 +3541,7 @@ def process_work_item(
             for index, project in enumerate(decision.project_decisions)
             if project.crm_customer_label
         }
+        assert prepared_sources is not None
         with store.task_agent_domain_apply_transaction() as db:
             apply_result = apply_task_agent_decision(
                 store,
@@ -3297,10 +3549,12 @@ def process_work_item(
                 work_item=work_item,
                 decision=decision,
                 codex_session_id=session_id,
+                source_native_provenance=source_native, source_provider_locator=source_provider,
                 record_run=False,
                 now=now,
                 crm_customer_lookups=crm_customer_lookups,
                 _db=db,
+                prepared_sources=prepared_sources,
             )
             if (
                 apply_result.task_ids
@@ -3352,6 +3606,7 @@ def process_work_item(
             apply_result.attention_proposals,
             apply_result.affected_task_ids,
             receipt=receipt,
+            prepared_sources=prepared_sources,
         )
         receipt = _finalize_assessment_results(
             store,

@@ -1,0 +1,577 @@
+{
+  "basis": "Actual copied source116→selected State target67; runtime app7ef171fe. Exact source boundary in state-runtime-actual-copy receipt; this is a residual migration inventory, not executable DDL.",
+  "target_core_and_ledger": [
+    "actions",
+    "business",
+    "configs",
+    "email_schema_migrations",
+    "emails",
+    "provenance",
+    "provider_state",
+    "runs",
+    "schedules",
+    "state",
+    "tasks"
+  ],
+  "present_final_tables": [
+    "actions",
+    "business",
+    "configs",
+    "email_schema_migrations",
+    "provider_state",
+    "runs",
+    "schedules",
+    "state",
+    "tasks"
+  ],
+  "not_yet_created_final_tables": [
+    "emails",
+    "provenance"
+  ],
+  "remaining_old_tables": 58,
+  "remaining_by_disposition": {
+    "actions": 30,
+    "business": 8,
+    "business/actions：内联已证明的旧身份": 1,
+    "tasks": 12,
+    "provenance": 1,
+    "retire per design section4": 2,
+    "emails": 2,
+    "runs": 2
+  },
+  "tables": {
+    "business_attention_events": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_attention_items": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 16,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_attention_proposal_tasks": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 3,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_attention_tasks": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 3,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_legacy_links": {
+      "approved_disposition": "business/actions：内联已证明的旧身份",
+      "baseline_csv_target": [
+        "business/actions：内联已证明的旧身份"
+      ],
+      "current_source_columns": 12,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_object_tasks": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 4,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_project_candidates": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_project_evidence": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 3,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_source_documents": {
+      "approved_disposition": "provenance",
+      "baseline_csv_target": [
+        "provenance"
+      ],
+      "current_source_columns": 4,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_anchor_links": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_date_evidence": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 10,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_dingtalk_links": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 17,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_events": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_evidence": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 4,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_follow_up_send_attempts": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 12,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_follow_ups": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 18,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_relations": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 7,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_signals": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 13,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_task_todo_sync_outbox": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 15,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_work_cluster_tasks": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 3,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "business_work_clusters": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 3,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "codex_session_search_index": {
+      "approved_disposition": "retire per design section4",
+      "baseline_csv_target": [
+        "codex_session_search_index"
+      ],
+      "current_source_columns": 7,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": [
+        "embedding_json",
+        "embedding_model",
+        "embedding_updated_at",
+        "fts_text",
+        "summary_text"
+      ],
+      "current_code_closure_required": "Current Store upsert/search and meeting producer still use metadata/title FTS; preserve native-file search and move existing identity/title metadata to runs/tasks before removing physical index+FTS shadows."
+    },
+    "email_agent_classification_tasks": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 14,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "email_classifications": {
+      "approved_disposition": "emails",
+      "baseline_csv_target": [
+        "emails"
+      ],
+      "current_source_columns": 30,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": [
+        "action_plan_json"
+      ]
+    },
+    "email_classifier_runtime_samples": {
+      "approved_disposition": "runs",
+      "baseline_csv_target": [
+        "runs"
+      ],
+      "current_source_columns": 12,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "email_historical_candidates": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 13,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "email_historical_classification_history": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 9,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "email_historical_operations": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 15,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "email_messages": {
+      "approved_disposition": "emails",
+      "baseline_csv_target": [
+        "emails"
+      ],
+      "current_source_columns": 19,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "errors": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_events": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 13,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_iteration_decision_items": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 3,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_iteration_decisions": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 6,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_processing_batches": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 6,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_processing_items": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 16,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_processing_rounds": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 23,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "feedback_processing_transitions": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 10,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "follow_up_drafts": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 31,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "follow_up_send_attempts": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 16,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "meeting_alignment_delivery_claims": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 2,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "meeting_memory_write_events": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 14,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "oa_notification_events": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 21,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "okr_review_items": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "service_bugfix_candidates": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 12,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "setup_wizard_events": {
+      "approved_disposition": "runs",
+      "baseline_csv_target": [
+        "runs"
+      ],
+      "current_source_columns": 10,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "task_memory_write_events": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 16,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "task_todo_sync_outbox": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 15,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "todo_evidence_candidates": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 15,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "wechat_deliveries": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 15,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "wechat_memory_candidates": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 22,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "wechat_memory_import_jobs": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 8,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "work_projects": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 25,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "work_todo_dingtalk_links": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 17,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "work_todos": {
+      "approved_disposition": "business",
+      "baseline_csv_target": [
+        "business"
+      ],
+      "current_source_columns": 18,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "work_updates": {
+      "approved_disposition": "actions",
+      "baseline_csv_target": [
+        "actions"
+      ],
+      "current_source_columns": 9,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "workbench_artifacts": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 6,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "workbench_attachments": {
+      "approved_disposition": "tasks",
+      "baseline_csv_target": [
+        "tasks"
+      ],
+      "current_source_columns": 9,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": []
+    },
+    "workbench_confirmations": {
+      "approved_disposition": "retire per design section4",
+      "baseline_csv_target": [
+        "workbench_confirmations"
+      ],
+      "current_source_columns": 26,
+      "current_columns_missing_from_baseline_csv": [],
+      "baseline_columns_absent_from_current_source": [],
+      "current_code_closure_required": "Current WorkbenchStore/executor/API still contain confirmation reads and writes; approved physical/API retirement requires explicit caller closure and current-fact handling, not a blind DROP."
+    }
+  },
+  "boundary": "The1611-field historical CSV gives approved direction only. Listed actual-column deltas require exact current code/DDL/constraint analysis before implementation; no new field or deletion policy approved here. Business source-body provenance availability still requires prior exact-source evidence."
+}

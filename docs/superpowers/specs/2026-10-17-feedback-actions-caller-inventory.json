@@ -1,0 +1,552 @@
+{
+  "scope": "readonly current caller AST baseline, no body values; source initializer/class metadata remain separate obligations",
+  "files": {
+    "app/store.py": {
+      "sha256": "9566ec988ea929f2e1f3a937f55039cf2be97f901324cd361da1fb7339b2e63a",
+      "methods": [
+        {
+          "method": "_initialize",
+          "start": 2420,
+          "end": 3294,
+          "ast_sha256": "0b759c0a8b222c5733b0e8df6ca1cce90028ba85e32e5b73476d7ac7e54bf0d6",
+          "references": [
+            {
+              "line": 2448,
+              "tables": [
+                "feedback_events",
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 3001,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 2994,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "list_sent_replies_waiting_for_feedback_events",
+          "start": 18428,
+          "end": 18447,
+          "ast_sha256": "9e1f57a14895dc0c35d48e8c8145b1cdb7a620f3674bfcbbd4c9d099a24c061f",
+          "references": [
+            {
+              "line": 18435,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "feedback_pressure_stats",
+          "start": 18469,
+          "end": 18544,
+          "ast_sha256": "712fc894851c3549d2593649c8525319c56fffe1acebb000d2b10279c18623a2",
+          "references": [
+            {
+              "line": 18488,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18496,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "upsert_feedback_event",
+          "start": 18546,
+          "end": 18610,
+          "ast_sha256": "c796f58e8c85a75bed0544dd5f523b5545d9b3e0e3e1a8554d8a1af9777831df",
+          "references": [
+            {
+              "line": 18562,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18603,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18603,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18605,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18606,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18606,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "record_feedback_iteration_decision",
+          "start": 18784,
+          "end": 18886,
+          "ast_sha256": "4c259f15213b2e89c4f3872065cfe494e55abd70dd4a335e67f1e23278b44275",
+          "references": [
+            {
+              "line": 18869,
+              "tables": [
+                "feedback_iteration_decision_items"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18879,
+              "tables": [
+                "feedback_iteration_decision_items"
+              ],
+              "is_sql": false
+            }
+          ]
+        },
+        {
+          "method": "list_feedback_iteration_decisions",
+          "start": 18888,
+          "end": 18905,
+          "ast_sha256": "b4e7731aeb2dd2e1747e99d96f188d4546cdba601b12712c952b9d76040141a6",
+          "references": [
+            {
+              "line": 18898,
+              "tables": [
+                "feedback_iteration_decision_items"
+              ],
+              "is_sql": false
+            }
+          ]
+        },
+        {
+          "method": "create_feedback_processing_batch",
+          "start": 18907,
+          "end": 18989,
+          "ast_sha256": "9e041fe316b1cd53b0b0a865fcfc4f6c129530704a30518052d8f7cee64f20f8",
+          "references": [
+            {
+              "line": 18972,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18972,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18937,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18952,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18978,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18979,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 18979,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "claim_feedback_processing_items",
+          "start": 18991,
+          "end": 19174,
+          "ast_sha256": "936643f9f6f05bec9327e46ed76cc1fc8a7b5d323a83c98251745b4da78b2886",
+          "references": [
+            {
+              "line": 19151,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 19028,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "reopen_feedback_processing_item",
+          "start": 19176,
+          "end": 19336,
+          "ast_sha256": "5f4669ed38cf895c8b6149c1da163afef23e2f4dcfd0f2125e36802080871b84",
+          "references": [
+            {
+              "line": 19292,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 19319,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 19235,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "list_feedback_processing_transitions",
+          "start": 19372,
+          "end": 19387,
+          "ast_sha256": "f935ac50935029bf859421ffacfca75c17ea8474b94c9f00e1f2c0202faf4bc6",
+          "references": [
+            {
+              "line": 19380,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "_validate_feedback_processing_transition_multiset",
+          "start": 19592,
+          "end": 19675,
+          "ast_sha256": "3e5b6c43e93508a5de9ae3c09b53ccdff825676fb4c9b785ff2961b3aa0ede5b",
+          "references": [
+            {
+              "line": 19610,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "_validate_feedback_processing_batch_transition_ownership",
+          "start": 19728,
+          "end": 19788,
+          "ast_sha256": "aa81a5c49662a8f04035bd0c03963a5f64d61c154b20e4f8bb82a5ba3202d1c1",
+          "references": [
+            {
+              "line": 19752,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 19771,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "_validate_current_feedback_processing_batch_lineage",
+          "start": 19791,
+          "end": 19965,
+          "ast_sha256": "404db6d702747abd275d19d517d38ed9fc90ee20c0adde25034c92af9d87da38",
+          "references": [
+            {
+              "line": 19834,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "_validate_resolved_feedback_processing_batch",
+          "start": 19968,
+          "end": 20251,
+          "ast_sha256": "a01b58806384bf3bc9294e09e076f6d465be266fdb2f3c30163fc3eff542e3cd",
+          "references": [
+            {
+              "line": 20147,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "_resolution_feedback_iteration_decision",
+          "start": 20254,
+          "end": 20290,
+          "ast_sha256": "2f207f2d30f0e72f0685edb116f81cda27f5a4e176c13cc7f2d4295ea86cd6b8",
+          "references": [
+            {
+              "line": 20275,
+              "tables": [
+                "feedback_iteration_decision_items"
+              ],
+              "is_sql": false
+            }
+          ]
+        },
+        {
+          "method": "resolve_feedback_processing_batch",
+          "start": 20402,
+          "end": 20714,
+          "ast_sha256": "89eb1c9e30f209e424130468027569f6b9504a0015ffc7ea4c9c8edb5dd60850",
+          "references": [
+            {
+              "line": 20680,
+              "tables": [
+                "feedback_processing_transitions"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 20697,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            },
+            {
+              "line": 20616,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "list_feedback_events_for_token",
+          "start": 20716,
+          "end": 20729,
+          "ast_sha256": "901c1ed0d788384d43208e432da93ac367551868c2204baca3c5651867946f73",
+          "references": [
+            {
+              "line": 20721,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "get_feedback_event",
+          "start": 20731,
+          "end": 20741,
+          "ast_sha256": "fb4036a7914f82d74eb51a7360d31a044549345f4861c04f0cffdd0f5071af9e",
+          "references": [
+            {
+              "line": 20738,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "list_feedback_events_for_tokens",
+          "start": 20743,
+          "end": 20764,
+          "ast_sha256": "9be4c91cf041bb8633b2d72f38cc5e6162a30f81404ef636a31d3972c026aae6",
+          "references": [
+            {
+              "line": 20752,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "create_service_bugfix_candidate_for_feedback_event",
+          "start": 20801,
+          "end": 20836,
+          "ast_sha256": "65fa64bca0d03d15aac30060f660192dbde1e16ee21e5de4a6a0d328b7aa7b64",
+          "references": [
+            {
+              "line": 20810,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": false
+            }
+          ]
+        },
+        {
+          "method": "list_user_feedback_items",
+          "start": 20874,
+          "end": 20943,
+          "ast_sha256": "1fdb3007c8370a059a5c63f9c83612c6659a36a4c16d30c31c43748e93fc209b",
+          "references": [
+            {
+              "line": 20885,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": false
+            },
+            {
+              "line": 20895,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": false
+            }
+          ]
+        },
+        {
+          "method": "list_user_feedback_items_by_keys",
+          "start": 20945,
+          "end": 21025,
+          "ast_sha256": "8ce619306b5e7c22b9ba7b0bcb1fd178b7401155d27911e4325f6d59752d5032",
+          "references": [
+            {
+              "line": 20958,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "count_user_feedback_items",
+          "start": 21027,
+          "end": 21032,
+          "ast_sha256": "2dc8edfa65de380924db7d08c5ad650df7492ec180b25390be730fcde0743022",
+          "references": [
+            {
+              "line": 21030,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        },
+        {
+          "method": "count_pending_user_feedback_items",
+          "start": 21047,
+          "end": 21076,
+          "ast_sha256": "b83a09707389f8e196a0c5ab033b5641fe042620e61477c065e2428abd813e1c",
+          "references": [
+            {
+              "line": 21056,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        }
+      ]
+    },
+    "app/quality_gate.py": {
+      "sha256": "8956e0f727ab92e6c4a646cdff71629c36abf2c9a028e2e3af5676c4ea0903f9",
+      "methods": [
+        {
+          "method": "_check_feedback",
+          "start": 964,
+          "end": 970,
+          "ast_sha256": "f531912fd831ccb1ef7980f88c18a36c7ba4b91a34563f9edd0315844ef04b07",
+          "references": [
+            {
+              "line": 968,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": false
+            },
+            {
+              "line": 969,
+              "tables": [
+                "feedback_events"
+              ],
+              "is_sql": true
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

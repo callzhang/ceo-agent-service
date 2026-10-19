@@ -20,18 +20,16 @@ def _seed(store, *, binding="verified", task_id=1):
         reply_task_id=task_id, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text="收到",
         evidence={"trigger_text": "hi"})
+    delivery = store.get_wechat_delivery_for_task(task_id)
     prepared = store.prepare_outbound_postfix(
         "wechat",
         f"wechat:{delivery_id}",
         "收到",
         "hi",
     )
-    with store._connect() as db:
-        db.execute(
-            "update wechat_deliveries set reply_text=? where id=?",
-            (prepared.final_body, delivery_id),
-        )
-    return store.get_wechat_delivery_for_task(task_id)
+    assert delivery is not None
+    assert delivery.reply_text == prepared.final_body
+    return delivery
 
 
 def _seed_with_attempt(store, *, task_id=1):

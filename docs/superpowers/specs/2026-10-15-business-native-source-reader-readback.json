@@ -1,0 +1,16 @@
+{
+  "verified_at": "2026-10-15T11:43:28.959575+00:00",
+  "reader_commit": "6d675762e9f37d7dc4007ac7938b527806588d05",
+  "source_artifact": "docs/superpowers/specs/2026-10-15-database-redesign-business-native-source-recovery.json",
+  "source_artifact_sha256": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+  "verified_documents": 30,
+  "verified_utf8_bytes": 672297,
+  "by_runtime": {"codex_cli": 7, "claude_cli": 23},
+  "bytes_by_runtime": {"codex_cli": 173779, "claude_cli": 498518},
+  "unproved_documents": 158,
+  "body_copy_written": false,
+  "database_opened": false,
+  "provider_invoked": false,
+  "source_body_retired": false,
+  "production_caller_selected": false
+}

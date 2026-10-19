@@ -13,10 +13,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.store import SQLITE_BUSY_TIMEOUT_SECONDS, AutoReplyStore, _utc_store_time
-from app.task_storage import (
-    WORKBENCH_TASK_SQL, WORKBENCH_TURN_SQL, insert_task, task_physical_id,
-    task_id_expression,
-)
+from app.task_storage import task_physical_id, task_id_expression
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task12_storage import insert_task12, task12_projection
+from app.task20_definitions import task20_column, task20_projection
 from app.run_storage import WORKBENCH_EVENT_SQL, insert_run
 from app.workbench.native_events import (
     AGENT_EVENTS,
@@ -31,11 +31,9 @@ from app.workbench.native_events import (
     terminal_cached_turn_ids,
 )
 from app.workbench.models import (
-    ConfirmationStatus,
     TurnStatus,
     WorkbenchAttachment,
     WorkbenchArtifact,
-    WorkbenchConfirmation,
     WorkbenchEvent,
     WorkbenchTask,
     WorkbenchTurn,
@@ -45,13 +43,7 @@ from app.workbench.models import (
 _TURN_TRANSITIONS = {
     TurnStatus.QUEUED: {TurnStatus.RUNNING, TurnStatus.STOPPED, TurnStatus.FAILED},
     TurnStatus.RUNNING: {
-        TurnStatus.WAITING_CONFIRMATION,
         TurnStatus.COMPLETED,
-        TurnStatus.STOPPED,
-        TurnStatus.FAILED,
-    },
-    TurnStatus.WAITING_CONFIRMATION: {
-        TurnStatus.QUEUED,
         TurnStatus.STOPPED,
         TurnStatus.FAILED,
     },
@@ -60,7 +52,6 @@ _TURN_TRANSITIONS = {
     TurnStatus.FAILED: set(),
 }
 
-WORKBENCH_RECOVERY_BATCH_LIMIT = 100
 _DEFAULT_WORKBENCH_TASK_TITLE = "新任务"
 _DERIVED_TASK_TITLE_MAX_LENGTH = 32
 
@@ -85,74 +76,20 @@ def _begin_immediate_with_retry(
             time.sleep(delay_seconds * (attempt + 1))
 
 
-# Retained child tables store physical parents and return the original public IDs.
-WORKBENCH_ATTACHMENT_SQL = """select c.id,t.legacy_key as task_id,
+WORKBENCH_TASK_SQL = task20_projection("workbench_tasks")
+WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
+
+
+# Child source projections keep physical parents and return original public IDs.
+WORKBENCH_ATTACHMENT_SQL = f"""select c.id,t.legacy_key as task_id,
     c.client_request_id,c.filename,c.media_type,c.size_bytes,c.content_sha256,
     c.storage_path,c.created_at
-    from workbench_attachments c join tasks t on t.id=c.task_id
+    from ({task12_projection("workbench_attachments")}) c join tasks t on t.id=c.task_id
     where t.record_type='workbench_tasks'"""
-WORKBENCH_ARTIFACT_SQL = """select c.id,t.legacy_key as turn_id,
+WORKBENCH_ARTIFACT_SQL = f"""select c.id,t.legacy_key as turn_id,
     c.label,c.path,c.media_type,c.created_at
-    from workbench_artifacts c join tasks t on t.id=c.turn_id
+    from ({task12_projection("workbench_artifacts")}) c join tasks t on t.id=c.turn_id
     where t.record_type='workbench_turns'"""
-WORKBENCH_CONFIRMATION_SQL = """select c.id,t.legacy_key as turn_id,
-    c.action_kind,c.target,c.summary,c.risk,c.canonical_capability,
-    c.canonical_operation,c.canonical_targets_json,c.canonical_operation_digest,
-    c.canonical_arguments_digest,c.arguments_json,c.status,c.result_json,
-    c.created_at,c.decided_at,c.execution_owner,c.execution_lease_expires_at,
-    c.execution_started_at,c.authorization_consumed_at,c.proposer_run_id,
-    c.proposer_owner,c.proposer_lease_expires_at,c.proposer_quiesced_at,
-    c.decision_requested,c.decision_requested_at
-    from workbench_confirmations c join tasks t on t.id=c.turn_id
-    where t.record_type='workbench_turns'"""
-
-
-LEGACY_PENDING_PROPOSER_RECOVERY_SQL = f"""
-select * from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-where status='pending' and proposer_run_id='' and id>?
-order by id limit ?
-"""
-
-EXPIRED_PENDING_PROPOSER_RECOVERY_SQL = f"""
-select * from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-where status='pending' and proposer_run_id<>'' and proposer_quiesced_at=''
-  and proposer_lease_expires_at<=?
-order by proposer_lease_expires_at, id limit ?
-"""
-
-LEGACY_CONFIRMED_OWNER_RECOVERY_SQL = f"""
-select confirmations.*, turns.status as turn_status
-from ({WORKBENCH_CONFIRMATION_SQL}) as confirmations
-join ({WORKBENCH_TURN_SQL}) as turns on turns.id=confirmations.turn_id
-where confirmations.status='confirmed' and confirmations.result_json=''
-  and confirmations.execution_owner=''
-  and confirmations.id>?
-order by confirmations.id limit ?
-"""
-
-LEGACY_CONFIRMED_LEASE_RECOVERY_SQL = f"""
-select confirmations.*, turns.status as turn_status
-from ({WORKBENCH_CONFIRMATION_SQL}) as confirmations
-join ({WORKBENCH_TURN_SQL}) as turns on turns.id=confirmations.turn_id
-where confirmations.status='confirmed' and confirmations.result_json=''
-  and confirmations.execution_owner<>''
-  and confirmations.execution_lease_expires_at=''
-  and confirmations.id>?
-order by confirmations.id limit ?
-"""
-
-EXPIRED_CONFIRMED_EXECUTION_RECOVERY_SQL = f"""
-select confirmations.*, turns.status as turn_status
-from ({WORKBENCH_CONFIRMATION_SQL}) as confirmations
-join ({WORKBENCH_TURN_SQL}) as turns on turns.id=confirmations.turn_id
-where confirmations.status='confirmed' and confirmations.result_json=''
-  and confirmations.execution_owner<>''
-  and confirmations.execution_lease_expires_at<>''
-  and confirmations.execution_lease_expires_at<=?
-order by confirmations.execution_lease_expires_at, confirmations.id limit ?
-"""
-
-
 def _json_object_text(value: dict[str, Any] | str, *, field: str) -> str:
     if isinstance(value, str):
         try:
@@ -212,9 +149,13 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("runtime_kind must be non-empty")
         task_id = str(uuid4())
         with self._connect() as db:
-            insert_task(db, "workbench_tasks", {
+            insert_parts = task8_insert_parts('workbench_tasks', {
                 "legacy_key": task_id, "title": title, "runtime_kind": runtime_kind,
             })
+            db.execute(
+                f"insert into tasks ({insert_parts.columns}) values ({insert_parts.values})",
+                insert_parts.parameters,
+            )
             return self._task_from_row(self._require_task(db, task_id))
 
     def get_task(self, task_id: str) -> WorkbenchTask | None:
@@ -229,12 +170,12 @@ class WorkbenchStore(AutoReplyStore):
             row = db.execute(
                 f"""
                 select tasks.*,
-                       coalesce((select status from tasks turns
+                       coalesce((select turns.{task20_column('workbench_turns', 'status')} from tasks turns
                                  where turns.record_type='workbench_turns'
                                    and turns.parent_id=(select parent.id from tasks parent
                                        where parent.record_type='workbench_tasks'
                                          and parent.legacy_key=tasks.id)
-                                 order by turns.task_sequence desc limit 1), 'idle')
+                                 order by turns.{task20_column('workbench_turns', 'task_sequence')} desc limit 1), 'idle')
                            as latest_state
                 from ({WORKBENCH_TASK_SQL}) tasks where tasks.id=?
                 """,
@@ -275,12 +216,12 @@ class WorkbenchStore(AutoReplyStore):
             rows = db.execute(
                 f"""
                 select tasks.*,
-                       coalesce((select status from tasks turns
+                       coalesce((select turns.{task20_column('workbench_turns', 'status')} from tasks turns
                                  where turns.record_type='workbench_turns'
                                    and turns.parent_id=(select parent.id from tasks parent
                                        where parent.record_type='workbench_tasks'
                                          and parent.legacy_key=tasks.id)
-                                 order by turns.task_sequence desc limit 1), 'idle')
+                                 order by turns.{task20_column('workbench_turns', 'task_sequence')} desc limit 1), 'idle')
                            as latest_state
                 from ({WORKBENCH_TASK_SQL}) as tasks
                 {where}
@@ -295,10 +236,17 @@ class WorkbenchStore(AutoReplyStore):
         if not title:
             raise ValueError("title must be non-empty")
         with self._connect() as db:
+            set_parts = task8_set_parts(
+                'workbench_tasks', {},
+                update_sql={
+                    'title': '?',
+                    'updated_at': 'current_timestamp',
+                },
+            )
             if db.execute(
-                """
+                f"""
                 update tasks
-                set title=?, updated_at=current_timestamp
+                set {set_parts.sql}
                 where record_type='workbench_tasks' and legacy_key=?
                 """,
                 (title, task_id),
@@ -316,7 +264,7 @@ class WorkbenchStore(AutoReplyStore):
             active = db.execute(
                 f"""
                 select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
-                where task_id=? and status in ('queued', 'running', 'waiting_confirmation')
+                where task_id=? and status in ('queued', 'running')
                 limit 1
                 """,
                 (task_id,),
@@ -325,10 +273,17 @@ class WorkbenchStore(AutoReplyStore):
                 raise WorkbenchConflictError(
                     "task_has_active_turn", "workbench task has an active turn"
                 )
+            set_parts = task8_set_parts(
+                'workbench_tasks', {},
+                update_sql={
+                    'archived_at': '?',
+                    'updated_at': '?',
+                },
+            )
             if db.execute(
-                """
+                f"""
                 update tasks
-                set archived_at=?, updated_at=?
+                set {set_parts.sql}
                 where record_type='workbench_tasks' and legacy_key=?
                 """,
                 (now_text, now_text, task_id),
@@ -393,24 +348,16 @@ class WorkbenchStore(AutoReplyStore):
                 try:
                     db.execute("begin immediate")
                     self._require_task(db, task_id)
-                    db.execute(
-                        """
-                        insert into workbench_attachments (
-                            id, task_id, client_request_id, filename, media_type,
-                            size_bytes, content_sha256, storage_path
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            attachment_id,
-                            task_physical_id(db, "workbench_tasks", task_id),
-                            client_request_id,
-                            filename,
-                            media_type,
-                            len(content),
-                            content_sha256,
-                            str(storage_path),
-                        ),
-                    )
+                    insert_task12(db, "workbench_attachments", {
+                        "id": attachment_id,
+                        "task_id": task_physical_id(db, "workbench_tasks", task_id),
+                        "client_request_id": client_request_id,
+                        "filename": filename,
+                        "media_type": media_type,
+                        "size_bytes": len(content),
+                        "content_sha256": content_sha256,
+                        "storage_path": str(storage_path),
+                    })
                     row = db.execute(
                         f"select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments where id=?",
                         (attachment_id,),
@@ -484,7 +431,7 @@ class WorkbenchStore(AutoReplyStore):
             active = db.execute(
                 f"""
                 select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
-                where task_id=? and status in ('queued', 'running', 'waiting_confirmation')
+                where task_id=? and status in ('queued', 'running')
                 """,
                 (task_id,),
             ).fetchone()
@@ -499,21 +446,32 @@ class WorkbenchStore(AutoReplyStore):
                 ).fetchone()[0]
             )
             try:
-                insert_task(db, "workbench_turns", {
+                insert_parts = task8_insert_parts('workbench_turns', {
                     "legacy_key": turn_id,
                     "parent_id": task_physical_id(db, "workbench_tasks", task_id),
                     "client_request_id": client_request_id,
                     "task_sequence": task_sequence, "user_text": user_text,
                     "status": TurnStatus.QUEUED.value,
                 })
+                db.execute(
+                    f"insert into tasks ({insert_parts.columns}) values ({insert_parts.values})",
+                    insert_parts.parameters,
+                )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("task already has an active turn") from exc
             if task_sequence == 1 and task["title"] == _DEFAULT_WORKBENCH_TASK_TITLE:
+                set_parts = task8_set_parts(
+                    'workbench_tasks', {},
+                    update_sql={
+                        'title': '?',
+                        'updated_at': 'current_timestamp',
+                    },
+                )
                 db.execute(
                     f"""
                     update tasks
-                    set title=?, updated_at=current_timestamp
-                    where record_type='workbench_tasks' and legacy_key=? and title=?
+                    set {set_parts.sql}
+                    where record_type='workbench_tasks' and legacy_key=? and {task20_column('workbench_tasks', 'title')}=?
                       and not exists (
                           select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
                           where task_id=? and id<>?
@@ -585,16 +543,7 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             turn = self._require_turn(db, turn_id)
             if turn["lease_owner"] != owner:
-                confirmation = db.execute(
-                    f"""
-                    select 1 from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-                    where turn_id=? and proposer_owner=?
-                      and proposer_run_id=? limit 1
-                    """,
-                    (turn_id, owner, turn["execution_run_id"]),
-                ).fetchone()
-                if confirmation is None:
-                    raise ValueError("executor does not own runtime run")
+                raise ValueError("executor does not own runtime run")
             return str(turn["execution_run_id"] or "")
 
     def recover_expired_turns(
@@ -647,26 +596,29 @@ class WorkbenchStore(AutoReplyStore):
                 join ({WORKBENCH_TASK_SQL}) as workbench_tasks on workbench_tasks.id=workbench_turns.task_id
                 where workbench_turns.status='queued'
                   and workbench_tasks.archived_at=''
-                  and not exists (
-                      select 1 from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-                      where workbench_confirmations.turn_id=workbench_turns.id
-                        and workbench_confirmations.status='confirmed'
-                        and workbench_confirmations.result_json=''
-                  )
                 order by workbench_turns.created_at, workbench_turns.id
                 limit 1
                 """
             ).fetchone()
             if row is None:
                 return None
+            set_parts = task8_set_parts(
+                'workbench_turns', {},
+                update_sql={
+                    'status': "'running'",
+                    'lease_owner': '?',
+                    'lease_expires_at': '?',
+                    'execution_run_id': '?',
+                    'runtime_quiesced_run_id': "''",
+                    'started_at': f"case when {task20_column('workbench_turns', 'started_at')}='' then ? else {task20_column('workbench_turns', 'started_at')} end",
+                    'updated_at': '?',
+                },
+            )
             if db.execute(
-                """
+                f"""
                 update tasks
-                set status='running', lease_owner=?, lease_expires_at=?,
-                    execution_run_id=?, runtime_quiesced_run_id='',
-                    started_at=case when started_at='' then ? else started_at end,
-                    updated_at=?
-                where record_type='workbench_turns' and legacy_key=? and status='queued'
+                set {set_parts.sql}
+                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='queued'
                 """,
                 (
                     owner,
@@ -700,11 +652,18 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             db.execute("begin immediate")
             self._require_lease(db, turn_id, owner=owner, now_text=now_text)
+            set_parts = task8_set_parts(
+                'workbench_turns', {},
+                update_sql={
+                    'lease_expires_at': '?',
+                    'updated_at': '?',
+                },
+            )
             if db.execute(
-                """
+                f"""
                 update tasks
-                set lease_expires_at=?, updated_at=?
-                where record_type='workbench_turns' and legacy_key=? and status='running' and lease_owner=? and lease_expires_at>?
+                set {set_parts.sql}
+                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running' and {task20_column('workbench_turns', 'lease_owner')}=? and {task20_column('workbench_turns', 'lease_expires_at')}>?
                 """,
                 (lease_expires_at, now_text, turn_id, owner, now_text),
             ).rowcount != 1:
@@ -727,8 +686,16 @@ class WorkbenchStore(AutoReplyStore):
                 return self._turn_from_row(row)
             if TurnStatus.STOPPED not in _TURN_TRANSITIONS[status]:
                 raise ValueError("invalid turn transition")
+            set_parts = task8_set_parts(
+                'workbench_turns', {},
+                update_sql={
+                    'stop_requested': '1',
+                    'updated_at': '?',
+                },
+            )
             db.execute(
-                "update tasks set stop_requested=1, updated_at=? where record_type='workbench_turns' and legacy_key=?",
+                f"""update tasks set {set_parts.sql}
+                where record_type='workbench_turns' and legacy_key=?""",
                 (now_text, turn_id),
             )
             self._append_control_event(
@@ -736,12 +703,6 @@ class WorkbenchStore(AutoReplyStore):
                 turn_id,
                 event_type="turn_completed",
                 payload={"status": TurnStatus.STOPPED.value},
-            )
-            self._resolve_pending_confirmations(
-                db,
-                turn_id,
-                status=ConfirmationStatus.CANCELLED,
-                now_text=now_text,
             )
             self._transition_turn(
                 db,
@@ -910,11 +871,13 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()[0])
             if sequence != expected:
                 raise ValueError("event sequence must be next")
-            db.execute(
-                """insert into workbench_artifacts(id,turn_id,label,path,media_type)
-                   values(?,?,?,?,?)""",
-                (artifact_id, task_physical_id(db, "workbench_turns", turn_id), label, path, media_type),
-            )
+            insert_task12(db, "workbench_artifacts", {
+                "id": artifact_id,
+                "turn_id": task_physical_id(db, "workbench_turns", turn_id),
+                "label": label,
+                "path": path,
+                "media_type": media_type,
+            })
             cursor = insert_run(db, "workbench_events", {
                 "task_id": task_physical_id(db, "workbench_turns", turn_id),
                 "sequence": sequence, "event_type": "artifact_created",
@@ -951,7 +914,6 @@ class WorkbenchStore(AutoReplyStore):
         before_sequence: int | None = None,
         event_before: int | None = None,
         artifact_after: tuple[str, str] | None = None,
-        confirmation_after: tuple[str, str] | None = None,
         attachment_after: tuple[str, str] | None = None,
     ) -> tuple[
         WorkbenchTask,
@@ -959,7 +921,6 @@ class WorkbenchStore(AutoReplyStore):
         list[WorkbenchEvent],
         list[WorkbenchAttachment],
         list[WorkbenchArtifact],
-        list[WorkbenchConfirmation],
         dict[str, Any],
     ]:
         if turn_limit < 1 or turn_limit > 100 or event_limit < 1 or event_limit > 1000:
@@ -968,9 +929,9 @@ class WorkbenchStore(AutoReplyStore):
             db.execute("begin")
             task_row = self._require_task(db, task_id)
             state_row = db.execute(
-                f"""select status from tasks where record_type='workbench_turns'
+                f"""select {task20_column('workbench_turns', 'status')} as status from tasks where record_type='workbench_turns'
                    and parent_id={task_id_expression('workbench_tasks', '?')}
-                   order by task_sequence desc limit 1""",
+                   order by {task20_column('workbench_turns', 'task_sequence')} desc limit 1""",
                 (task_id,),
             ).fetchone()
             task_state = state_row["status"] if state_row is not None else "idle"
@@ -982,7 +943,7 @@ class WorkbenchStore(AutoReplyStore):
             turn_parameters.append(turn_limit + 1)
             turn_rows = db.execute(
                 f"""select * from ({WORKBENCH_TURN_SQL}
-                    and t.parent_id={task_id_expression('workbench_tasks', '?')}) as workbench_turns
+                    and tasks.parent_id={task_id_expression('workbench_tasks', '?')}) as workbench_turns
                     {cursor_sql} order by task_sequence desc limit ?""",
                 tuple(turn_parameters),
             ).fetchall()
@@ -1019,27 +980,8 @@ class WorkbenchStore(AutoReplyStore):
                         {artifact_cursor_sql} order by created_at,id limit 101""",
                     tuple(artifact_parameters),
                 ).fetchall()
-                confirmation_cursor_sql = ""
-                confirmation_parameters: list[Any] = list(turn_ids)
-                if confirmation_after is not None:
-                    confirmation_cursor_sql = (
-                        "and (created_at>? or (created_at=? and id>?))"
-                    )
-                    confirmation_parameters.extend(
-                        (
-                            confirmation_after[0],
-                            confirmation_after[0],
-                            confirmation_after[1],
-                        )
-                    )
-                confirmation_rows = db.execute(
-                    f"""select * from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-                        where turn_id in ({placeholders})
-                        {confirmation_cursor_sql} order by created_at,id limit 101""",
-                    tuple(confirmation_parameters),
-                ).fetchall()
             else:
-                event_rows, artifact_rows, confirmation_rows = [], [], []
+                event_rows, artifact_rows = [], []
             attachment_cursor_sql = ""
             attachment_parameters: list[Any] = [task_id]
             if attachment_after is not None:
@@ -1056,27 +998,13 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchall()
             events_has_more = len(event_rows) > event_limit
             artifacts_has_more = len(artifact_rows) > 100
-            confirmations_has_more = len(confirmation_rows) > 100
             attachments_has_more = len(attachment_rows) > 100
             events_next_cursor = (
                 event_rows[event_limit - 1]["id"] if events_has_more else None
             )
             event_rows = event_rows[:event_limit]
             artifact_rows = artifact_rows[:100]
-            confirmation_rows = confirmation_rows[:100]
             attachment_rows = attachment_rows[:100]
-            runtime_quiesced_runs = {
-                row["id"]: row["runtime_quiesced_run_id"] for row in turn_rows
-            }
-            confirmation_quiescence = {
-                row["id"]: bool(
-                    row["proposer_quiesced_at"]
-                    and row["proposer_run_id"]
-                    and row["proposer_run_id"]
-                    == runtime_quiesced_runs.get(row["turn_id"], "")
-                )
-                for row in confirmation_rows
-            }
             next_cursor = (
                 turn_rows[-1]["task_sequence"]
                 if has_more and turn_rows
@@ -1090,7 +1018,6 @@ class WorkbenchStore(AutoReplyStore):
                 hydrate_events(db, self.path, [self._event_from_row(row) for row in reversed(event_rows)]),
                 [self._attachment_from_row(row) for row in attachment_rows],
                 [self._artifact_from_row(row) for row in artifact_rows],
-                [self._confirmation_from_row(row) for row in confirmation_rows],
                 {
                     "has_more": has_more,
                     "next_cursor": next_cursor,
@@ -1098,8 +1025,6 @@ class WorkbenchStore(AutoReplyStore):
                     "events_has_more": events_has_more,
                     "events_next_cursor": events_next_cursor,
                     "artifacts_has_more": artifacts_has_more,
-                    "confirmations_has_more": confirmations_has_more,
-                    "confirmation_quiescence": confirmation_quiescence,
                     "attachments_has_more": attachments_has_more,
                 },
             )
@@ -1129,18 +1054,6 @@ class WorkbenchStore(AutoReplyStore):
                     row["status"]: int(row["count"])
                     for row in db.execute(
                         f"select status, count(*) as count from ({WORKBENCH_TURN_SQL}) as workbench_turns group by status"
-                    )
-                }
-            )
-            confirmation_counts = {status.value: 0 for status in ConfirmationStatus}
-            confirmation_counts.update(
-                {
-                    row["status"]: int(row["count"])
-                    for row in db.execute(
-                        f"""
-                        select status, count(*) as count
-                        from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations group by status
-                        """
                     )
                 }
             )
@@ -1185,7 +1098,6 @@ class WorkbenchStore(AutoReplyStore):
                 "archived": int(task_row["archived"] or 0),
             },
             "turns": turn_counts,
-            "confirmations": confirmation_counts,
             "events": event_counts,
             "attachments": attachments,
             "artifacts": artifacts,
@@ -1212,10 +1124,17 @@ class WorkbenchStore(AutoReplyStore):
             turn = self._require_executor_lease(
                 db, turn_id, owner=owner, now_text=now_text
             )
+            set_parts = task8_set_parts(
+                'workbench_tasks', {},
+                update_sql={
+                    'provider_session_ref': '?',
+                    'updated_at': '?',
+                },
+            )
             if db.execute(
-                """
+                f"""
                 update tasks
-                set provider_session_ref=?, updated_at=?
+                set {set_parts.sql}
                 where record_type='workbench_tasks' and legacy_key=?
                 """,
                 (provider_session_ref.strip(), now_text, turn["task_id"]),
@@ -1246,772 +1165,22 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchall()
             return tuple((Path(row["storage_path"]), row["media_type"]) for row in rows)
 
-    def create_confirmation(
-        self,
-        turn_id: str,
-        *,
-        action_kind: str,
-        target: str,
-        summary: str,
-        risk: str,
-        arguments_json: dict[str, Any] | str,
-        confirmation_id: str = "",
-        canonical_capability: str = "",
-        canonical_operation: str = "",
-        canonical_targets: tuple[str, ...] = (),
-        canonical_operation_digest: str = "",
-        canonical_arguments_digest: str = "",
-        owner: str = "",
-        now: str | datetime | None = None,
-    ) -> WorkbenchConfirmation:
-        values = tuple(item.strip() for item in (action_kind, target, summary, risk))
-        if not all(values):
-            raise ValueError("confirmation fields must be non-empty")
-        arguments_text = _json_object_text(arguments_json, field="arguments_json")
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
-            turn = self._require_turn(db, turn_id)
-            if TurnStatus(turn["status"]) is not TurnStatus.RUNNING:
-                raise ValueError("confirmation requires a running turn")
-            self._require_executor_lease(
-                db, turn_id, owner=owner, now_text=now_text
-            )
-            confirmation_id = confirmation_id or str(uuid4())
-            canonical_targets_text = json.dumps(
-                canonical_targets, ensure_ascii=False, separators=(",", ":")
-            )
-            proposer_run_id = str(turn["execution_run_id"] or "")
-            if not proposer_run_id:
-                raise ValueError("confirmation proposer run is missing")
-            db.execute(
-                """
-                insert into workbench_confirmations (
-                    id, turn_id, action_kind, target, summary, risk, arguments_json,
-                    canonical_capability, canonical_operation, canonical_targets_json,
-                    canonical_operation_digest, canonical_arguments_digest, status,
-                    proposer_run_id, proposer_owner, proposer_lease_expires_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-                """,
-                (
-                    confirmation_id,
-                    task_physical_id(db, "workbench_turns", turn_id),
-                    *values,
-                    arguments_text,
-                    canonical_capability,
-                    canonical_operation,
-                    canonical_targets_text,
-                    canonical_operation_digest,
-                    canonical_arguments_digest,
-                    proposer_run_id,
-                    owner,
-                    turn["lease_expires_at"],
-                ),
-            )
-            self._append_control_event(
-                db,
-                turn_id,
-                event_type="confirmation_required",
-                payload={
-                    "action_kind": values[0],
-                    "confirmation_id": confirmation_id,
-                    "target": values[1],
-                },
-            )
-            self._transition_turn(
-                db,
-                turn_id,
-                current=TurnStatus.RUNNING,
-                target=TurnStatus.WAITING_CONFIRMATION,
-                now_text=now_text,
-                clear_lease=True,
-            )
-            return self._confirmation_from_row(
-                self._require_confirmation(db, confirmation_id), redact_arguments=True
-            )
 
-    def consume_confirmation_authorization(
-        self, confirmation_id: str, *, owner: str, authorization: Any
-    ) -> None:
-        _, now_text = _utc_store_time()
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._require_confirmation(db, confirmation_id)
-            expected = (
-                row["canonical_capability"],
-                row["canonical_operation"],
-                row["canonical_operation_digest"],
-                tuple(json.loads(row["canonical_targets_json"])),
-                row["canonical_arguments_digest"],
-            )
-            actual = (
-                authorization.capability,
-                authorization.operation,
-                authorization.operation_digest,
-                authorization.target_identifiers,
-                authorization.arguments_digest,
-            )
-            if (
-                row["status"] != ConfirmationStatus.CONFIRMED.value
-                or row["execution_owner"] != owner
-                or row["execution_lease_expires_at"] <= now_text
-                or row["authorization_consumed_at"]
-                or expected != actual
-            ):
-                raise ValueError("reviewed write authorization cannot be consumed")
-            if db.execute(
-                """
-                update workbench_confirmations set authorization_consumed_at=?
-                where id=? and status='confirmed' and execution_owner=?
-                  and authorization_consumed_at='' and execution_lease_expires_at>?
-                """,
-                (now_text, confirmation_id, owner, now_text),
-            ).rowcount != 1:
-                raise ValueError("reviewed write authorization cannot be consumed")
 
-    def renew_confirmation_proposer(
-        self,
-        turn_id: str,
-        *,
-        owner: str,
-        proposer_run_id: str,
-        lease_seconds: int,
-    ) -> None:
-        now_value, now_text = _utc_store_time()
-        expires = (now_value + timedelta(seconds=lease_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        with self._connect() as db:
-            db.execute("begin immediate")
-            if db.execute(
-                f"""
-                update workbench_confirmations
-                set proposer_lease_expires_at=?
-                where turn_id={task_id_expression('workbench_turns', '?')} and status='pending' and proposer_owner=?
-                  and proposer_run_id=? and proposer_quiesced_at=''
-                  and proposer_lease_expires_at>?
-                """,
-                (expires, turn_id, owner, proposer_run_id, now_text),
-            ).rowcount != 1:
-                raise ValueError("confirmation proposer lease is stale")
 
-    def mark_confirmation_proposer_quiesced(
-        self,
-        turn_id: str,
-        *,
-        owner: str,
-        proposer_run_id: str,
-        now: str | datetime | None = None,
-    ) -> tuple[str, str] | None:
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = db.execute(
-                f"""
-                select * from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-                where turn_id=? and status='pending' and proposer_owner=?
-                  and proposer_run_id=? and proposer_quiesced_at=''
-                  and proposer_lease_expires_at>?
-                order by created_at desc, id desc limit 1
-                """,
-                (turn_id, owner, proposer_run_id, now_text),
-            ).fetchone()
-            if row is None:
-                return None
-            turn = self._require_turn(db, turn_id)
-            if (
-                TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION
-                or turn["execution_run_id"] != proposer_run_id
-            ):
-                raise ValueError("confirmation proposer run is stale")
-            db.execute(
-                "update workbench_confirmations set proposer_quiesced_at=? where id=?",
-                (now_text, row["id"]),
-            )
-            db.execute(
-                "update tasks set runtime_quiesced_run_id=? where record_type='workbench_turns' and legacy_key=?",
-                (proposer_run_id, turn_id),
-            )
-            return row["id"], str(row["decision_requested"] or "")
 
-    def reconcile_unquiesced_proposers(
-        self, *, now: str | datetime | None = None
-    ) -> int:
-        return len(self.reconcile_unquiesced_proposer_batch(now=now))
 
-    def reconcile_unquiesced_proposer_batch(
-        self, *, now: str | datetime | None = None
-    ) -> tuple[str, ...]:
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            _begin_immediate_with_retry(db)
-            rows = list(
-                db.execute(
-                    LEGACY_PENDING_PROPOSER_RECOVERY_SQL,
-                    ("", WORKBENCH_RECOVERY_BATCH_LIMIT),
-                ).fetchall()
-            )
-            remaining = WORKBENCH_RECOVERY_BATCH_LIMIT - len(rows)
-            if remaining:
-                rows.extend(
-                    db.execute(
-                        EXPIRED_PENDING_PROPOSER_RECOVERY_SQL,
-                        (now_text, remaining),
-                    ).fetchall()
-                )
-            for row in rows:
-                code = (
-                    "legacy_proposer_state_unknown"
-                    if not row["proposer_run_id"]
-                    else "confirmation_proposer_not_quiesced"
-                )
-                db.execute(
-                    """
-                    update workbench_confirmations
-                    set status='failed', result_json=?, decided_at=?,
-                        execution_owner='', execution_lease_expires_at='',
-                        execution_started_at='', authorization_consumed_at='',
-                        proposer_owner='', proposer_lease_expires_at='',
-                        proposer_quiesced_at='', decision_requested='',
-                        decision_requested_at=''
-                    where id=? and status='pending'
-                    """,
-                    (
-                        _json_object_text(
-                            {
-                                "code": code,
-                                "retryable": False,
-                                "status": "failed",
-                            },
-                            field="result_json",
-                        ),
-                        now_text,
-                        row["id"],
-                    ),
-                )
-                turn = self._require_turn(db, row["turn_id"])
-                status = TurnStatus(turn["status"])
-                if status in {
-                    TurnStatus.QUEUED,
-                    TurnStatus.RUNNING,
-                    TurnStatus.WAITING_CONFIRMATION,
-                }:
-                    self._append_control_event(
-                        db,
-                        row["turn_id"],
-                        event_type="turn_failed",
-                        payload={
-                            "code": code,
-                            "status": TurnStatus.FAILED.value,
-                        },
-                    )
-                    self._transition_turn(
-                        db,
-                        row["turn_id"],
-                        current=status,
-                        target=TurnStatus.FAILED,
-                        now_text=now_text,
-                        error_code=code,
-                        error_detail=(
-                            "Legacy confirmation proposer state is unknown."
-                            if code == "legacy_proposer_state_unknown"
-                            else "Confirmation proposer did not quiesce safely."
-                        ),
-                        clear_lease=True,
-                    )
-            return tuple(row["id"] for row in rows)
 
-    def list_confirmations(self, task_id: str) -> list[WorkbenchConfirmation]:
-        with self._connect() as db:
-            self._require_task(db, task_id)
-            rows = db.execute(
-                f"""
-                select confirmations.*
-                from ({WORKBENCH_CONFIRMATION_SQL}) as confirmations
-                join ({WORKBENCH_TURN_SQL}) as turns on turns.id=confirmations.turn_id
-                where turns.task_id=?
-                order by confirmations.created_at, confirmations.id
-                """,
-                (task_id,),
-            ).fetchall()
-            return [
-                self._confirmation_from_row(row, redact_arguments=True)
-                for row in rows
-            ]
 
-    def get_confirmation(self, confirmation_id: str) -> WorkbenchConfirmation | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations where id=?", (confirmation_id,)
-            ).fetchone()
-            return (
-                None
-                if row is None
-                else self._confirmation_from_row(row, redact_arguments=True)
-            )
 
-    def confirmation_is_quiesced(self, confirmation_id: str) -> bool | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select confirmations.proposer_quiesced_at,
-                       confirmations.proposer_run_id,
-                       turns.runtime_quiesced_run_id
-                from ({WORKBENCH_CONFIRMATION_SQL}) as confirmations
-                join ({WORKBENCH_TURN_SQL}) as turns on turns.id=confirmations.turn_id
-                where confirmations.id=?
-                """,
-                (confirmation_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return bool(
-            row["proposer_quiesced_at"]
-            and row["proposer_run_id"]
-            and row["proposer_run_id"] == row["runtime_quiesced_run_id"]
-        )
 
-    def confirmation_quiescence(self, confirmation_ids: list[str]) -> dict[str, bool]:
-        if not confirmation_ids:
-            return {}
-        placeholders = ",".join("?" for _ in confirmation_ids)
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select confirmations.id, confirmations.proposer_quiesced_at,
-                       confirmations.proposer_run_id, turns.runtime_quiesced_run_id
-                from ({WORKBENCH_CONFIRMATION_SQL}) confirmations
-                join ({WORKBENCH_TURN_SQL}) turns on turns.id=confirmations.turn_id
-                where confirmations.id in ({placeholders})
-                """,
-                tuple(confirmation_ids),
-            ).fetchall()
-        return {
-            row["id"]: bool(
-                row["proposer_quiesced_at"]
-                and row["proposer_run_id"]
-                and row["proposer_run_id"] == row["runtime_quiesced_run_id"]
-            )
-            for row in rows
-        }
 
-    def requested_quiesced_confirmation_ids(
-        self, *, limit: int = 2
-    ) -> tuple[tuple[str, str], ...]:
-        if limit < 1 or limit > 2:
-            raise ValueError("limit must be between 1 and 2")
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select id, decision_requested from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-                where status='pending' and decision_requested<>''
-                  and proposer_run_id<>'' and proposer_quiesced_at<>''
-                order by decision_requested_at, id limit ?
-                """,
-                (limit,),
-            ).fetchall()
-        return tuple((row["id"], row["decision_requested"]) for row in rows)
 
-    def claim_confirmation_execution(
-        self,
-        confirmation_id: str,
-        *,
-        owner: str,
-        lease_seconds: int = 300,
-        now: str | datetime | None = None,
-    ) -> WorkbenchConfirmation | None:
-        """Claim one external action; exact argv is returned only to the winner."""
-        owner = owner.strip()
-        if not owner:
-            raise ValueError("owner must be non-empty")
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        now_value, now_text = _utc_store_time(now)
-        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._require_confirmation(db, confirmation_id)
-            status = ConfirmationStatus(row["status"])
-            if status is ConfirmationStatus.PENDING:
-                requested = str(row["decision_requested"] or "")
-                if requested and requested != "confirm":
-                    raise ValueError("confirmation has conflicting decision intent")
-                if not requested:
-                    db.execute(
-                        """
-                        update workbench_confirmations
-                        set decision_requested='confirm', decision_requested_at=?
-                        where id=? and status='pending' and decision_requested=''
-                        """,
-                        (now_text, confirmation_id),
-                    )
-                    row = self._require_confirmation(db, confirmation_id)
-                turn = self._require_turn(db, row["turn_id"])
-                if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
-                    raise ValueError("confirmation turn is not waiting")
-                if (
-                    not row["proposer_quiesced_at"]
-                    or turn["runtime_quiesced_run_id"] != row["proposer_run_id"]
-                ):
-                    return None
-                unresolved = db.execute(
-                    f"""
-                    select 1 from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations
-                    where turn_id=? and id<>? and status='confirmed' and result_json=''
-                    limit 1
-                    """,
-                    (row["turn_id"], confirmation_id),
-                ).fetchone()
-                if unresolved is not None:
-                    return None
-                if db.execute(
-                    """
-                    update workbench_confirmations
-                    set status='confirmed', decided_at=?, execution_owner=?,
-                        execution_lease_expires_at=?, execution_started_at=?
-                    where id=? and status='pending'
-                    """,
-                    (
-                        now_text,
-                        owner,
-                        lease_expires_at,
-                        now_text,
-                        confirmation_id,
-                    ),
-                ).rowcount != 1:
-                    return None
-                return self._confirmation_from_row(
-                    self._require_confirmation(db, confirmation_id)
-                )
-            if status in {
-                ConfirmationStatus.CONFIRMED,
-                ConfirmationStatus.EXECUTED,
-                ConfirmationStatus.FAILED,
-            }:
-                return None
-            raise ValueError("confirmation has already been decided")
 
-    def renew_confirmation_execution_lease(
-        self,
-        confirmation_id: str,
-        *,
-        owner: str,
-        lease_seconds: int = 300,
-        now: str | datetime | None = None,
-    ) -> WorkbenchConfirmation:
-        owner = owner.strip()
-        if not owner:
-            raise ValueError("owner must be non-empty")
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        now_value, now_text = _utc_store_time(now)
-        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._require_confirmation(db, confirmation_id)
-            if (
-                ConfirmationStatus(row["status"]) is not ConfirmationStatus.CONFIRMED
-                or row["result_json"]
-                or row["execution_owner"] != owner
-                or row["execution_lease_expires_at"] <= now_text
-            ):
-                raise ValueError("confirmation execution lease is stale")
-            db.execute(
-                """
-                update workbench_confirmations
-                set execution_lease_expires_at=?
-                where id=? and status='confirmed' and result_json=''
-                  and execution_owner=? and execution_lease_expires_at>?
-                """,
-                (lease_expires_at, confirmation_id, owner, now_text),
-            )
-            return self._confirmation_from_row(
-                self._require_confirmation(db, confirmation_id), redact_arguments=True
-            )
 
-    def finish_confirmation_execution(
-        self,
-        confirmation_id: str,
-        *,
-        owner: str,
-        status: ConfirmationStatus | str,
-        result_json: dict[str, Any] | str,
-        resume_context: str,
-        now: str | datetime | None = None,
-    ) -> WorkbenchConfirmation:
-        try:
-            target = ConfirmationStatus(status)
-        except ValueError as exc:
-            raise ValueError("invalid confirmation result status") from exc
-        if target not in {ConfirmationStatus.EXECUTED, ConfirmationStatus.FAILED}:
-            raise ValueError("invalid confirmation result status")
-        result_text = _json_object_text(result_json, field="result_json")
-        resume_context = resume_context.strip()
-        if not resume_context:
-            raise ValueError("resume_context must be non-empty")
-        owner = owner.strip()
-        if not owner:
-            raise ValueError("owner must be non-empty")
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._require_confirmation(db, confirmation_id)
-            current = ConfirmationStatus(row["status"])
-            if current is target:
-                return self._confirmation_from_row(row, redact_arguments=True)
-            if current is not ConfirmationStatus.CONFIRMED:
-                raise ValueError("confirmation execution is not claimed")
-            if (
-                row["execution_owner"] != owner
-                or not row["execution_lease_expires_at"]
-                or row["execution_lease_expires_at"] <= now_text
-            ):
-                raise ValueError("confirmation execution lease is stale")
-            if target is ConfirmationStatus.EXECUTED and not row[
-                "authorization_consumed_at"
-            ]:
-                raise ValueError("confirmation authorization was not consumed")
-            turn = self._require_turn(db, row["turn_id"])
-            if db.execute(
-                """
-                update workbench_confirmations
-                set status=?, result_json=?, execution_owner='',
-                    execution_lease_expires_at=''
-                where id=? and status='confirmed' and result_json=''
-                  and execution_owner=? and execution_lease_expires_at>?
-                """,
-                (
-                    target.value,
-                    result_text,
-                    confirmation_id,
-                    owner,
-                    now_text,
-                ),
-            ).rowcount != 1:
-                raise ValueError("confirmation execution lease is stale")
-            turn_status = TurnStatus(turn["status"])
-            if turn_status in {
-                TurnStatus.COMPLETED,
-                TurnStatus.STOPPED,
-                TurnStatus.FAILED,
-            }:
-                return self._confirmation_from_row(
-                    self._require_confirmation(db, confirmation_id),
-                    redact_arguments=True,
-                )
-            if turn_status is not TurnStatus.WAITING_CONFIRMATION:
-                raise ValueError("confirmation turn is not waiting")
-            self._append_control_event(
-                db,
-                row["turn_id"],
-                event_type="status_changed",
-                payload={
-                    "confirmation_id": confirmation_id,
-                    "status": TurnStatus.QUEUED.value,
-                },
-            )
-            self._transition_turn(
-                db,
-                row["turn_id"],
-                current=TurnStatus.WAITING_CONFIRMATION,
-                target=TurnStatus.QUEUED,
-                now_text=now_text,
-            )
-            db.execute(
-                """
-                update tasks
-                set resume_context=?, error_code=?, error_detail=?, updated_at=?
-                where record_type='workbench_turns' and legacy_key=? and status='queued'
-                """,
-                (
-                    resume_context,
-                    "reviewed_write_failed" if target is ConfirmationStatus.FAILED else "",
-                    (
-                        "Reviewed external action failed; it will not be replayed."
-                        if target is ConfirmationStatus.FAILED
-                        else ""
-                    ),
-                    now_text,
-                    row["turn_id"],
-                ),
-            )
-            return self._confirmation_from_row(
-                self._require_confirmation(db, confirmation_id), redact_arguments=True
-            )
 
-    def cancel_confirmation_execution(
-        self,
-        confirmation_id: str,
-        *,
-        resume_context: str,
-        now: str | datetime | None = None,
-    ) -> WorkbenchConfirmation:
-        resume_context = resume_context.strip()
-        if not resume_context:
-            raise ValueError("resume_context must be non-empty")
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._require_confirmation(db, confirmation_id)
-            current = ConfirmationStatus(row["status"])
-            if current is ConfirmationStatus.CANCELLED:
-                return self._confirmation_from_row(row, redact_arguments=True)
-            if current is not ConfirmationStatus.PENDING:
-                raise ValueError("confirmation has already been decided")
-            requested = str(row["decision_requested"] or "")
-            if requested and requested != "cancel":
-                raise ValueError("confirmation has conflicting decision intent")
-            if not requested:
-                db.execute(
-                    """
-                    update workbench_confirmations
-                    set decision_requested='cancel', decision_requested_at=?
-                    where id=? and status='pending' and decision_requested=''
-                    """,
-                    (now_text, confirmation_id),
-                )
-                row = self._require_confirmation(db, confirmation_id)
-            turn = self._require_turn(db, row["turn_id"])
-            if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
-                raise ValueError("confirmation turn is not waiting")
-            if (
-                not row["proposer_quiesced_at"]
-                or turn["runtime_quiesced_run_id"] != row["proposer_run_id"]
-            ):
-                return self._confirmation_from_row(row, redact_arguments=True)
-            db.execute(
-                """
-                update workbench_confirmations
-                set status='cancelled', decided_at=?
-                where id=? and status='pending'
-                """,
-                (now_text, confirmation_id),
-            )
-            self._append_control_event(
-                db,
-                row["turn_id"],
-                event_type="status_changed",
-                payload={
-                    "confirmation_id": confirmation_id,
-                    "status": TurnStatus.QUEUED.value,
-                },
-            )
-            self._transition_turn(
-                db,
-                row["turn_id"],
-                current=TurnStatus.WAITING_CONFIRMATION,
-                target=TurnStatus.QUEUED,
-                now_text=now_text,
-            )
-            db.execute(
-                "update tasks set resume_context=? where record_type='workbench_turns' and legacy_key=?",
-                (resume_context, row["turn_id"]),
-            )
-            return self._confirmation_from_row(
-                self._require_confirmation(db, confirmation_id), redact_arguments=True
-            )
 
-    def reconcile_confirmed_without_result(
-        self, *, now: str | datetime | None = None
-    ) -> int:
-        return len(self.reconcile_confirmed_without_result_batch(now=now))
 
-    def reconcile_confirmed_without_result_batch(
-        self, *, now: str | datetime | None = None
-    ) -> tuple[str, ...]:
-        """Fail crash-ambiguous writes without executing or replaying them."""
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = list(
-                db.execute(
-                    LEGACY_CONFIRMED_OWNER_RECOVERY_SQL,
-                    ("", WORKBENCH_RECOVERY_BATCH_LIMIT),
-                ).fetchall()
-            )
-            remaining = WORKBENCH_RECOVERY_BATCH_LIMIT - len(rows)
-            if remaining:
-                rows.extend(
-                    db.execute(
-                        LEGACY_CONFIRMED_LEASE_RECOVERY_SQL,
-                        ("", remaining),
-                    ).fetchall()
-                )
-            remaining = WORKBENCH_RECOVERY_BATCH_LIMIT - len(rows)
-            if remaining:
-                rows.extend(
-                    db.execute(
-                        EXPIRED_CONFIRMED_EXECUTION_RECOVERY_SQL,
-                        (now_text, remaining),
-                    ).fetchall()
-                )
-            for row in rows:
-                recovery_result = _json_object_text(
-                    {
-                        "code": "confirmation_execution_ambiguous",
-                        "retryable": False,
-                        "status": "failed",
-                    },
-                    field="result_json",
-                )
-                db.execute(
-                    """
-                    update workbench_confirmations
-                    set status='failed', result_json=?, execution_owner='',
-                        execution_lease_expires_at=''
-                    where id=? and status='confirmed' and result_json=''
-                    """,
-                    (recovery_result, row["id"]),
-                )
-                current_turn = self._require_turn(db, row["turn_id"])
-                current_status = TurnStatus(current_turn["status"])
-                if current_status in {
-                    TurnStatus.QUEUED,
-                    TurnStatus.RUNNING,
-                    TurnStatus.WAITING_CONFIRMATION,
-                }:
-                    self._resolve_pending_confirmations(
-                        db,
-                        row["turn_id"],
-                        status=ConfirmationStatus.FAILED,
-                        now_text=now_text,
-                    )
-                    self._append_control_event(
-                        db,
-                        row["turn_id"],
-                        event_type="turn_failed",
-                        payload={
-                            "code": "confirmation_execution_ambiguous",
-                            "confirmation_id": row["id"],
-                            "status": TurnStatus.FAILED.value,
-                        },
-                    )
-                    self._transition_turn(
-                        db,
-                        row["turn_id"],
-                        current=current_status,
-                        target=TurnStatus.FAILED,
-                        now_text=now_text,
-                        error_code="confirmation_execution_ambiguous",
-                        error_detail="External action outcome is ambiguous after restart.",
-                        clear_lease=True,
-                    )
-                else:
-                    self._append_control_event(
-                        db,
-                        row["turn_id"],
-                        event_type="status_changed",
-                        payload={
-                            "code": "confirmation_execution_ambiguous",
-                            "confirmation_id": row["id"],
-                            "confirmation_status": ConfirmationStatus.FAILED.value,
-                        },
-                    )
-            return tuple(row["id"] for row in rows)
 
     def complete_turn(
         self,
@@ -2046,11 +1215,6 @@ class WorkbenchStore(AutoReplyStore):
                 error_code = ""
                 error_detail = ""
                 event_payload = {"status": TurnStatus.STOPPED.value}
-            if (current, target_status) in {
-                (TurnStatus.RUNNING, TurnStatus.WAITING_CONFIRMATION),
-                (TurnStatus.WAITING_CONFIRMATION, TurnStatus.QUEUED),
-            }:
-                raise ValueError("reserved confirmation transition")
             if target_status not in _TURN_TRANSITIONS[current]:
                 raise ValueError("invalid turn transition")
             if current is TurnStatus.RUNNING:
@@ -2065,17 +1229,6 @@ class WorkbenchStore(AutoReplyStore):
             if event_payload is not None and not terminal:
                 raise ValueError("event_payload requires a terminal turn status")
             if terminal:
-                if current is TurnStatus.WAITING_CONFIRMATION:
-                    self._resolve_pending_confirmations(
-                        db,
-                        turn_id,
-                        status=(
-                            ConfirmationStatus.CANCELLED
-                            if target_status is TurnStatus.STOPPED
-                            else ConfirmationStatus.FAILED
-                        ),
-                        now_text=now_text,
-                    )
                 self._append_control_event(
                     db,
                     turn_id,
@@ -2134,32 +1287,25 @@ class WorkbenchStore(AutoReplyStore):
                     clear_lease=True,
                 )
                 continue
+            set_parts = task8_set_parts(
+                'workbench_turns', {},
+                update_sql={
+                    'status': "'queued'",
+                    'lease_owner': "''",
+                    'lease_expires_at': "''",
+                    'updated_at': '?',
+                },
+            )
             db.execute(
-                """
+                f"""
                 update tasks
-                set status='queued', lease_owner='', lease_expires_at='', updated_at=?
-                where record_type='workbench_turns' and legacy_key=? and status='running' and lease_expires_at<=?
+                set {set_parts.sql}
+                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running' and {task20_column('workbench_turns', 'lease_expires_at')}<=?
                 """,
                 (now_text, row["id"], now_text),
             )
         return len(rows)
 
-    @staticmethod
-    def _resolve_pending_confirmations(
-        db: sqlite3.Connection,
-        turn_id: str,
-        *,
-        status: ConfirmationStatus,
-        now_text: str,
-    ) -> None:
-        db.execute(
-            f"""
-            update workbench_confirmations
-            set status=?, result_json='', decided_at=?
-            where turn_id={task_id_expression('workbench_turns', '?')} and status='pending'
-            """,
-            (status.value, now_text, turn_id),
-        )
 
     @staticmethod
     def _canonical_uuid(value: str, *, field: str) -> str:
@@ -2303,13 +1449,13 @@ class WorkbenchStore(AutoReplyStore):
                         attachment_id = self._canonical_uuid(row["id"], field="id")
                     except ValueError:
                         db.execute(
-                            "delete from workbench_attachments where id=?", (row["id"],)
+                            f"delete from tasks where record_type='workbench_attachments' and {task20_column('workbench_attachments', 'id')}=?", (row["id"],)
                         )
                         continue
                     directory = root / task_id
                     if not self._managed_directory(directory, create=False):
                         db.execute(
-                            "delete from workbench_attachments where id=?", (row["id"],)
+                            f"delete from tasks where record_type='workbench_attachments' and {task20_column('workbench_attachments', 'id')}=?", (row["id"],)
                         )
                         continue
                     expected_path = directory / attachment_id
@@ -2323,7 +1469,7 @@ class WorkbenchStore(AutoReplyStore):
                         or not stat.S_ISREG(metadata.st_mode)
                     ):
                         db.execute(
-                            "delete from workbench_attachments where id=?", (row["id"],)
+                            f"delete from tasks where record_type='workbench_attachments' and {task20_column('workbench_attachments', 'id')}=?", (row["id"],)
                         )
                         continue
                     referenced_paths.add(expected_path)
@@ -2408,14 +1554,6 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("workbench turn does not exist")
         return row
 
-    @staticmethod
-    def _require_confirmation(db: sqlite3.Connection, confirmation_id: str) -> sqlite3.Row:
-        row = db.execute(
-            f"select * from ({WORKBENCH_CONFIRMATION_SQL}) as workbench_confirmations where id=?", (confirmation_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError("workbench confirmation does not exist")
-        return row
 
     @classmethod
     def _require_lease(
@@ -2463,15 +1601,23 @@ class WorkbenchStore(AutoReplyStore):
         if target not in _TURN_TRANSITIONS[current]:
             raise ValueError("invalid turn transition")
         terminal = target in {TurnStatus.COMPLETED, TurnStatus.STOPPED, TurnStatus.FAILED}
+        set_parts = task8_set_parts(
+            'workbench_turns', {},
+            update_sql={
+                'status': '?',
+                'error_code': '?',
+                'error_detail': '?',
+                'lease_owner': f"case when ? then '' else {task20_column('workbench_turns', 'lease_owner')} end",
+                'lease_expires_at': f"case when ? then '' else {task20_column('workbench_turns', 'lease_expires_at')} end",
+                'completed_at': f"case when ? then ? else {task20_column('workbench_turns', 'completed_at')} end",
+                'updated_at': '?',
+            },
+        )
         cursor = db.execute(
-            """
+            f"""
             update tasks
-            set status=?, error_code=?, error_detail=?,
-                lease_owner=case when ? then '' else lease_owner end,
-                lease_expires_at=case when ? then '' else lease_expires_at end,
-                completed_at=case when ? then ? else completed_at end,
-                updated_at=?
-            where record_type='workbench_turns' and legacy_key=? and status=?
+            set {set_parts.sql}
+            where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}=?
             """,
             (
                 target.value,
@@ -2534,11 +1680,3 @@ class WorkbenchStore(AutoReplyStore):
             {key: row[key] for key in WorkbenchArtifact.model_fields}
         )
 
-    @staticmethod
-    def _confirmation_from_row(
-        row: sqlite3.Row, *, redact_arguments: bool = False
-    ) -> WorkbenchConfirmation:
-        values = {key: row[key] for key in WorkbenchConfirmation.model_fields}
-        if redact_arguments:
-            values["arguments_json"] = ""
-        return WorkbenchConfirmation.model_validate(values)

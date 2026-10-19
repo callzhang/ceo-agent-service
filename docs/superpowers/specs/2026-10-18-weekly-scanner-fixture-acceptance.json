@@ -1,0 +1,15 @@
+{
+  "status": "accepted_test_fixture_retirement",
+  "freeze": "docs/superpowers/specs/2026-10-18-weekly-scanner-fixture-freeze.json",
+  "freeze_sha256": "923d13ec31b195dcd0d40a9acc889a6533fcb257fa2aa107487a1e984dec99ea",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-weekly-scanner-fixture-spec-review.json",
+    "sha256": "937849d278b1bcfb0c69feeae794aabc2c7f28cfd55cf2a521acbb5ea144e16f"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-weekly-scanner-fixture-quality-review.json",
+    "sha256": "ab1c45cfe62c91b370c0aec587dc0f29eb7552bcbd912c3efceeab6f0cd982ef"
+  },
+  "scope": "FreshcurrentStore scanner test nowqueries currenttask20projection; scanner3then0/pagecounts/sourcekind/ref/title/payload/stateassertions unchanged.",
+  "limits": "Original t.source_type RED and wrong task12 candidate failures preserved in note; exact1node independentPASS only, no runtime or broader test claim."
+}

@@ -6,6 +6,9 @@ import pytest
 import app.store as store_module
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import AutoReplyStore
+from app.state_storage import insert_state
+from app.state_definitions import state_projection
+from app.task20_definitions import TASK20_INDEX_DDL
 
 
 def seed_job(
@@ -50,11 +53,13 @@ def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
     assert {"tasks", "runs"} <= tables
     assert "meeting_alignment_jobs" not in tables
     assert "meeting_alignment_runs" not in tables
-    assert {
-        "idx_meeting_alignment_jobs_claim",
-        "idx_meeting_alignment_jobs_identity",
-        "idx_meeting_alignment_runs_job",
-    } <= indexes
+    expected_meeting_indexes = {
+        sql.partition(" on tasks(")[0].split()[-1]
+        for sql in TASK20_INDEX_DDL
+        if sql.endswith("where record_type='meeting_alignment_jobs'")
+    }
+    assert expected_meeting_indexes
+    assert expected_meeting_indexes | {"idx_meeting_alignment_runs_job"} <= indexes
 
 
 def test_incomplete_unmarked_meeting_source_is_rejected_without_mutation(tmp_path):
@@ -99,12 +104,12 @@ def test_incomplete_unmarked_meeting_source_is_rejected_without_mutation(tmp_pat
         assert db.execute("pragma user_version").fetchone()[0] == user_version
 
 
-def test_current_schema_manifest_detects_missing_calendar_summary_columns(tmp_path):
+def test_current_schema_manifest_detects_missing_meeting_payload_column(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     seed_job(store, meeting_id="minutes-retained")
     with sqlite3.connect(db_path) as db:
-        db.execute("alter table tasks rename column calendar_summary_status to missing_calendar_summary_status")
+        db.execute("alter table tasks rename column payload_json to missing_payload_json")
         before = tuple(db.iterdump())
         user_version = db.execute("pragma user_version").fetchone()[0]
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -331,12 +336,11 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
         now="2026-07-14 02:11:00",
     )
     with store._connect() as db:
-        db.execute(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at) "
-            "values ('meeting', ?, 'old-service', 123, 1, '2026-07-14 03:00:00')",
-            (str(job_id),),
-        )
+        db.execute("begin immediate")
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": "meeting", "source_id": str(job_id), "owner": "old-service",
+            "owner_pid": 123, "generation": 1, "lease_expires_at": "2026-07-14 03:00:00",
+        })
 
     [recovered] = store.reset_processing_meeting_alignment_jobs()
 
@@ -351,7 +355,7 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
     assert runtime_attempt.finished_at
     with store._connect() as db:
         lease = db.execute(
-            "select owner, owner_pid, lease_expires_at from dispatcher_claim_leases "
+            f"select owner, owner_pid, lease_expires_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='meeting' and source_id=?",
             (str(job_id),),
         ).fetchone()

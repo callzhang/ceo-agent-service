@@ -66,7 +66,7 @@ def _event(store: AutoReplyStore, task_id: int, reason: str, *, created_at: str)
 
 def _attention(store: AutoReplyStore, key: str, *, category: str, created_at: str) -> int:
     signal_id = _signal(store, f"attention:{key}")
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         anchor_id = store.create_business_anchor_in_transaction(
             anchor_type="customer", anchor_ref=key, title=f"客户 {key}", _db=db
         )

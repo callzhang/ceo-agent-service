@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-16",
+  "scope": "Unselected mixed23 Store caller proposal after47-method candidate",
+  "patch_sha256": "475d867211ca0a9f96d15122f2155d7f674edf9229e4e68d4c2e7fc2cc196edf",
+  "candidate_sha256": "b548e907d20eeb1edb02ab9555e13044cc7bf693f2d1ebef8f600abb1fb8d6c5",
+  "base_sha256": "e1abebbe9f299d39b5eb4f387fa9949b890ae53bdf88ee32ab4ba8507fb5027c",
+  "spec": {
+    "status": "PASS",
+    "paired_checkpoints": 94,
+    "prior_passes_rerun": 78,
+    "fixed_real_method_successes": 4,
+    "new_owner_zero_row_late_abort": 12,
+    "unchanged_other_method_asts": 754,
+    "signatures_unchanged": 777
+  },
+  "quality": {
+    "status": "PASS",
+    "adversarial_tests": 84,
+    "adversarial_seconds": 1.84,
+    "real_mixed_method_clock_tests": 4,
+    "clock_seconds": 9.59,
+    "native_and_candidate_final_insert_witnesses": 8,
+    "delay_seconds": 1.1,
+    "proof": "Actualprepare_meeting_alignment_message andbegin_direct_email_unsubscribe_execution acrossnativeactual/fresh retain ownfinalINSERTclock andleave noopen transaction; prior84 scalar/owner/zero-row/late-rollback/exact-targeting/concurrentclaim bounds rerun.",
+    "state_storage_sha256": "ebbedf3dd2a7b7b69094adac32b558f90343327137917612ee58e1ff34e59b12",
+    "native_encoder_sha256": "3710ce46766226e5e315e5b2922533e3e63e225290d776a85bdc50737937accc"
+  },
+  "root_prerequisite_preflight": {
+    "plan": "2026-10-16-state-point-statement-defaults-plan.md",
+    "red": 156,
+    "baseline_guard_pass": 2,
+    "green": 637,
+    "seconds": 12.51,
+    "app_candidate_sha256": "ebbedf3dd2a7b7b69094adac32b558f90343327137917612ee58e1ff34e59b12"
+  },
+  "current_callers_selected": false,
+  "constructor_selected": false,
+  "production_changed": false,
+  "previous_quality": {
+    "status": "PENDING_FOUNDATION_CORRECTION",
+    "severity": "P2",
+    "other_cases_passed": 84,
+    "mixed_clock_repro_failures": 2,
+    "mixed_seconds": 8.02,
+    "point_update_extension_failures": 4,
+    "point_update_seconds": 9.64,
+    "finding": "State insert_state resolves CURRENT_TIMESTAMP defaults in _completed SELECT before final INSERT. Point update_state(replace=True) does the same for explicit NULL/NaN. Native defaults belong to final SQL statement; do not preselect clocks in callers.",
+    "next": "Accept exact foundation point statement-default fix, then independently re-review unchanged proposal."
+  },
+  "foundation_acceptance_receipt": "2026-10-16-state-point-defaults-native-binding-acceptance.json"
+}

@@ -1,0 +1,52 @@
+{
+  "recorded_utc": "2026-10-16T20:13:19.239780+00:00",
+  "status": "canonical_component_and_allocator_prerequisite_spec_quality_pass_unselected",
+  "artifacts": {
+    "2026-10-16-task20-release-candidate.py": "90fab9be52f04e03d826587851d4ae893e1abb0a57145a6c1133c0ee140f2715",
+    "2026-10-16-task20-release-regression.py": "e30d8f3fdae27a7f098835ffc57bfdec0d6fb7d585afe0bb336d9ec5e6cb51e4",
+    "2026-10-16-task20-release-installed-regression-candidate.py": "98195f21b893a18dfeb968961db80b316086e82948d611c0815bf366919ca479",
+    "2026-10-16-task20-main-sequence-definitions-candidate.py": "d3e84f6d3ce871bf01b85fb160b1cf13162ca73b2644e39e593edc0b0c258773",
+    "2026-10-16-task20-main-sequence-storage-candidate.py": "592da58189962bee520ae87b3504742495f5132fc481902bc72c11aa4766cf0d",
+    "2026-10-16-task20-main-sequence-regression.py": "9999ea20a894f2fb8c64b00a96b483c9f2dced8d67b5f5e5017c30c84d13eb36",
+    "2026-10-16-task20-main-sequence-preflight.py": "6828f8a04c54fde36c682526941c23dd8f7c79a03ec44a1e7947c62984ba4a08"
+  },
+  "root": {
+    "copied_candidate_cases": 184,
+    "elapsed_seconds": 7.98,
+    "owned_temp_removed": true,
+    "original_helper_red_behavior_failures": 8
+  },
+  "independent_spec": {
+    "cases": 184,
+    "seconds": 9.15,
+    "only_changed_existing_function_asts": [
+      "initialize_task8_sequence",
+      "_physical_next",
+      "_auto_next"
+    ],
+    "only_sql_literal_changes": 4,
+    "all_declarations_unchanged": true
+  },
+  "independent_quality": {
+    "cases": 184,
+    "seconds": 7.81,
+    "supplemental_full_temp_counter_inverse_roundtrips": 4,
+    "canonical_mutant_fixture_baselines": 10,
+    "semantic_mutant_fixture_failures": 9,
+    "equivalent_survivor": "actual profile positional stage; source orders coincide, fresh profile catches mutation",
+    "no_remaining_findings": true
+  },
+  "dispositions": [
+    "Reject finite TEMP relation/staging shadows before DDL, within existing source-bound migration protocol",
+    "Qualify four non-trigger allocator statements to MAIN; allow unrelated TEMP allocators and retain MAIN trigger resolution",
+    "Reconstruct all508 unused per-kind source slots as SQL NULL; require exact raw82 identity/value/type equality",
+    "Inverse metadata contains declarations and allocator presence only; runtime current facts/counters are not snapshots"
+  ],
+  "unproved": [
+    "Installed exact application files/tests and applied review",
+    "Refreshed nonempty actual-copy with corrected helper hashes and TEMP allocator witness",
+    "Complete current constructor/caller/publication/coordinator closure and integrated55 intermediate",
+    "Genuine archived predecessor current writes/reforward, real CLI fake outbound, UI/performance/final11/production"
+  ],
+  "production_changed": false
+}

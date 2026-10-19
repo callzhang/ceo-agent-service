@@ -1,0 +1,96 @@
+{
+  "observed_at": "2026-10-17T19:49:49.940319+00:00",
+  "scope": "Exactly two currently unproved protocol classes, max2 latest persisted native lineages each; no whole-home content scan",
+  "parent_receipt_sha256": "0aee70892418c7fa5d60bb38916a2cd93be9fee9bc62b25644c7474d8d626730",
+  "producer_file_sha256": {
+    "app/native_trajectory.py": "a5b76d0964097d9ae996c9413f464acfd7d17e11a99489346f4a459114ae6248",
+    "app/meeting_alignment_agent.py": "5367b2a6d0e36d0e9bae81934e6a22dcec08960b3f2d51c6f587038fb7a5b1a9"
+  },
+  "protocol_classes": 2,
+  "candidate_files_attempted": 4,
+  "results": [
+    {
+      "job_public_id": "6578",
+      "meeting_run_public_id": "2476",
+      "attempt": {
+        "legacy_key": "18985",
+        "runtime_kind": "codex_cli",
+        "session_id": "01a0fe5d-f5d7-7710-84bc-649373887dfa",
+        "transcript_reference": "codex_session:01a0fe5d-f5d7-7710-84bc-649373887dfa",
+        "transcript_start": 0,
+        "transcript_end": 18,
+        "status": "completed"
+      },
+      "protocol_sha256": "a360027d166ae4f7f734d52796bab271e6e05495800ae16ca3a1a084f421d0c0",
+      "protocol_decoded_utf8_bytes": 34700,
+      "native_path": null,
+      "current_reader_proofs": [],
+      "plain_substring_candidates": [],
+      "status": "native_file_unavailable"
+    },
+    {
+      "job_public_id": "6519",
+      "meeting_run_public_id": "2475",
+      "attempt": {
+        "legacy_key": "18949",
+        "runtime_kind": "codex_cli",
+        "session_id": "01a0faaf-a7f8-7fd0-8bd8-65e5a2273c5e",
+        "transcript_reference": "codex_session:01a0faaf-a7f8-7fd0-8bd8-65e5a2273c5e",
+        "transcript_start": 0,
+        "transcript_end": 18,
+        "status": "completed"
+      },
+      "protocol_sha256": "a360027d166ae4f7f734d52796bab271e6e05495800ae16ca3a1a084f421d0c0",
+      "protocol_decoded_utf8_bytes": 34700,
+      "native_path": null,
+      "current_reader_proofs": [],
+      "plain_substring_candidates": [],
+      "status": "native_file_unavailable"
+    },
+    {
+      "job_public_id": "4808",
+      "meeting_run_public_id": "2284",
+      "attempt": {
+        "legacy_key": "13457",
+        "runtime_kind": "codex_cli",
+        "session_id": "01a0ae2f-c664-79d1-8522-47dca9bf1618",
+        "transcript_reference": "codex_session:01a0ae2f-c664-79d1-8522-47dca9bf1618",
+        "transcript_start": 0,
+        "transcript_end": 116,
+        "status": "completed"
+      },
+      "protocol_sha256": "002c5d4ee8841a36028fe5fc2c227f4d5a07a1f7d3f466a8a577c8d87bf00bd4",
+      "protocol_decoded_utf8_bytes": 31427,
+      "native_path": null,
+      "current_reader_proofs": [],
+      "plain_substring_candidates": [],
+      "status": "native_file_unavailable"
+    },
+    {
+      "job_public_id": "4807",
+      "meeting_run_public_id": "2283",
+      "attempt": {
+        "legacy_key": "13317",
+        "runtime_kind": "codex_cli",
+        "session_id": "01a0ae00-9b9f-7a60-909d-8b765682e332",
+        "transcript_reference": "codex_session:01a0ae00-9b9f-7a60-909d-8b765682e332",
+        "transcript_start": 0,
+        "transcript_end": 20,
+        "status": "completed"
+      },
+      "protocol_sha256": "002c5d4ee8841a36028fe5fc2c227f4d5a07a1f7d3f466a8a577c8d87bf00bd4",
+      "protocol_decoded_utf8_bytes": 31427,
+      "native_path": null,
+      "current_reader_proofs": [],
+      "plain_substring_candidates": [],
+      "status": "native_file_unavailable"
+    }
+  ],
+  "existing_reader_verified_classes": 0,
+  "elapsed_seconds": 0.185,
+  "original_body_or_trajectory_copy_persisted": false,
+  "source_write": false,
+  "reader_or_runtime_activated": false,
+  "provider_or_send_calls": 0,
+  "limits": "Plain substring candidate is not a proof through the existing JSON-string-literal reader. Missing these finite files does not establish permanent source unavailability. Current canonical222 contexts and old68 remain separately classified; no retirement or new decoder fallback."
+}

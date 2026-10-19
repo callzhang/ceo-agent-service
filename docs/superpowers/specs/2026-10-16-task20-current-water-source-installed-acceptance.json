@@ -1,0 +1,26 @@
+{
+  "recorded_utc": "2026-10-16T20:49:58.428463+00:00",
+  "status": "installed_unselected_current_water_source_spec_quality_pass",
+  "commit": "020c48197203193900fc6497bf6b6d82d63e00dc",
+  "files": {
+    "app/task20_schema_release.py": "79df1e03cf9f5989bd21477ba19ca0038c0c90b43c285fd3449270877b78a151",
+    "tests/test_task20_current_water_source.py": "422d5d06627bf121ad2099f6aa865b050adc003e20f13aa07cb1b551d8395d00"
+  },
+  "writer": {
+    "cases": 206,
+    "seconds": 15.97
+  },
+  "fresh_applied_spec": {
+    "cases": 206,
+    "seconds": 18.27,
+    "original_red_cases": 22,
+    "original_red_seconds": 0.43
+  },
+  "fresh_applied_quality": {
+    "cases": 206,
+    "seconds": 16.29,
+    "additional_declaration_rejection_controls": 14,
+    "findings": []
+  },
+  "boundary": "Exact accepted unselected component only. No current constructor/caller/paired-coordinator imports. Production unchanged. Coupled proposals remain separate."
+}

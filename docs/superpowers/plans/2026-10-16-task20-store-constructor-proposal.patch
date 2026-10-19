@@ -1,0 +1,1005 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -70,18 +70,26 @@
+ )
+ 
+ from app.task_storage import (
+-    SOURCE_COLUMNS, task_id_expression,
+-    RETIRED_TASK_TABLES, create_task_schema,
+-    task_schema_is_current, install_task_child_guards,
++    task_id_expression, RETIRED_TASK_TABLES,
+ )
+ 
+-from app.task20_definitions import task20_column, task20_projection
+-from app.task8_storage import task8_insert_parts, task8_set_parts, task8_meeting_returning
++from app.task20_definitions import (
++    TASK20_FIELDS as SOURCE_COLUMNS, TASK20_INDEX_DDL, TASK20_TRIGGER_DDL,
++    TASK20_NEW_KINDS, task20_column, task20_projection,
++)
++from app.task20_current_schema import (
++    create_current_task20_schema, create_current_feedback_child_schema,
++    create_current_workbench_auxiliary_schema, install_current_task_child_guards,
++    task20_schema_is_current, task20_feedback_child_is_current,
++    task20_workbench_schema_is_current,
++)
++from app.task8_storage import (
++    register_task8_functions, task8_insert_parts, task8_set_parts, task8_meeting_returning,
++)
+ from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
+ 
+ from app.workbench_storage import (
+-    RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS, create_workbench_auxiliary_schema,
+-    workbench_schema_is_current,
++    RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS,
+ )
+ 
+ from app.agent_cron.models import (
+@@ -388,23 +396,14 @@
+     "state",
+     "meeting_alignment_delivery_claims",
+     "task_memory_write_events",
+-    "feedback_processing_batches",
+-    "feedback_processing_items",
+-    "feedback_processing_rounds",
+     "feedback_processing_transitions",
+     "task_todo_sync_outbox",
+     "runs",
+-    "wechat_memory_import_jobs",
+     "meeting_memory_write_events",
+-    "business_object_tasks",
+     "tasks",
+-    "oa_notification_events",
+     "follow_up_send_attempts",
+     "todo_evidence_candidates",
+-    "workbench_attachments",
+-    "workbench_artifacts",
+     "workbench_confirmations",
+-    "feedback_iteration_decisions",
+     "feedback_iteration_decision_items",
+     "business",
+     "business_source_documents",
+@@ -429,17 +428,10 @@
+     "business_legacy_links",
+ )
+ STORE_SCHEMA_REQUIRED_INDEXES = (
+-    "idx_reply_tasks_business_object_key",
+     "idx_errors_unresolved",
+-    "idx_feedback_processing_items_status",
+-    "idx_feedback_processing_items_batch",
+-    "idx_feedback_processing_rounds_feedback",
+-    "idx_feedback_processing_rounds_batch",
+     "idx_feedback_processing_transitions_feedback",
+     "idx_feedback_processing_transitions_batch_round",
+     "idx_feedback_processing_transitions_round",
+-    "idx_oa_notification_events_case_status",
+-    "idx_oa_notification_events_claim",
+     "idx_runtime_attempt_active_route",
+     "idx_runtime_attempt_active_lease",
+     "idx_agent_runtime_attempts_run",
+@@ -447,17 +439,9 @@
+     "idx_agent_run_state_events_run",
+     "idx_errors_reply_task_settlement",
+     "idx_meeting_alignment_runs_active_job",
+-    "idx_weekly_okr_analysis_jobs_identity",
+-    "idx_wechat_memory_import_jobs_status",
+     "idx_wechat_deliveries_task_generation",
+     "idx_workbench_events_turn_id_id",
+-    "idx_workbench_artifacts_turn_created_id",
+-    "idx_workbench_turns_task_created_id",
+-    "idx_workbench_turns_task_sequence",
+-    "idx_workbench_tasks_updated_id",
+     "idx_workbench_confirmations_turn_created_id",
+-    "idx_workbench_attachments_task_created_id",
+-    "idx_workbench_attachments_task_request",
+     "idx_workbench_events_event_type",
+     "idx_todo_evidence_candidates_todo",
+     "idx_todo_evidence_candidates_status",
+@@ -470,7 +454,6 @@
+     "idx_scheduled_task_runs_reply_execution",
+     "idx_meeting_memory_write_events_lease",
+     "idx_task_memory_write_events_lease",
+-    "idx_feedback_iteration_decisions_batch",
+     "idx_feedback_iteration_decision_items_feedback_round",
+     "idx_business_public_id",
+     "idx_business_typed_id",
+@@ -505,9 +488,12 @@
+     "idx_business_attention_proposal_tasks_task",
+     "idx_business_attention_events_item",
+     "idx_business_legacy_links_task",
++    *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"')
++      for sql in TASK20_INDEX_DDL),
+ )
+ STORE_SCHEMA_REMOVED_TABLES = (
+     *STATE_SOURCE_TABLES,
++    *TASK20_NEW_KINDS,
+     "business_tasks",
+     "business_projects",
+     "business_anchors",
+@@ -531,15 +517,10 @@
+ }
+ STORE_SCHEMA_REQUIRED_COLUMNS = {
+     "tasks": (
+-        "id", "source_type", "source_ref", "payload_json", "source_created_at",
+-        "body_sha256", "body_bytes", "body_compacted", "status",
+-        "record_type", "legacy_key", "parent_id", "business_object_key",
+-        "input_version", "claimed_input_version", "current_input_id", "claimed_input_id",
+-        "input_provenance_json", "input_compacted",
+-        "meeting_id", "calendar_summary_status", "calendar_summary_result_json",
+-        "trigger_sender_user_id", "period_label", "period_start", "period_end",
+-        "okr_source_json", "codex_session_id", "week_end", "manager_user_id",
+-        "source_digest", "lease_owner", "lease_expires_at", "finished_at",
++        "id", "record_type", "legacy_key", "payload_json", "parent_id",
++        "current_input_id", "claimed_input_id", "parent_type",
++        *(kind + "__" + field for kind, fields in SOURCE_COLUMNS.items()
++          for field in fields),
+     ),
+     "business": ("id", "record_type", "public_id", "task_public_id",
+                  "project_public_id", "anchor_public_id"),
+@@ -618,12 +599,6 @@
+         "project_candidate_id", "attention_item_id", "work_project_id",
+         "work_todo_id", "work_update_id", "created_at",
+     ),
+-    "feedback_processing_items": ("current_round_id",),
+-    "feedback_processing_rounds": (
+-        "backlog_evidence_json",
+-        "receipt_version",
+-        "scope_receipt_json",
+-    ),
+     "runs": (
+         "record_type", "legacy_key", "task_id", "parent_id",
+         "summary_input_id", "error", "projection_json", "job_id", "request_id",
+@@ -635,14 +610,6 @@
+         "lease_owner",
+         "lease_expires_at",
+         "result_schema_id",
+-    ),
+-    "wechat_memory_import_jobs": (
+-        "import_run_id",
+-        "account_id",
+-        "status",
+-        "error",
+-        "finished_at",
+-        "updated_at",
+     ),
+     "meeting_memory_write_events": (
+         "execution_generation",
+@@ -669,8 +636,6 @@
+     "trg_business_task_date_evidence_immutable_update",
+     "trg_business_task_date_evidence_immutable_delete",
+     "trg_business_task_date_evidence_immutable_replace",
+-    "trg_feedback_processing_round_integer_v2_insert",
+-    "trg_feedback_processing_round_integer_v2_update",
+     "trg_runtime_attempt_session_evidence_trim_insert",
+     "trg_runtime_attempt_session_evidence_trim_update",
+     "trg_runtime_attempt_generalized_lease_insert",
+@@ -678,33 +643,10 @@
+     "trg_runtime_attempt_lineage_insert",
+     "trg_runtime_attempt_lineage_update",
+     "trg_runtime_attempt_lineage_immutable",
+-    "trg_feedback_iteration_decisions_immutable_update",
+-    "trg_feedback_iteration_decisions_immutable_delete",
+     "trg_feedback_iteration_decision_items_immutable_update",
+     "trg_feedback_iteration_decision_items_immutable_delete",
++    *(sql.split()[2] for sql in TASK20_TRIGGER_DDL),
+ )
+-FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
+-CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
+-before insert on feedback_processing_rounds
+-when typeof(new.round_number) <> 'integer' or new.round_number <= 0
+-begin
+-    select raise(
+-        abort,
+-        'feedback_processing_round_number_must_be_positive'
+-    );
+-end
+-""".strip()
+-FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL = """
+-CREATE TRIGGER trg_feedback_processing_round_integer_v2_update
+-before update of round_number on feedback_processing_rounds
+-when typeof(new.round_number) <> 'integer' or new.round_number <= 0
+-begin
+-    select raise(
+-        abort,
+-        'feedback_processing_round_number_must_be_positive'
+-    );
+-end
+-""".strip()
+ MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+ CREATE TRIGGER trg_managed_skill_revisions_immutable_update
+ before update on managed_skill_revisions
+@@ -838,20 +780,6 @@
+     select raise(abort, 'feedback iteration capability records are immutable');
+ end
+ """.strip()
+-FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+-CREATE TRIGGER trg_feedback_iteration_decisions_immutable_update
+-before update on feedback_iteration_decisions
+-begin
+-    select raise(abort, 'feedback iteration decisions are append-only');
+-end
+-""".strip()
+-FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+-CREATE TRIGGER trg_feedback_iteration_decisions_immutable_delete
+-before delete on feedback_iteration_decisions
+-begin
+-    select raise(abort, 'feedback iteration decisions are append-only');
+-end
+-""".strip()
+ FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+ CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_update
+ before update on feedback_iteration_decision_items
+@@ -1047,18 +975,6 @@
+ 
+ 
+ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
+-    "trg_feedback_processing_round_integer_v2_insert": _normalize_schema_sql(
+-        FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL
+-    ),
+-    "trg_feedback_processing_round_integer_v2_update": _normalize_schema_sql(
+-        FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL
+-    ),
+-    "trg_feedback_iteration_decisions_immutable_update": _normalize_schema_sql(
+-        FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
+-    ),
+-    "trg_feedback_iteration_decisions_immutable_delete": _normalize_schema_sql(
+-        FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
+-    ),
+     "trg_feedback_iteration_decision_items_immutable_update": _normalize_schema_sql(
+         FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL
+     ),
+@@ -1890,7 +1806,6 @@
+                 self._require_supported_store_bootstrap_source()
+                 self._ensure_wal_journal_mode()
+                 if self._schema_is_current_after_lock_retry():
+-                    self._reconcile_feedback_processing_round_backfill()
+                     _INITIALIZED_STORE_PATHS.add(path_key)
+                     return
+                 self._initialize()
+@@ -1918,254 +1833,8 @@
+         _INITIALIZED_STORE_PATHS.discard(path_key)
+         return False
+ 
+-    @staticmethod
+-    def _feedback_processing_round_backfill_needed(
+-        db: sqlite3.Connection,
+-    ) -> bool:
+-        return (
+-            db.execute(
+-                """
+-                select 1
+-                  from feedback_processing_items item
+-                 where item.status in ('processing', 'resolved')
+-                   and (
+-                       trim(item.batch_id) <> ''
+-                       or trim(item.workbench_task_id) <> ''
+-                       or trim(item.workbench_turn_id) <> ''
+-                       or cast(item.attempt_id as integer) > 0
+-                       or cast(item.agent_run_id as integer) > 0
+-                       or trim(item.commit_sha) <> ''
+-                       or trim(item.test_evidence_json) not in ('', '{}')
+-                       or trim(item.restart_evidence_json) not in ('', '{}')
+-                       or trim(item.health_evidence_json) not in ('', '{}')
+-                       or trim(item.note) <> ''
+-                   )
+-                   and (
+-                       (
+-                           item.current_round_id <> 0
+-                           and (
+-                               not exists (
+-                                   select 1
+-                                     from feedback_processing_rounds current_round
+-                                    where current_round.id=item.current_round_id
+-                                      and current_round.feedback_key=
+-                                          item.feedback_key
+-                                      and current_round.batch_id=item.batch_id
+-                                      and current_round.status=item.status
+-                                      and current_round.round_number=(
+-                                          select max(latest_round.round_number)
+-                                            from feedback_processing_rounds latest_round
+-                                           where latest_round.feedback_key=item.feedback_key
+-                                      )
+-                               )
+-                               or (
+-                                   select count(*)
+-                                     from feedback_processing_rounds matching_round
+-                                    where matching_round.feedback_key=
+-                                          item.feedback_key
+-                                      and matching_round.batch_id=item.batch_id
+-                                      and matching_round.status=item.status
+-                               ) <> 1
+-                           )
+-                       )
+-                       or (
+-                           item.current_round_id=0
+-                           and (
+-                               not exists (
+-                                   select 1
+-                                     from feedback_processing_rounds history_round
+-                                    where history_round.feedback_key=
+-                                          item.feedback_key
+-                               )
+-                               or (
+-                                   select count(*)
+-                                     from feedback_processing_rounds matching_round
+-                                    where matching_round.feedback_key=
+-                                          item.feedback_key
+-                                      and matching_round.batch_id=item.batch_id
+-                                      and matching_round.status=item.status
+-                               ) = 1
+-                               and (
+-                                   select max(matching_round.round_number)
+-                                     from feedback_processing_rounds matching_round
+-                                    where matching_round.feedback_key=item.feedback_key
+-                                      and matching_round.batch_id=item.batch_id
+-                                      and matching_round.status=item.status
+-                               ) = (
+-                                   select max(latest_round.round_number)
+-                                     from feedback_processing_rounds latest_round
+-                                    where latest_round.feedback_key=item.feedback_key
+-                               )
+-                           )
+-                       )
+-                   )
+-                 limit 1
+-                """
+-            ).fetchone()
+-            is not None
+-        )
+-
+-    @staticmethod
+-    def _backfill_feedback_processing_rounds(db: sqlite3.Connection) -> None:
+-        db.execute(
+-            """
+-            insert or ignore into feedback_processing_rounds (
+-                feedback_key, round_number, batch_id, status,
+-                workbench_task_id, workbench_turn_id, attempt_id,
+-                agent_run_id, commit_sha, test_evidence_json,
+-                restart_evidence_json, health_evidence_json, note,
+-                started_at, resolved_at, receipt_version, created_at, updated_at
+-            )
+-            select item.feedback_key, 1, item.batch_id, item.status,
+-                   item.workbench_task_id, item.workbench_turn_id,
+-                   item.attempt_id, item.agent_run_id, item.commit_sha,
+-                   item.test_evidence_json, item.restart_evidence_json,
+-                   item.health_evidence_json, item.note,
+-                   item.created_at, item.resolved_at, 1,
+-                   item.created_at, item.updated_at
+-              from feedback_processing_items item
+-             where item.status in ('processing', 'resolved')
+-               and (
+-                   trim(item.batch_id) <> ''
+-                   or trim(item.workbench_task_id) <> ''
+-                   or trim(item.workbench_turn_id) <> ''
+-                   or cast(item.attempt_id as integer) > 0
+-                   or cast(item.agent_run_id as integer) > 0
+-                   or trim(item.commit_sha) <> ''
+-                   or trim(item.test_evidence_json) not in ('', '{}')
+-                   or trim(item.restart_evidence_json) not in ('', '{}')
+-                   or trim(item.health_evidence_json) not in ('', '{}')
+-                   or trim(item.note) <> ''
+-               )
+-               and not exists (
+-                   select 1
+-                     from feedback_processing_rounds history_round
+-                    where history_round.feedback_key=item.feedback_key
+-               )
+-            """
+-        )
+-        db.execute(
+-            """
+-            update feedback_processing_items
+-               set current_round_id=case
+-                   when (
+-                       select count(*)
+-                         from feedback_processing_rounds matching_round
+-                        where matching_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and matching_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and matching_round.status=
+-                              feedback_processing_items.status
+-                   ) = 1
+-                   and (
+-                       select max(matching_round.round_number)
+-                         from feedback_processing_rounds matching_round
+-                        where matching_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and matching_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and matching_round.status=
+-                              feedback_processing_items.status
+-                   ) = (
+-                       select max(latest_round.round_number)
+-                         from feedback_processing_rounds latest_round
+-                        where latest_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                   )
+-                   then (
+-                       select min(matching_round.id)
+-                         from feedback_processing_rounds matching_round
+-                        where matching_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and matching_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and matching_round.status=
+-                              feedback_processing_items.status
+-                   )
+-                   else 0
+-               end
+-             where status in ('processing', 'resolved')
+-               and (
+-                   trim(batch_id) <> ''
+-                   or trim(workbench_task_id) <> ''
+-                   or trim(workbench_turn_id) <> ''
+-                   or cast(attempt_id as integer) > 0
+-                   or cast(agent_run_id as integer) > 0
+-                   or trim(commit_sha) <> ''
+-                   or trim(test_evidence_json) not in ('', '{}')
+-                   or trim(restart_evidence_json) not in ('', '{}')
+-                   or trim(health_evidence_json) not in ('', '{}')
+-                   or trim(note) <> ''
+-               )
+-               and (
+-                   not exists (
+-                       select 1
+-                         from feedback_processing_rounds current_round
+-                        where current_round.id=
+-                              feedback_processing_items.current_round_id
+-                          and current_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and current_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and current_round.status=
+-                              feedback_processing_items.status
+-                          and current_round.round_number=(
+-                              select max(latest_round.round_number)
+-                                from feedback_processing_rounds latest_round
+-                               where latest_round.feedback_key=
+-                                     feedback_processing_items.feedback_key
+-                          )
+-                   )
+-                   or (
+-                       select count(*)
+-                         from feedback_processing_rounds matching_round
+-                        where matching_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and matching_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and matching_round.status=
+-                              feedback_processing_items.status
+-                   ) <> 1
+-               )
+-               and (
+-                   current_round_id <> 0
+-                   or (
+-                       select count(*)
+-                         from feedback_processing_rounds matching_round
+-                        where matching_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and matching_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and matching_round.status=
+-                              feedback_processing_items.status
+-                   ) = 1
+-                   and (
+-                       select max(matching_round.round_number)
+-                         from feedback_processing_rounds matching_round
+-                        where matching_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                          and matching_round.batch_id=
+-                              feedback_processing_items.batch_id
+-                          and matching_round.status=
+-                              feedback_processing_items.status
+-                   ) = (
+-                       select max(latest_round.round_number)
+-                         from feedback_processing_rounds latest_round
+-                        where latest_round.feedback_key=
+-                              feedback_processing_items.feedback_key
+-                   )
+-               )
+-            """
+-        )
+-
+-    def _reconcile_feedback_processing_round_backfill(self) -> None:
+-        with self._connect() as db:
+-            if not self._feedback_processing_round_backfill_needed(db):
+-                return
+-        with self._immediate_write_transaction() as db:
+-            if self._feedback_processing_round_backfill_needed(db):
+-                self._backfill_feedback_processing_rounds(db)
++
++
+ 
+     def _ensure_wal_journal_mode(self) -> None:
+         with self._connect() as db:
+@@ -2205,9 +1874,9 @@
+     ) -> bool:
+         return (
+             db.execute(
+-                """
++                f"""
+                 select 1
+-                  from feedback_processing_rounds
++                  from ({task12_projection("feedback_processing_rounds")})
+                  where typeof(round_number) <> 'integer'
+                     or round_number <= 0
+                  limit 1
+@@ -2226,29 +1895,6 @@
+                 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
+             )
+ 
+-    @classmethod
+-    def _replace_feedback_processing_round_guards_atomically(
+-        cls,
+-        db: sqlite3.Connection,
+-    ) -> None:
+-        db.execute("begin immediate")
+-        try:
+-            db.execute(
+-                "drop trigger if exists "
+-                "trg_feedback_processing_round_integer_v2_insert"
+-            )
+-            db.execute(
+-                "drop trigger if exists "
+-                "trg_feedback_processing_round_integer_v2_update"
+-            )
+-            db.execute(FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL)
+-            db.execute(FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL)
+-            cls._validate_feedback_processing_round_storage(db)
+-        except BaseException:
+-            db.execute("rollback")
+-            raise
+-        else:
+-            db.execute("commit")
+ 
+     @staticmethod
+     def _replace_managed_skill_revision_immutability_guards_atomically(
+@@ -2330,46 +1976,13 @@
+         else:
+             db.execute("commit")
+ 
+-    @staticmethod
+-    def _replace_feedback_iteration_decision_immutability_guards_atomically(
+-        db: sqlite3.Connection,
+-    ) -> None:
+-        names = (
+-            "trg_feedback_iteration_decisions_immutable_update",
+-            "trg_feedback_iteration_decisions_immutable_delete",
+-            "trg_feedback_iteration_decision_items_immutable_update",
+-            "trg_feedback_iteration_decision_items_immutable_delete",
+-        )
+-        definitions = (
+-            FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+-            FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL,
+-            FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+-            FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL,
+-        )
+-        db.execute("begin immediate")
+-        try:
+-            for name in names:
+-                db.execute(f"drop trigger if exists {name}")
+-            for definition in definitions:
+-                db.execute(definition)
+-        except BaseException:
+-            db.execute("rollback")
+-            raise
+-        else:
+-            db.execute("commit")
+ 
+     @classmethod
+     def _feedback_processing_round_guard_state_is_valid(
+         cls,
+         db: sqlite3.Connection,
+     ) -> bool:
+-        round_table_present = db.execute(
+-            """
+-            select 1 from sqlite_master
+-             where type='table' and name='feedback_processing_rounds'
+-            """
+-        ).fetchone()
+-        if round_table_present is None:
++        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db):
+             return False
+         cls._validate_feedback_processing_round_storage(db)
+         trigger_names = tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS)
+@@ -2459,7 +2072,7 @@
+             )
+         )
+         feedback_processing_round_storage_valid = (
+-            "feedback_processing_rounds" in present_tables
++            "tasks" in present_tables
+             and self._feedback_processing_round_storage_is_valid(db)
+         )
+         required_columns_present = all(
+@@ -2496,8 +2109,9 @@
+             and feedback_processing_round_storage_valid
+             and required_columns_present
+             and _config_run_objects(db) == _config_run_declarations(mapped=True)
+-            and task_schema_is_current(db, include_workbench=True)
+-            and workbench_schema_is_current(db, mapped_runs=True)
++            and task20_schema_is_current(db)
++            and task20_feedback_child_is_current(db)
++            and task20_workbench_schema_is_current(db)
+             and business_schema_is_current(db)
+             and state_schema_is_current(db)
+             and any(configs_schema_is_current(db, action_variant=variant)
+@@ -2693,6 +2307,7 @@
+                 self.path,
+                 timeout=self.busy_timeout_seconds,
+             )
++            register_task8_functions(connection)
+             connection.execute(
+                 f"pragma busy_timeout = {self.busy_timeout_milliseconds}"
+             )
+@@ -2750,9 +2365,10 @@
+                 if db.execute("select 1 from sqlite_master where name='actions'").fetchone()
+                 else "fresh_memory_fk"
+             )
+-            create_task_schema(db, include_workbench=True)
++            create_current_task20_schema(db)
++            create_current_feedback_child_schema(db)
+             create_run_schema(db, include_task_runs=True, include_workbench=True)
+-            create_workbench_auxiliary_schema(db)
++            create_current_workbench_auxiliary_schema(db)
+             self._migrate_business_task_source_documents(db)
+             if db.execute("select 1 from sqlite_schema where type='table' "
+                           "and name='business'").fetchone() is None:
+@@ -2781,97 +2397,6 @@
+                 );
+                 create index if not exists idx_feedback_events_token
+                     on feedback_events(feedback_token, received_at);
+-                create table if not exists feedback_processing_batches (
+-                    batch_id text primary key,
+-                    status text not null default 'pending'
+-                        check (status in ('pending', 'processing', 'resolved')),
+-                    requested_count integer not null default 0,
+-                    created_at text not null default current_timestamp,
+-                    updated_at text not null default current_timestamp,
+-                    resolved_at text not null default ''
+-                );
+-                create table if not exists feedback_processing_items (
+-                    feedback_key text primary key,
+-                    current_round_id integer not null default 0,
+-                    batch_id text not null default '',
+-                    status text not null default 'pending'
+-                        check (status in ('pending', 'processing', 'resolved')),
+-                    workbench_task_id text not null default '',
+-                    workbench_turn_id text not null default '',
+-                    attempt_id integer not null default 0,
+-                    agent_run_id integer not null default 0,
+-                    commit_sha text not null default '',
+-                    test_evidence_json text not null default '{}',
+-                    restart_evidence_json text not null default '{}',
+-                    health_evidence_json text not null default '{}',
+-                    note text not null default '',
+-                    resolved_at text not null default '',
+-                    created_at text not null default current_timestamp,
+-                    updated_at text not null default current_timestamp
+-                );
+-                create index if not exists idx_feedback_processing_items_status
+-                    on feedback_processing_items(status);
+-                create index if not exists idx_feedback_processing_items_batch
+-                    on feedback_processing_items(batch_id);
+-                create table if not exists feedback_iteration_decisions (
+-                    id integer primary key autoincrement,
+-                    batch_id text not null,
+-                    workbench_task_id text not null,
+-                    workbench_turn_id text not null,
+-                    decision_json text not null,
+-                    created_at text not null default current_timestamp,
+-                    foreign key(batch_id) references feedback_processing_batches(batch_id)
+-                );
+-                create index if not exists idx_feedback_iteration_decisions_batch
+-                    on feedback_iteration_decisions(batch_id, id);
+-                create table if not exists feedback_iteration_decision_items (
+-                    decision_id integer not null,
+-                    feedback_key text not null,
+-                    round_id integer not null,
+-                    primary key(decision_id, feedback_key),
+-                    foreign key(decision_id) references feedback_iteration_decisions(id),
+-                    foreign key(feedback_key) references feedback_processing_items(feedback_key),
+-                    foreign key(round_id) references feedback_processing_rounds(id)
+-                );
+-                create index if not exists idx_feedback_iteration_decision_items_feedback_round
+-                    on feedback_iteration_decision_items(feedback_key, round_id, decision_id);
+-                create table if not exists feedback_processing_rounds (
+-                    id integer primary key autoincrement,
+-                    feedback_key text not null,
+-                    round_number integer not null
+-                        check (
+-                            typeof(round_number) = 'integer'
+-                            and round_number > 0
+-                        ),
+-                    batch_id text not null default '',
+-                    status text not null
+-                        check (status in ('processing', 'resolved')),
+-                    workbench_task_id text not null default '',
+-                    workbench_turn_id text not null default '',
+-                    attempt_id integer not null default 0,
+-                    agent_run_id integer not null default 0,
+-                    commit_sha text not null default '',
+-                    test_evidence_json text not null default '{}',
+-                    restart_evidence_json text not null default '{}',
+-                    health_evidence_json text not null default '{}',
+-                    backlog_evidence_json text not null default '{}',
+-                    scope_receipt_json text not null default '{}',
+-                    receipt_version integer not null default 1
+-                        check (receipt_version in (1, 2)),
+-                    note text not null default '',
+-                    started_at text not null default '',
+-                    resolved_at text not null default '',
+-                    reopened_at text not null default '',
+-                    reopen_reason text not null default '',
+-                    created_at text not null default current_timestamp,
+-                    updated_at text not null default current_timestamp,
+-                    unique (feedback_key, round_number),
+-                    unique (feedback_key, batch_id)
+-                );
+-                create index if not exists idx_feedback_processing_rounds_feedback
+-                    on feedback_processing_rounds(feedback_key, round_number desc);
+-                create index if not exists idx_feedback_processing_rounds_batch
+-                    on feedback_processing_rounds(batch_id);
+                 create table if not exists feedback_processing_transitions (
+                     id integer primary key autoincrement,
+                     feedback_key text not null,
+@@ -2892,25 +2417,6 @@
+                     on feedback_processing_transitions(batch_id, round_id, id);
+                 create index if not exists idx_feedback_processing_transitions_round
+                     on feedback_processing_transitions(round_id, id);
+-                insert or ignore into feedback_processing_items (
+-                    feedback_key, status, resolved_at
+-                )
+-                    select key,
+-                           case when trim(resolved_at) <> ''
+-                                then 'resolved' else 'pending' end,
+-                           resolved_at
+-                    from feedback_events;
+-                update feedback_processing_items
+-                   set status='resolved',
+-                       resolved_at=(select fe.resolved_at from feedback_events fe
+-                                    where fe.key=feedback_processing_items.feedback_key),
+-                       updated_at=current_timestamp
+-                 where exists (
+-                     select 1 from feedback_events fe
+-                      where fe.key=feedback_processing_items.feedback_key
+-                        and trim(fe.resolved_at) <> ''
+-                        and feedback_processing_items.status <> 'resolved'
+-                 );
+                 create table if not exists service_bugfix_candidates (
+                     id integer primary key autoincrement,
+                     feedback_event_key text not null unique,
+@@ -2956,13 +2462,6 @@
+                 );
+                 create index if not exists idx_meeting_memory_write_events_due
+                     on meeting_memory_write_events(status, available_at, id);
+-                create table if not exists business_object_tasks (
+-                    business_object_key text primary key,
+-                    reply_task_id integer not null,
+-                    created_at text not null default current_timestamp,
+-                    updated_at text not null default current_timestamp,
+-                    foreign key(reply_task_id) references tasks(id)
+-                );
+                 
+                 
+                 
+@@ -2986,19 +2485,6 @@
+                 );
+                 create index if not exists idx_wechat_deliveries_status
+                     on wechat_deliveries(status, id);
+-                create table if not exists wechat_memory_import_jobs (
+-                    id integer primary key autoincrement,
+-                    import_run_id text not null,
+-                    account_id text not null,
+-                    status text not null default 'running'
+-                        check(status in ('running', 'completed', 'failed')),
+-                    error text not null default '',
+-                    created_at text not null default current_timestamp,
+-                    finished_at text not null default '',
+-                    updated_at text not null default current_timestamp
+-                );
+-                create index if not exists idx_wechat_memory_import_jobs_status
+-                    on wechat_memory_import_jobs(status, id);
+                 create table if not exists wechat_memory_candidates (
+                     id integer primary key autoincrement,
+                     import_run_id text not null,
+@@ -3052,16 +2538,6 @@
+                 create index if not exists idx_setup_wizard_events_step
+                     on setup_wizard_events(step_id, id);
+                 
+-                create table if not exists okr_review_items (
+-                    id integer primary key autoincrement,
+-                    request_id integer not null,
+-                    objective_title text not null,
+-                    objective_weight real not null default 0,
+-                    kr_title text not null,
+-                    kr_weight real not null default 0,
+-                    item_json text not null default '{}',
+-                    created_at text not null default current_timestamp
+-                );
+                 """
+                 f"""
+                 {';'.join(BUSINESS_SOURCE_DOCUMENT_SCHEMA)};
+@@ -3703,13 +3179,10 @@
+                 "create index if not exists idx_wechat_deliveries_task_generation "
+                 "on wechat_deliveries(reply_task_id, execution_generation, id)"
+             )
+-            # The guard-replacement helpers below deliberately open their own
+-            # BEGIN IMMEDIATE transactions. Finish any legacy table/column DDL
+-            # first; SQLite does not support nested write transactions.
++            # Preserve the existing transaction boundary after table/column DDL.
++            # Workbench reconciliation continues on this same connection.
+             if db.in_transaction:
+                 db.commit()
+-            self._replace_feedback_processing_round_guards_atomically(db)
+-            self._replace_feedback_iteration_decision_immutability_guards_atomically(db)
+             self._reconcile_legacy_workbench_confirmations(db)
+             meeting_memory_write_columns = {
+                 row["name"]
+@@ -3763,8 +3236,6 @@
+                 "update meeting_memory_write_events set payload_json='{}' "
+                 "where payload_json<>'{}'"
+             )
+-            db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
+-            self._migrate_oa_notification_events(db)
+             feedback_event_columns = {
+                 row["name"]
+                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
+@@ -3777,68 +3248,8 @@
+                         f"alter table feedback_events add column {column} {definition}"
+                     )
+ 
+-            feedback_processing_item_columns = {
+-                row["name"]
+-                for row in db.execute(
+-                    "pragma table_info(feedback_processing_items)"
+-                ).fetchall()
+-            }
+-            if "current_round_id" not in feedback_processing_item_columns:
+-                try:
+-                    db.execute(
+-                        "alter table feedback_processing_items add column "
+-                        "current_round_id integer not null default 0"
+-                    )
+-                except sqlite3.OperationalError as exc:
+-                    if "duplicate column name" not in str(exc):
+-                        raise
+-
+-            feedback_processing_round_columns = {
+-                row["name"]
+-                for row in db.execute(
+-                    "pragma table_info(feedback_processing_rounds)"
+-                ).fetchall()
+-            }
+-            if "backlog_evidence_json" not in feedback_processing_round_columns:
+-                try:
+-                    db.execute(
+-                        "alter table feedback_processing_rounds add column "
+-                        "backlog_evidence_json text not null default '{}'"
+-                    )
+-                except sqlite3.OperationalError as exc:
+-                    if "duplicate column name" not in str(exc):
+-                        raise
+-            if "receipt_version" not in feedback_processing_round_columns:
+-                try:
+-                    db.execute(
+-                        "alter table feedback_processing_rounds add column "
+-                        "receipt_version integer not null default 1"
+-                    )
+-                except sqlite3.OperationalError as exc:
+-                    if "duplicate column name" not in str(exc):
+-                        raise
+-                for row in db.execute(
+-                    "select id, backlog_evidence_json from feedback_processing_rounds"
+-                ).fetchall():
+-                    if self._feedback_backlog_receipt_is_complete(
+-                        row["backlog_evidence_json"]
+-                    ):
+-                        db.execute(
+-                            "update feedback_processing_rounds set receipt_version=2 "
+-                            "where id=?",
+-                            (int(row["id"]),),
+-                        )
+-            if "scope_receipt_json" not in feedback_processing_round_columns:
+-                try:
+-                    db.execute(
+-                        "alter table feedback_processing_rounds add column "
+-                        "scope_receipt_json text not null default '{}'"
+-                    )
+-                except sqlite3.OperationalError as exc:
+-                    if "duplicate column name" not in str(exc):
+-                        raise
+-
+-            self._backfill_feedback_processing_rounds(db)
++
++
+ 
+             db.execute(
+                 """
+@@ -4091,25 +3502,6 @@
+                     "alter table wechat_memory_candidates add column "
+                     "memory_write_error text not null default ''"
+                 )
+-            db.execute(
+-                """
+-                create table if not exists wechat_memory_import_jobs (
+-                    id integer primary key autoincrement,
+-                    import_run_id text not null,
+-                    account_id text not null,
+-                    status text not null default 'running'
+-                        check(status in ('running', 'completed', 'failed')),
+-                    error text not null default '',
+-                    created_at text not null default current_timestamp,
+-                    finished_at text not null default '',
+-                    updated_at text not null default current_timestamp
+-                )
+-                """
+-            )
+-            db.execute(
+-                "create index if not exists idx_wechat_memory_import_jobs_status "
+-                "on wechat_memory_import_jobs(status, id)"
+-            )
+             wechat_delivery_columns = {
+                 row["name"]
+                 for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
+@@ -4207,7 +3599,7 @@
+                 )
+             self._migrate_project_attention_evidence(db)
+             install_run_child_guards(db)
+-            install_task_child_guards(db)
++            install_current_task_child_guards(db)
+             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
+                 raise FeedbackProcessingSchemaIntegrityError(FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR)
+             upsert_state(
+@@ -8514,7 +7906,9 @@
+                             *CONFIG_SOURCE_TABLES, "email_training_snapshot_observations", "configs", "schedules",
+                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
+                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
+-                            *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
++                            *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS,
++                            *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"') for sql in TASK20_INDEX_DDL),
++                            *(sql.split()[2] for sql in TASK20_TRIGGER_DDL)}
+             expected_runs = _config_run_declarations(mapped=True)
+             actual_runs = _config_run_objects(db)
+             current_core_with_known_repairs = (
+@@ -8527,10 +7921,9 @@
+                     db, action_variant=variant)
+                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
+                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
+-                and task_schema_is_current(
+-                    db, allow_missing_objects=True, include_workbench=True,
+-                )
+-                and workbench_schema_is_current(db, allow_missing_objects=True, mapped_runs=True)
++                and task20_schema_is_current(db, allow_missing_objects=True)
++                and task20_feedback_child_is_current(db, allow_missing_objects=True)
++                and task20_workbench_schema_is_current(db, allow_missing_objects=True)
+                 and any(
+                     action_schema_is_current(
+                         db, allow_missing_objects=True, include_reply=True,
+@@ -21986,27 +21379,6 @@
+             ).fetchone()
+             return int(row["pending_count"] if row else 0)
+ 
+-    def resolve_feedback_event(self, key: str) -> bool:
+-        cleaned_key = key.strip()
+-        if not cleaned_key:
+-            return False
+-        with self._connect() as db:
+-            cursor = db.execute(
+-                """
+-                update feedback_events
+-                set resolved_at=current_timestamp,
+-                    updated_at=current_timestamp
+-                where key=?
+-                """,
+-                (cleaned_key,),
+-            )
+-            if cursor.rowcount == 1:
+-                _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': cleaned_key, 'status': 'resolved'}, insert_sql={'resolved_at': 'current_timestamp'}, insert_parameters=())
+-                db.execute(
+-                    f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': "'resolved'", 'resolved_at': 'current_timestamp', 'updated_at': 'current_timestamp'}).sql}""",
+-                    _task12_insert.parameters,
+-                )
+-            return cursor.rowcount == 1
+ 
+     def update_sent_reply_recall(
+         self,

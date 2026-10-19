@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactList } from "./ArtifactList";
-import { ConfirmationCard } from "./ConfirmationCard";
 import {
   activeTurnScrollIndex,
   assistantTurnKey,
@@ -16,28 +15,22 @@ import type { Timeline, TurnStatus } from "../types";
 
 const turn = {
   id: "turn-1", task_id: "task-1", client_request_id: "request-1", user_text: "请生成 **报告**",
-  status: "waiting_confirmation" as const, stop_requested: false, final_text: "", error_code: "", error_detail: "",
+  status: "running" as const, stop_requested: false, final_text: "", error_code: "", error_detail: "",
   started_at: "2026-08-13 10:00:00", completed_at: "", created_at: "2026-08-13 10:00:00", updated_at: "2026-08-13 10:00:01",
 };
 
 const timeline: Timeline = {
-  task: { id: "task-1", title: "报告", runtime_kind: "codex", archived_at: "", state: "waiting_confirmation", created_at: "", updated_at: "" },
+  task: { id: "task-1", title: "报告", runtime_kind: "codex", archived_at: "", state: "running", created_at: "", updated_at: "" },
   turns: [turn],
   events: [
     { id: 1, turn_id: turn.id, sequence: 1, event_type: "text_delta", payload: { text: "[官网](https://example.com) [坏链接](javascript:alert(1))\n\n```ts\nconst ok = true\n```\n<div>raw</div>" }, created_at: "" },
     { id: 2, turn_id: turn.id, sequence: 2, event_type: "tool_started", payload: { tool: "read", tool_call_id: "tool-1", summary: "/Users/private/secret api_key=visible-secret" }, created_at: "" },
-    { id: 3, turn_id: turn.id, sequence: 3, event_type: "confirmation_required", payload: { confirmation_id: "confirmation-1" }, created_at: "" },
     { id: 4, turn_id: turn.id, sequence: 4, event_type: "artifact_created", payload: { artifact_id: "artifact-1" }, created_at: "" },
   ],
   attachments: [],
   artifacts: [{ id: "artifact-1", turn_id: turn.id, label: "结果.txt", media_type: "text/plain", created_at: "", download_url: "/private/wrong" }],
-  confirmations: [{
-    id: "confirmation-1", turn_id: turn.id, action_kind: "send", target: "fallback", summary: "发送消息", risk: "外部可见",
-    canonical_capability: "dingtalk-chat", canonical_operation: "发送群消息", canonical_targets: ["CEO 群"], status: "pending",
-    decision_requested: "confirm", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
-  }],
   next_cursor: "older", has_more: true, events_has_more: true, events_next_cursor: 1,
-  artifacts_has_more: false, artifacts_next_cursor: "", confirmations_has_more: false, confirmations_next_cursor: "",
+  artifacts_has_more: false, artifacts_next_cursor: "",
   attachments_has_more: false, attachments_next_cursor: "",
 };
 
@@ -67,18 +60,16 @@ describe("ConversationTimeline", () => {
     }));
     render(
       <ConversationTimeline
-        timeline={{ ...timeline, turns, events: [], confirmations: [], artifacts: [] }}
+        timeline={{ ...timeline, turns, events: [], artifacts: [] }}
         activeTurnId={null}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
     expect(document.querySelectorAll(".conversation-turn").length).toBeLessThanOrEqual(12);
   });
 
-  it("renders ordered safe markdown, execution, confirmation and artifact blocks", () => {
-    render(<ConversationTimeline timeline={timeline} activeTurnId={turn.id} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+  it("renders ordered safe markdown, execution and artifact blocks", () => {
+    render(<ConversationTimeline timeline={timeline} activeTurnId={turn.id} />);
 
     expect(screen.getByText("请生成 **报告**")).toBeInTheDocument();
     const safe = screen.getByRole("link", { name: "官网" });
@@ -89,8 +80,7 @@ describe("ConversationTimeline", () => {
     expect(screen.queryByText("raw")).not.toBeInTheDocument();
     expect(screen.getByText(/\/Users\/private\/secret/)).toBeInTheDocument();
     expect(screen.getByText(/visible-secret/)).toBeInTheDocument();
-    expect(screen.getByText("发送群消息")).toBeInTheDocument();
-    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
+    expect(screen.queryByText("历史确认记录（只读）")).not.toBeInTheDocument();
     const artifact = screen.getByRole("link", { name: /结果.txt/ });
     expect(artifact).toHaveAttribute("href", "/api/workbench/tasks/task-1/turns/turn-1/artifacts/artifact-1/download");
     expect(artifact).toHaveAttribute("target", "_blank");
@@ -114,12 +104,10 @@ describe("ConversationTimeline", () => {
             },
             created_at: "",
           }],
-          confirmations: [],
+
           artifacts: [],
         }}
         activeTurnId={turn.id}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -130,7 +118,7 @@ describe("ConversationTimeline", () => {
   });
 
   it("shows every turn lifecycle state in Chinese", () => {
-    const states = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"] as const;
+    const states = ["queued", "running", "completed", "stopped", "failed"] as const;
     const turns = states.map((status, index) => ({
       ...turn,
       id: `turn-${status}`,
@@ -139,9 +127,9 @@ describe("ConversationTimeline", () => {
       status,
       error_detail: status === "failed" ? "公开错误" : "",
     }));
-    render(<ConversationTimeline timeline={{ ...timeline, turns, events: [], confirmations: [], artifacts: [] }} activeTurnId="turn-running" onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    render(<ConversationTimeline timeline={{ ...timeline, turns, events: [], artifacts: [] }} activeTurnId="turn-running" />);
 
-    for (const label of ["已排队", "执行中", "等待确认", "已完成", "已停止", "执行失败：公开错误"]) {
+    for (const label of ["已排队", "执行中", "已完成", "已停止", "执行失败：公开错误"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
   });
@@ -157,8 +145,6 @@ describe("ConversationTimeline", () => {
           events_has_more: true,
         }}
         activeTurnId={null}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -179,12 +165,10 @@ describe("ConversationTimeline", () => {
             payload: { text: "![tracking pixel](https://tracker.example/pixel.png) [documentation](https://example.com/docs)" },
             created_at: "",
           }],
-          confirmations: [],
+
           artifacts: [],
         }}
         activeTurnId={turn.id}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -203,8 +187,6 @@ describe("ConversationTimeline", () => {
           events: [{ id: 21, turn_id: stopped.id, sequence: 21, event_type: "text_delta", payload: { text: "分页片段" }, created_at: "" }],
         }}
         activeTurnId={null}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -220,12 +202,10 @@ describe("ConversationTimeline", () => {
           ...timeline,
           turns: [failed],
           events: [{ id: 40, turn_id: failed.id, sequence: 40, event_type: "tool_started", payload: { tool: "read", tool_call_id: "tool-40", summary: "读取文件" }, created_at: "" }],
-          confirmations: [],
+
           artifacts: [],
         }}
         activeTurnId={null}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -244,10 +224,8 @@ describe("ConversationTimeline", () => {
     };
     render(
       <ConversationTimeline
-        timeline={{ ...timeline, turns: [failed], events: [], confirmations: [], artifacts: [] }}
+        timeline={{ ...timeline, turns: [failed], events: [], artifacts: [] }}
         activeTurnId={null}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -261,10 +239,8 @@ describe("ConversationTimeline", () => {
     const events = [{ id: 41, turn_id: turn.id, sequence: 41, event_type: "tool_started" as const, payload: { tool: "read", tool_call_id: "tool-41", summary: "读取文件" }, created_at: "" }];
     const renderTimeline = (status: TurnStatus) => (
       <ConversationTimeline
-        timeline={{ ...timeline, turns: [{ ...turn, status }], events, confirmations: [], artifacts: [] }}
+        timeline={{ ...timeline, turns: [{ ...turn, status }], events, artifacts: [] }}
         activeTurnId={turn.id}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />
     );
     const { rerender } = render(renderTimeline("running"));
@@ -275,7 +251,7 @@ describe("ConversationTimeline", () => {
     };
 
     expect(execution().getByText("执行中")).toBeInTheDocument();
-    for (const status of ["queued", "waiting_confirmation"] as const) {
+    for (const status of ["queued"] as const) {
       rerender(renderTimeline(status));
       expect(execution().getByText("执行中")).toBeInTheDocument();
       expect(execution().queryByText("已中止")).not.toBeInTheDocument();
@@ -301,12 +277,10 @@ describe("ConversationTimeline", () => {
             { id: 44, turn_id: stopped.id, sequence: 44, event_type: "tool_started", payload: { tool: "shell", tool_call_id: "tool-44", summary: "运行命令" }, created_at: "" },
             { id: 45, turn_id: stopped.id, sequence: 45, event_type: "tool_completed", payload: { tool: "shell", tool_call_id: "tool-44", status: "failed", summary: "命令失败" }, created_at: "" },
           ],
-          confirmations: [],
+
           artifacts: [],
         }}
         activeTurnId={null}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
       />,
     );
 
@@ -315,56 +289,6 @@ describe("ConversationTimeline", () => {
     expect(within(executions[0] as HTMLElement).getByText("失败")).toBeInTheDocument();
     expect(within(executions[1] as HTMLElement).getByText("已完成")).toBeInTheDocument();
     expect(screen.queryByText("已中止")).not.toBeInTheDocument();
-  });
-});
-
-describe("ConfirmationCard", () => {
-  it("renders legacy confirmations as read-only history", () => {
-    const confirmation = timeline.confirmations[0];
-    const onConfirm = vi.fn();
-    const onCancel = vi.fn();
-    render(
-      <ConfirmationCard confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} />,
-    );
-
-    expect(screen.getByText("历史确认记录（只读）")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
-    expect(onConfirm).not.toHaveBeenCalled();
-    expect(onCancel).not.toHaveBeenCalled();
-  });
-
-  it("does not resume persisted legacy decision intents", () => {
-    const { rerender } = render(
-      <ConfirmationCard
-        confirmation={{ ...timeline.confirmations[0], decision_requested: "confirm", proposer_quiesced: true }}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
-    rerender(
-      <ConfirmationCard
-        confirmation={{ ...timeline.confirmations[0], decision_requested: "cancel", proposer_quiesced: true }}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
-  });
-
-  it("shows persisted confirmation outcomes instead of an in-progress label", () => {
-    render(
-      <ConfirmationCard
-        confirmation={{ ...timeline.confirmations[0], status: "executed", decision_requested: "confirm", proposer_quiesced: true }}
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText("操作已执行")).toBeInTheDocument();
-    expect(screen.queryByText("正在执行已确认操作")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
   });
 });
 

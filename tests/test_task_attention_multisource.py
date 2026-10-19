@@ -7,6 +7,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
+from app.business_source_reader import AvailableSource, PreparedSources
+from app.business_candidate_storage import update_business_candidate
+from app.action_business_storage import update_business_action
+from app.store import BUSINESS_ACTION_SQL
+from app.task8_storage import task8_set_parts
+from app.task20_definitions import task20_column
 from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
 from app.task_semantic_models import ProjectContext
 from app.task_agent import apply_task_agent_decision
@@ -26,6 +34,25 @@ def evaluation_tool():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def install_fixture_source_reader(monkeypatch, store, prepared_sources):
+    """Expose this fixture's exact originals to the runtime request reader."""
+    originals = {
+        key: reading
+        for key, reading in prepared_sources.readings.items()
+        if isinstance(reading, AvailableSource)
+    }
+    original_factory = store.business_source_reader
+
+    def source_reader(**kwargs):
+        reader = original_factory(**kwargs)
+        reader._readings.update({
+            key: (reading.binding, reading) for key, reading in originals.items()
+        })
+        return reader
+
+    monkeypatch.setattr(store, "business_source_reader", source_reader)
 
 
 def test_fixed_evaluation_cases_have_independent_inputs_and_expectations():
@@ -86,7 +113,8 @@ def test_assessment_cases_are_versioned_source_facts_with_post_run_expectations(
         item = WorkItem.model_validate(case["work_item"])
         case["expected"]["secret_label"] = "evaluation_only_secret_expectation"
         store = AutoReplyStore(tmp_path / f"{case['case_id']}.sqlite3")
-        input_id = tool.seed_case(store, case)
+        prepared_sources = PreparedSources(store.business_source_reader())
+        input_id = tool.seed_case(store, case, prepared_sources=prepared_sources)
         stored = store.get_work_summary_input(input_id)
         assert "evaluation_only_secret_expectation" not in stored.payload_json
         assert "evaluation_only_secret_expectation" not in build_task_agent_prompt(
@@ -98,9 +126,12 @@ def test_assessment_cases_are_versioned_source_facts_with_post_run_expectations(
             signal = store.get_business_task_signal(evidence["signal_id"])
             assert signal is not None
             assert evidence["source_ref"] == signal.source_ref == item.source.ref
-            assert tool.evidence_contains(
-                signal.evidence_text, evidence["source_excerpt"]
-            )
+            with store.business_task_transaction() as db:
+                fact, original_body = prepared_sources.require_body(
+                    store, signal.id, db=db
+                )
+            assert fact == signal
+            assert tool.evidence_contains(original_body, evidence["source_excerpt"])
 
 
 @pytest.mark.parametrize(
@@ -117,7 +148,7 @@ def test_assessment_cases_are_versioned_source_facts_with_post_run_expectations(
     ],
 )
 def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
-    tmp_path, fixture, case_id
+    tmp_path, monkeypatch, fixture, case_id
 ):
     from app.task_agent import TaskAgentRunner
 
@@ -125,34 +156,15 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
     cases = tool.load_cases(Path(__file__).parent / "fixtures" / fixture)
     case = next(item for item in cases if item["case_id"] == case_id)
     store = AutoReplyStore(tmp_path / "existing-card-idempotent.sqlite3")
-    input_id = tool.seed_case(store, case)
+    prepared_sources = PreparedSources(store.business_source_reader())
+    input_id = tool.seed_case(store, case, prepared_sources=prepared_sources)
+    install_fixture_source_reader(monkeypatch, store, prepared_sources)
     (card,) = store.list_business_attention_items()
     (member,) = store.list_business_attention_tasks(card.id)
     (proof,) = json.loads(card.assessment_json)["evidence"]
 
     def domain_snapshot():
-        tables = (
-            "business_tasks",
-            "business_projects",
-            "business_anchors",
-            "business_source_documents",
-            "business_project_context_revisions",
-            "business_project_evidence",
-            "business_attention_items",
-            "business_attention_tasks",
-            "business_attention_events",
-            "business_task_events",
-            "business_task_signals",
-            "business_task_evidence",
-        )
-        with store._connect() as db:
-            return {
-                table: [
-                    dict(row)
-                    for row in db.execute(f"select * from {table} order by rowid")
-                ]
-                for table in tables
-            }
+        return tool.domain_snapshot(store)
 
     initial_domain = domain_snapshot()
 
@@ -195,8 +207,10 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
         input_id,
         source_ref=case["work_item"]["source"]["ref"],
         expected=case["expected"],
+        prepared_sources=prepared_sources,
     )
     after_first_domain = domain_snapshot()
+    assert store.get_business_attention_item(card.id) == card
     replay = tool.replay_input(
         store,
         runner,
@@ -204,6 +218,7 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
         source_ref=case["work_item"]["source"]["ref"],
         expected=case["expected"],
         source_payload=WorkItem.model_validate(case["work_item"]).model_dump_json(),
+        prepared_sources=prepared_sources,
     )
     assert first["passed"], {
         "failures": first["failures"],
@@ -229,7 +244,6 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
         "business_tasks",
         "business_projects",
         "business_anchors",
-        "business_attention_items",
         "business_attention_tasks",
         "business_attention_events",
         "business_task_events",
@@ -281,9 +295,14 @@ def test_compacted_replay_rejects_identity_and_length_without_mutation(tmp_path,
         }).model_dump_json()
     else:
         with store._connect() as db:
+            parts = task8_set_parts(
+                "work_summary_inputs", {}, update_sql={
+                    "body_bytes": task20_column("work_summary_inputs", "body_bytes") + "+1"
+                }
+            )
             db.execute(
-                "update tasks set body_bytes=body_bytes+1 where id=?",
-                (task_physical_id(db, "work_summary_inputs", target),),
+                f"update tasks set {parts.sql} where record_type='work_summary_inputs' and id=?",
+                (*parts.parameters, task_physical_id(db, "work_summary_inputs", target)),
             )
     before = store.get_work_summary_input(target)
     with pytest.raises(ValueError, match="identity|digest"):
@@ -305,9 +324,13 @@ def test_replay_cas_rejects_input_changed_after_verification(tmp_path, monkeypat
 
     def acquire_with_changed_input(current_store):
         with current_store._connect() as db:
+            parts = task8_set_parts(
+                "work_summary_inputs", {}, update_sql={"body_sha256": "?"},
+                update_parameters=("f" * 64,),
+            )
             db.execute(
-                "update tasks set body_sha256=? where id=?",
-                ("f" * 64, task_physical_id(db, "work_summary_inputs", target)),
+                f"update tasks set {parts.sql} where record_type='work_summary_inputs' and id=?",
+                (*parts.parameters, task_physical_id(db, "work_summary_inputs", target)),
             )
         return original(current_store)
 
@@ -336,9 +359,13 @@ def test_fixed_source_version_cas_preserves_changed_prior_input(tmp_path, monkey
         calls.append(input_id)
         current_store.mark_work_summary_input_done(input_id)
         with current_store._connect() as db:
+            parts = task8_set_parts(
+                "work_summary_inputs", {}, update_sql={"body_sha256": "?"},
+                update_parameters=("e" * 64,),
+            )
             db.execute(
-                "update tasks set body_sha256=? where id=?",
-                ("e" * 64, task_physical_id(db, "work_summary_inputs", input_id)),
+                f"update tasks set {parts.sql} where record_type='work_summary_inputs' and id=?",
+                (*parts.parameters, task_physical_id(db, "work_summary_inputs", input_id)),
             )
         return {"passed": True, "run_status": "completed", "failures": []}
 
@@ -426,6 +453,11 @@ def test_evaluation_metrics_use_persisted_cards_and_detect_invalid_evidence(tmp_
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "metrics.sqlite3")
     seed_report(store)
+    source_item = report_item()
+    prepared_sources = PreparedSources(store.business_source_reader())
+    for signal in store.list_business_task_signals():
+        if signal.source_ref == source_item.source.ref:
+            prepared_sources.add_current(signal, source_item.summary)
     before = tool.read_domain(store)
     expected = {
         "attention_projects": ["示例项目"],
@@ -433,40 +465,41 @@ def test_evaluation_metrics_use_persisted_cards_and_detect_invalid_evidence(tmp_
         "task_count": 1,
         "minimum_evidence_sources": 1,
     }
-    result = tool.readback(store, input_id=None, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=None, before=before, expected=expected,
+        prepared_sources=prepared_sources,
+    )
     assert result["passed"]
     (card,) = store.list_business_attention_items()
     assessment = json.loads(card.assessment_json)
     assessment["evidence"][0]["source_link"] = "https://example.invalid/invented"
-    with store._connect() as db:
-        db.execute(
-            "update business_attention_items set assessment_json=?",
-            (json.dumps(assessment),),
-        )
+    with store.business_task_transaction() as db:
+        update_business_candidate(db, "attention_item", card.id, {
+            "assessment_json": json.dumps(assessment),
+        })
     assert (
-        tool.readback(store, input_id=None, before=before, expected=expected)[
+        tool.readback(
+            store, input_id=None, before=before, expected=expected,
+            prepared_sources=prepared_sources,
+        )[
             "evidence_valid"
         ]
         is False
     )
-    with store._connect() as db:
-        db.execute(
-            "update business_attention_items set assessment_json=?",
-            (
-                json.dumps(
-                    {
-                        "evidence": [
-                            {
-                                "signal_id": 999,
-                                "source_ref": "missing",
-                                "source_excerpt": "invented",
-                            }
-                        ]
-                    }
-                ),
-            ),
-        )
-    result = tool.readback(store, input_id=None, before=before, expected=expected)
+    with store.business_task_transaction() as db:
+        update_business_candidate(db, "attention_item", card.id, {
+            "assessment_json": json.dumps({
+                "evidence": [{
+                    "signal_id": 999,
+                    "source_ref": "missing",
+                    "source_excerpt": "invented",
+                }]
+            }),
+        })
+    result = tool.readback(
+        store, input_id=None, before=before, expected=expected,
+        prepared_sources=prepared_sources,
+    )
     assert result["evidence_valid"] is False
     assert "unverifiable_attention_evidence" in result["failures"]
 
@@ -480,6 +513,11 @@ def test_evaluation_allows_only_explicit_reviewed_task_counts(
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "counts.sqlite3")
     seed_report(store)
+    source_item = report_item()
+    prepared_sources = PreparedSources(store.business_source_reader())
+    for signal in store.list_business_task_signals():
+        if signal.source_ref == source_item.source.ref:
+            prepared_sources.add_current(signal, source_item.summary)
     expected = {
         "attention_projects": ["示例项目"],
         "project_titles": ["示例项目"],
@@ -487,7 +525,8 @@ def test_evaluation_allows_only_explicit_reviewed_task_counts(
         "minimum_evidence_sources": 1,
     }
     result = tool.readback(
-        store, input_id=None, before=tool.read_domain(store), expected=expected
+        store, input_id=None, before=tool.read_domain(store), expected=expected,
+        prepared_sources=prepared_sources,
     )
     assert result["passed"] is passes
     assert ("task_count_mismatch" in result["failures"]) is (not passes)
@@ -728,7 +767,7 @@ def recorded_two_project_assessment_case(store):
             },
         ],
     }
-    return input_id, before, expected
+    return item, input_id, before, expected
 
 
 def read_latest_decision(store):
@@ -755,11 +794,14 @@ def rewrite_latest_run(store, *, decision=None, projection=None):
 def test_assessment_oracle_accepts_no_task_insufficient_receipt(tmp_path):
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-no-task-positive.sqlite3")
-    _, input_id, before, applied, expected = recorded_no_task_assessment_case(store)
+    item, input_id, before, applied, expected = recorded_no_task_assessment_case(store)
 
     assert applied.task_ids == ()
     assert applied.projection_receipt.project_assessments[0].task_ids == []
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_report_sources(store, item),
+    )
     assert result["passed"], result["failures"]
 
 
@@ -777,6 +819,10 @@ def test_assessment_oracle_rejects_unlinked_positive_receipt_signal_without_task
         source_time=item.source.created_at,
         context_json="{}",
         dedupe_key="eval:no-task-unlinked-receipt-signal",
+    )
+    prepared_sources = prepared_report_sources(store)
+    prepared_sources.add_current(
+        store.get_business_task_signal(unlinked_signal_id), required["source_excerpt"]
     )
     with store._connect() as db:
         projection = json.loads(
@@ -796,7 +842,10 @@ def test_assessment_oracle_rejects_unlinked_positive_receipt_signal_without_task
     )
     rewrite_latest_run(store, projection=projection)
 
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_sources,
+    )
 
     assert not result["passed"]
     assert "project_assessment_receipt_mismatch" in result["failures"]
@@ -805,11 +854,14 @@ def test_assessment_oracle_rejects_unlinked_positive_receipt_signal_without_task
 def test_assessment_oracle_observes_missing_raw_field_without_model_defaults(tmp_path):
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-missing.sqlite3")
-    _, input_id, before, _, expected = recorded_assessment_case(store)
+    item, input_id, before, _, expected = recorded_assessment_case(store)
     raw = read_latest_decision(store)
     raw.pop("project_assessments")
     rewrite_latest_run(store, decision=raw)
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_report_sources(store, item),
+    )
     assert not result["passed"]
     assert "project_assessments_missing" in result["failures"]
 
@@ -862,7 +914,7 @@ def test_assessment_oracle_rejects_unmatched_extra_receipt_assessment(tmp_path):
 def test_assessment_oracle_matches_two_receipts_by_index_after_order_reversal(tmp_path):
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-reversed-receipts.sqlite3")
-    input_id, before, expected = recorded_two_project_assessment_case(store)
+    item, input_id, before, expected = recorded_two_project_assessment_case(store)
     with store._connect() as db:
         projection = json.loads(
             db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
@@ -873,7 +925,10 @@ def test_assessment_oracle_matches_two_receipts_by_index_after_order_reversal(tm
     projection["project_assessments"].reverse()
     rewrite_latest_run(store, projection=projection)
 
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_report_sources(store, item),
+    )
 
     assert result["passed"], result["failures"]
 
@@ -1002,7 +1057,7 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
 
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-linked-raw-positive.sqlite3")
-    _, input_id, before, _, expected = recorded_assessment_case(store)
+    item, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
         run = db.execute(f"select * from ({TASK_AGENT_RUN_SQL})").fetchone()
         projection = json.loads(run["projection_json"])
@@ -1015,6 +1070,11 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
         source_time="2026-09-30T12:00:00Z",
         context_json="{}",
         dedupe_key="eval:linked-raw-positive",
+    )
+    prepared_sources = prepared_report_sources(store, item)
+    prepared_sources.add_current(
+        store.get_business_task_signal(linked_signal_id),
+        f"本周经营风险：{RISK_QUOTE}",
     )
     store.link_business_task_evidence(
         task_id=receipt["task_ids"][0],
@@ -1051,7 +1111,10 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
     )
     rewrite_latest_run(store, decision=decision, projection=projection)
 
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_sources,
+    )
 
     assert result["passed"], result["failures"]
 
@@ -1177,7 +1240,10 @@ def test_assessment_oracle_requires_reviewed_proof_coverage_and_validates_extras
         for entry in evidence
     ]
     rewrite_latest_run(store, decision=decision, projection=projection)
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_report_sources(store, item),
+    )
     assert result["passed"] is passes
     assert ("project_assessment_evidence_mismatch" in result["failures"]) is (
         not passes
@@ -1320,6 +1386,7 @@ def test_evaluation_requires_source_on_each_target_project_card(tmp_path):
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "each-target.sqlite3")
     seed_report(store)
+    first_item = report_item()
     second_item = report_item()
     second_item = second_item.model_copy(
         update={
@@ -1343,6 +1410,7 @@ def test_evaluation_requires_source_on_each_target_project_card(tmp_path):
         store,
         input_id=None,
         before=tool.read_domain(store),
+        prepared_sources=prepared_report_sources(store, (first_item, second_item)),
         expected={
             "attention_projects": ["示例项目", "另一项目"],
             "project_titles": ["示例项目", "另一项目"],
@@ -1444,9 +1512,13 @@ def test_evaluation_valid_old_card_cannot_mask_recorded_projection_failure(
         "minimum_evidence_sources": 1,
         "required_source_refs": [item.source.ref],
     }
+    prepared_sources = prepared_report_sources(store, item)
     # A current proposal without a persisted application receipt cannot pass;
     # this is distinct from historical cards with no current proposal.
-    baseline = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    baseline = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_sources,
+    )
     assert baseline["passed"] is False
     assert "projection_not_successful" in baseline["failures"]
     (card,) = store.list_business_attention_items()
@@ -1470,7 +1542,10 @@ def test_evaluation_valid_old_card_cannot_mask_recorded_projection_failure(
         recompute_error=recompute_error,
     )
     store.record_task_agent_projection(run_id, receipt.model_dump_json())
-    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    result = tool.readback(
+        store, input_id=input_id, before=before, expected=expected,
+        prepared_sources=prepared_sources,
+    )
     assert result["evidence_valid"]
     assert result["passed"] is False
     assert "projection_not_successful" in result["failures"]
@@ -1644,6 +1719,20 @@ def seed_report(store):
     )
 
 
+def prepared_report_sources(store, item=None):
+    items = (report_item(),) if item is None else (
+        tuple(item) if isinstance(item, (tuple, list)) else (item,)
+    )
+    prepared = PreparedSources(store.business_source_reader())
+    for signal in store.list_business_task_signals():
+        source = next((item for item in items
+                       if signal.source_ref == item.source.ref
+                       and signal.source.matches_body(item.summary)), None)
+        if source is not None:
+            prepared.add_current(signal, source.summary)
+    return prepared
+
+
 def update_risk(
     store, seed, *, source_type="reply_attempt", evidence=None, related_ids=None
 ):
@@ -1766,8 +1855,13 @@ def test_invalid_historical_citation_rejects_whole_proposal(tmp_path, fault):
     if fault in {"unlinked", "crossproject"}:
         # Historical Project proof is checked against its immutable source,
         # not a legacy Task-evidence carrier or another Task's membership.
+        prepared_sources = prepared_report_sources(store)
+        prepared_sources.add_current(
+            store.get_business_task_signal(signal_id), RISK_QUOTE
+        )
         result = apply_task_agent_decision(
-            store, summary_input_id=2, work_item=item, decision=decision, record_run=False
+            store, summary_input_id=2, work_item=item, decision=decision,
+            record_run=False, prepared_sources=prepared_sources,
         )
         assert result.projection_receipt.status == "completed"
         return
@@ -1988,7 +2082,8 @@ def test_new_source_risk_reuses_project_card_and_preserves_report_fields(
         proposal.evidence.append(type(proposal.evidence[0]).model_validate(historical))
         proposal.assessment_basis = "historical_comparison"
     result = apply_task_agent_decision(
-        store, summary_input_id=2, work_item=item, decision=decision, record_run=False
+        store, summary_input_id=2, work_item=item, decision=decision,
+        record_run=False, prepared_sources=prepared_report_sources(store),
     )
     assert result.projection_receipt.status == "completed"
     assert result.projection_receipt.registry_row_count is None
@@ -2209,6 +2304,8 @@ def test_folded_group_checks_each_current_signal_not_only_first(tmp_path):
     store.link_business_task_evidence(
         task_id=applied.task_ids[0], signal_id=cited, evidence_role="discovery"
     )
+    prepared_sources = prepared_report_sources(store)
+    prepared_sources.add(store.get_business_task_signal(cited))
     receipt = _project_task_attention(
         store,
         (
@@ -2229,6 +2326,7 @@ def test_folded_group_checks_each_current_signal_not_only_first(tmp_path):
             project_link_count=0,
             proposal_count=2,
         ),
+        prepared_sources=prepared_sources,
     )
     assert receipt.status == "partial"
     assert any(outcome.status == "rejected" for outcome in receipt.outcomes)
@@ -2457,7 +2555,7 @@ def test_project_link_count_includes_confirmed_candidate_cluster_members(tmp_pat
         actual = {
             tuple(link)
             for link in db.execute(
-                "select task_id, anchor_id from business_task_anchor_links where status='confirmed' and active=1"
+                f"select task_id, anchor_id from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where status='confirmed' and active=1"
             )
         }
     assert actual == expected
@@ -2507,12 +2605,14 @@ def test_conflicting_chat_risk_does_not_replace_report_registry_summary(
             ],
         }
     )
+    prepared_sources = prepared_report_sources(store)
     with store.business_task_transaction() as db:
         ProjectContextService(store).apply(
             project_id=project.id,
             context=context,
             signal_ids=(seed.current_signal_id,),
             db=db,
+            prepared_sources=prepared_sources,
         )
     before = business_project_detail(store, project.id).summary
     assert before.goal == "降低现金流风险"
@@ -2656,9 +2756,13 @@ def test_invalid_registry_proof_rolls_back_domain_transaction(tmp_path, change):
         )
     assert store.list_business_projects() == []
     with store._connect() as db:
-        assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+        ).fetchone()[0] == 0
         assert (
-            db.execute("select count(*) from business_task_signals").fetchone()[0] == 0
+            db.execute(
+                f"select count(*) from ({BUSINESS_ACTION_SQL['business_task_signals']})"
+            ).fetchone()[0] == 0
         )
 
 
@@ -2692,7 +2796,9 @@ def test_registry_prose_cannot_register_a_project(tmp_path, quote_from_following
         )
     assert store.list_business_projects() == []
     with store._connect() as db:
-        assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({BUSINESS_PROJECTIONS['task']})"
+        ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(
@@ -3088,6 +3194,13 @@ def existing_project_link_case(tmp_path, source_type="ai_minutes"):
     return store, item, seed, anchor_id, card_id, new_task
 
 
+def prepared_existing_project_source(store, seed):
+    prepared = PreparedSources(store.business_source_reader())
+    fact = store.get_business_task_signal(seed.signal_id)
+    prepared.add_current(fact, "复核示例交付项目验收计划。验收延期可能影响回款。")
+    return prepared
+
+
 def existing_project_assessment(
     *, item, seed, anchor_id, decision_indexes, outcome="needs_attention"
 ):
@@ -3192,7 +3305,7 @@ def test_current_source_links_new_task_to_existing_project_and_updates_one_card(
             ).fetchone()[0]
         )
         link = db.execute(
-            "select * from business_task_anchor_links where task_id<>?", (seed.task_id,)
+            f"select * from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where task_id<>?", (seed.task_id,)
         ).fetchone()
     assert receipt["status"] == "completed"
     assert receipt["project_link_count"] == 2
@@ -3339,8 +3452,8 @@ def test_existing_project_link_rejects_unproven_target_or_current_action(
             assessment_task_ids = [seed.task_id]
         target_anchor = other
     elif failure == "inactive":
-        with store._connect() as db:
-            db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+        with store.business_task_transaction() as db:
+            update_business(db, "anchor", anchor_id, {"active": 0})
     elif failure == "wrong_quote":
         payload["project_link_evidence"][0]["source_excerpt"] = (
             "示例交付项目不存在于当前来源的关联句。"
@@ -3451,15 +3564,15 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
     with store._connect() as db:
         before = tuple(
             db.execute(
-                "select evidence_signal_id,reason from business_task_anchor_links"
+                f"select evidence_signal_id,reason from ({BUSINESS_ACTION_SQL['business_task_anchor_links']})"
             ).fetchone()
         )
         followups_before = [
-            dict(row) for row in db.execute("select * from business_task_follow_ups")
+            dict(row) for row in store.list_business_task_follow_ups()
         ]
         todo_before = [
             dict(row)
-            for row in db.execute("select * from business_task_todo_sync_outbox")
+            for row in store.list_business_task_todo_sync_outbox()
         ]
     events_before = store.list_business_task_events(seed.task_id)
     signals_before = store.list_business_task_signals()
@@ -3493,24 +3606,29 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
     assert len(store.list_business_task_signals()) == len(signals_before) + 1
     signal = store.get_business_task_signal(assessment.evidence[0].signal_id)
     assert signal.source_ref == item.source.ref
-    assert assessment.evidence[0].source_excerpt in signal.evidence_text
+    prepared_sources = PreparedSources(store.business_source_reader())
+    prepared_sources.add_current(signal, item.summary)
+    with store.business_task_transaction() as db:
+        fact, original_body = prepared_sources.require_body(store, signal.id, db=db)
+    assert fact == signal
+    assert assessment.evidence[0].source_excerpt in original_body
     assert store.get_business_task(seed.task_id) == task
     assert store.list_business_task_events(seed.task_id) == events_before
     with store._connect() as db:
         assert (
             tuple(
                 db.execute(
-                    "select evidence_signal_id,reason from business_task_anchor_links"
+                    f"select evidence_signal_id,reason from ({BUSINESS_ACTION_SQL['business_task_anchor_links']})"
                 ).fetchone()
             )
             == before
         )
         assert [
-            dict(row) for row in db.execute("select * from business_task_follow_ups")
+            dict(row) for row in store.list_business_task_follow_ups()
         ] == followups_before
         assert [
             dict(row)
-            for row in db.execute("select * from business_task_todo_sync_outbox")
+            for row in store.list_business_task_todo_sync_outbox()
         ] == todo_before
     assert store.get_business_attention_item(card_id).title == "验收取消与付款风险"
     assert store.list_business_attention_tasks(card_id)[0].task_id == seed.task_id
@@ -3569,11 +3687,11 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
     assert store.list_business_task_events(seed.task_id) == events_before
     with store._connect() as db:
         assert [
-            dict(row) for row in db.execute("select * from business_task_follow_ups")
+            dict(row) for row in store.list_business_task_follow_ups()
         ] == followups_before
         assert [
             dict(row)
-            for row in db.execute("select * from business_task_todo_sync_outbox")
+            for row in store.list_business_task_todo_sync_outbox()
         ] == todo_before
 
 
@@ -3940,6 +4058,7 @@ def test_invalid_historical_attention_quote_does_not_save_current_proof(tmp_path
             work_item=item,
             decision=decision,
             record_run=False,
+            prepared_sources=prepared_existing_project_source(store, seed),
         )
     assert store.list_business_task_signals() == signals_before
     assert store.list_business_task_evidence(seed.task_id) == evidence_before
@@ -3979,14 +4098,13 @@ def test_reconfirmed_relevance_with_attention_keeps_task_and_follow_up_unchanged
         dedupe_key="follow-up:relevance",
     )
     events_before = store.list_business_task_events(seed.task_id)
-    with store._connect() as db:
-        followups_before = [
-            dict(row) for row in db.execute("select * from business_task_follow_ups")
-        ]
-        todo_before = [
-            dict(row)
-            for row in db.execute("select * from business_task_todo_sync_outbox")
-        ]
+    followups_before = [
+        dict(row) for row in store.list_business_task_follow_ups()
+    ]
+    todo_before = [
+        dict(row)
+        for row in store.list_business_task_todo_sync_outbox()
+    ]
     payload = {
         **new_task,
         "action": "update_task",
@@ -4017,14 +4135,13 @@ def test_reconfirmed_relevance_with_attention_keeps_task_and_follow_up_unchanged
     assert result.projection_receipt.project_assessments[0].attention_id == card_id
     assert store.get_business_task(seed.task_id) == task
     assert store.list_business_task_events(seed.task_id) == events_before
-    with store._connect() as db:
-        assert [
-            dict(row) for row in db.execute("select * from business_task_follow_ups")
-        ] == followups_before
-        assert [
-            dict(row)
-            for row in db.execute("select * from business_task_todo_sync_outbox")
-        ] == todo_before
+    assert [
+        dict(row) for row in store.list_business_task_follow_ups()
+    ] == followups_before
+    assert [
+        dict(row)
+        for row in store.list_business_task_todo_sync_outbox()
+    ] == todo_before
 
 
 def test_reconfirmed_relevance_without_attention_keeps_ordinary_task_evidence_effect(
@@ -4076,15 +4193,13 @@ def test_existing_unconfirmed_task_can_confirm_project_link_with_real_source_upd
         tmp_path
     )
     quote = item.summary.splitlines()[1]
-    with store._connect() as db:
-        db.execute(
-            "update business_task_anchor_links set status='proposed' where task_id=?",
+    with store.business_task_transaction() as db:
+        (link_row,) = db.execute(
+            f"select id from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where task_id=?",
             (seed.task_id,),
-        )
-        db.execute(
-            "update business_tasks set business_relevance='unknown' where id=?",
-            (seed.task_id,),
-        )
+        ).fetchone()
+        update_business_action(db, "business_task_anchor_links", link_row, {"status": "proposed"})
+        update_business(db, "task", seed.task_id, {"business_relevance": "unknown"})
     payload = {
         **new_task,
         "action": "update_task",
@@ -4121,7 +4236,7 @@ def test_existing_unconfirmed_task_can_confirm_project_link_with_real_source_upd
     with store._connect() as db:
         assert (
             db.execute(
-                "select status from business_task_anchor_links where task_id=?",
+                f"select status from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where task_id=?",
                 (seed.task_id,),
             ).fetchone()[0]
             == "confirmed"
@@ -4164,7 +4279,7 @@ def test_uncertain_anchor_match_remains_proposed_without_deriving_relevance(tmp_
     with store._connect() as db:
         assert (
             db.execute(
-                "select status from business_task_anchor_links where task_id=?",
+                f"select status from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) where task_id=?",
                 (new_id,),
             ).fetchone()[0]
             == "proposed"

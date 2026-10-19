@@ -1,0 +1,17 @@
+# Provenance reader binding A1 validation — 2026-10-18
+
+Status: unselected local component. This slice adds only an immutable source-version binding, independent Signal metadata fact, transient available/unavailable read results, and a request-scoped native reader. Existing Signal/Store/body storage and all callers remain as they were. Native reads reuse `read_native_source_body`; its expected missing and version-changed `LookupError` failures now have distinct subclasses with unchanged messages and base-class compatibility. Provider locators return `reader_unavailable` until an exact provider reader is implemented. A missing locator and reference-only provenance are explicitly unavailable.
+
+The binding carries the existing eight-field `source_document_key` identity, complete-body SHA-256 and UTF-8 byte count, and optional exact locator metadata. It contains no original body. The request reader checks native coordinates through the existing helper, then checks the full body digest, byte count, and unchanged identity key. A second binding under the same identity key is rejected as `binding_conflict` in that request. Quotations use `source_contains_quote` on the transient complete body. The separate Signal fact retains only selected metadata and a matching binding; it does not contain `evidence_text`.
+
+Focused evidence:
+
+- RED: `pytest -q tests/test_business_source_reader.py` exited 2 at collection with `ModuleNotFoundError: app.business_source_reader` before implementation.
+- First GREEN: the same focused command exited 0 with 9 passed in 0.30 s. A subsequent typed-error regression was RED, exit 1, because `NativeSourceMissing` did not yet exist. Final GREEN: `pytest -q tests/test_business_source_reader.py tests/test_native_source_documents.py --basetemp /tmp/provenance-a1-green-d8cbzmjw/pytest` exited 0 with 82 passed in 0.30 s. Synthetic JSONL covers native exact read, multibyte hash/bytes, decoded JSON-leaf quote, missing/changed/incomplete record, invalid coordinates, mismatched body and source-ref/quote, reference-only and absent/provider locators, same-version fanout, same-key binding conflict, independent Signal facts, typed helper failures with `LookupError` compatibility, and visible unexpected helper exceptions.
+- `ruff check app/native_trajectory.py app/business_source_reader.py tests/test_business_source_reader.py`: exited 0.
+- `python -m compileall -q app/native_trajectory.py app/business_source_reader.py tests/test_business_source_reader.py`: exited 0.
+- `git diff --check -- app/native_trajectory.py docs/agent-claims.md`: exited 0. The typed-error RED used `/tmp/provenance-a1-red-axxsg_xx/pytest`; final GREEN used `/tmp/provenance-a1-green-d8cbzmjw/pytest`. Both were owned `TemporaryDirectory` roots and were confirmed removed after their test sessions. Earlier first-slice pytest runs used pytest's default temporary root without recording its exact path; no historical path was guessed or deleted.
+
+SHA-256: `app/native_trajectory.py` `5b5ea4c0b880f78c08f0f020dde45c26ae1c38e21d012253b38cd50c30cadc04`; `app/business_source_reader.py` `ad1fe4b16e27ac1afc6b3583ca2c54bee5bdf8ef84398c4c1f95a283cdbf8933`; `tests/test_business_source_reader.py` `a10d36969e40d7f49bd15ad5c2c43249812cfa00e1cac65bed7376d7734d6e81`.
+
+This does not prove a production source can be recovered. There is no provider read, transaction/API/bundle integration, physical provenance row, body retirement, database copy, external call, commit, push, or deploy in A1.

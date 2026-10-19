@@ -27,7 +27,10 @@ from app.native_trajectory import (
 from app.workbench.codex_runtime import _native_tool_failed
 from app.workbench.models import WorkbenchEvent, WorkbenchTurn
 from app.run_storage import RUNTIME_ATTEMPT_SQL
-from app.task_storage import WORKBENCH_TURN_SQL, task_id_expression
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_projection
+
+WORKBENCH_TURN_SQL = task20_projection('workbench_turns')
 
 AGENT_EVENTS = {"text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed"}
 UNAVAILABLE = "原生 Agent 记录不可用。"
@@ -97,7 +100,7 @@ def terminal_cached_turn_ids(db: sqlite3.Connection, db_path: Path) -> list[str]
     placeholders = ",".join("?" for _ in ids)
     return [row["id"] for row in db.execute(
         f"select id from ({WORKBENCH_TURN_SQL}) as workbench_turns where id in ({placeholders}) "
-        "and status in ('completed','stopped','failed','waiting_confirmation')", ids
+        "and status in ('completed','stopped','failed')", ids
     )]
 
 

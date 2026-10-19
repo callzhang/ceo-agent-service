@@ -1,0 +1,155 @@
+{
+  "observed_at_utc": "2026-10-17T18:41:43.015739+00:00",
+  "scope": "Four previously reported current weekly observations; exactly three known nodes, no history traversal",
+  "source_access": "mode=ro/query_only transaction snapshot, body held only in process memory",
+  "profile_count": 1,
+  "unique_org_current": true,
+  "same_explicit_profile": true,
+  "executed_module_sha256": {
+    "app/task_report_scanner.py": "470f4014322d5acbc6110042effd1ed0e40f2350f4fd2f5a909f799362864026",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290"
+  },
+  "method": {
+    "provider_fields": [
+      "nodeId",
+      "title",
+      "markdown"
+    ],
+    "retained_locator_metadata": [
+      "original report.url"
+    ],
+    "derived_fields": [
+      "report_type by genuine classify_report_title",
+      "reporting_period by genuine report_period",
+      "source_ref by genuine ReportDocument.source_ref",
+      "full JSON wrapper by genuine _work_item"
+    ],
+    "identity_fields": "Retained source signal authorship/time/conversation metadata; not independently provider-verified authorship",
+    "not_reused_as_provider_body": "No stored markdown reused; exact complete original body SHA and source identity comparison required"
+  },
+  "provider_reads": [
+    {
+      "node_id": "QG53mjyd80xOQYX3sekaZBZx86zbX04v",
+      "complete": true,
+      "success": true,
+      "exact_node_binding": true,
+      "returned_history_version": null,
+      "markdown_utf8_bytes": 9035,
+      "markdown_utf8_sha256": "41eddfac7740ecfa93ea0e073d55a4cb7490c77ead03181f8f6e23f2c7034f42"
+    },
+    {
+      "node_id": "qnYMoO1rWxE6Rexzi964QXoxV47Z3je9",
+      "complete": true,
+      "success": true,
+      "exact_node_binding": true,
+      "returned_history_version": null,
+      "markdown_utf8_bytes": 10495,
+      "markdown_utf8_sha256": "2649a93a57b957af9f9265eb71ecb873192800bc845c775ff57c652ffe597baf"
+    },
+    {
+      "node_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "complete": true,
+      "success": true,
+      "exact_node_binding": true,
+      "returned_history_version": null,
+      "markdown_utf8_bytes": 62657,
+      "markdown_utf8_sha256": "de1748eb17579547013dd8d4b4585b4c806388bf5db7873caf83ba5d25ed5b89"
+    }
+  ],
+  "provider_body_requests": 3,
+  "documents": [
+    {
+      "source_document_id": 67,
+      "signal_count": 9,
+      "node_id": "QG53mjyd80xOQYX3sekaZBZx86zbX04v",
+      "expected_body_utf8_bytes": 9421,
+      "expected_body_utf8_sha256": "1fd6628813796adb2236fc375eab541e0cbe8385199e762a7e109c798c42be05",
+      "markdown_equal": true,
+      "provider_title_matches_retained_metadata": true,
+      "retained_original_url_used_as_locator_metadata": true,
+      "source_authorship_independently_reverified": false,
+      "report_metadata_equal": true,
+      "rebuilt_body_utf8_bytes": 9421,
+      "rebuilt_body_utf8_sha256": "1fd6628813796adb2236fc375eab541e0cbe8385199e762a7e109c798c42be05",
+      "whole_body_equal": true,
+      "source_ref_checks_expected": 9,
+      "source_ref_checks_pass": 9,
+      "source_identity_checks_pass": 9,
+      "source_identity_checks_expected": 9,
+      "altered_body_negative_control_rejected": true,
+      "status": "verified"
+    },
+    {
+      "source_document_id": 69,
+      "signal_count": 10,
+      "node_id": "QG53mjyd80xOQYX3sekaZBZx86zbX04v",
+      "expected_body_utf8_bytes": 9421,
+      "expected_body_utf8_sha256": "1fd6628813796adb2236fc375eab541e0cbe8385199e762a7e109c798c42be05",
+      "markdown_equal": true,
+      "provider_title_matches_retained_metadata": true,
+      "retained_original_url_used_as_locator_metadata": true,
+      "source_authorship_independently_reverified": false,
+      "report_metadata_equal": true,
+      "rebuilt_body_utf8_bytes": 9421,
+      "rebuilt_body_utf8_sha256": "1fd6628813796adb2236fc375eab541e0cbe8385199e762a7e109c798c42be05",
+      "whole_body_equal": true,
+      "source_ref_checks_expected": 10,
+      "source_ref_checks_pass": 10,
+      "source_identity_checks_pass": 10,
+      "source_identity_checks_expected": 10,
+      "altered_body_negative_control_rejected": true,
+      "status": "verified"
+    },
+    {
+      "source_document_id": 91,
+      "signal_count": 13,
+      "node_id": "qnYMoO1rWxE6Rexzi964QXoxV47Z3je9",
+      "expected_body_utf8_bytes": 11122,
+      "expected_body_utf8_sha256": "e18202a9184f5acbe5fb083df03b3bd36586f47ad1099bb68f70ebf7c2025cf6",
+      "markdown_equal": true,
+      "provider_title_matches_retained_metadata": true,
+      "retained_original_url_used_as_locator_metadata": true,
+      "source_authorship_independently_reverified": false,
+      "report_metadata_equal": true,
+      "rebuilt_body_utf8_bytes": 11122,
+      "rebuilt_body_utf8_sha256": "e18202a9184f5acbe5fb083df03b3bd36586f47ad1099bb68f70ebf7c2025cf6",
+      "whole_body_equal": true,
+      "source_ref_checks_expected": 13,
+      "source_ref_checks_pass": 13,
+      "source_identity_checks_pass": 13,
+      "source_identity_checks_expected": 13,
+      "altered_body_negative_control_rejected": true,
+      "status": "verified"
+    },
+    {
+      "source_document_id": 93,
+      "signal_count": 20,
+      "node_id": "amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p",
+      "expected_body_utf8_bytes": 63562,
+      "expected_body_utf8_sha256": "0bbb50ced42556ddd693e286869955caf2ac74814db3e09509e0434bb7a16186",
+      "markdown_equal": true,
+      "provider_title_matches_retained_metadata": true,
+      "retained_original_url_used_as_locator_metadata": true,
+      "source_authorship_independently_reverified": false,
+      "report_metadata_equal": true,
+      "rebuilt_body_utf8_bytes": 63562,
+      "rebuilt_body_utf8_sha256": "0bbb50ced42556ddd693e286869955caf2ac74814db3e09509e0434bb7a16186",
+      "whole_body_equal": true,
+      "source_ref_checks_expected": 20,
+      "source_ref_checks_pass": 20,
+      "source_identity_checks_pass": 20,
+      "source_identity_checks_expected": 20,
+      "altered_body_negative_control_rejected": true,
+      "status": "verified"
+    }
+  ],
+  "verified_documents": 4,
+  "verified_body_utf8_bytes": 93526,
+  "elapsed_seconds": 5.086,
+  "raw_bodies_persisted": false,
+  "source_or_provider_mutations": false,
+  "outbound_sends": 0,
+  "runtime_reader_activated": false,
+  "body_retirement": false,
+  "limits": "Bound current reads, not permanent availability or historical-version search; full body retains original URL locator metadata. No production migration."
+}

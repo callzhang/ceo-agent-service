@@ -1,0 +1,344 @@
+{
+  "recorded_at": "2026-10-18T02:02:31.345219+00:00",
+  "scope": "Read-only candidate navigation; author may be concurrently repairing2reviewed nodes. Not frozen test bytes, not an executed test failure count.",
+  "reason": "Independent QUALITY found2current public regressions with retired physical-table assumptions. Exact review repair remains bounded; final current-target test closure must separately classify remaining assumptions.",
+  "known_current_selected_example": {
+    "node": "test_exact_scan_replay_is_idempotent",
+    "issue": "Fresh EmailStore then public persist_scan twice; final count reads still use retired native parents; public replay assertions must be preserved against source-shaped projections."
+  },
+  "candidates": [
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_backfill_fills_only_an_empty_recipient_list",
+      "line": 1540,
+      "native_parent_string_lines": [
+        1545
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads",
+      "line": 2110,
+      "native_parent_string_lines": [
+        2120
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reopen",
+      "line": 2733,
+      "native_parent_string_lines": [
+        2760
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_training_inclusion_digest_cas_rejects_concurrent_correction_and_clears_old_model",
+      "line": 2841,
+      "native_parent_string_lines": [
+        2860
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_training_promotion_lease_rejects_changed_snapshot_before_promote",
+      "line": 2871,
+      "native_parent_string_lines": [
+        2886
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_fresh_schema_contains_account_aware_persistence_tables",
+      "line": 3022,
+      "native_parent_string_lines": [
+        3036,
+        3037,
+        3066
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_current_schema_rejects_non_text_sqlite_master_identifiers",
+      "line": 3401,
+      "native_parent_string_lines": [
+        3397
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_current_schema_missing_required_column_is_domain_corruption",
+      "line": 3499,
+      "native_parent_string_lines": [
+        3512,
+        3516
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_current_schema_allows_unrelated_extra_tables_and_columns",
+      "line": 3521,
+      "native_parent_string_lines": [
+        3527
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_durable_validation_boundary_normalizes_missing_row_field",
+      "line": 3783,
+      "native_parent_string_lines": [
+        3794
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_current_schema_missing_required_unique_key_is_domain_corruption",
+      "line": 4024,
+      "native_parent_string_lines": [
+        4032,
+        4063
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_future_email_schema_version_fails_closed_before_schema_changes",
+      "line": 4195,
+      "native_parent_string_lines": [
+        4262
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_normal_startup_does_not_repair_missing_durable_rows",
+      "line": 4291,
+      "native_parent_string_lines": [
+        4290
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_message_account_identity_mismatch",
+      "line": 4325,
+      "native_parent_string_lines": [
+        4333
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_message_locator_and_thread_mismatch",
+      "line": 4349,
+      "native_parent_string_lines": [
+        4342,
+        4343,
+        4344,
+        4345,
+        4346
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_orphan_message_without_classification",
+      "line": 4369,
+      "native_parent_string_lines": [
+        4377
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_accepts_canonical_and_empty_locator_metadata_equivalence",
+      "line": 4382,
+      "native_parent_string_lines": [
+        4408
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_normalizes_both_persisted_locator_metadata_sides",
+      "line": 4433,
+      "native_parent_string_lines": [
+        4445,
+        4452,
+        4459,
+        4460
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_current_action_plan_pointer_rollback",
+      "line": 4491,
+      "native_parent_string_lines": [
+        4511
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_current_plan_classification_field_mismatch",
+      "line": 4535,
+      "native_parent_string_lines": [
+        4547,
+        4549
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_pending_feedback_with_action_plan",
+      "line": 4555,
+      "native_parent_string_lines": [
+        4564
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_pending_feedback_with_user_source",
+      "line": 4573,
+      "native_parent_string_lines": [
+        4581
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_pending_feedback_with_legacy_marker",
+      "line": 4587,
+      "native_parent_string_lines": [
+        4595
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_legacy_user_processed_with_mismatched_confirmation",
+      "line": 4601,
+      "native_parent_string_lines": [
+        4612
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_accepts_model_processed_without_user_confirmation",
+      "line": 4624,
+      "native_parent_string_lines": [
+        4632
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_startup_rejects_normal_processed_classification_without_plan",
+      "line": 4637,
+      "native_parent_string_lines": [
+        4655
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_exact_scan_replay_is_idempotent",
+      "line": 4729,
+      "native_parent_string_lines": [
+        4738,
+        4739
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot",
+      "line": 5200,
+      "native_parent_string_lines": [
+        5264,
+        5265
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_classification_id_collision_fails_closed_with_domain_error",
+      "line": 5370,
+      "native_parent_string_lines": [
+        5389
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically",
+      "line": 5483,
+      "native_parent_string_lines": [
+        5508,
+        5509,
+        5516,
+        5517,
+        5548
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_stale_cursor_generation_commit_rolls_back_all_scan_state",
+      "line": 5563,
+      "native_parent_string_lines": [
+        5588,
+        5589,
+        5596,
+        5597,
+        5628
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_corrupt_stored_json_is_reported_as_domain_corruption",
+      "line": 7337,
+      "native_parent_string_lines": [
+        7345
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_unsubscribe_claim_fences_current_authorization_during_browser_write",
+      "line": 7917,
+      "native_parent_string_lines": [
+        7935,
+        7942,
+        7956
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "test": "test_flagged_important_between_lists_only_done_flags_in_the_window",
+      "line": 9867,
+      "native_parent_string_lines": [
+        9889
+      ],
+      "disposition": "unclassified_navigation_candidate"
+    }
+  ],
+  "next": "Classify source-factory/native-schema-oracle versus selected-current DML/reads and metadata assertions. Keep historical oracles unchanged; preserve public business assertions. Do not blindly rewrite strings or weaken constraints; run focused groups on isolated temp only. Finish current2node repair/reviews and actual-copy independently; require this closure before final CLI/release.",
+  "runtime_or_test_changes": false,
+  "actual_copy_or_release_acceptance": false
+}

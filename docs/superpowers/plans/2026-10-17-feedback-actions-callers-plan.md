@@ -1,0 +1,19 @@
+# Feedback Actions caller cutover, 2026-10-17
+
+Prepared while opt-in component is being implemented. NOT implementation acceptance or selected28 runtime. Do not begin until component sequential independent SPEC and QUALITY approve its final freeze. Source mapping is original approved design, exact current metadata and caller AST inventory; no new business field/policy/retention.
+
+## Existing paths to convert
+
+Inventory: ../specs/2026-10-17-feedback-actions-caller-inventory.json. Store23methods excluding initializer cover feedback event UPSERT/read/list/count, sent-feedback joins/pressure, processing batch creation/claim/reopen/resolution, transition multiset and batch lineage readers, immutable iteration decision item insert/aggregation, and bugfix candidate link. QualityGate _check_feedback currently directly reads native events. Preserve public method signatures/DTOs, all user-visible states, original validation semantics and exact receipt associations. Do not rewrite audit/safety/feedback policy. Existing task12 joins and Actions writers share same caller-owned connection and transaction.
+
+Events UPSERT must retain source key/ROWID on conflict, overwrite exactly original ten input fields and updated_at, preserve original created_at/resolved_at; Task processing projection creation/updates in same transaction. Child decision items bulk insert uses source compound identity and three real Tasks endpoints; append-only order and aggregate membership retained. Claim and completion transitions share the existing single statement timestamp as applicable. Original transition validation intentionally groups two bounded queries; preserve query counts and positive/negative lineage checks.
+
+## Selection and inverse
+
+Extend current paired release to apply Feedback after Errors and reverse before Errors. Select include_feedback=True explicitly in current constructors/declaration recognition and Config Actions-dependent recognition. Stop initializer from recreating native3 tables/indexes/immutable triggers or ALTERing absent Events. Retain exact historical source initializers/declarations where they serve inverse profiles. Current Tasks20 child creation/recognition must recognize that child has retired after conversion; do not add permissive absence fallback to hide malformed schema. Current source candidate31→28, whole116 source schema inverse remains objective. Config/Email external triggers must remain exact around Actions rebuild; update explicit flags through existing current factories only.
+
+## Validation
+
+Focused original feedback processing/iteration/Console API/E2E tests, with stale direct SQL fixtures converted to typed source helpers only where needed for current runtime. Preserve historical native fixtures and negative corruption controls. Add native public DAO differential on same typed Tasks parents after Feedback-only inverse so schema change can be isolated; include positive nonempty event, transition, decision-child facts, counts/order/pressure/resolution/reopen/idempotency and failures/rollback. Audit quality check nonempty unresolved and resolved readback. Freeze files, fresh SPEC then QUALITY before root real production copy.
+
+Root real copied acceptance:116→28 cold constructors and no retired names, all prior7families plus new3 entire rows/types/counters, whole source schema inverse, genuine current production predecessor public synthetic feedback creation/claim/association/decision/readback (internal only; no model, provider, resolution or external send; resolution branches are covered separately by focused lifecycle tests), reforward28 preserving current+old facts, metadata-only receipt, scoped original diagnostics unchanged, exact runtime hashes stable and managed temporary cleanup. This is separate from full CLI/UI/final11 acceptance and whole-candidate capacity. No production apply until schema inverse and full release prerequisites pass.

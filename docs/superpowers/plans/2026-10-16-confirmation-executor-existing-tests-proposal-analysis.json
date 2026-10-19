@@ -1,0 +1,204 @@
+{
+  "status": "COMPLETE_UNSELECTED_TEST_MAINTENANCE_PROPOSAL",
+  "patch_sha256": "20a0d49353d54180d5ad0387539dde33074fee3259f706a43acabb560d493710",
+  "patch_bytes": 41076,
+  "base_head": "7111ea47546ac7cb242ff7267993868eacec6561",
+  "inputs": {
+    "tests/test_workbench_executor.py": "7ee79c37f0cdf6525ea7b1ff661e35ee2d029dfa77fba0c40eb45e402fa7421f",
+    "tests/test_workbench_native_events.py": "658e6b446fbc9a6a1c401e548cf31c749b5d46986fdbae6b8b3cc26c5cd0419b",
+    "tests/test_workbench_runtime.py": "515efd63a7f5ebdea62e72fb8f58047366a1858316fda5176c2cdac7d3555c75",
+    "tests/conftest.py": "74b5a3022d92a530e6b4def57dc5a6cd0a70f960fc937de7bc95db4152e744ce",
+    "pyproject.toml": "7b236f2948ca0c9bae3de67e99f6383f0e91b53c34ae590bfd295cba8855f48c",
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-16-confirmation-store-schema-proposal.patch": "a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4",
+    "docs/superpowers/plans/2026-10-16-confirmation-executor-proposal.patch": "294fc6f7ac837a0d064c3af39e8af7e6ea6e6c3d12c132bf37fce262610cee47",
+    "docs/superpowers/plans/2026-10-16-confirmation-executor-test-proposal.patch": "ad5e2e00f383ce3313e2a2c04e9439f75f7a7678c0d01908c14b90beb5164e7e",
+    "docs/superpowers/plans/2026-10-16-confirmation-executor-task20-fixture-proposal.patch": "ed9dafe6a0c5594a4e32f0c3b24a8a0653c7bc68bb35075f29a069acc84bb69f"
+  },
+  "test_audit": {
+    "removed_names": [
+      "test_recover_drains_every_bounded_confirmation_batch",
+      "test_recover_fails_safe_when_full_batch_makes_no_progress",
+      "test_stop_and_confirmation_callback_race_has_one_authoritative_terminal_state",
+      "test_confirmation_event_atomically_waits_and_runtime_completion_cannot_overwrite",
+      "test_confirmation_uses_canonical_target_and_waits_for_runtime_quiescence",
+      "test_cancel_intent_waits_for_quiescence_then_requeues_without_second_click",
+      "test_unquiesced_crashed_proposer_recovery_fails_closed",
+      "test_runtime_recovery_fails_corrupt_blank_legacy_proposer",
+      "test_scheduler_never_executes_persisted_legacy_confirmation_intent",
+      "test_confirmation_rejects_private_argv_drift_before_writer",
+      "test_confirm_executes_once_redacts_receipt_and_requeues",
+      "test_cancel_never_runs_and_conflicting_decision_rejects",
+      "test_writer_failure_is_sanitized_and_requeued_for_agent_report",
+      "test_restart_reconciles_confirmed_without_result_without_execution",
+      "test_explicit_recovery_reconciles_legacy_resultless_confirmed_states_without_execution",
+      "test_claim_and_run_once_defend_against_unreconciled_confirmed_action",
+      "test_live_confirmation_claim_survives_other_executor_recovery_and_runs_once",
+      "test_stop_during_blocked_writer_keeps_turn_stopped_and_persists_receipt",
+      "test_confirmation_heartbeat_prevents_short_lease_recovery",
+      "test_lost_confirmation_lease_never_persists_writer_result",
+      "test_two_executors_racing_confirm_run_writer_at_most_once"
+    ],
+    "retained_names": [
+      "test_recover_retries_a_transient_sqlite_lock",
+      "test_run_once_persists_stream_session_and_one_terminal_event",
+      "test_runtime_artifact_event_persists_artifact_and_safe_event_atomically",
+      "test_runtime_artifact_event_rejects_unsafe_path_without_artifact_row",
+      "test_recover_requeues_only_expired_running_turns",
+      "test_heartbeat_renews_during_blocked_wait",
+      "test_lost_lease_stops_runtime_and_does_not_write_after_loss",
+      "test_unknown_runtime_and_malformed_event_fail_safely",
+      "test_white_box_runtime_result_and_tool_payload_require_native_source",
+      "test_failed_runtime_keeps_service_code_without_copying_native_diagnostic",
+      "test_stop_before_handle_publication_stops_once_and_never_completes",
+      "test_stop_during_wait_stops_once",
+      "test_stop_after_runtime_wait_before_atomic_completion_wins",
+      "test_runtime_request_uses_validated_attachment_and_image_paths",
+      "test_runtime_failure_keeps_code_and_public_detail_without_native_copy",
+      "test_close_is_bounded_and_idempotent_without_heartbeat_thread_leak",
+      "test_close_during_blocked_start_stops_late_handle_once",
+      "test_concurrent_run_once_respects_global_two_worker_capacity"
+    ],
+    "unchanged_body_ast_names": [
+      "test_run_once_persists_stream_session_and_one_terminal_event",
+      "test_runtime_artifact_event_persists_artifact_and_safe_event_atomically",
+      "test_runtime_artifact_event_rejects_unsafe_path_without_artifact_row",
+      "test_heartbeat_renews_during_blocked_wait",
+      "test_lost_lease_stops_runtime_and_does_not_write_after_loss",
+      "test_unknown_runtime_and_malformed_event_fail_safely",
+      "test_white_box_runtime_result_and_tool_payload_require_native_source",
+      "test_stop_before_handle_publication_stops_once_and_never_completes",
+      "test_stop_during_wait_stops_once",
+      "test_stop_after_runtime_wait_before_atomic_completion_wins",
+      "test_runtime_request_uses_validated_attachment_and_image_paths",
+      "test_runtime_failure_keeps_code_and_public_detail_without_native_copy",
+      "test_close_is_bounded_and_idempotent_without_heartbeat_thread_leak",
+      "test_close_during_blocked_start_stops_late_handle_once",
+      "test_concurrent_run_once_respects_global_two_worker_capacity"
+    ],
+    "changed_names": [
+      "test_recover_retries_a_transient_sqlite_lock",
+      "test_recover_requeues_only_expired_running_turns",
+      "test_failed_runtime_keeps_service_code_without_copying_native_diagnostic"
+    ],
+    "assertions": {
+      "test_recover_retries_a_transient_sqlite_lock": {
+        "before": 2,
+        "after": 2,
+        "identical": true
+      },
+      "test_run_once_persists_stream_session_and_one_terminal_event": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_runtime_artifact_event_persists_artifact_and_safe_event_atomically": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_runtime_artifact_event_rejects_unsafe_path_without_artifact_row": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_recover_requeues_only_expired_running_turns": {
+        "before": 4,
+        "after": 4,
+        "identical": false
+      },
+      "test_heartbeat_renews_during_blocked_wait": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_lost_lease_stops_runtime_and_does_not_write_after_loss": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_unknown_runtime_and_malformed_event_fail_safely": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      },
+      "test_white_box_runtime_result_and_tool_payload_require_native_source": {
+        "before": 6,
+        "after": 6,
+        "identical": true
+      },
+      "test_failed_runtime_keeps_service_code_without_copying_native_diagnostic": {
+        "before": 7,
+        "after": 7,
+        "identical": true
+      },
+      "test_stop_before_handle_publication_stops_once_and_never_completes": {
+        "before": 7,
+        "after": 7,
+        "identical": true
+      },
+      "test_stop_during_wait_stops_once": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_stop_after_runtime_wait_before_atomic_completion_wins": {
+        "before": 6,
+        "after": 6,
+        "identical": true
+      },
+      "test_runtime_request_uses_validated_attachment_and_image_paths": {
+        "before": 4,
+        "after": 4,
+        "identical": true
+      },
+      "test_runtime_failure_keeps_code_and_public_detail_without_native_copy": {
+        "before": 3,
+        "after": 3,
+        "identical": true
+      },
+      "test_close_is_bounded_and_idempotent_without_heartbeat_thread_leak": {
+        "before": 1,
+        "after": 1,
+        "identical": true
+      },
+      "test_close_during_blocked_start_stops_late_handle_once": {
+        "before": 7,
+        "after": 7,
+        "identical": true
+      },
+      "test_concurrent_run_once_respects_global_two_worker_capacity": {
+        "before": 5,
+        "after": 5,
+        "identical": true
+      }
+    }
+  },
+  "ordinary_changes": {
+    "test_recover_retries_a_transient_sqlite_lock": "Retain identical two assertions; replace removed confirmation reconciliation monkeypatch with ordinary recover_expired_turns and integer zero return.",
+    "test_recover_requeues_only_expired_running_turns": "Delete only canceled confirmation creation; keep second claimed turn live at10s lease; replace WAITING_CONFIRMATION assertion with RUNNING. Four assertions retained.",
+    "test_failed_runtime_keeps_service_code_without_copying_native_diagnostic": "Preserve every assertion; use existing task8_set_parts for error_detail empty-string fixture write; current source-shaped projection supplied at module scope."
+  },
+  "removed_helpers": [
+    "_write_classifier",
+    "_pending_confirmation",
+    "_duplicate_confirmation_candidates",
+    "_TrackingRecoveryStore"
+  ],
+  "preservation": "All18 retained functions and80 assertion statements remain;15 function AST bodies identical. All retained assertions identical except explicit waiting-status\u2192live-running assertion for converted recovery control. All source test names outside21 removal list retained. No skip/xfail/fake enum/stub/extracted module.",
+  "verification": {
+    "combined": "76 passed in16.10s: full tests/test_workbench_executor.py + full new retirement tests + full runtime tests + full native-event tests; pinnedPython3.13, actualpackage/models/WorkbenchStore and root+executor source proposals.",
+    "compile": "PinnedPython3.13 passed",
+    "ruff": "Revised entire executor test module passed",
+    "reverse_reapply": "Reverse reproduced exact original test-module bytes; reapply succeeded",
+    "apply": "Standalone source patch applies to exact original executor test module",
+    "subsequent_fixture_fix": "Companion six-test proposal now seeds distinct turn created_at to avoid UUID ordering ties;10/10 narrow repetitions passed. Existing full-module patch unchanged."
+  },
+  "application_order": "Root Store/schema patch, executor four-file source patch, new six-test proposal, tiny Task20 fixture patch with --include=tests/test_workbench_native_events.py ONLY, then this existing-executor-test patch. This patch supersedes the executor.py half of the prior tiny test-fixture patch.",
+  "limitations": [
+    "Docs-only proposal; no app/tests actual edits, staging or commit.",
+    "No production/database migration/provider/native CLI/network/push/deploy.",
+    "Root must integrate runtime/API/schema/constructor/migration and independent acceptance."
+  ],
+  "temporary_cleanup": "Owned /private/tmp/confirmation-executor-tests.87d9zc removed after verification."
+}

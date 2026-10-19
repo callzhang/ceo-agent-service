@@ -1,8 +1,12 @@
 """Auditable, idempotent repair planning for task project metadata."""
 
 from __future__ import annotations
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import task20_projection
 from app.run_storage import TASK_AGENT_RUN_SQL
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.action_storage import insert_sync_action
 
 import hashlib
 import json
@@ -13,6 +17,16 @@ from pathlib import Path
 from typing import Any
 
 from app.work_summary_payload import decode_work_summary_payload
+
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+def _project_sql(db: sqlite3.Connection) -> str:
+    return BUSINESS_PROJECTIONS["work_project"]
+
+
+def _todo_sql(db: sqlite3.Connection) -> str:
+    return BUSINESS_PROJECTIONS["work_todo"]
 
 
 RESTORABLE_FIELDS = (
@@ -83,9 +97,7 @@ def build_repair_manifest(
     current_path = Path(db_path)
     with _connect(current_path) as db:
         fingerprint = _database_fingerprint(db)
-        projects = db.execute(
-            "select * from work_projects order by id"
-        ).fetchall()
+        projects = db.execute(f"select * from ({_project_sql(db)}) order by id").fetchall()
         agent_refs = _latest_agent_refs(db)
         archives = tuple(_archive_candidates(db, projects))
     agent_values = _latest_agent_values(agent_refs)
@@ -96,7 +108,7 @@ def build_repair_manifest(
             historical_rows = {
                 int(row["id"]): row
                 for row in historical_db.execute(
-                    "select * from work_projects order by id"
+                    f"select * from ({_project_sql(historical_db)}) order by id"
                 )
             }
 
@@ -207,7 +219,7 @@ def apply_manifest(
                         f"unsupported repair field: {restoration.field}"
                     )
                 row = db.execute(
-                    f"select {restoration.field} from work_projects where id=?",
+                    f"select {restoration.field} from ({_project_sql(db)}) where id=?",
                     (restoration.project_id,),
                 ).fetchone()
                 if row is None:
@@ -221,11 +233,9 @@ def apply_manifest(
                         f"project {restoration.project_id} field {restoration.field} "
                         "changed since manifest planning"
                     )
-                db.execute(
-                    f"update work_projects set {restoration.field}=?, "
-                    "updated_at=current_timestamp where id=?",
-                    (restoration.replacement, restoration.project_id),
-                )
+                update_business(db, "work_project", restoration.project_id,
+                                {restoration.field: restoration.replacement,
+                                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                 changed_fields += 1
                 changed_by_project.setdefault(restoration.project_id, []).append(
                     {
@@ -240,7 +250,7 @@ def apply_manifest(
                 archive_decisions = archive_decisions[: max(0, archive_limit)]
             for archive in archive_decisions:
                 row = db.execute(
-                    "select status from work_projects where id=?",
+                    f"select status from ({_project_sql(db)}) where id=?",
                     (archive.project_id,),
                 ).fetchone()
                 if row is None:
@@ -253,11 +263,9 @@ def apply_manifest(
                     raise RuntimeError(
                         f"project {archive.project_id} status changed since manifest planning"
                     )
-                db.execute(
-                    "update work_projects set status='archived', "
-                    "updated_at=current_timestamp where id=?",
-                    (archive.project_id,),
-                )
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_business(db, "work_project", archive.project_id,
+                                {"status": "archived", "updated_at": timestamp})
                 archived_projects += 1
                 changed_by_project.setdefault(archive.project_id, []).append(
                     {
@@ -268,21 +276,15 @@ def apply_manifest(
                 )
 
             for project_id, changes in changed_by_project.items():
-                db.execute(
-                    """
-                    insert into work_updates(
-                        project_id, source_type, source_ref, summary,
-                        changes_json, merge_reason, confidence
-                    ) values(?, 'repair_task_projects', ?, ?, ?, ?, 1.0)
-                    """,
-                    (
-                        project_id,
-                        f"manifest:{manifest.manifest_id}",
-                        "Restored or archived by reviewed task-project repair manifest.",
-                        _canonical_json({"changes": changes}),
-                        "auditable_repair",
-                    ),
-                )
+                insert_sync_action(db, "work_updates", {
+                    "project_id": project_id,
+                    "source_type": "repair_task_projects",
+                    "source_ref": f"manifest:{manifest.manifest_id}",
+                    "summary": "Restored or archived by reviewed task-project repair manifest.",
+                    "changes_json": _canonical_json({"changes": changes}),
+                    "merge_reason": "auditable_repair",
+                    "confidence": 1.0,
+                })
             db.commit()
         except Exception:
             db.rollback()
@@ -355,15 +357,15 @@ def _archive_candidates(
         if str(project["status"]) not in {"active", "waiting"}:
             continue
         if db.execute(
-            "select 1 from work_todos where project_id=? limit 1", (project_id,)
+            f"select 1 from ({_todo_sql(db)}) where project_id=? limit 1", (project_id,)
         ).fetchone():
             continue
         if db.execute(
-            "select 1 from follow_up_drafts where project_id=? limit 1", (project_id,)
+            f"select 1 from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where project_id=? limit 1", (project_id,)
         ).fetchone():
             continue
         updates = db.execute(
-            "select source_type, source_ref from work_updates "
+            f"select source_type, source_ref from ({SYNC_ACTION_PROJECTIONS['work_updates']}) "
             "where project_id=? and source_type!='repair_task_projects' order by id",
             (project_id,),
         ).fetchall()
@@ -443,18 +445,18 @@ def _database_fingerprint(db: sqlite3.Connection) -> str:
     schema_version = db.execute("pragma user_version").fetchone()[0]
     projects = [
         [int(row["id"]), str(row["created_at"])]
-        for row in db.execute("select id, created_at from work_projects order by id")
+        for row in db.execute(f"select id, created_at from ({_project_sql(db)}) order by id")
     ]
     related_state = {
-        "todos": db.execute("select count(*), coalesce(max(id), 0) from work_todos").fetchone(),
-        "follow_ups": db.execute(
-            "select count(*), coalesce(max(id), 0) from follow_up_drafts"
+        "todos": db.execute(f"select count(*), coalesce(max(id), 0) from ({_todo_sql(db)})").fetchone(),
+            "follow_ups": db.execute(
+            f"select count(*), coalesce(max(id), 0) from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})"
         ).fetchone(),
         "source_inputs": db.execute(
             f"select count(*), coalesce(max(id), 0) from ({WORK_SUMMARY_INPUT_SQL})"
         ).fetchone(),
         "business_updates": db.execute(
-            "select count(*), coalesce(max(id), 0) from work_updates "
+            f"select count(*), coalesce(max(id), 0) from ({SYNC_ACTION_PROJECTIONS['work_updates']}) "
             "where source_type!='repair_task_projects'"
         ).fetchone(),
     }

@@ -1,0 +1,580 @@
+# Email Actions Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task by task. Steps use checkboxes for tracking. This document authorizes no additional agents, runtime release, provider operation or production migration.
+
+**Goal:** Move thirteen existing Email action families and all 144 source fields into finite `actions` records, preserving business results, legal source values, public identities, source row locators, native constraints and current behavior.
+
+**Architecture:** Extend the current sixteen-type actions schema by thirteen explicit Email types. Nine nullable TEXT-primary-key types retain source SQLite ROWID in `legacy_key` and their original public key exactly once in the finite payload; attempts/steps retain their public AUTOINCREMENT namespaces; effects/retry retain original composite identities. Native typed composite foreign keys reference generated original public keys, following the existing postfix pattern, while the classification FK still references the existing Email classification table.
+
+**Tech Stack:** Python, SQLite, finite action projections and writes, paired Store/Email schema publication, focused pytest, Console History/Attention, offline production-copy and native CLI acceptance with provider substitutes.
+
+---
+
+## Status, source and authorization boundary
+
+This is a docs-only implementation plan, not target code or migration acceptance. Its preparation checkout is `6dfb439a` on `codex/database-redesign-email-actions-20261014`. Phase5E PR82 CI/publication is still pending when this plan is written: candidate Store19 does not establish production Store19; production remains Store18/Email51. The full objective remains ten core tables plus the migration ledger, rather than completion at 29 action types. No retention policy, source-body retirement, SMTP activation, audit/authorization addition or new periodic work belongs to this unit.
+
+The approved structure is `docs/superpowers/specs/2026-10-11-database-redesign-design.md`. Source contracts are the two frozen 2026-10-13 Email action JSON/map pairs: nine tables/103 fields and four children/41 fields. Their measured actual source was Store16/Email51 at `d7397203`; those are historical observations, never the publication predecessor. The accompanying `2026-10-14-database-redesign-email-actions-field-map.csv` independently names all 144 actual source columns and their exact target path. No field is retired in this plan.
+
+Constructor/caller integration, release/version selection and migration activation start only after E is normally published and root captures the actual immediate predecessor commit, Store/Email markers, literal actions/Email declarations, generated columns, FKs, indexes, triggers and native sequence metadata. The unselected pure storage unit Task3A below may be developed against the exact reviewed E sixteen-type candidate plus frozen thirteen-table sources before publication; its synthetic/candidate-prepared test databases are never called an actual published predecessor or production migration acceptance. Only after actual E publication, record the verified immediate published predecessor values in a new `docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json` and source map; candidate and synthetic preparation values never populate that artifact. Refuse a changed declaration outside the enumerated source variants before mutation. Do not assign a target Store/Email version until that binding exists. A numeric release name is deliberately absent here; assigning one now would falsely reserve an unpublished predecessor.
+
+Task2's opt-in storage unit and Task3A's unselected pure storage unit may proceed
+independently against the frozen thirteen
+source declarations and the reviewed E candidate's exact sixteen-type manifest
+while remote E CI runs. Its default remains disabled, and no Store/Email
+initializer, automatic migration route, release selector or marker is changed by
+those units. Standalone pure migration functions and explicit test-only invocation
+are allowed in Task3A; no constructor or runtime caller selects them. Integrate
+reviewed E increments first; preserve all preceding manifests and compare the
+actual published source again in Task1 before actual-source migration acceptance,
+constructor/caller/release integration or activation. This scheduling distinction does not mark the
+published-source binding complete or allow candidate data to masquerade as
+production evidence.
+
+## File responsibilities and ownership
+
+All repository paths below are relative to this plan's worktree root, `/Users/derek/.codex/worktrees/database-redesign-email-actions/ceo-agent-service`.
+
+| File | Responsibility during implementation |
+|---|---|
+| `app/action_storage.py` | Opt-in thirteen Email types, finite source-value codec reuse, explicit generated fields, native keys/FKs/checks/indexes, source-rowid/AUTOINCREMENT handling, Email projections and confined insert/update/delete helpers; older manifests remain fixed |
+| New `app/action_email_definitions.py` | Confined thirteen-kind metadata, generated SQL declarations and source projections for Task2A; the shared factory delegates only when Email opt-in is explicitly enabled |
+| New `app/action_email_storage.py` | Published-source capture, thirteen-family forward/current-fact inverse, original row locator and sequence restoration, external dependency translation; no caller or provider execution |
+| New `app/action_email_schema_release.py`; `app/store_schema_release.py`; `app/email_schema_release.py`; `app/deploy_maintenance.py`; exact existing publication selectors | Paired Store/Email source/target/inverse selection and atomic markers; bind actual E successor rather than guessed version numbers |
+| New `app/email_classification_schema.py` | Neutral single canonical current classification-parent DDL factory, with no Store/Email imports or constructor calls; used by both fresh constructors |
+| `app/store.py` | Fresh/current actions construction, History source detection/query and source ID preservation; no migration of classifications/messages/accounts into another core table in this unit |
+| `app/email_store.py` | Fresh schema and old-schema initialization dispatch; finite thirteen-family reads/writes; durable validation and exact external trigger checks; retain public method signatures/returns |
+| `app/email_worker.py`, `app/email_action_reconcile.py`, `app/email_unsubscribe_direct.py`, `app/email_unsubscribe.py`, `app/email_unsubscribe_audit.py`, `app/email_reply_delivery.py`, `app/email_task_adapter.py`, `app/email_task_producer.py`, `app/email_pipeline.py`, `app/email_context_source.py` | Only direct SQL/physical-presence assumptions and existing helper consumers; do not activate dormant delivery or change the decision/retry/recovery lifecycle |
+| `app/audit_web.py`, `app/web_api/email.py`, `app/web_api/attempts.py`, `app/cli.py`, `app/deploy_maintenance.py`, `app/daily_report_facts.py`, `app/history_types.py` | Existing observability, History/Attention, feedback, recovery/retry CLI and release readiness consumers |
+| New `tests/test_email_action_storage.py`, `tests/test_email_action_migration.py`, `tests/test_email_action_schema_release.py`, `tests/test_email_action_callers.py`, `tests/test_email_action_copy_proof.py` | Source-versus-target values/types/constraints, forward/inverse/current facts, publication failure stages, callers and copy harness |
+| Existing `tests/test_email_action_source.py`; new `tests/test_email_action_children_source.py` | Independent native source-only oracles. Another agent owns current source-oracle work; do not replace source expectations with target behavior |
+| New `scripts/validate_action_email_copy.py`, new `evals/database_redesign/email_actions_copy.v1.json` and `email_actions_native.v1.json` | Reproducible offline latest-copy/old-code/current-fact evidence and actual native Consumer/Audit with in-memory provider substitutes; no raw private rows in reports |
+| `docs/architecture.md`, `docs/runtime-mechanism.md`, new `docs/database-redesign-email-actions-validation.md`, redesign program status | Same-commit behavior documentation and precise evidence boundaries |
+
+The plan/map author owns only this plan, the CSV and their claim row. No current runtime/test/validation file is edited by the planning task.
+
+## Concrete finite representation
+
+### Record identities and source row locators
+
+The following nine record types use `legacy_key = canonical signed decimal source ROWID`: `email_action_plans`, `email_actions`, `email_unsubscribe_cancellations`, `email_unsubscribe_claims`, `email_unsubscribe_continuations`, `email_unsubscribe_receipts`, `email_feedback_requests`, `email_reply_dispatch_claims`, `email_reply_receipts`. Zero and negative source ROWIDs are legal; do not add positivity checks. Their original named public PK is retained once at `payload_json.$.<original_column>`, including explicit JSON null. An original missing TEXT PK insert means SQL NULL, not a generated public business identity. `actions.id` remains the separate globally allocated physical integer.
+
+`email_action_attempts.id` and `email_unsubscribe_steps.id` use canonical decimal `legacy_key` and their own existing AUTOINCREMENT watermarks. The effects `legacy_key` is a canonical JSON array of original `(action_identity,effect_digest)`; retry uses `(action_id,attempt_number)`. Their PK components occur only in that array, not again in payload. Components use the confined SQLite scalar codec when required. Do not reuse postfix's strict two-TEXT-component key CHECK: source TEXT affinity permits BLOB PK components; array shape, component decoding, affinity and original component constraints are explicit for each of these two types. No extra source/public ID, status flag or identity table is introduced.
+
+Original source rowid is not a fifteenth business field: it is SQLite's existing physical locator carried by the approved structural legacy key. Source composite tables also have implicit rowid, but no current business/UI reader depends on it; only the historical effects rebuild orders by effects.rowid at `email_store.py:4991`. Composite business identities remain their exact two original components. The inverse acceptance compares these composite identities and facts; it does not claim preservation of their otherwise unobserved implicit rowids or allocator sequence. Before accepting inverse, the genuine predecessor constructor must prove the historical effects rebuild is not rerun for its current schema; if it is rerun, verify its rowid ordering leaves the same declared effect facts and lineage, otherwise stop before publication rather than claim parity.
+
+Source forward mapping keys are `(record_type, source_rowid)` for the nine nullable types, `(record_type, source_integer_id)` for the two integer types, and `(record_type, exact_original_composite_components)` for the other two. Never use a dict keyed only by a nullable public PK: two NULL rows must not collapse. Preserve existing sixteen-type physical IDs and values through the actions rebuild.
+
+### Original values, affinities and generated projection
+
+For each CSV row, create the explicitly named `email_<original_column>` generated column using the original SQL affinity. The sole exception is numeric source `id`, whose source projection is `CAST(legacy_key AS INTEGER)`. Shared generated names may be shared only when all contributing source declarations have the same affinity; finite CASE scopes must return NULL outside their applicable Email record types. Prefixing avoids existing action column collisions. All source fields remain exactly once in payload/key storage. Inner JSON strings such as actions, parameters, account snapshots, operations, decisions and provider evidence stay original strings, not parsed/re-serialized business objects.
+
+Reuse the existing `_encoded_sqlite_value`, `_reply_value_check` and generated decoding expressions as confined scalar primitives for these thirteen types. Rename a primitive only if existing manifests remain byte-identical; a small Email wrapper is sufficient. TEXT affinity legally preserves BLOBs; INTEGER affinity may legally retain nonintegral REAL or nonnumeric TEXT/BLOB when original CHECK/FK permits it. Native source affinity and checks are the authority, not application Pydantic validation. The source oracle and target must agree on value and `typeof`, including embedded NUL, BLOB, SQL NULL and finite/nonfinite numeric outcomes. A strict JSON `text`/`integer` check from `_payload_check` cannot be copied as the Email legal-state contract.
+
+The decoding expression is finite, with the current E representation:
+
+```sql
+CASE WHEN json_type(payload_json,'$.action_identity')='object'
+ THEN CASE json_extract(payload_json,'$.action_identity.t')
+  WHEN 'blob' THEN unhex(json_extract(payload_json,'$.action_identity.v'))
+  WHEN 'inf' THEN 9e999 WHEN '-inf' THEN -9e999 END
+ ELSE json_extract(payload_json,'$.action_identity') END
+```
+
+Declare the generated source column TEXT so native affinity applies. Every named payload key must be present, including explicit NULL where the old column is nullable. Reject extra keys with the finite per-type key-set CHECK, not a generic arbitrary payload. Apply each literal frozen source CHECK/default/NOT NULL to decoded source-affinity values, with SQLite's original three-valued CHECK behavior; do not wrap nullable CHECK results in `coalesce(...,0)`. Required keys and allowed scalar codec shapes are distinct from source column NULL constraints.
+
+### Typed native public-key foreign keys
+
+Choose direct native composite public-key FKs, rather than converting these original opaque relationships to physical integer IDs plus new key-rename triggers. Existing postfix already demonstrates this pattern in `action_storage.py:338`. Keep `email_public_key TEXT GENERATED ALWAYS AS (...)` selecting the original PK generated column for exactly the nine nullable types, NULL elsewhere. Create an unconditional unique index `(record_type,email_public_key)`; NULLs remain distinct, and this exact nonpartial index can serve as an FK parent.
+
+Six explicit child reference families are sufficient:
+
+| Generated source reference | Generated parent record_type | Original callers |
+|---|---|---|
+| `email_action_plan_id` | `email_action_plans` | operations, unsubscribe claims/receipts, reply claims/receipts |
+| `email_expected_current_action_plan_id` | `email_action_plans` | feedback; nullable means initial confirmation |
+| `email_resulting_action_plan_id` | `email_action_plans` | feedback result |
+| `email_action_id` | `email_actions` | attempts and direct retry |
+| `email_action_identity` | `email_unsubscribe_claims` | effects, continuations, steps |
+| `email_classification_id` | existing classification INTEGER endpoint | plans, operations, unsubscribe claims/receipts, feedback, reply claims/receipts |
+
+The corresponding generated discriminator names are `email_plan_parent_type`, `email_prior_plan_parent_type`, `email_result_plan_parent_type`, `email_operation_parent_type`, `email_claim_parent_type`. Their CASE expressions are exact finite child-kind membership, not a user-controlled relationship string. The last row remains a simple direct FK to `email_classifications(id)`; it is not an actions.id or future emails.id mapping.
+
+For example, the plan relation is exactly:
+
+```sql
+FOREIGN KEY(email_plan_parent_type,email_action_plan_id)
+ REFERENCES actions(record_type,email_public_key) ON UPDATE NO ACTION ON DELETE RESTRICT
+```
+
+All source FKs are immediate, NOT DEFERRABLE. Compare native source and target extended error codes, not an assumed common subclass: NO ACTION key rename and RESTRICT deletion can report different native constraint codes even with the same human-readable message. Preserve that timing, original source affinity and BINARY collation. Child NULL association skips native FK checking exactly as source; a non-NULL child can never select a NULL parent public key. Keep the child's original scalar once, rather than reconstructing it from a possibly changed physical parent. This also preserves INSERT OR IGNORE/CHECK/UNIQUE-before-FK ordering without Python parent lookup errors. No claim-to-receipt FK, account/message FK, effect/run/thread FK or new composite effect constraint is invented.
+
+### Unique and query index closure
+
+Keep `(record_type,CAST(legacy_key AS INTEGER))` unique for the nine rowid types and two integer types, excluding the two composite types from numeric public-order scope. Older integer/postfix/observer scopes remain byte-identical when Email is not enabled. For the Email-enabled schema, exclude all Email kinds from existing older-type source-PK projections and indexes wherever necessary, rather than letting composite JSON cast to zero and collide.
+
+Translate all 13 frozen table index sets explicitly. Required source uniqueness includes plan `(classification_id,action_plan_version)`, operation `(action_plan_id,action_type)`, attempt `(action_id,attempt_number)`, step `(action_identity,sequence)`, effects `(action_identity,effect_digest)`, retry `(action_id,attempt_number)`, feedback expected/result plan individually, and each reply family's outgoing Message-ID. Preserve all nine nullable original public PK uniqueness rules with `email_public_key`. Scoped source indexes retain classification/plan lookups and `(status,updated_at,action_identity/action_id)` claim/order access. Query predicates explicitly name record_type and the same partial-index scope so SQLite can use it; compare EXPLAIN and bounded VM progress with unrelated action volume as in E.
+
+History requires a separate locator projection: `CAST(legacy_key AS INTEGER) AS rowid` for direct actions; the original opaque `action_id` remains the `email_action_id` projection. Preserve `id='email-action:'||source_rowid`, `source_table='email_actions'` and `source_id=source_rowid` in `store.py:30725`. Attention's compact failed-row membership currently uses rowid (`audit_web.py:3651`) and must use that source locator, not opaque action_id or physical actions.id. Do not claim target API equivalence until the caller tests and copy readback verify it.
+
+### Minimal helper changes
+
+Add an explicit opt-in `include_email` branch in `_action_definitions`/schema factories after the E branch. Export finite `EMAIL_ACTION_PROJECTIONS`, with each projection listing original columns in captured actual/fresh order; optional `email_action_projection(kind, include_rowid=True)` includes the source locator only for the nine supported rowid kinds. Preserve the unsubscribe-claim actual/fresh physical column-order variants explicitly.
+
+Add confined Email helpers next to the E helpers, with these exact interfaces:
+
+```python
+_EMAIL_ROWID_UNSET = object()
+
+insert_email_action(db, kind, values, *, source_rowid=None, ignore=False)
+update_email_action(db, kind, source_rowid, values, *, new_source_rowid=_EMAIL_ROWID_UNSET)
+delete_email_action(db, kind, source_rowid)
+```
+
+`source_rowid`/`new_source_rowid` are structural arguments for the nine rowid kinds. The private Python sentinel distinguishes omitted rowid assignment from an explicit SQL NULL update; it is not a stored flag or business field. Integer/composite kinds continue the appropriate existing identity-shaped helper paths, extended only for their two finite new kind sets. Public DAO methods keep their existing input identities; they select the projected source locator before a rowid helper mutation, within the same existing transaction. Public-key assignments update the original named payload field; rowid assignments update only legacy_key. Multi-row source writes select all matching locators under the caller's writer transaction, preserving statement atomicity through a savepoint when multiple target writes are required. Native FK constraints remain the final authority; do not pre-resolve/reject absent parents in Python.
+
+Reuse the ordinary source-rowid allocator logic at `action_storage.py:928-935`: empty namespace starts at 1; otherwise MAX+1, including negative/zero maxima; deleting the largest permits reuse; at signed max, use native in-memory INTEGER PRIMARY KEY allocator populated with only that record type's existing rowids. A failed/ignored ordinary insert advances no logical namespace watermark. No sequence row is created for these nine. Explicit rowid assignment and update use `_native_integer_primary_key`, including update=True semantics; new NULL rowid UPDATE must raise the native datatype mismatch rather than auto-allocate. Include all ordinary auto-rowid allocations in the existing writer-lock acquisition predicate before reading MAX. Apply that lock to autocommit and deferred connections as E does; no new lease or policy layer.
+
+Attempts/steps extend existing native AUTOINCREMENT sequence strategy with two scoped sequence names, including explicit IDs, ignored high IDs, delete highwater, max exhaustion and transaction behavior. Effects/retry extend finite composite identity handling; retain retry's original immutable insert/update/delete trigger behavior. `ActionWriteResult.lastrowid` for successful nine-kind insertion represents original source rowid; native SQLite's ignored-insert `last_insert_rowid()` versus the helper's existing `None` return is not assumed equal. Verify actual callers do not consume a different return before changing their write path; API methods currently do not use these nine cursors' lastrowid.
+
+## Task 1: Bind the actual predecessor and complete the source-only oracle
+
+**Files:** published-source JSON/map; source-only tests owned by the source-oracle agent; `docs/database-redesign-email-actions-source-validation.md`.
+
+- [x] After E deployment, read actual production commit/markers and schema/aggregate metadata with read-only URI and one transaction. Compare all thirteen declarations, own/external objects, old sixteen actions manifest and both claim physical-order variants to frozen source. No business row body or credentials enter artifacts.
+- [x] Independently validate source-only cases for all nine NULL PKs, source rowid zero/negative/deleted-high/ignored insert/max allocation, public key/ROWID UPDATE, BLOB keys, native FK immediate timing, duplicate and OR REPLACE behavior, 13 external blockers, 2 count triggers and 3 retry immutable triggers. Include a NULL prior feedback plan independently of its non-NULL feedback PK.
+- [x] Run `pytest -q tests/test_email_action_source.py tests/test_email_action_children_source.py`; expected all native source cases pass, with only documented opposite-variant skips. These are source evidence, never target evidence. Commit source evidence independently of target code.
+
+**Task1 accepted locally at `467b4dc2` (2026-10-14):** sequential independent
+SPEC then QUALITY passed actual published `eb797e6b` Store19/Email51 binding,
+exact thirteen-table/144-field metadata and complete sixteen-type source action
+manifest. Ordinary-rowid ignored-MAX source coverage was repaired after SPEC;
+70 scoped source cases pass independently. This is source evidence only.
+Task3B latest-copy, genuine published-old-code cold read/write and re-forward
+remain mandatory before Task4 or target version allocation.
+
+## Task 2: Implement finite storage and native constraint parity
+
+**Task2A accepted locally at `7adf3ea8` (2026-10-14):** sequential independent SPEC and QUALITY passed the finite declarations,144-field mapping, source codec/native constraints and projections. Both generated-column ownership and unused physical-reference gaps were corrected with regressions. All six default-disabled manifests remain byte-identical. Task2B writers/allocators were separately accepted at `0f1a0b5a` after sequential independent SPEC and QUALITY. Migration, constructors and publication remain pending. Later normal merge `f249e9dd` preserves E/main increments without changing this storage unit.
+
+**Files:** `app/action_storage.py`; new `tests/test_email_action_storage.py`; runtime storage documentation only when implemented.
+
+Execute this task in two reviewed units: **2A** finite declarations, native
+constraints, codec/projections and source comparison; then **2B** the mutation
+helpers, ordinary-rowid and AUTOINCREMENT allocation/update semantics. The
+finite declarations live in `app/action_email_definitions.py` to keep the
+shared module focused. Accepting 2A does not establish writer, allocator,
+constructor, migration or publication correctness. Both units leave the
+default Email opt-in disabled and preserve prior manifests.
+
+- [x] Write failing target tests using both frozen variants. Build native source tables directly from captured SQL, with minimal classification/account/message parent stubs for external trigger tests. The target fixture creates the same parent rows and an opt-in Email actions schema. Compare every field in CSV order, value and `typeof`, not selected business samples.
+- [x] Use these complete source examples as mandatory comparisons:
+
+```python
+def insert_plan(db, public_key, version):
+    db.execute("""INSERT INTO email_action_plans
+        (action_plan_id,action_plan_version,classification_id,account_id,category,
+         classification_source,confidence,model_id,config_version,actions_json,
+         action_parameters_json,created_at)
+        VALUES(?,?,11,'account','category','model',0.5,'model','config','[]','{}','time')""",
+        (public_key, version))
+
+def test_source_two_null_public_plan_ids(source_db):
+    insert_plan(source_db, None, 1)
+    insert_plan(source_db, None, 2)
+    assert source_db.execute("SELECT count(*) FROM email_action_plans WHERE action_plan_id IS NULL").fetchone()[0] == 2
+    assert source_db.execute("SELECT count(*) FROM email_action_plans WHERE action_plan_id=?", (None,)).fetchone()[0] == 0
+
+def test_source_rowid_and_public_key_are_independent(source_db):
+    insert_plan(source_db, 'plan', 1)
+    source_db.execute("UPDATE email_action_plans SET rowid=-4 WHERE action_plan_id='plan'")
+    source_db.execute("UPDATE email_action_plans SET action_plan_id=NULL WHERE rowid=-4")
+    assert source_db.execute("SELECT rowid,action_plan_id FROM email_action_plans").fetchone() == (-4, None)
+    insert_plan(source_db, 'second', 2)
+    assert source_db.execute("SELECT rowid FROM email_action_plans WHERE action_plan_id='second'").fetchone()[0] == -3
+```
+
+Target counterparts call the interfaces defined above with the same values and assert projected rowid/public key pairs. Run RED `pytest -q tests/test_email_action_storage.py`; expected missing Email opt-in/helper failure, not changed source oracle output.
+
+- [x] Implement the finite schema/projections/helpers exactly described above. Encode and decode all 144 source columns through the CSV; preserve original NOT NULL/default/CHECK/UNIQUE behavior. For composite fields test BLOB/text distinctions and source affinity before indexing. Keep six/nine/twelve/fourteen/sixteen schema SQL/manifests byte-identical when Email opt-in is false.
+- [x] Exercise public key NULL→value/value→NULL, duplicate non-NULL keys, NULL equality/IS NULL, signed explicit rowid and rowid UPDATE, referenced public-key UPDATE/DELETE failures, unreferenced rename success, OR IGNORE invalid CHECK versus missing parent, OR REPLACE referenced parent restriction, native immediate transaction boundaries and unrelated records with colliding numeric IDs.
+- [x] Run `pytest -q tests/test_email_action_storage.py tests/test_action_storage.py tests/test_action_receipt_storage.py tests/test_action_postfix_storage.py tests/test_reply_attempt_action_storage.py`; expected all selected cases pass and prior manifests match unchanged. Commit storage and its focused tests/docs only.
+
+## Task 3: Forward/current-fact inverse and exact dependency closure
+
+**Accepted offline, 2026-10-14:** Task3A pure migration/inverse was previously
+accepted separately. Task3B executed code `e9314a50` and evidence `b0a7e904`
+now passed sequential independent SPEC then QUALITY. The final actual source
+is published `2773d6f4`, with historical schema binding `eb797e6b`. Actual
+121-to-108-table conversion, both separate fresh cases, current-fact inverse,
+genuine strict old public read/write and re-forward are accepted at this
+bounded level. All earlier narrow runs remain unaccepted as final proof.
+Task4 constructors, paired markers/callers and production activation remain
+unimplemented; Task6 integrated/native/CI/live gates remain separate.
+
+
+Execute this in two reviewed units. **3A** implements only unselected pure
+capture/forward/current-fact inverse functions and finite dependency translation,
+with tests using synthetic source DDL or explicitly candidate-prepared copies.
+It may proceed while E publication waits because the default constructors,
+release selectors, source/target markers and caller paths are unchanged. Its
+source preflight must match the complete canonical reviewed E sixteen-type
+manifest (both established global variants) and the frozen thirteen source
+families/objects; changed or extra dependencies refuse before mutation. It
+must never weaken validation, load a guessed source variant, write a schema
+marker, import/run a provider, or create a current-constructor activation path.
+No target Store/Email version or published-source artifact is assigned here.
+
+**3B** remains gated on the actual E publication and Task1 binding: recheck the
+complete actual predecessor, then run latest-copy current-fact conversion,
+actual archived-old-code cold read/write and re-forward, refreshing anything
+that differs. Candidate-only old-code or candidate-prepared-copy results cannot
+satisfy that published-source gate. Task4 constructor/caller/release integration
+and any activation require both units and that real binding to pass. This is
+an implementation scheduling change, not an alternate migration or production
+publication path. Full Task3 requires both units and their independent acceptance.
+
+**Copy proof contract clarification (2026-10-14, accepted plan only):** run two
+separate cases. The SQL-boundary case preserves the two NULL-PK plans and all
+other legal SQLite edge facts through forward/current-fact inverse/re-forward;
+it does not claim those rows are valid immutable application ActionPlans.
+The application proof uses both the complete latest actual source and a separate
+fresh genuine-old-code source, creating only public-API-valid fixture facts. It
+must pass strict default old AutoReplyStore/EmailStore cold constructors and
+meaningful public read/write/re-forward with provider substitutes. Never delete,
+filter or rewrite NULL rows to convert one case into the other, skip real
+source rows, patch archived code, disable old durable-row validation, or call
+an expected constructor rejection a successful application proof. If the actual
+source contains any application-invalid state, report it and stop this gate.
+See `docs/database-redesign-email-copy-contract-boundary.md` for the reproduced
+unmigrated old-code counterexample; this changes proof composition only, not
+source/target schema, validation, retention or runtime behavior. Independent
+SPEC then QUALITY accepted6729b596+d87d88e8; this accepts proof composition,
+not Task3B implementation or execution evidence.
+
+
+**Files:** new `app/action_email_storage.py`; new `tests/test_email_action_migration.py`.
+
+- [x] Write RED tests for exact source capture, declaration mismatch, extra inbound table/view/trigger, variant mismatch, zero-row sources, colliding old/Email IDs and unsupported changed metadata. Follow `action_reply_storage.py` capture/manifest/current-fact pattern rather than a new mapper.
+- [x] Implement forward conversion inside caller-owned FK-off transaction. Capture exact source declarations/sequence metadata and original sixteen action stored rows; read nine rowid kinds with explicit rowid, numeric kinds with explicit id, composite kinds with exact keys. Allocate new physical IDs without modifying old physical IDs. Insert finite facts, replace external triggers with exact generated-column predicates, remove only the thirteen old tables, then check integrity/FK and unchanged unrelated objects before commit.
+- [x] Preserve the full external closure: 3 direct blockers on account update/delete and classification switch; 5 unsubscribe blockers on accounts, message identity/thread update/delete and classification switch; 5 reply blockers on the same endpoints. Preserve each trigger's existing changed-value predicate and processing/dispatching state. Keep the 2 direct count triggers and 3 retry immutable triggers. No new account/message FK or common receipt immutability rule.
+- [x] Implement inverse from current typed records, not original row backups. Recreate exact source declarations/objects, explicitly insert nine original rowids, preserve integer IDs and sequence progress, reconstruct composite source key fields from their finite legacy array, restore source triggers and old sixteen actions. Include facts created or updated after forward conversion; do not resurrect the original state or replay an action.
+- [x] Add a lossless SQL-boundary current-fact case with a valid synthetic empty-SMTP-ID reply receipt seeded before forward: forward, insert two NULL-PK plans on distinct rowids/versions, append an attempt/step after raising both sequence watermarks, enrich the existing receipt's empty SMTP ID, update an unsubscribe skip projection using its existing permitted behavior, add an explicit retry record, inverse and re-forward. Compare all source projections, values, storage classes, rowids and current receipts at each boundary; preserve old IDs and unrelated facts. Independently demonstrate that the unchanged genuine old constructor rejects the same NULL fixtures on an unmigrated source. That expected source rejection is not application compatibility acceptance.
+- [x] In a separate complete actual-source and fresh-source application case, seed only genuine public-API-valid fixtures. Exercise the same application-permitted receipt enrichment, attempt/step sequence continuation, unsubscribe outcome and explicit retry changes, inverse, cold open both genuine old AutoReplyStore and strict default EmailStore, perform meaningful public read/write including feedback replay and fake-result attempt completion, then re-forward. Compare every original source row and exact declared fixture deltas, source types/keys/waters and unrelated facts. Do not omit or sanitize any original actual row to obtain a valid application case. Both cases are required for Task3B; SQL equality never substitutes for strict old application proof.
+- [x] Run `pytest -q tests/test_email_action_migration.py tests/test_email_action_storage.py`; expected unsupported-source refusals before mutation and all current-fact inverse comparisons pass. Commit migration/inverse separately.
+
+## Task 4: Paired release, constructors, DAO and external triggers
+
+**Scheduling accepted:** docs-only7d239490 passed sequential independent SPEC then QUALITY; this accepts sequencing only, not4A implementation or activation.
+
+**Task4A accepted, unselected (2026-10-14):** implementation `2fead6ee` passed
+sequential independent SPEC then QUALITY. Each reviewer independently ran all53
+protocol cases; QUALITY also passed8 lifecycle/marker probes and Ruff/diff checks.
+Exact paired source capture, atomic supplied-target publication and current-fact
+inverse are accepted within this preparation scope. No default version, DAO,
+constructor or coordinator selects the protocol. Target-default subprocess and
+real coordinator lifecycle evidence remain Task4F. Reusing a completed release
+object across a distinct later publication can inverse that later same-version
+pair; this has no introduced4A call path and is recorded as a bounded lifecycle
+limitation, not a new ownership policy or guard. Full Task4 remains open.
+
+**Task4B accepted as unpublished partial integration (2026-10-14):**
+`1e54ce25` passed sequential independent SPEC then QUALITY. Each independently
+ran all13 new DAO cases against genuine2773 public methods and converted copies;
+SPEC also checked moved provider locators and the authorized receipt dependency.
+QUALITY added7 source-ROWID/CAS/rollback/conflict probes. Existing EmailStore
+public signatures remain unchanged. This accepts only the five-family DAO and
+its two authorized shared reads. The branch still requires explicitly converted
+Email29 and is not independently runnable with default Store19/Email51. C/D
+writes, E validators/seeds, F paired default activation and later gates remain
+open. No target release was allocated or production transition performed.
+
+**Task4C accepted as unpublished partial integration (2026-10-14):**
+`9ecf1c25` passed sequential independent SPEC then QUALITY. All34 current
+mutations and six-family reads, including actual lineage helper closure and
+two approved shared D receipt reads, are converted. SPEC observed2 critical
+constraint/rollback cases and3 invalid-option probes; its separate13-case
+run lacks retained final stdout and is not counted as an observed pass receipt.
+QUALITY independently passed6 distinct old-code/converted-copy scenarios with
+retained output. The actor's189-case scoped run remains separate evidence.
+No default activation is accepted; the startup-shape-dependent public preview,
+seven remaining D methods, E validators/seeds and F paired construction/release
+remain open. No real target version or production transition was selected.
+
+**Task4D accepted as unpublished partial integration (2026-10-14):**
+`2e38c20d` passed sequential independent SPEC then QUALITY. Each independently
+ran all11 new cases (57.33s and32.36s); QUALITY added native NULL identity
+recovery/second-update rollback and wrong-owner/exact-owner/replay probes.
+All17 claim/13 receipt fields, source ROWIDs, original transactions/predicates,
+JSON-text CAS and public signatures remain unchanged. This accepts only the
+seven-method DAO conversion. E/F validators, seeds and paired default activation,
+Task5 external callers and later copy/native/publication remain open.
+
+**Task4E1 accepted, unselected fresh seeds (2026-10-14):**
+`25852120` passed sequential independent SPEC (13 cases and separate genuine
+fresh51 constructor binding/complete seed parity) then QUALITY (23 cases,
+including15 parent/candidate trace/clock/transaction probes). Historical method
+AST expansion is exact; the fresh seeder has zero app callers. E2 target shape/
+durable validators remains next, with original required coverage retained and
+historical <=48 cached-plan/DDL contracts left intact. F alone selects fresh
+seeding and must reject unsupported source versions before mutation. No default
+constructor, marker or activation is accepted by this E1 preparation.
+
+**Task4E2 accepted as unpublished preparation (2026-10-14):**
+`f1778a7e` passed sequential independent SPEC (21+7 cases) then QUALITY
+(15 cases plus source-binding, read-only authorizer, metadata-corruption and
+installer-savepoint probes). Current validators close17 physical query sites,
+preserve original retained coverage/policy and accept both exact29 variants;
+source maps/capture/inverse/historical helpers remain unchanged. Public preview
+is read-only and method-specific NULL/error behavior matches genuine2773.
+F paired constructors/locking/coordinator/real markers/default activation is
+next; this partial branch is still not default-runtime-ready.
+
+**Implementation scheduling clarification (2026-10-14):** the selected
+constructor/DAO/validator/marker transition remains one paired activation and
+publication. Source inspection found hundreds of old-family references and about90 active
+DAO/validator methods; genuine old default constructors reject the pure29-kind
+conversion. A partial constructor selection therefore cannot be a passing
+intermediate release. Develop/review these bounded preparation groups first:
+
+- **4A, unselected paired-release protocol:** new action_email_schema_release
+  module and confined fault/current-fact tests only. Capture source Store19
+  value/timestamp, complete Email51 ledger, exact13/old16 declarations and FK
+  baseline in one read snapshot. The caller explicitly supplies a target pair;
+  tests use sentinel markers, not allocated published versions. Atomic DDL and
+  both marker writes use the accepted pure conversion; inverse reconstructs
+  current facts and restores the exact source timestamp/ledger, with unsupported
+  inverse refusing before commit. No old-row backup or stale DB restoration.
+  Test before-DDL/after-capture/during-conversion/after-first-marker/before-commit
+  failure rollback, current receipt backfill and native allocator advancement.
+  No current selector, constructor, constants, DAO or default action flag is
+  changed. A confined callback may exercise the protocol, but it is not a
+  genuine target-default constructor proof; the paired subprocess remains
+  deferred until final activation.
+- **B–D, exact DAO groups:** plan/direct/feedback and current-plan CAS;
+  unsubscribe lease/effect/continuation/step/terminal/cancellation; reply
+  claims/receipts. Preserve existing transaction and mutation semantics. These
+  may be logical work-in-progress commits on the unpublished integration branch;
+  do not create a second selected DAO, a compatibility router/mixin, or claim
+  independently working default runtime while the coupled migration is partial.
+- **E, target validators and seed factoring:** exact metadata/durable checks,
+  translated existing external triggers and current fresh defaults. Direct
+  History/context/Web API consumers remain Task5 where already assigned.
+- **F, final coupled activation:** exact paired coordinator and real subprocess,
+  both fresh constructor orders/current reopen, whole selected DAO/validator
+  set, target marker allocation/default29 selection, all mandatory real default
+  constructor and failure tests. Only this complete coupled unit may proceed
+  to integrated copy/native/CI/publication gates.
+
+This changes development/review sequencing only. It does not change the144
+source fields, accepted SQL/application contracts, retention, policies or the
+atomic final publication requirement. The substantive requirements below stay
+open until their full relevant checks pass; unselected4A is not Task4 completion.
+
+
+**Foundation preparation accepted, unselected:** neutral current classification
+and retained non-action DDL factories0a1929a0 passed sequential independent
+SPEC then QUALITY. Genuine2773 native49-object parity, transaction/savepoint
+rollback, passive imports and real opt-in action FK behavior are verified.
+No constructor invokes these factories, no seeds/markers are assigned, and
+all selected constructor/DAO/release work below remains open.
+
+
+**Unselected foundation prepared 2026-10-14:** `app/email_classification_schema.py`
+provides the full post-Email51 classification-parent DDL, and
+`app/email_current_schema.py` provides the retained non-action Email DDL as
+19 business tables, 10 independent indexes and 19 independent triggers. The
+empty migration ledger has a separate factory. Both factories use the caller's
+connection and transaction and create no seed rows or markers. The exact
+declarations were checked against a fresh database constructed by archived
+`2773d6f4` code; that metadata-only oracle is in
+`tests/fixtures/email_current_schema_2773.json`. The coupled F candidate now calls these factories in its fresh constructor
+branches. The checklist below remains the acceptance contract; local F evidence
+and the remaining test/consumer gates are recorded in the validation document.
+
+**Files:** new `app/action_email_schema_release.py`; existing Store/Email release selectors; `app/store.py`; `app/email_store.py`; new `tests/test_email_action_schema_release.py`, `tests/test_email_action_callers.py`.
+
+- [ ] First write a regression against `prepare_database_schema_release` at `app/store_schema_release.py:120-129`: it currently rejects simultaneous Store/Email changes. Add the exact approved source-pair to target-pair coordinator path before independently preparing either single release; preserve rejection for every other unsupported simultaneous pair. Do not leave Email51 claiming its old 13-table validator contract after removing those tables. The source capture includes `(Store marker value, updated_at)`, all Email migration ledger `(version,applied_at)` rows, source Email marker and exact declarations. `publish` commits the 29-type schema, thirteen-table/trigger transition and both target markers atomically. `rollback` restores both marker values/timestamps and the exact source Email ledger while reconstructing all current facts, original thirteen declarations/trigger sets and the previous sixteen-type actions with their native codec/allocator state.
+- [ ] Replace the release's migration callback with a confined paired initializer rather than reusing `_migrate_store` unchanged: `_migrate_store` currently launches only `AutoReplyStore` (`store_schema_release.py:35`). Add an explicit subprocess path that first runs the exact paired DDL/marker transaction and then cold initializes/verifies both `AutoReplyStore` and `EmailStore`; the two constructors must not independently publish half the pair. The deploy coordinator must select this path before either constructor can recreate source tables. Do not globally weaken the existing simultaneous-change refusal.
+- [ ] Treat constructor ordering as its own foundation subtask before target activation. Extract only the full **current** classification DDL into neutral `app/email_classification_schema.py`, with a single `create_current_email_classifications(db)` factory and no Store/Email imports. Current means the exact post-Email51 declaration from Task1; `_create_base_tables` at `email_store.py:3680` still declares retired action_plan_json and is not the canonical current factory. Call the neutral factory in fresh AutoReplyStore before actions creation, so even an older-kind action insert has its declared Email parent table. Do not create a stub, repeat the classification declaration, or call EmailStore from Store.
+- [ ] Give fresh EmailStore an explicit current non-action-schema construction path, rather than its historical 0→51 migration chain: that chain may expect action_plan_json later and cannot be combined blindly with a current classification table already present. Reuse the neutral classification factory and factor the remaining exact current non-action Email DDL without old thirteen-table creation. On EmailStore-first construction, call the genuine public AutoReplyStore once **outside** EmailStore's own schema_initialize_lock, then enter the Email initializer; avoid nested schema locks and any Store→EmailStore→Store recursion. On an existing verified predecessor, the paired release coordinator handles both schemas/markers before ordinary target initializers; old-schema source constructors remain genuine predecessor code for inverse acceptance.
+- [ ] Write explicit RED tests for both empty constructor orders, AutoReplyStore-only old-kind insert with FK checking on, EmailStore-first classification/action write, published predecessor open in both orders, current reopen and crash between paired transition stages. A shared actions FK parent is required even for generated NULL child keys; the neutral parent factory solves that exact dependency, rather than silently constructing a second full Email service inside Store. Verify actual initializer ordering and historical migration assumptions before implementation; if the fresh/current path cannot be confined to this foundation subtask, stop target activation and report the concrete constructor dependency instead of adding fallback or broad legacy cleanup.
+- [ ] Bind the actual source versions from Task1, then allocate the target Store/Email markers in this integration commit. Add exact routing in existing selectors; do not treat a phase constant, candidate commit or constructor as already published. Implement atomic paired marker/DDL transition and current-fact inverse following E's verified publication protocol.
+- [ ] RED publication tests inject failure before DDL, after old actions capture, during thirteen-family conversion, after first marker and before final commit. Compare code/schema/markers/facts to original transaction state; no marker claims success alone. Refuse inverse if unsupported current facts/declarations cannot be represented, preserving the current database intact.
+- [ ] Convert fresh construction and old migration dispatch so a fresh Store/Email pair creates one current actions schema, and an old published pair migrates exactly once. Remove now-obsolete old-table initialization/ALTER paths for migrated families from current bootstrap; historical source constructors remain genuine code in the old-code acceptance environment. Do not leave two writers or compatibility views.
+- [ ] Replace EmailStore SQL with finite projections/writes while retaining current method inputs/outputs. Cover `_persist_action_plan`, `_ensure_direct_action_rows`, `_apply_human_classification`, `append_action_plan_version`, direct claim/complete/recovery/retry, unsubscribe claim/effect/continuation/step/terminal/cancellation and reply claim/receipt functions. Retain original transaction scopes, current-plan CAS, dependency ordering, lease generation, immutable retries and exact receipt backfill. Keep account snapshots including existing credential references wherever recovery reads them; do not copy credential values.
+- [ ] Translate durable validators, required table/column/index/trigger metadata checks and startup schema acceptance alongside the actual constructor. A NULL public key remains legal at storage level even when application durable validation rejects it; target storage must not strengthen SQL based on the application validator. Account admin and message hydration preserve their existing trigger behavior, with no bypass of in-flight checks.
+- [ ] Run `pytest -q tests/test_email_action_schema_release.py tests/test_email_action_callers.py tests/test_email_store.py tests/test_email_store_startup_validation.py tests/test_email_action_plan_reference.py tests/test_email_pipeline.py tests/test_email_retry_schema_release.py tests/test_store_schema_release.py`; expect source/target/inverse factory and named caller semantics pass. Commit release/constructors/DAO and matching architecture/runtime documentation together.
+
+## Task 5: History, Attention, context and remaining callers
+
+**Files:** `app/store.py`, `app/audit_web.py`, `app/web_api/email.py`, `app/web_api/attempts.py`, bounded consumers listed above; existing History/Email tests.
+
+- [ ] RED History test inserts direct actions with identical nullable public IDs but distinct signed rowids; compare native source and target History IDs/source IDs, ordering, pagination, total counts and detail retrieval. Include mixed old/new action families and a later row update. Ensure no source_id becomes physical actions.id.
+- [ ] RED Attention test retains failed nullable-public-key direct rows through compact source-rowid selection; keep existing retry-window/status/current-plan predicates. Verify representative query plans and bounded VM steps with many unrelated action records, plus current-plan poll and due-claim indexes. Do not add speculative indexes after sufficient access is shown.
+- [ ] Convert remaining direct SQL/physical table existence checks. Actual families: worker direct claim/complete/recovery; CLI source-verified retry and audit/reconciliation read paths; unsubscribe direct and audited history; classification observability; safe context receipts; deployment readiness; daily-report counters; feedback replay and original result timestamp. Stop if exact-symbol/AST scan finds an active consumer outside the frozen list, add that concrete caller to this task and its tests.
+- [ ] Verify the three Console surfaces: History page/detail/native-link availability, Attention failed-action row and existing retry state, Email classification detail/feedback replay/receipt summaries. Existing SMTP-disabled settings and legacy task failure remain unchanged. Native source absence remains honest unavailable state, with no replay.
+- [ ] Run `pytest -q tests/test_store_history_pagination.py tests/test_email_action_attention_query_plan.py tests/test_audit_web.py tests/test_email_web_api.py tests/test_email_context_source.py tests/test_email_worker.py tests/test_email_action_reconcile.py tests/test_email_unsubscribe_direct.py tests/test_email_unsubscribe_audit.py tests/test_email_reply_delivery.py tests/test_email_task_adapter.py tests/test_email_task_producer.py`; expect all selected behavior/query checks pass with native/provider fakes and no real sends. Commit callers and same-commit behavior docs.
+
+## Task 6: Latest-copy, genuine old code and native fake-provider acceptance
+
+**Files:** new `scripts/validate_action_email_copy.py`; new `tests/test_email_action_copy_proof.py`; existing `scripts/validate_native_copy_lifecycle.py` only a confined Email case extension; new evidence JSON and validation document.
+
+- [x] Keep SQL-boundary and strict application-valid cases explicitly separate as required by Task3B. Aggregate evidence must identify which case preserves NULL-PK plans and which executes genuine old default constructors/public writes. Preserve all actual rows; no deletion/filtering, archived-code patch or validation bypass is allowed to make either case pass.
+- [x] Build the copy harness with the existing reply-copy pattern and these flags: `--source` (owned immutable SQLite backup), `--source-ref` (exact published predecessor), `--evidence` (aggregate-only report). It must inspect source markers/ref, compare all 144 fields and SQL storage classes/keys/sequence watermarks, unrelated-table fingerprints/counts, original sixteen actions, current queue/History/Attention counters and all 13 blocker states. Never emit row bodies/digests, credentials or trajectory content in the evidence artifact.
+- [x] Use SQLite backup API for the latest production copy in a task-owned temporary directory; quick_check/integrity/FK first. Keep only the newest verified backup for this workflow. Run current default constructors on the copy; record actual marker transition and source/table-count change. A 13-table disappearance with actions still present is expected; it does not prove full ten-table completion or a proportional size gain.
+- [x] Run exact old published code in a fresh process on inverse-derived current facts, including fresh source constructor and meaningful read/write: classification feedback replay, direct action attempt completion with a fake result, native receipt enrichment, sequence continuation, History source IDs and failed action visibility. Then current-code re-forward and compare current facts again. Merely importing old classes is insufficient.
+- [x] Run `pytest -q tests/test_email_action_copy_proof.py`; expected all copied synthetic failure/current-fact/inverse/old-process cases pass. Then run the new copy harness against the owned backup and exact source ref selected in Task1. The evidence result must say `passed` only after each read/type/rowid/sequence comparison and cold old-process test succeeds.
+- [x] Add confined native cases to the existing lifecycle harness: actual Consumer/Audit produce a persisted accepted action on the migrated copy, provider writes are replaced in memory, resulting business receipt/context/History readback is verified. Run both approval and revision cases; no live SMTP/IMAP/browser/DingTalk mutation is allowed. The ordinary deterministic Email source/claim/receipt chain is tested with its existing native provider substitutes; this does not activate auto reply.
+- [x] Create the owned directory with `EMAIL_ACTION_NATIVE_ROOT=$(mktemp -d /tmp/ceo-native-copy.XXXXXX)` and populate its source backup/metadata through the caller's verified SQLite backup step. This is the existing harness's required root prefix. Run `python -m scripts.validate_native_copy_lifecycle --owned-temp-root "$EMAIL_ACTION_NATIVE_ROOT" --case approve` and the same command with `--case revision` after the harness's explicit Email setup is added. The named variable must resolve to the verified task-owned temporary directory. Expect actual native CLI completion, fake-provider receipts, unchanged original rows and no real external effects. Record scripted tests, actual native model evidence and untested live provider outcomes separately. Clean owned temporary copies/native outputs after concise accepted evidence is saved. Commit harness/evidence independently.
+
+## Task 7: CI, publication and live readback
+
+**Files:** current validation/program status; versioned release evidence only after runtime code has passed all prior gates.
+
+- [ ] Run focused checks after the last code change: `git diff --check`, scoped Ruff on changed Python files and the exact selected pytest files from Tasks2–6. Preserve unrelated dirty changes and stage only owned hunks. Do not run serial full pytest while service is live; if full CI is required, use repository CI or the approved parallel `pytest -q -n 6` outside restart windows.
+- [ ] Integrate the latest remote main with safe fast-forward/merge, preserve unrelated increments, rebind the immediate predecessor and changed-module evidence if needed. Re-run only checks justified by the increment. Obtain independent specification/quality review through the existing review mechanism; no extra agents are authorized by this plan alone.
+- [ ] Push the complete commits, create and attach the review PR, wait for actual CI completion, merge only within existing authorization, then use `python -m app.deploy` from development. The paired publication path must back up the DB and roll code/schema together before external work resumes; after external work resumes, no stale DB rollback can erase new receipts. Do not hand-kill/kickstart or edit/test production checkout.
+- [ ] Read new PID, healthz, queue/claim state, Attention, History and Email API details, plus markers, thirteen-table retirement and current typed counts using read-only schema/aggregate queries. Verify no new unexpected failed/stuck work or duplicate business receipt. No settings-secret fields are printed. Save exact production commit/marker/CI/deploy/readback boundaries in the validation doc before marking publication complete.
+- [ ] Do not VACUUM or add retention cleanup in this unit. Report actual DB/WAL/index measurements without claiming table reduction is proportional space recovery. No fixed retention deadline is introduced.
+
+## Optional separately reviewable dormant SMTP retirement
+
+Default implementation includes both reply claim and reply receipt record types and their exact constraints, snapshots and existing disabled behavior. Current static evidence finds no app construction of `EmailReplyDelivery`, no app caller to `accepted_email_reply_effect`, and no app caller to terminated-owner reply recovery; tests exercise them. Configuration, authorization and worker already reject auto reply. That evidence supports a later scoped removal proposal for dormant execution code, not automatic field/table retirement during migration.
+
+Any retirement must preserve real Sent evidence/business receipts and active `email_action_identity` imports used by unsubscribe. Do not delete a whole module because its delivery class is uncalled; do not delete zero-row supported record types by inference. Approval, code/tests/docs and commit for optional removal are separate from storage migration. This plan adds no new rejection, audit, safety gate or activation policy.
+
+## Acceptance and known risks
+
+Success requires source-equivalent legal SQL values/NULLs/affinity/constraints, exact original public identities and nine ROWID namespaces, preserved 2 AUTOINCREMENT sequences, current business receipts and feedback lineage, complete typed FK/13 external trigger closure, unchanged old sixteen action facts, genuine current-fact inverse and old AutoReplyStore and EmailStore cold read/write, bounded list/claim access, actual native fake-provider acceptance, successful CI/normal deployment and honest live readback. Full redesign remains incomplete until the remaining core-table consolidation finishes.
+
+Hard implementation risks are explicit: generated TEXT/BLOB/INTEGER affinity and BINARY uniqueness must match source; composite FK references require the unconditional parent unique index; original immediate/RESTRICT timing must survive FK-off migration and normal FK-on execution; MAX+1 must occur under the writer lock; source ROWID updates must not mutate original opaque PKs; OR IGNORE must not run Python parent validation ahead of native source constraints; old partial index scopes must not accidentally index Email composite keys; constructor/validator and all external triggers must switch together. None is verified by this plan or by the frozen production zero-NULL counts.
+
+The source snapshots contain 382 deliberately NULL feedback prior-plan associations; their NULL allowance and replay semantics are mandatory. The nine public PKs have normal creation validation/generated identities, but SQL-legal nullable states remain preserved by this storage plan. No incidental constraint cleanup is proposed.
+
+## Planning acceptance
+
+Independent sequential SPEC and QUALITY accepted the plan and complete field
+map at `6a273df766e900bd7792bfe204e2ec346c7f6cb8`. Both compared the 144 unique
+source fields against the frozen inventories and inspected the actual
+constructor and paired-publication dependencies. The independent source-only
+oracle at `cf47ee0e` also passed SPEC/QUALITY and 36 focused cases. This accepts
+the implementation direction within the already approved redesign; no target
+schema or migration has been implemented, no version allocated, and no
+production transition follows from planning acceptance. Task1 still requires
+the actually published Phase5E predecessor.
+
+Sequential SPEC/QUALITY also accepted the scheduling clarification allowing
+only disabled opt-in Task2 storage preparation before that publication.
+Task1 published-source binding, Task3B actual-source migration acceptance,
+constructor/caller integration, marker allocation and release retain their
+actual-predecessor requirements; Task3A remains unselected preparation only.
+
+
+### Reviewed Task3A scheduling amendment
+
+The docs-only sequencing change in `30aed444` and `c2db834f` passed fresh
+independent SPEC review followed by independent QUALITY review. Both verified
+that synthetic/candidate preparation cannot populate the published-source
+artifact, allocate release markers, activate constructors/callers, or replace
+Task3B actual-predecessor/current-fact inverse acceptance. No runtime changed.
+Task3A starts with a separately reviewed source-capture/refusal unit before
+forward/inverse implementation; full Task3 remains incomplete until Task3B.
+
+
+### Task4F local candidate handoff, 2026-10-14
+
+The coupled implementation now selects Store2026-10-14.1/Email52/29-kind actions
+locally, with exact19/51 coordinator-only migration, real paired child/cold opens,
+canonical parent/fresh seeds and both constructor orders. This is unpublished and
+stops for independent SPEC then QUALITY. No Task5 implementation or Tasks6/7
+acceptance/publication occurred. The whole branch remains non-deployable because
+external old-table consumers are still present.
+
+Local F validation is47 mandatory real-default cases plus the accepted DAO/E and
+known-repair regressions; the separate full pipeline/protocol/current-schema batch
+passed82. The initial120-case focused batch passed119 and exposed one E2 staging
+fixture still carrying51. That single fixture now uses a complete genuine-source
+copy through the real coordinator/child, preserving the genuine51 preview oracle
+and all readonly assertions; its independent rerun passed1. The full historical
+Email test files were not mass-adapted or claimed green. Exact old-SQL test
+navigation/classification and final command outcomes are in
+`docs/database-redesign-email-actions-validation.md` under Task4F. Those tests
+remain required follow-up before the broader Task4/Tasks5–7 gates can be closed.
+
+
+A final concrete known-current Email repair was also retained before freezing F:
+the original provider-observation important_signals_json helper remains in current
+reopen. Genuine51 versus52 reproduced its omission, then the added48th F test and
+two direct startup cases passed3 after restoring the single existing call. No
+new repair policy or broader matrix was added; exact RED/GREEN evidence is in the
+validation document.
+
+### Task4F review acceptance, 2026-10-14
+
+Sequential independent SPEC then QUALITY accepted20bebe37. SPEC independently
+passed48 F cases,16 selected protocol cases and three existing repair cases;
+QUALITY passed four focused regressions and its own cache/current-fact/BLOB/
+genuine-old-code probes. Both left the candidate clean and removed owned temps.
+The existing provider-column repair is preserved. Schema-only action validation
+adds measured cached-constructor cost (root median14.1731ms, independent QUALITY
+16.473ms); no production throughput claim or new cache layer follows.
+
+Only this coupled unit is accepted. Task5 consumers and the deferred old-SQL
+test adaptations remain required, then fresh actual-copy/native evidence and
+CI/publication. Do not close the complete Task4 named test gate or deploy this
+branch on the strength of F review alone. Task5 is the next implementation unit.
+
+### Task5A accepted;5B0 source-contract repair first, 2026-10-14
+
+SPEC and QUALITY independently accepted7dcbe227 external consumers, with13 and17
+focused cases respectively plus full genuine0441 History model/receipt/quiet
+probes. The implementation's355-case pass remains a separate receipt.5A does not
+close the complete Task4/5 test gates or authorize publication.
+
+Before broad H/T/S fixture adaptation, correct the independently demonstrated
+parent-F missing-Email-index behavior: genuine51 refuses and leaves the native
+index absent, whereas target52 shared Store repair recreates its mapped canonical
+index. Two exact native/canonical pairs and parent binding are in the validation
+document.5B0 must retain original Store repair and original Email refusal/provider
+repair behavior, with source RED/target GREEN evidence and independent reviews;
+do not turn the new repair into policy by weakening old tests. No new recovery,
+authorization, schema field or retention feature is proposed.
+
+### Task5B0 accepted, 2026-10-14
+
+Sequential fresh SPEC then QUALITY accepted4a9de752: SPEC39+10 cases; QUALITY8 cases plus independent each32 malformed-metadata/cache probes, MAIN/TEMP ownership and preserved repair paths. Exact commands, exits and cleanup are in Email validation. Parent-F auxiliary-repair defect is corrected locally. Next5B1 is only six existing current scan/plan/feedback tests with finite existing projections and unchanged business assertions. Historical native migrations/shared corruption helpers need separate scope. Remaining Task4/5 gates, latest-copy/native acceptance, CI/deploy and full10+1 consolidation remain open.
+
+2026-10-14 Task5B1 accepted8989d5d4 after fresh sequential SPEC (six cases6pass2.65s) and QUALITY (complete-file AST equivalence after reversing only imports/projections). Exactly six current scan/plan/reference tests are adapted with business assertions retained. Remaining current/history/shared fixtures and later copy/native/CI/publication gates remain open; no runtime or production change.
+
+### Current acceptance boundary after Task6, 2026-10-14
+
+Task5's named combined gate passed1,369 parent cases, including eight fixed0441
+wrappers enforcing105 genuine old-source child cases. Task6A's four actual-copy
+cases passed396.75s, including current-fact inverse, genuine published-old cold
+public writes and reforward. Task6B's real native approval/revision passed with
+two/four CLI calls and only in-memory providers; the separately deterministic
+Email context/direct receipt proof also passed. Root invoked the same committed
+`run(root, case)` entry point under caller-owned verified backup contexts; native
+CLI commands were unchanged. The corrected root example above reflects that
+existing harness contract rather than the earlier unsupported prefix.
+
+The isolated UI gate found an existing generic History query cost. The scoped
+repair0c210a7d passed sequential fresh SPEC/QUALITY,14 focused cases and independent
+258-row full-result equivalence. Actual whole-copy public reads then completed
+plain1.7845s, matching search0.9163s and no-match search1.3001s. Read-only browser
+clicks verified History/detail/Consumer-Audit/native tool I/O, Attention, mock
+Email plan/direct receipt, and existing unsubscribe detail/business links. All
+103 original ordinary baseline tables still matched; integrity checks and the
+pre-existing one FK finding were preserved. Owned UI process/tab and all working
+copies were cleaned. Exact aggregate receipts are in the two Task6 evidence JSONs
+and `docs/database-redesign-email-actions-validation.md`.
+
+This closes the local Task6 evidence boundary, not Task7 publication. Further
+current tests outside the named Task5 matrix still contain retired-table fixture
+SQL, while historical migration tests need genuine old-source binding. These
+must be classified and migrated without weakening assertions or restoring old
+physical tables, before CI/main integration/normal deployment/live readback.
+Production remains d06/Store19/Email51/121 non-internal tables; this unit's target
+is108 on the tested copy, with all FTS/shadow tables counted in both numbers.
+Full ten core tables plus one ledger remains unfinished.

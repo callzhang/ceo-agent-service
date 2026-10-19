@@ -1,0 +1,295 @@
+{
+  "observed_at_utc": "2026-10-17T17:55:03.502454+00:00",
+  "scope": "Exactly seven current documents214–220; bounded candidate session lineage then exact native source reader verification; metadata only",
+  "source_database": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+  "source_access": "mode=ro/query_only read snapshot",
+  "source_document_count_at_observation": 220,
+  "code_sha256": {
+    "app/native_trajectory.py": "a5b76d0964097d9ae996c9413f464acfd7d17e11a99489346f4a459114ae6248",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/run_storage.py": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718"
+  },
+  "prior_locator_artifact_sha256": "803f78d34564275edc1a296a076122478b2aa45069a610e6fefcc6ecb66e1d1a",
+  "native_file": {
+    "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+    "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+    "runtime_kind": "codex_cli",
+    "initial_size_bytes": 170230039,
+    "size_bytes_after_read": 170230039,
+    "observed_prefix_bytes": 170230039,
+    "prefix_sha256": "333f68fb50129e1b91be55d04daeb04a0f9bfad61a1a1ecda3f4e9d4a75d7283",
+    "prefix_sha256_after_reader_recheck": "333f68fb50129e1b91be55d04daeb04a0f9bfad61a1a1ecda3f4e9d4a75d7283",
+    "prefix_unchanged": true,
+    "lines_observed": 1064,
+    "invalid_or_partial_lines": 0,
+    "path_resolution": "One exact existing file, same session already recorded in additional25 artifact; no whole-home scan or transcript copy"
+  },
+  "lineage": [
+    {
+      "source_type": "ai_minutes",
+      "source_ref": "76327569643438383434353234375f3537323738383235325f39#todos-sha256=e28b133c6653483e36ea8c8daa14f856507dc8e2dd5469d41cc21202d8a2e6b9",
+      "completed_input_task_run_rows": [
+        {
+          "input_id": 405382,
+          "run_id": 371552,
+          "status": "completed",
+          "codex_session_id": "01a13b26-22ac-7891-9388-64b6a5a44786"
+        }
+      ]
+    },
+    {
+      "source_type": "ai_minutes",
+      "source_ref": "76327569643438353930363635345f3136353839343033325f39#todos-sha256=b616360fd3cf6c1650778e7ac4ec034b93d4e43f9e1501d62e003ea437992985",
+      "completed_input_task_run_rows": [
+        {
+          "input_id": 405383,
+          "run_id": 371562,
+          "status": "completed",
+          "codex_session_id": "01a13b26-22ac-7891-9388-64b6a5a44786"
+        }
+      ]
+    },
+    {
+      "source_type": "ai_minutes",
+      "source_ref": "76327569643438353836363137335f313131333531383337385f39#todos-sha256=d3eb8c97be3553bb00d6cf6aa1454082ec8aca3856f1d7a91b025605b3d32f7d",
+      "completed_input_task_run_rows": [
+        {
+          "input_id": 405384,
+          "run_id": 371566,
+          "status": "completed",
+          "codex_session_id": "01a13b26-22ac-7891-9388-64b6a5a44786"
+        }
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "source_document_id": 214,
+      "source_identity_key": "1677147981479ec13ab08e081ca7fb2990ff77266606c78628f31fbc8006ec9b",
+      "source_utf8_bytes": 16239,
+      "source_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0",
+      "signal_identity_checks": 1,
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 949,
+        "line_number_one_based": 950,
+        "raw_line_sha256": "e8c56cca614db459046247b8a0d8518cece0cb902941c92a21fcc1021fb7ced9",
+        "raw_line_bytes": 586471,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 276164,
+        "substring_end_character_exclusive": 284237,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 16239,
+        "decoded_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0"
+      }
+    },
+    {
+      "source_document_id": 215,
+      "source_identity_key": "76975219441a62feca87e5c8d74f9565b36e52c6c5458fedf1ed20c8539d3625",
+      "source_utf8_bytes": 16239,
+      "source_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0",
+      "signal_identity_checks": 1,
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 949,
+        "line_number_one_based": 950,
+        "raw_line_sha256": "e8c56cca614db459046247b8a0d8518cece0cb902941c92a21fcc1021fb7ced9",
+        "raw_line_bytes": 586471,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 276164,
+        "substring_end_character_exclusive": 284237,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 16239,
+        "decoded_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0"
+      }
+    },
+    {
+      "source_document_id": 216,
+      "source_identity_key": "390dc6ccdbf54e4fddb05fb54033330cfcf363bfa7d8ae5db16d48ea5248a371",
+      "source_utf8_bytes": 16239,
+      "source_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0",
+      "signal_identity_checks": 1,
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 949,
+        "line_number_one_based": 950,
+        "raw_line_sha256": "e8c56cca614db459046247b8a0d8518cece0cb902941c92a21fcc1021fb7ced9",
+        "raw_line_bytes": 586471,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 276164,
+        "substring_end_character_exclusive": 284237,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 16239,
+        "decoded_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0"
+      }
+    },
+    {
+      "source_document_id": 217,
+      "source_identity_key": "59e3877ce16c5b63697be49963035399108e12f54a3ce59cebc6f766187d471c",
+      "source_utf8_bytes": 16239,
+      "source_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0",
+      "signal_identity_checks": 1,
+      "matching_decoded_leaf_count": 5,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 949,
+        "line_number_one_based": 950,
+        "raw_line_sha256": "e8c56cca614db459046247b8a0d8518cece0cb902941c92a21fcc1021fb7ced9",
+        "raw_line_bytes": 586471,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 276164,
+        "substring_end_character_exclusive": 284237,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 16239,
+        "decoded_utf8_sha256": "8375b7e4b66c08e54c34aa090c895a384ca18530eb2ff0149a0062b01928e5b0"
+      }
+    },
+    {
+      "source_document_id": 218,
+      "source_identity_key": "2c228873663dd00426f6f2429335744916fc45a54d871bf98278acccf54d4307",
+      "source_utf8_bytes": 25357,
+      "source_utf8_sha256": "6de9eddd083fdded0905f080f03b87610778447a3c6e0ef73899e4f702819558",
+      "signal_identity_checks": 1,
+      "matching_decoded_leaf_count": 4,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 989,
+        "line_number_one_based": 990,
+        "raw_line_sha256": "913c9d886ce3823598209bc540c9d4af27ef40e73da8ffd20363ea9051cfab39",
+        "raw_line_bytes": 557204,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 255391,
+        "substring_end_character_exclusive": 267197,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 25357,
+        "decoded_utf8_sha256": "6de9eddd083fdded0905f080f03b87610778447a3c6e0ef73899e4f702819558"
+      }
+    },
+    {
+      "source_document_id": 219,
+      "source_identity_key": "f17e2483f62785fe576e10fcd2e9e9c52d35a9f2628949b5c138be94168549aa",
+      "source_utf8_bytes": 25357,
+      "source_utf8_sha256": "6de9eddd083fdded0905f080f03b87610778447a3c6e0ef73899e4f702819558",
+      "signal_identity_checks": 2,
+      "matching_decoded_leaf_count": 4,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 989,
+        "line_number_one_based": 990,
+        "raw_line_sha256": "913c9d886ce3823598209bc540c9d4af27ef40e73da8ffd20363ea9051cfab39",
+        "raw_line_bytes": 557204,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 255391,
+        "substring_end_character_exclusive": 267197,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 25357,
+        "decoded_utf8_sha256": "6de9eddd083fdded0905f080f03b87610778447a3c6e0ef73899e4f702819558"
+      }
+    },
+    {
+      "source_document_id": 220,
+      "source_identity_key": "ae6bd792ff7d0ec0b2de4ae5584c81d6d34a6542f9984d592280dad092a2e693",
+      "source_utf8_bytes": 31503,
+      "source_utf8_sha256": "c366bfff42a7e1f48ecc9a9b1345288b1490f115c0c9b5d35294d9788c2147b6",
+      "signal_identity_checks": 4,
+      "matching_decoded_leaf_count": 3,
+      "native_provenance": {
+        "runtime_kind": "codex_cli",
+        "session_uuid": "01a13b26-22ac-7891-9388-64b6a5a44786",
+        "path": "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl",
+        "line_index_zero_based": 1015,
+        "line_number_one_based": 1016,
+        "raw_line_sha256": "4c68257030739f33dbf74f2eeb766ce361d8dcf7ab9404facf4541aa8fddf681",
+        "raw_line_bytes": 578160,
+        "leaf_path": [
+          "payload",
+          "content",
+          0,
+          "text"
+        ],
+        "substring_start_character_zero_based": 262509,
+        "substring_end_character_exclusive": 276707,
+        "literal_encoding_mode": "json_string_literal_utf8",
+        "decoded_utf8_bytes": 31503,
+        "decoded_utf8_sha256": "c366bfff42a7e1f48ecc9a9b1345288b1490f115c0c9b5d35294d9788c2147b6"
+      }
+    }
+  ],
+  "aggregate": {
+    "requested": 7,
+    "exact_full_body_reader_rechecks": 7,
+    "exact_utf8_bytes": 147173,
+    "signal_identity_checks": 11,
+    "distinct_type_ref_pairs": 3
+  },
+  "elapsed_seconds": 1.632,
+  "limits": [
+    "Candidate lineage is not a fabricated runtime-attempt parent FK; exact body and complete source_document_key checks provide the content proof.",
+    "No original text/raw JSONL/DB copy is persisted; files and production DB unchanged.",
+    "No provider availability refresh, runtime reader selection or source-body retirement."
+  ],
+  "additional_fresh_reader_recheck": {
+    "source_documents": 220,
+    "prior_known55_readers_pass": 55,
+    "prior_known55_utf8_bytes": 1703120,
+    "known_explicit_file_count": 2,
+    "known_explicit_files": [
+      "/Users/derek/.claude/projects/-Users-derek-Services-ceo-agent-service/a86bb9f5-4b0e-4352-a186-c75a61bb1c48.jsonl",
+      "/Users/derek/.codex/sessions/2026/10/14/rollout-2026-10-14T09-01-57-01a13b26-22ac-7891-9388-64b6a5a44786.jsonl"
+    ],
+    "recorded_metadata_sha256": {
+      "2026-10-15-database-redesign-business-native-source-recovery.json": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+      "2026-10-17-business-native-source-additional-recovery.json": "803f78d34564275edc1a296a076122478b2aa45069a610e6fefcc6ecb66e1d1a"
+    },
+    "new7_plus_old55_current_native_reader_count": 62,
+    "new7_plus_old55_current_native_reader_bytes": 1850293,
+    "scope": "All55 earlier known native coordinates re-read with unchanged native reader and finder constrained to2exact known files. Selected raw-line/body hashes match current DB rows; no home scan, provider or source write.",
+    "elapsed_seconds": 1.477
+  }
+}

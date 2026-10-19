@@ -1,0 +1,306 @@
+{
+  "status": "COMPLETE_UNSELECTED_TEST_MAINTENANCE_PROPOSAL_WITH_THREE_UNCHANGED_SOURCE_FIXTURE_FAILURES",
+  "base_head": "7111ea47546ac7cb242ff7267993868eacec6561",
+  "scope": [
+    "tests/test_workbench_store.py"
+  ],
+  "artifact": {
+    "name": "2026-10-16-confirmation-surface-store-tests-proposal.patch",
+    "bytes": 39911,
+    "sha256": "e7bb38f61e7ee0285b256ceb2df44dadf002a249b9727667a87eb43959870dda"
+  },
+  "companion_patches_sha256": {
+    "2026-10-16-confirmation-store-schema-proposal.patch": "a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4",
+    "2026-10-16-confirmation-executor-proposal.patch": "294fc6f7ac837a0d064c3af39e8af7e6ea6e6c3d12c132bf37fce262610cee47",
+    "2026-10-16-confirmation-surface-proposal.patch": "0d437d6586e5f35d07cdf3a5c4bd98845885e29c0aaa884987fd4292799d71c6",
+    "2026-10-16-confirmation-release-proposal.patch": "25ba3d7e84828be021a498332606d6ed9579ad8116725cf205ba0ba5a9a0047b"
+  },
+  "inputs_sha256": {
+    "tests/test_workbench_store.py": "76258eabf981c563722a3ccfa1ecd9f219da20d68b83fd669af28a1be925c623",
+    "tests/workbench_caller_fixtures.py": "275283d61affa702826e5809114810f2c1e98da53b9d463dcf4922390c7022d1",
+    "tests/workbench_schema_fixtures.py": "52253d07d989ac6eb31c7f0e0967a3b65cab127437309dcfeed648138ed6e0ef",
+    "tests/test_email_legacy_schema.py": "1fdfb8a8a85153a41d24efcddb1b6777f0fbc0973cc67e89dd96f7fcee9ca387",
+    "tests/conftest.py": "74b5a3022d92a530e6b4def57dc5a6cd0a70f960fc937de7bc95db4152e744ce",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/workbench_storage.py": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398",
+    "app/task8_storage.py": "8994bab2054b253a3001aab562d5c6dddd23cad3305b08068110cdea4f25cf6c",
+    "app/task12_storage.py": "d695f644308e669d9cffa2f20f7803f31c23d6ff9d7463035a30262d105bf19c",
+    "app/configs_schema_transfer.py": "7b515211991f2fdb8a9f620c3545c80e5e63bc29043f4da4b995263222aa7f58",
+    "app/state_definitions.py": "053fbdb7e461f3eaade98ec0aa834875119e777478a1adbe72a66260a1a6d870",
+    "docs/superpowers/specs/2026-10-16-configs-current-fixture-acceptance.json": "7e631cf8b3b223756d484d8666d0db00d2a5167d53af5fabcc1cfdce6a5227e3"
+  },
+  "target_sha256": "f36ab8525ae980c499664e3ecfb9682867df4048f493b3285da2f23398649d3a",
+  "inventory": {
+    "original_test_definitions": 62,
+    "original_cases": 64,
+    "removed_test_definitions_count": 14,
+    "retained_test_definitions_count": 48,
+    "retained_cases": 50,
+    "removed_test_definitions": [
+      "test_source13_confirmation_controls_survive_migration_and_existing_recovery",
+      "test_source13_blank_proposer_recovery_is_once_across_turn_states",
+      "test_confirmation_quiescence_exposes_only_truthful_public_boolean",
+      "test_stale_prior_run_quiescence_cannot_unlock_confirmation",
+      "test_recovery_leaves_waiting_confirmation_turn_unchanged",
+      "test_transition_to_waiting_confirmation_releases_worker_lease",
+      "test_confirmation_list_redacts_arguments_and_execution_claim_exposes_them_once",
+      "test_claim_owner_can_finish_receipt_after_turn_is_stopped",
+      "test_reconcile_confirmation_claims_only_when_abandoned",
+      "test_confirmation_receipt_rejects_non_owner_and_expired_claim",
+      "test_confirmation_arguments_reject_nonfinite_json",
+      "test_confirmation_creation_and_control_events_are_atomic",
+      "test_waiting_confirmation_terminalization_resolves_pending_confirmations",
+      "test_generic_completion_rejects_reserved_confirmation_transitions"
+    ],
+    "retained_test_definitions": [
+      "test_source13_migration_preserves_user_text_and_private_resume_context",
+      "test_store_schema_check_rejects_missing_required_reply_attempt_column",
+      "test_store_upgrades_point_seven_schema_with_current_indexes",
+      "test_store_repairs_missing_required_point_nine_index",
+      "test_source13_migration_preserves_attachment_request_hash_and_file_bytes",
+      "test_source13_migration_preserves_stable_per_task_sequence",
+      "test_concurrent_turn_creation_allocates_unique_monotonic_task_sequences",
+      "test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition",
+      "test_store_has_no_public_confirmation_decision_bypass",
+      "test_public_turn_excludes_private_resume_context",
+      "test_create_turn_persists_initial_status_event_and_lists_nested_resources",
+      "test_archived_task_rejects_new_turn_and_active_task_rejects_archive",
+      "test_archived_task_returns_exact_idempotent_turn_before_rejecting_new_requests",
+      "test_archive_and_create_turn_race_has_one_valid_outcome",
+      "test_workbench_query_indexes_exist",
+      "test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events",
+      "test_get_task_summary_uses_latest_turn_index_and_limit_one",
+      "test_create_task_and_idempotent_turn_request",
+      "test_first_turn_derives_default_title_and_idempotently_replays",
+      "test_first_turn_does_not_overwrite_manually_renamed_default_title",
+      "test_second_turn_never_derives_title_after_title_is_restored_to_default",
+      "test_derived_default_title_truncates_to_unicode_boundary",
+      "test_create_turn_rejects_second_active_request_for_task",
+      "test_events_replay_in_id_order_and_reject_duplicate_sequence",
+      "test_event_stream_snapshot_returns_bounded_events_and_authoritative_turn",
+      "test_append_artifact_event_is_atomic_and_public_payload_has_no_path",
+      "test_append_artifact_event_rolls_back_artifact_when_event_insert_fails",
+      "test_recover_expired_running_turn_as_queued",
+      "test_running_transition_requires_claiming_a_lease",
+      "test_running_turn_executor_mutations_require_an_owner",
+      "test_running_turn_executor_mutations_reject_mismatched_and_expired_owners",
+      "test_recovered_stale_worker_cannot_append_events",
+      "test_provider_session_requires_running_turn_lease",
+      "test_event_payload_rejects_nonfinite_json",
+      "test_stop_is_idempotent",
+      "test_attachment_db_failure_leaves_no_orphan_file",
+      "test_attachment_rejects_untrusted_task_ids_before_filesystem_access",
+      "test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file",
+      "test_attachment_reconciliation_removes_generated_orphans",
+      "test_stop_and_terminal_completion_append_atomic_control_events",
+      "test_independent_store_instances_idempotently_create_one_turn",
+      "test_independent_stores_allow_one_active_turn_and_one_claim",
+      "test_independent_stores_allow_one_next_sequence_insert",
+      "test_independent_stores_linearize_stop_against_terminal_completion",
+      "test_running_stop_is_immediately_terminal_on_both_recovery_paths",
+      "test_attachment_symlink_components_are_rejected",
+      "test_reconciliation_waits_for_active_attachment_upload",
+      "test_attachment_filename_cannot_escape_generated_task_directory"
+    ],
+    "removed_helpers": [
+      "_waiting_confirmation",
+      "_repair_historical_workbench_columns"
+    ],
+    "changed_test_definitions": [
+      "test_store_upgrades_point_seven_schema_with_current_indexes",
+      "test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition",
+      "test_store_has_no_public_confirmation_decision_bypass",
+      "test_workbench_query_indexes_exist",
+      "test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events",
+      "test_get_task_summary_uses_latest_turn_index_and_limit_one",
+      "test_running_turn_executor_mutations_require_an_owner",
+      "test_running_turn_executor_mutations_reject_mismatched_and_expired_owners",
+      "test_attachment_db_failure_leaves_no_orphan_file",
+      "test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file",
+      "test_attachment_reconciliation_removes_generated_orphans",
+      "test_attachment_filename_cannot_escape_generated_task_directory"
+    ],
+    "exact_ast_preserved_owners": [
+      "_store",
+      "_running_turn",
+      "test_source13_migration_preserves_user_text_and_private_resume_context",
+      "test_store_schema_check_rejects_missing_required_reply_attempt_column",
+      "test_store_repairs_missing_required_point_nine_index",
+      "test_source13_migration_preserves_attachment_request_hash_and_file_bytes",
+      "test_source13_migration_preserves_stable_per_task_sequence",
+      "test_concurrent_turn_creation_allocates_unique_monotonic_task_sequences",
+      "test_public_turn_excludes_private_resume_context",
+      "test_create_turn_persists_initial_status_event_and_lists_nested_resources",
+      "test_archived_task_rejects_new_turn_and_active_task_rejects_archive",
+      "test_archived_task_returns_exact_idempotent_turn_before_rejecting_new_requests",
+      "test_archive_and_create_turn_race_has_one_valid_outcome",
+      "test_create_task_and_idempotent_turn_request",
+      "test_first_turn_derives_default_title_and_idempotently_replays",
+      "test_first_turn_does_not_overwrite_manually_renamed_default_title",
+      "test_second_turn_never_derives_title_after_title_is_restored_to_default",
+      "test_derived_default_title_truncates_to_unicode_boundary",
+      "test_create_turn_rejects_second_active_request_for_task",
+      "test_events_replay_in_id_order_and_reject_duplicate_sequence",
+      "test_event_stream_snapshot_returns_bounded_events_and_authoritative_turn",
+      "test_append_artifact_event_is_atomic_and_public_payload_has_no_path",
+      "test_append_artifact_event_rolls_back_artifact_when_event_insert_fails",
+      "test_recover_expired_running_turn_as_queued",
+      "test_running_transition_requires_claiming_a_lease",
+      "test_recovered_stale_worker_cannot_append_events",
+      "test_provider_session_requires_running_turn_lease",
+      "test_event_payload_rejects_nonfinite_json",
+      "test_stop_is_idempotent",
+      "test_attachment_rejects_untrusted_task_ids_before_filesystem_access",
+      "test_stop_and_terminal_completion_append_atomic_control_events",
+      "test_independent_store_instances_idempotently_create_one_turn",
+      "test_independent_stores_allow_one_active_turn_and_one_claim",
+      "store_turn_id",
+      "test_independent_stores_allow_one_next_sequence_insert",
+      "test_independent_stores_linearize_stop_against_terminal_completion",
+      "test_running_stop_is_immediately_terminal_on_both_recovery_paths",
+      "test_attachment_symlink_components_are_rejected",
+      "test_reconciliation_waits_for_active_attachment_upload"
+    ],
+    "unchanged_test_definitions_count": 36,
+    "exact_preserved_non_test_helpers_count": 3,
+    "added_functions": []
+  },
+  "changes": [
+    "Remove14canceled-feature-only tests and2exclusive fixture helpers; remove now-unused ConfirmationStatus/json/workbench_store_module/source-only insert_task/WORKBENCH_TURN_SQL imports.",
+    "Remove only create_confirmation subcases from two mixed execution-owner tests; ordinary append_event and complete_turn owner and lease assertions remain.",
+    "Timeline concurrency test consumes6elements, with same queued snapshot/terminal transition assertions.",
+    "Retain current index installation/repair and index-plan assertions using typed index names and generated source-field names; delete only confirmation query/recovery/index assertions.",
+    "Preserve1000turn latest-status/limit-one/index/no-TEMP-BTREE assertions and50000unrelated-event bounded timeline assertions; current task8 scalar insert parts replace source-shaped physical-column fixtures.",
+    "Keep attachment injected failure/no-orphan/no-metadata/reconciliation/path evidence; inject only matching record_type on current Tasks, use native insert_task12 for attachment row and typed projection/counts for reads.",
+    "Current schema-version assertion reads State projection. Three ordinary source13 migration test functions remain byte/AST-exact, with unchanged shared helpers.",
+    "Existing negative decision bypass test retains old assertions and adds explicit absence of ten removed methods/table/index objects."
+  ],
+  "verification": {
+    "interpreter": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python,3.13.12,-B,PYTHONDONTWRITEBYTECODE=1",
+    "original_candidate_collection": "Original module with4complete application proposals: ImportError ConfirmationStatus, exit2,0collected.",
+    "retirement_only_baseline": "14tests/2helpers removed and mixed legacy branches removed: full50cases,12failed/38passed40.15s.",
+    "unmodified_source_control": "One command used originalcheckout cwd before correction; retained as unchanged-source control: full64cases,15failed/49passed71.00s. Same3source13 config-preflight failures.",
+    "final_retained_full_module": "Full retained module collected and ran50cases with no skips/xfails/stubs:3failed/47passed74.85s. Nine finite current fixture/index/tuple baseline failures repaired.",
+    "ruff_compile": "PASS; final module Ruff and pinned3.13 compile; no bytecode needed.",
+    "patch_application": "Reverse to exact original bytes; whitespace=error-all check and reapply to exact target bytes PASS.",
+    "ast": "36retainedtestdefs and3remaininghelperdefs exact;12changedtestdefs;14deletedfeaturetests/2deletedhelpers;0newfunctions. Three ordinary source13 tests byte/AST exact.",
+    "commands": {
+      "reverse-check": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--check",
+          "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-confirmation-surface-store-tests-proposal.patch"
+        ],
+        "exit_code": 0
+      },
+      "reverse": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-confirmation-surface-store-tests-proposal.patch"
+        ],
+        "exit_code": 0
+      },
+      "reapply-check": {
+        "command": [
+          "git",
+          "apply",
+          "--check",
+          "--whitespace=error-all",
+          "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-confirmation-surface-store-tests-proposal.patch"
+        ],
+        "exit_code": 0
+      },
+      "reapply": {
+        "command": [
+          "git",
+          "apply",
+          "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-confirmation-surface-store-tests-proposal.patch"
+        ],
+        "exit_code": 0
+      },
+      "ruff": {
+        "command": [
+          "ruff",
+          "check",
+          "tests/test_workbench_store.py"
+        ],
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      }
+    },
+    "logs": {
+      "initial-collect": {
+        "sha256": "38f0c287df70b801e419e34fabb92d11ed22cd266919e2a3fc0d575acc94a0c4",
+        "output": "\n==================================== ERRORS ====================================\n________________ ERROR collecting tests/test_workbench_store.py ________________\nImportError while importing test module '/private/tmp/confirmation-store-tests-proposal.yebkYy/candidate/tests/test_workbench_store.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/Users/derek/.local/share/uv/python/cpython-3.13.12-macos-aarch64-none/lib/python3.13/importlib/__init__.py:88: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntests/test_workbench_store.py:13: in <module>\n    from app.workbench.models import ConfirmationStatus, TurnStatus\nE   ImportError: cannot import name 'ConfirmationStatus' from 'app.workbench.models' (/private/tmp/confirmation-store-tests-proposal.yebkYy/candidate/app/workbench/models.py)\n=========================== short test summary info ============================\nERROR tests/test_workbench_store.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\nno tests collected, 1 error in 0.62s\n",
+        "summary": "no tests collected, 1 error in 0.62s"
+      },
+      "retained-baseline": {
+        "sha256": "f32476857a7123875f8f2adbcd3103db52c0ce48ab332cda73169184801a279d",
+        "output": "F.F.FF.F......FFF...................F..FF........F                       [100%]\n=================================== FAILURES ===================================\n____ test_source13_migration_preserves_user_text_and_private_resume_context ____\ntests/test_workbench_store.py:45: in test_source13_migration_preserves_user_text_and_private_resume_context\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n_________ test_store_upgrades_point_seven_schema_with_current_indexes __________\ntests/test_workbench_store.py:95: in test_store_upgrades_point_seven_schema_with_current_indexes\n    schema_version = db.execute(\nE   sqlite3.OperationalError: no such table: service_state\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-6290/test_store_upgrades_point_seve0/workbench.sqlite3 thread=8379752832 callers=store.py:2234:_connect <- contextlib.py:162:__exit__ <- store.py:137:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:88:test_store_upgrades_point_seven_schema_with_current_indexes <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: no such table: service_state\n___ test_source13_migration_preserves_attachment_request_hash_and_file_bytes ___\ntests/test_workbench_store.py:141: in test_source13_migration_preserves_attachment_request_hash_and_file_bytes\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n__________ test_source13_migration_preserves_stable_per_task_sequence __________\ntests/test_workbench_store.py:173: in test_source13_migration_preserves_stable_per_task_sequence\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n_____ test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition _____\ntests/test_workbench_store.py:249: in test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition\n    _, turns, events, _, _, _, page = snapshot\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   ValueError: not enough values to unpack (expected 7, got 6)\n______________________ test_workbench_query_indexes_exist ______________________\ntests/test_workbench_store.py:412: in test_workbench_query_indexes_exist\n    assert {\nE   AssertionError: assert {'idx_workben...ecovery', ...} <= {'idx_actions...plans_0', ...}\nE     \nE     Extra items in the left set:\nE     'idx_workbench_turns_recovery'\nE     'idx_workbench_turns_task_created_id'\nE     'idx_workbench_confirmations_recovery'\nE     'idx_workbench_confirmations_legacy_proposer_recovery'\nE     'idx_workbench_confirmations_proposer_recovery'...\nE     \nE     ...Full output truncated (12 lines hidden), use '-vv' to show\n__ test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events __\ntests/test_workbench_store.py:550: in test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events\n    insert_task(db, 'workbench_turns', {\napp/task_storage.py:653: in insert_task\n    return db.execute(\nE   sqlite3.OperationalError: table tasks has no column named client_request_id\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-6290/test_timeline_snapshot_work_is0/workbench.sqlite3 thread=8379752832 callers=store.py:2234:_connect <- contextlib.py:162:__exit__ <- store.py:137:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:549:test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: table tasks has no column named client_request_id\n__________ test_get_task_summary_uses_latest_turn_index_and_limit_one __________\ntests/test_workbench_store.py:595: in test_get_task_summary_uses_latest_turn_index_and_limit_one\n    insert_task(db, 'workbench_turns', {\napp/task_storage.py:653: in insert_task\n    return db.execute(\nE   sqlite3.OperationalError: table tasks has no column named client_request_id\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-6290/test_get_task_summary_uses_lat0/workbench.sqlite3 thread=8379752832 callers=store.py:2234:_connect <- contextlib.py:162:__exit__ <- store.py:137:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:592:test_get_task_summary_uses_latest_turn_index_and_limit_one <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: table tasks has no column named client_request_id\n_______________ test_attachment_db_failure_leaves_no_orphan_file _______________\ntests/test_workbench_store.py:1041: in test_attachment_db_failure_leaves_no_orphan_file\n    db.execute(\nE   sqlite3.OperationalError: no such table: main.workbench_attachments\n_____ test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file _____\ntests/test_workbench_store.py:1101: in test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file\n    assert db.execute(\"select count(*) from workbench_attachments\").fetchone()[0] == 0\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   sqlite3.OperationalError: no such table: workbench_attachments\n___________ test_attachment_reconciliation_removes_generated_orphans ___________\ntests/test_workbench_store.py:1134: in test_attachment_reconciliation_removes_generated_orphans\n    db.execute(\nE   sqlite3.OperationalError: no such table: workbench_attachments\n_______ test_attachment_filename_cannot_escape_generated_task_directory ________\ntests/test_workbench_store.py:1461: in test_attachment_filename_cannot_escape_generated_task_directory\n    db.execute(\nE   sqlite3.OperationalError: no such table: workbench_attachments\n=========================== short test summary info ============================\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_user_text_and_private_resume_context\nFAILED tests/test_workbench_store.py::test_store_upgrades_point_seven_schema_with_current_indexes\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_attachment_request_hash_and_file_bytes\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_stable_per_task_sequence\nFAILED tests/test_workbench_store.py::test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition\nFAILED tests/test_workbench_store.py::test_workbench_query_indexes_exist - As...\nFAILED tests/test_workbench_store.py::test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events\nFAILED tests/test_workbench_store.py::test_get_task_summary_uses_latest_turn_index_and_limit_one\nFAILED tests/test_workbench_store.py::test_attachment_db_failure_leaves_no_orphan_file\nFAILED tests/test_workbench_store.py::test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file\nFAILED tests/test_workbench_store.py::test_attachment_reconciliation_removes_generated_orphans\nFAILED tests/test_workbench_store.py::test_attachment_filename_cannot_escape_generated_task_directory\n12 failed, 38 passed in 40.15s\n",
+        "summary": "12 failed, 38 passed in 40.15s"
+      },
+      "converted": {
+        "sha256": "5bd0e608c21f03c2b2f670b10bde523216ebcabdb3189c1c42b7f0298a33840a",
+        "output": "F.F.FF..FF.......FFFF............F.............F..FF...........F         [100%]\n=================================== FAILURES ===================================\n____ test_source13_migration_preserves_user_text_and_private_resume_context ____\ntests/test_workbench_store.py:76: in test_source13_migration_preserves_user_text_and_private_resume_context\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:554: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:296: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n_________ test_store_upgrades_point_seven_schema_with_current_indexes __________\ntests/test_workbench_store.py:126: in test_store_upgrades_point_seven_schema_with_current_indexes\n    schema_version = db.execute(\nE   sqlite3.OperationalError: no such table: service_state\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/tmp/confirmation-store-tests-proposal.yebkYy/final-tests/test_store_upgrades_point_seve0/workbench.sqlite3 thread=8379752832 callers=store.py:2235:_connect <- contextlib.py:162:__exit__ <- store.py:204:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:119:test_store_upgrades_point_seven_schema_with_current_indexes <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: no such table: service_state\n___ test_source13_migration_preserves_attachment_request_hash_and_file_bytes ___\ntests/test_workbench_store.py:172: in test_source13_migration_preserves_attachment_request_hash_and_file_bytes\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:554: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:296: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n__________ test_source13_migration_preserves_stable_per_task_sequence __________\ntests/test_workbench_store.py:204: in test_source13_migration_preserves_stable_per_task_sequence\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:554: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:296: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n_ test_source13_confirmation_controls_survive_migration_and_existing_recovery __\ntests/test_workbench_store.py:302: in test_source13_confirmation_controls_survive_migration_and_existing_recovery\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:554: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:296: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n_______ test_source13_blank_proposer_recovery_is_once_across_turn_states _______\ntests/test_workbench_store.py:349: in test_source13_blank_proposer_recovery_is_once_across_turn_states\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:554: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:296: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n______________________ test_workbench_query_indexes_exist ______________________\ntests/test_workbench_store.py:574: in test_workbench_query_indexes_exist\n    assert {\nE   AssertionError: assert {'idx_workben...ecovery', ...} <= {'idx_actions...plans_0', ...}\nE     \nE     Extra items in the left set:\nE     'idx_workbench_turns_task_sequence'\nE     'idx_workbench_turns_task_created_id'\nE     'idx_workbench_artifacts_created_id_turn'\nE     'idx_workbench_artifacts_turn_created_id'\nE     'idx_workbench_tasks_updated_id'...\nE     \nE     ...Full output truncated (3 lines hidden), use '-vv' to show\n__ test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events __\ntests/test_workbench_store.py:712: in test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events\n    insert_task(db, 'workbench_turns', {\napp/task_storage.py:653: in insert_task\n    return db.execute(\nE   sqlite3.OperationalError: table tasks has no column named client_request_id\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/tmp/confirmation-store-tests-proposal.yebkYy/final-tests/test_timeline_snapshot_work_is0/workbench.sqlite3 thread=8379752832 callers=store.py:2235:_connect <- contextlib.py:162:__exit__ <- store.py:204:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:711:test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: table tasks has no column named client_request_id\n__________ test_get_task_summary_uses_latest_turn_index_and_limit_one __________\ntests/test_workbench_store.py:757: in test_get_task_summary_uses_latest_turn_index_and_limit_one\n    insert_task(db, 'workbench_turns', {\napp/task_storage.py:653: in insert_task\n    return db.execute(\nE   sqlite3.OperationalError: table tasks has no column named client_request_id\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/tmp/confirmation-store-tests-proposal.yebkYy/final-tests/test_get_task_summary_uses_lat0/workbench.sqlite3 thread=8379752832 callers=store.py:2235:_connect <- contextlib.py:162:__exit__ <- store.py:204:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:754:test_get_task_summary_uses_latest_turn_index_and_limit_one <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: table tasks has no column named client_request_id\n__________ test_stale_prior_run_quiescence_cannot_unlock_confirmation __________\ntests/test_workbench_store.py:796: in test_stale_prior_run_quiescence_cannot_unlock_confirmation\n    db.execute(\nE   sqlite3.OperationalError: no such column: execution_run_id\n----------------------------- Captured stderr call -----------------------------\nsqlite SQLITE_ERROR code=1 path=/private/tmp/confirmation-store-tests-proposal.yebkYy/final-tests/test_stale_prior_run_quiescenc0/workbench.sqlite3 thread=8379752832 callers=store.py:2235:_connect <- contextlib.py:162:__exit__ <- store.py:204:_connect <- contextlib.py:162:__exit__ <- test_workbench_store.py:787:test_stale_prior_run_quiescence_cannot_unlock_confirmation <- python.py:167:pytest_pyfunc_call <- _callers.py:121:_multicall <- _manager.py:120:_hookexec: no such column: execution_run_id\n________ test_transition_to_waiting_confirmation_releases_worker_lease _________\ntests/test_workbench_store.py:1130: in test_transition_to_waiting_confirmation_releases_worker_lease\n    assert db.execute(\nE   sqlite3.OperationalError: no such column: t.client_request_id\n_______________ test_attachment_db_failure_leaves_no_orphan_file _______________\ntests/test_workbench_store.py:1474: in test_attachment_db_failure_leaves_no_orphan_file\n    db.execute(\nE   sqlite3.OperationalError: no such table: main.workbench_attachments\n_____ test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file _____\ntests/test_workbench_store.py:1534: in test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file\n    assert db.execute(\"select count(*) from workbench_attachments\").fetchone()[0] == 0\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   sqlite3.OperationalError: no such table: workbench_attachments\n___________ test_attachment_reconciliation_removes_generated_orphans ___________\ntests/test_workbench_store.py:1567: in test_attachment_reconciliation_removes_generated_orphans\n    db.execute(\nE   sqlite3.OperationalError: no such table: workbench_attachments\n_______ test_attachment_filename_cannot_escape_generated_task_directory ________\ntests/test_workbench_store.py:2008: in test_attachment_filename_cannot_escape_generated_task_directory\n    db.execute(\nE   sqlite3.OperationalError: no such table: workbench_attachments\n=========================== short test summary info ============================\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_user_text_and_private_resume_context\nFAILED tests/test_workbench_store.py::test_store_upgrades_point_seven_schema_with_current_indexes\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_attachment_request_hash_and_file_bytes\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_stable_per_task_sequence\nFAILED tests/test_workbench_store.py::test_source13_confirmation_controls_survive_migration_and_existing_recovery\nFAILED tests/test_workbench_store.py::test_source13_blank_proposer_recovery_is_once_across_turn_states\nFAILED tests/test_workbench_store.py::test_workbench_query_indexes_exist - As...\nFAILED tests/test_workbench_store.py::test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events\nFAILED tests/test_workbench_store.py::test_get_task_summary_uses_latest_turn_index_and_limit_one\nFAILED tests/test_workbench_store.py::test_stale_prior_run_quiescence_cannot_unlock_confirmation\nFAILED tests/test_workbench_store.py::test_transition_to_waiting_confirmation_releases_worker_lease\nFAILED tests/test_workbench_store.py::test_attachment_db_failure_leaves_no_orphan_file\nFAILED tests/test_workbench_store.py::test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file\nFAILED tests/test_workbench_store.py::test_attachment_reconciliation_removes_generated_orphans\nFAILED tests/test_workbench_store.py::test_attachment_filename_cannot_escape_generated_task_directory\n15 failed, 49 passed in 71.00s (0:01:10)\n",
+        "summary": "15 failed, 49 passed in 71.00s (0:01:10)"
+      },
+      "converted-candidate": {
+        "sha256": "b748ff392a63de7678c453b03e432b383ba9b34d2d64d788389f543191babfc0",
+        "output": "F...FF..................................F.........                       [100%]\n=================================== FAILURES ===================================\n____ test_source13_migration_preserves_user_text_and_private_resume_context ____\ntests/test_workbench_store.py:46: in test_source13_migration_preserves_user_text_and_private_resume_context\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n___ test_source13_migration_preserves_attachment_request_hash_and_file_bytes ___\ntests/test_workbench_store.py:139: in test_source13_migration_preserves_attachment_request_hash_and_file_bytes\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n__________ test_source13_migration_preserves_stable_per_task_sequence __________\ntests/test_workbench_store.py:171: in test_source13_migration_preserves_stable_per_task_sequence\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n___________ test_attachment_reconciliation_removes_generated_orphans ___________\ntests/test_workbench_store.py:1066: in test_attachment_reconciliation_removes_generated_orphans\n    parts = task8_insert_parts(\"workbench_attachments\", {\napp/task8_storage.py:87: in task8_insert_parts\n    payload, physical = _partition(kind, values, expressions, physical_sql)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/task8_storage.py:58: in _partition\n    raise ValueError(\"unsupported existing Tasks kind\")\nE   ValueError: unsupported existing Tasks kind\n=========================== short test summary info ============================\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_user_text_and_private_resume_context\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_attachment_request_hash_and_file_bytes\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_stable_per_task_sequence\nFAILED tests/test_workbench_store.py::test_attachment_reconciliation_removes_generated_orphans\n4 failed, 46 passed in 55.71s\n",
+        "summary": "4 failed, 46 passed in 55.71s"
+      },
+      "final-full": {
+        "sha256": "ff9baf3938d7330fc0a0b20dcb7c48688c3b79fddbefbffb66f44062d1704234",
+        "output": "F...FF............................................                       [100%]\n=================================== FAILURES ===================================\n____ test_source13_migration_preserves_user_text_and_private_resume_context ____\ntests/test_workbench_store.py:47: in test_source13_migration_preserves_user_text_and_private_resume_context\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n___ test_source13_migration_preserves_attachment_request_hash_and_file_bytes ___\ntests/test_workbench_store.py:140: in test_source13_migration_preserves_attachment_request_hash_and_file_bytes\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n__________ test_source13_migration_preserves_stable_per_task_sequence __________\ntests/test_workbench_store.py:172: in test_source13_migration_preserves_stable_per_task_sequence\n    advance_source17_to_current_store(db_path, published_source)\ntests/workbench_caller_fixtures.py:80: in advance_source17_to_current_store\n    release = prepare_database_schema_release(Path(__file__).parents[1], path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/store_schema_release.py:135: in prepare_database_schema_release\n    paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:563: in prepare_action_email_schema_release\n    source[\"configs\"] = _project_config_source(db, source[\"action_variant\"])\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/action_email_schema_release.py:301: in _project_config_source\n    original = capture_config_declarations(db)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\napp/configs_schema_transfer.py:63: in capture_config_declarations\n    raise ValueError('unsupported config source declaration')\nE   ValueError: unsupported config source declaration\n=========================== short test summary info ============================\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_user_text_and_private_resume_context\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_attachment_request_hash_and_file_bytes\nFAILED tests/test_workbench_store.py::test_source13_migration_preserves_stable_per_task_sequence\n3 failed, 47 passed in 74.85s (0:01:14)\n",
+        "summary": "3 failed, 47 passed in 74.85s (0:01:14)"
+      }
+    }
+  },
+  "known_source_fixture_boundary": {
+    "failing_tests": [
+      "test_source13_migration_preserves_user_text_and_private_resume_context",
+      "test_source13_migration_preserves_attachment_request_hash_and_file_bytes",
+      "test_source13_migration_preserves_stable_per_task_sequence"
+    ],
+    "trace": [
+      "tests/workbench_caller_fixtures.py:80 advance_source17_to_current_store",
+      "app/store_schema_release.py:135 prepare_database_schema_release",
+      "app/action_email_schema_release.py:563 prepare_action_email_schema_release",
+      "app/action_email_schema_release.py:301 _project_config_source",
+      "app/configs_schema_transfer.py:63 capture_config_declarations"
+    ],
+    "error": "ValueError: unsupported config source declaration",
+    "disposable_fixture_metadata": {
+      "fixture_path": "/tmp/confirmation-store-tests-proposal.yebkYy/candidate-tests/test_source13_migration_preser0/workbench.sqlite3",
+      "observed_source_declaration_fingerprint": "637f041bcaded37f3b761916b827fc12c42fe9f71e674134a57d49cf10ede5ec",
+      "supported_fingerprints": {
+        "actual": "4705ccca6a2fe6eef6be550baa99008fe8cdb7c767a50646ba2e516382575bf6",
+        "fresh": "877b819ec78de375db8fdd6093cf1bb627a88769b55688cebd9e9cb7d4d23389",
+        "actual_email52": "ae625fbb906925358c68e921c54eb047bfc574878bd2e8915b6bab0f76879bc3",
+        "fresh_email52": "915d992f75a788da33181b2702b751e3948a4b48c590d43462abd07920d87756"
+      },
+      "supported": false,
+      "source_schema_version": "2026-10-13.5",
+      "source_email_version": 51
+    },
+    "known_acceptance_reference": "docs/superpowers/specs/2026-10-16-configs-current-fixture-acceptance.json documents archived fresh-config/actual-observation hybrid refusal boundary and explicit synthetic-target distinction; it does not authorize relabeling this source fixture.",
+    "disposition": "Parent expressly agreed to preserve these3ordinary source13 assertions and record known fixture limitations. No new supported variant, normalization, skipping, xfail, stubbing or expectation weakening. Legitimate source fixture/publication work remains separately root-owned.",
+    "assertion_execution_limit": "All3fail before their ordinary migration assertions; those assertions are retained but not newly proven by this proposal. Later source-shaped postmigration reads may need separately verified current fixture adaptation once legitimate source construction is resolved."
+  },
+  "cleanup": {
+    "owned_temp": "/tmp/confirmation-store-tests-proposal.yebkYy",
+    "owned_default_pytest_temp": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-6290",
+    "status": "OWNED_TASK_ROOT_REMOVED_BOTH_ROOTS_ABSENCE_VERIFIED",
+    "default_pytest_root_status": "ALREADY_ABSENT_WHEN_CHECKED"
+  },
+  "not_done": [
+    "No actual app/tests/source fixture helper/index edits",
+    "No app behavior/production/native/provider/network/main/push/deploy",
+    "No new hybrid source support or nonempty confirmation disposition",
+    "No claim all50retainedcases pass"
+  ]
+}

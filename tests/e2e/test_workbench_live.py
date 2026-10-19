@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
-import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -17,11 +16,8 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-import app.agent_cli as agent_cli
-from app.agent_result import EffectKind
 from app.agent_runtime_contracts import CredentialMode
 from app.audit_web import create_audit_app
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.setup_wizard import SETUP_WIZARD_STEPS
 from app.store import AutoReplyStore
 from app.workbench.executor import WorkbenchExecutor
@@ -468,7 +464,7 @@ def _complete_setup(store: WorkbenchStore) -> None:
         )
 
 
-def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
+def test_workbench_stream_stop_and_retired_confirmation_route_are_end_to_end(
     tmp_path: Path, monkeypatch
 ) -> None:
     db_path = tmp_path / "workbench.sqlite3"
@@ -478,22 +474,10 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
     _complete_setup(store)
     runtime = FixtureRuntime(AutoReplyStore(db_path), codex_home)
     registry = RuntimeRegistry([runtime])
-    writer_calls: list[list[str]] = []
-    classifier = NativeCliMetadataClassifier(
-        reviewed_effects={("dws", "chat message send"): EffectKind.EFFECTFUL}
-    )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/fixture/bin/dws")
-
-    def fake_writer(argv, **_kwargs):
-        writer_calls.append(list(argv))
-        return subprocess.CompletedProcess(argv, 0, "fixture write complete", "")
-
     executor = WorkbenchExecutor(
         store,
         registry,
         workspace=tmp_path,
-        classifier=classifier,
-        write_runner=fake_writer,
     )
     app = create_audit_app(
         db_path,
@@ -662,70 +646,16 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
                 "turn_completed"
             ) == 1
 
-            confirm_turn = client.post(
-                f"/api/workbench/tasks/{task_id}/turns",
-                json={"text": _CONFIRM_PROMPT, "client_request_id": "live-confirm"},
+            # The confirmed retirement removes both persistence and the old API.
+            retired = client.post(
+                f"/api/workbench/tasks/{task_id}/turns/{stop_turn_id}"
+                "/confirmations/historical-confirmation/confirm", json={},
             )
-            assert confirm_turn.status_code == 201
-            confirm_turn_id = confirm_turn.json()["id"]
-            assert runtime.confirmation_wait_entered.wait(2)
-            waiting_timeline = _wait_for_json(
-                client,
-                f"/api/workbench/tasks/{task_id}/timeline",
-                lambda payload: (
-                    next(
-                        turn
-                        for turn in payload["turns"]
-                        if turn["id"] == confirm_turn_id
-                    )["status"]
-                    == "waiting_confirmation"
-                    and len(payload["confirmations"]) == 1
-                ),
-            )
-            confirmation = waiting_timeline["confirmations"][0]
-            confirmation_id = confirmation["id"]
-            assert confirmation["target"] == "group=fixture-group"
-            assert confirmation["summary"].startswith("[Untrusted agent description]")
-            assert confirmation["proposer_quiesced"] is False
-
-            confirm_path = (
-                f"/api/workbench/tasks/{task_id}/turns/{confirm_turn_id}"
-                f"/confirmations/{confirmation_id}/confirm"
-            )
-            requested = client.post(confirm_path, json={})
-            duplicate_before_quiescence = client.post(confirm_path, json={})
-            assert (
-                requested.status_code == duplicate_before_quiescence.status_code == 410
-            )
-            assert (
-                requested.json()["detail"] == "Historical confirmations are read-only"
-            )
-            assert writer_calls == []
-
-            runtime.release(confirm_turn_id)
-            stopped_confirmation = client.post(
-                f"/api/workbench/tasks/{task_id}/turns/{confirm_turn_id}/stop",
-                json={},
-            )
-            assert stopped_confirmation.status_code == 200
-            confirmation_terminal = _wait_for_json(
-                client,
-                f"/api/workbench/turns/{confirm_turn_id}",
-                lambda payload: payload["status"] == "stopped",
-            )
-            assert confirmation_terminal["final_text"] == ""
-            duplicate_after_execution = client.post(confirm_path, json={})
-            assert duplicate_after_execution.status_code == 410
-            assert writer_calls == []
-            assert [request.turn_id for request in runtime.requests].count(
-                confirm_turn_id
-            ) == 1
-            confirm_events = client.get(
-                f"/api/workbench/turns/{confirm_turn_id}/events", params={"after": 0}
-            ).json()
-            assert [event["event_type"] for event in confirm_events].count(
-                "turn_completed"
-            ) == 1
+            assert retired.status_code == 405
+            assert not any("/confirmations/" in path for path in client.get("/openapi.json").json()["paths"])
+            timeline = client.get(f"/api/workbench/tasks/{task_id}/timeline").json()
+            assert "confirmations" not in timeline
+            assert {turn['id'] for turn in timeline['turns']} == {safe_turn_id, stop_turn_id}
         finally:
             runtime.release_all()
 

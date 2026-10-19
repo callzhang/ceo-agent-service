@@ -56,8 +56,9 @@ from app.dws_client import (
 )
 from app.outbound_postfix import compose_outbound_postfix
 from app.action_storage import insert_action, update_action
-from app.store import AgentRole, AutoReplyStore
-from app.task_storage import REPLY_TASK_SQL
+from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL
+from app.task12_storage import task12_projection
+from app.task8_storage import register_task8_functions, task8_set_parts
 from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
 from app.worker import (
@@ -74,6 +75,19 @@ from tests.support.image_bytes import TINY_PNG
 
 
 CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 条）:"
+
+
+def _update_reply_task(db, task_id, *, values=None, update_sql=None):
+    """Mutate one current reply task through its Task8 payload projection."""
+    register_task8_functions(db)
+    parts = task8_set_parts(
+        "reply_tasks", values or {}, update_sql=update_sql or {}
+    )
+    return db.execute(
+        f"update tasks set {parts.sql} "
+        "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+        (*parts.parameters, task_id),
+    )
 
 
 def test_oa_group_trigger_uses_cached_applicant_open_id(tmp_path):
@@ -342,12 +356,31 @@ class FakeAgentOrchestrator:
             and not scripted.error.code):
             consumer_result = ConsumerAgentResult.model_validate({
                 "outcome": "needs_human", "summary": scripted.summary, "proposal": None,
-                "requested_input": scripted.summary, "decision_options": [],
+                "requested_input": None, "decision_options": [
+                    {
+                        "key": "manual_handling",
+                        "label": "Handle this task class manually",
+                        "instruction": "For future tasks in this class, handle each one manually.",
+                        "consequence": "No automated action will be taken for this task class.",
+                        "applies_to": "task_class", "plan": None,
+                        "terminal_outcome": "skipped",
+                        "reason": "The reusable handling rule for this task class is unresolved.",
+                    },
+                    {
+                        "key": "no_action",
+                        "label": "Take no action for this task class",
+                        "instruction": "For future tasks in this class, take no action.",
+                        "consequence": "Tasks in this class will be skipped without external action.",
+                        "applies_to": "task_class", "plan": None,
+                        "terminal_outcome": "skipped",
+                        "reason": "The reusable handling rule for this task class is unresolved.",
+                    },
+                ],
                 "needs_human_reason": scripted.summary,
                 "decision_basis": {
-                    "verified_facts": [{"assertion": "Current trigger needs a specific fact", "references": ["record:current"]}],
+                    "verified_facts": [{"assertion": "The current trigger requires a reusable task-class handling rule", "references": ["record:current"]}],
                     "rule_evidence": [{"assertion": scripted.summary, "references": ["policy:current"]}],
-                    "quality_explanation": "The current instance needs a fact from the principal.",
+                    "quality_explanation": "The reusable handling rule for this task class is unresolved.",
                     "no_external_action_evidence": [{"assertion": "No action was performed", "references": ["receipt:none"]}],
                     "conclusion": scripted.summary,
                 },
@@ -5977,7 +6010,7 @@ def test_consume_once_stops_retryable_orchestration_at_limit(
     assert json.loads(prior_run.structured_error_json)["session_continuable"] is False
     assert prior_run.codex_session_id == "retry-session"
     with worker.store._connect() as db:
-        db.execute("update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (pending.id,))
+        _update_reply_task(db, pending.id, update_sql={"available_at": "''"})
     assert worker.consume_once(max_tasks=1) == 0
     retried = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
     assert retried.execution_generation == generation
@@ -6740,9 +6773,9 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
         owner="crashed-worker",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (claimed[0].id,),
+        _update_reply_task(
+            db, claimed[0].id,
+            update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
         db.execute(
             "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
@@ -6798,9 +6831,9 @@ def test_stale_wechat_read_only_decision_requeues_with_precise_reason(
         expected_execution_generation=task.execution_generation,
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
+        _update_reply_task(
+            db, task.id,
+            update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -6840,9 +6873,9 @@ def test_stale_processing_without_agent_run_is_recovered_after_short_window(
     )
     [task] = store.claim_reply_tasks(limit=1)
     with store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-11 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
+        _update_reply_task(
+            db, task.id,
+            update_sql={"locked_at": "datetime('now', '-11 minutes')"},
         )
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -6890,9 +6923,9 @@ def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
         owner="active-worker",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (claimed[0].id,),
+        _update_reply_task(
+            db, claimed[0].id,
+            update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -6938,9 +6971,9 @@ def test_stale_processing_recovery_requeues_live_run_after_total_processing_limi
         owner="active-worker",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-61 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
+        _update_reply_task(
+            db, task.id,
+            update_sql={"locked_at": "datetime('now', '-61 minutes')"},
         )
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -10254,7 +10287,7 @@ def test_ding_approval_reminder_is_processed_by_audit_agent(
     assert worker.store.count_reply_attempts() == 0
     with worker.store._connect() as db:
         event = db.execute(
-            "select event_kind, requires_reply from oa_notification_events "
+            f"select event_kind, requires_reply from ({task12_projection('oa_notification_events')}) "
             "where trigger_message_id=?",
             (trigger.open_message_id,),
         ).fetchone()
@@ -12131,9 +12164,8 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(tmp_path: Path, monke
 
     pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set available_at='2026-05-13 17:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (pending.id,),
+        _update_reply_task(
+            db, pending.id, update_sql={"available_at": "'2026-05-13 17:00:00'"}
         )
 
     assert worker.consume_once(max_tasks=1) == 0
@@ -12541,9 +12573,9 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
         send_status="calendar",
     )
     with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (claimed.id,),
+        _update_reply_task(
+            db, claimed.id,
+            update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
     script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
@@ -12713,9 +12745,8 @@ def test_queued_stop_with_error_becomes_terminal_at_retry_limit(
     assert len(runner.calls) == 1
 
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set available_at='2026-05-13 17:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (pending.id,),
+        _update_reply_task(
+            db, pending.id, update_sql={"available_at": "'2026-05-13 17:00:00'"}
         )
 
     assert worker.consume_once(max_tasks=1) == 0
@@ -12848,10 +12879,9 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
         now="2026-05-13 17:00:00",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
+        _update_reply_task(
+            db, task.id,
+            update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
         db.execute(
             "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
@@ -12947,10 +12977,9 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
         now="2026-05-13 17:00:00",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
+        _update_reply_task(
+            db, task.id,
+            update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
         db.execute(
             "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
@@ -15101,10 +15130,8 @@ def test_recovery_requeues_failed_reply_once_when_new_context_arrives(
         expected_execution_generation=claimed.execution_generation,
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set updated_at='2026-10-13 10:00:00' "
-            "where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_reply_task(
+            db, task.id, update_sql={"updated_at": "'2026-10-13 10:00:00'"}
         )
     conversation = DingTalkConversation(
         open_conversation_id="cid-recovery-context",

@@ -1,0 +1,62 @@
+{
+  "scope": "Current configs fixture closure only; not full ten-core-plus-ledger acceptance",
+  "baseline": "18657800",
+  "reviewed_head": "00a4fd4f663d087bc90d328a365d5d42e4900210",
+  "commits": [
+    "98297c3df3172b44af24e029d8e048f5d9d8a1cb",
+    "00a4fd4f663d087bc90d328a365d5d42e4900210"
+  ],
+  "files_in_focused_matrix": 10,
+  "changed_test_files": 9,
+  "initial_run": {
+    "failed": 50,
+    "passed": 103
+  },
+  "implementer_final": {
+    "passed": 155,
+    "seconds": 58.75,
+    "warnings": 1
+  },
+  "independent_spec": {
+    "result": "PASS",
+    "prior_exact_matrix_passed": 153,
+    "prior_matrix_seconds": 62.2,
+    "final_split_cases_passed": 4,
+    "final_split_seconds": 0.4,
+    "observed_real_installer_calls": 8,
+    "negative_controls": {
+      "helper_commits_transaction": "2 intended failures",
+      "helper_replaces_existing_trigger": "2 intended failures"
+    }
+  },
+  "independent_quality": {
+    "result": "PASS",
+    "passed": 155,
+    "seconds": 61.09,
+    "warnings": [
+      "Existing Starlette BlockingPortal deprecation"
+    ],
+    "ruff": "PASS",
+    "compile": "PASS",
+    "diff_check": "PASS",
+    "owned_temporary_absent": true,
+    "final_worktree_clean": true
+  },
+  "source_oracle": "Genuine archived2773 and original DAO builders unchanged",
+  "fixture_boundary": "Old2773 combines fresh config declarations and actual-variant observations and is correctly outside paired source preflight. Local synthetic target uses accepted Email/Business/Provider/Configs conversion primitives; real constructor and readonly public preview preserved. It does not prove paired publication.",
+  "installer_boundary": "Real source-phase helper transaction/idempotence/nonrepair tested. Current typed manifest separately tests validator acceptance and missing/malformed refusal. No coverage claim for current runtime inline installation loop.",
+  "cold_publication_evidence": "2026-10-16-configs-current-cold-copy.json; separate supported frozen-source proof",
+  "app_changes": false,
+  "actual_database_access": false,
+  "native_cli_starts": 0,
+  "provider_calls": 0,
+  "real_sends": 0,
+  "main_merge": false,
+  "deployment": false,
+  "open": [
+    "Other native fixture/harness adaptation outside named ten-file matrix",
+    "Latest full CI and native lifecycle proof",
+    "State16 and remaining Business/Actions/Email/Provenance consolidation",
+    "Final retirement, size/performance verification and publication approval"
+  ]
+}

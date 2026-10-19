@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createTask, getTimeline, listTasks } from "./api";
+import { ApiError, createTask, getStats, getTimeline, listTasks } from "./api";
+import * as workbenchApi from "./api";
 
 const publicTask = {
   id: "1b8a4717-07fe-45e7-950c-df5bbc56d8aa",
@@ -136,9 +137,9 @@ describe("workbench API", () => {
         task: publicTask,
         turns: [],
         events: [{ id: 0, turn_id: "turn", sequence: 1, event_type: "text_delta", payload: { text: "bad" }, created_at: "" }],
-        attachments: [], artifacts: [], confirmations: [], next_cursor: "", has_more: false,
+        attachments: [], artifacts: [], next_cursor: "", has_more: false,
         events_has_more: false, events_next_cursor: 0, artifacts_has_more: false, artifacts_next_cursor: "",
-        confirmations_has_more: false, confirmations_next_cursor: "", attachments_has_more: false, attachments_next_cursor: "",
+        attachments_has_more: false, attachments_next_cursor: "",
       }), { status: 200, headers: { "Content-Type": "application/json" } })),
     );
 
@@ -164,9 +165,9 @@ describe("workbench API", () => {
         task: publicTask,
         turns: [],
         events: [{ id: 1, turn_id: "turn", sequence: 1, event_type: "tool_completed", payload, created_at: "2026-08-14 00:00:02" }],
-        attachments: [], artifacts: [], confirmations: [], next_cursor: "", has_more: false,
+        attachments: [], artifacts: [], next_cursor: "", has_more: false,
         events_has_more: false, events_next_cursor: 0, artifacts_has_more: false, artifacts_next_cursor: "",
-        confirmations_has_more: false, confirmations_next_cursor: "", attachments_has_more: false, attachments_next_cursor: "",
+        attachments_has_more: false, attachments_next_cursor: "",
       }), { status: 200, headers: { "Content-Type": "application/json" } })),
     );
 
@@ -174,4 +175,40 @@ describe("workbench API", () => {
 
     expect(timeline.events[0].payload).toEqual(payload);
   });
+
+  it("removes the retired confirmation client exports", () => {
+    expect(workbenchApi).not.toHaveProperty("confirmAction");
+    expect(workbenchApi).not.toHaveProperty("cancelAction");
+  });
+
+  it("accepts the timeline contract without a confirmation resource and keeps remaining cursors", async () => {
+    const payload = {
+      task: publicTask, turns: [], events: [], attachments: [], artifacts: [],
+      next_cursor: "turns", has_more: true, events_has_more: true, events_next_cursor: 9,
+      artifacts_has_more: true, artifacts_next_cursor: "artifacts",
+      attachments_has_more: true, attachments_next_cursor: "attachments",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    expect(await getTimeline(publicTask.id, { before: "turns", eventBefore: 9, artifactAfter: "artifacts", attachmentAfter: "attachments" })).toEqual(payload);
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/workbench/tasks/${publicTask.id}/timeline?before=turns&event_before=9&artifact_after=artifacts&attachment_after=attachments`,
+      expect.anything(),
+    );
+  });
+
+  it("accepts statistics without confirmation counts or the retired waiting status", async () => {
+    const payload = {
+      tasks: { total: 1, active: 1, archived: 0 },
+      turns: { queued: 0, running: 1, completed: 0, stopped: 0, failed: 0 },
+      events: { tool_completed: 1 }, attachments: 2, artifacts: 3,
+      duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    expect(await getStats()).toEqual(payload);
+  });
+
 });

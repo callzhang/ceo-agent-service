@@ -1,0 +1,898 @@
+--- a/app/workbench/api.py
++++ b/app/workbench/api.py
+@@ -26,11 +26,9 @@
+ 
+ from app.workbench.executor import WorkbenchExecutor
+ from app.workbench.models import (
+-    ConfirmationStatus,
+     TurnStatus,
+     WorkbenchArtifact,
+     WorkbenchAttachment,
+-    WorkbenchConfirmation,
+     WorkbenchEvent,
+     WorkbenchTask,
+     WorkbenchTurn,
+@@ -127,39 +125,18 @@
+     download_url: str
+ 
+ 
+-class PublicConfirmation(_StrictModel):
+-    id: str
+-    turn_id: str
+-    action_kind: str
+-    target: str
+-    summary: str
+-    risk: str
+-    canonical_capability: str
+-    canonical_operation: str
+-    canonical_targets: list[str]
+-    status: ConfirmationStatus
+-    decision_requested: str
+-    decision_requested_at: str
+-    proposer_quiesced: bool
+-    created_at: str
+-    decided_at: str
+-
+-
+ class PublicTimeline(_StrictModel):
+     task: PublicTask
+     turns: list[PublicTurn]
+     events: list[PublicEvent]
+     attachments: list[WorkbenchAttachment]
+     artifacts: list[PublicArtifact]
+-    confirmations: list[PublicConfirmation]
+     next_cursor: str = ""
+     has_more: bool = False
+     events_has_more: bool = False
+     events_next_cursor: int = 0
+     artifacts_has_more: bool = False
+     artifacts_next_cursor: str = ""
+-    confirmations_has_more: bool = False
+-    confirmations_next_cursor: str = ""
+     attachments_has_more: bool = False
+     attachments_next_cursor: str = ""
+ 
+@@ -184,7 +161,6 @@
+ class WorkbenchStatsResponse(_StrictModel):
+     tasks: CountSummary
+     turns: dict[str, int]
+-    confirmations: dict[str, int]
+     events: dict[str, int]
+     attachments: int
+     artifacts: int
+@@ -337,7 +313,6 @@
+     "client_request_conflict": "Client request ID conflicts with an existing turn",
+     "attachment_request_conflict": "Client request ID conflicts with an existing attachment",
+     "attachment_invalid": "Attachment data is invalid",
+-    "confirmation_history_read_only": "Historical confirmations are read-only",
+ }
+ 
+ 
+@@ -534,14 +509,9 @@
+     "artifact_created": frozenset(
+         {"artifact_id", "label", "filename", "path", "media_type"}
+     ),
+-    "confirmation_required": frozenset(
+-        {"action_kind", "confirmation_id", "target", "summary", "risk"}
+-    ),
+-    "status_changed": frozenset(
+-        {"status", "code", "confirmation_id", "confirmation_status"}
+-    ),
++    "status_changed": frozenset({"status", "code"}),
+     "turn_completed": frozenset({"status"}),
+-    "turn_failed": frozenset({"status", "code", "confirmation_id"}),
++    "turn_failed": frozenset({"status", "code"}),
+ }
+ 
+ 
+@@ -602,66 +572,12 @@
+     return WorkbenchAttachment.model_validate(_public_record(values, workspace))
+ 
+ 
+-def _public_confirmation(
+-    store: WorkbenchStore,
+-    confirmation: WorkbenchConfirmation,
+-    *,
+-    proposer_quiesced: bool | None = None,
+-    workspace: Path | None = None,
+-) -> PublicConfirmation:
+-    workspace = workspace or Path.cwd()
+-    try:
+-        canonical_targets = json.loads(confirmation.canonical_targets_json)
+-    except json.JSONDecodeError:
+-        canonical_targets = []
+-    if not isinstance(canonical_targets, list) or not all(
+-        isinstance(item, str) for item in canonical_targets
+-    ):
+-        canonical_targets = []
+-    return PublicConfirmation.model_validate(
+-        _public_record(
+-            {
+-                "id": confirmation.id,
+-                "turn_id": confirmation.turn_id,
+-                "action_kind": confirmation.action_kind,
+-                "target": confirmation.target,
+-                "summary": confirmation.summary,
+-                "risk": confirmation.risk,
+-                "canonical_capability": confirmation.canonical_capability,
+-                "canonical_operation": confirmation.canonical_operation,
+-                "canonical_targets": canonical_targets,
+-                "status": confirmation.status,
+-                "decision_requested": confirmation.decision_requested,
+-                "decision_requested_at": confirmation.decision_requested_at,
+-                "proposer_quiesced": (
+-                    bool(store.confirmation_is_quiesced(confirmation.id))
+-                    if proposer_quiesced is None
+-                    else proposer_quiesced
+-                ),
+-                "created_at": confirmation.created_at,
+-                "decided_at": confirmation.decided_at,
+-            },
+-            workspace,
+-        )
+-    )
+-
+-
+ def _owned_turn(store: WorkbenchStore, task_id: str, turn_id: str) -> WorkbenchTurn:
+     task = store.get_task(task_id)
+     turn = store.get_turn(turn_id)
+     if task is None or turn is None or turn.task_id != task_id:
+         raise _not_found()
+     return turn
+-
+-
+-def _owned_confirmation(
+-    store: WorkbenchStore, task_id: str, turn_id: str, confirmation_id: str
+-) -> WorkbenchConfirmation:
+-    _owned_turn(store, task_id, turn_id)
+-    confirmation = store.get_confirmation(confirmation_id)
+-    if confirmation is None or confirmation.turn_id != turn_id:
+-        raise _not_found()
+-    return confirmation
+ 
+ 
+ def _media_type_permitted(media_type: str) -> bool:
+@@ -1046,12 +962,11 @@
+         before: str | None = None,
+         event_before: int | None = Query(default=None, ge=1),
+         artifact_after: str | None = None,
+-        confirmation_after: str | None = None,
+         attachment_after: str | None = None,
+     ) -> PublicTimeline:
+         task_id_text = _uuid_text(task_id)
+         try:
+-            task, turns, events, attachments, artifacts, confirmations, page = (
++            task, turns, events, attachments, artifacts, page = (
+                 store.timeline_snapshot(
+                     task_id_text,
+                     turn_limit=turn_limit,
+@@ -1059,7 +974,6 @@
+                     before_sequence=_parse_turn_cursor(before, task_id=task_id_text),
+                     event_before=event_before,
+                     artifact_after=_parse_resource_cursor(artifact_after),
+-                    confirmation_after=_parse_resource_cursor(confirmation_after),
+                     attachment_after=_parse_resource_cursor(attachment_after),
+                 )
+             )
+@@ -1081,17 +995,6 @@
+                 _public_artifact(task_id_text, artifact, executor.workspace)
+                 for artifact in artifacts
+             ],
+-            confirmations=[
+-                _public_confirmation(
+-                    store,
+-                    confirmation,
+-                    proposer_quiesced=page["confirmation_quiescence"].get(
+-                        confirmation.id, False
+-                    ),
+-                    workspace=executor.workspace,
+-                )
+-                for confirmation in confirmations
+-            ],
+             next_cursor=(
+                 _turn_cursor(task_id_text, turns[-1])
+                 if page["has_more"] and turns
+@@ -1106,12 +1009,6 @@
+                 if page["artifacts_has_more"] and artifacts
+                 else ""
+             ),
+-            confirmations_has_more=page["confirmations_has_more"],
+-            confirmations_next_cursor=(
+-                _resource_cursor(confirmations[-1])
+-                if page["confirmations_has_more"] and confirmations
+-                else ""
+-            ),
+             attachments_has_more=page["attachments_has_more"],
+             attachments_next_cursor=(
+                 _resource_cursor(attachments[-1])
+@@ -1119,40 +1016,6 @@
+                 else ""
+             ),
+         )
+-
+-    @app.post(
+-        "/api/workbench/tasks/{task_id}/turns/{turn_id}/confirmations/{confirmation_id}/confirm",
+-        response_model=PublicConfirmation,
+-    )
+-    async def confirm(
+-        task_id: UUID, turn_id: UUID, confirmation_id: UUID, request: Request
+-    ) -> PublicConfirmation:
+-        await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
+-        await anyio.to_thread.run_sync(
+-            _owned_confirmation,
+-            store,
+-            _uuid_text(task_id),
+-            _uuid_text(turn_id),
+-            _uuid_text(confirmation_id),
+-        )
+-        raise _public_error(410, "confirmation_history_read_only")
+-
+-    @app.post(
+-        "/api/workbench/tasks/{task_id}/turns/{turn_id}/confirmations/{confirmation_id}/cancel",
+-        response_model=PublicConfirmation,
+-    )
+-    async def cancel(
+-        task_id: UUID, turn_id: UUID, confirmation_id: UUID, request: Request
+-    ) -> PublicConfirmation:
+-        await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
+-        await anyio.to_thread.run_sync(
+-            _owned_confirmation,
+-            store,
+-            _uuid_text(task_id),
+-            _uuid_text(turn_id),
+-            _uuid_text(confirmation_id),
+-        )
+-        raise _public_error(410, "confirmation_history_read_only")
+ 
+     @app.get(
+         "/api/workbench/runtimes", response_model=list[RuntimeCapabilitiesResponse]
+--- a/frontend/src/types.ts
++++ b/frontend/src/types.ts
+@@ -2,7 +2,6 @@
+   | "idle"
+   | "queued"
+   | "running"
+-  | "waiting_confirmation"
+   | "completed"
+   | "stopped"
+   | "failed";
+@@ -16,17 +15,9 @@
+   | "tool_completed"
+   | "file_changed"
+   | "artifact_created"
+-  | "confirmation_required"
+   | "status_changed"
+   | "turn_completed"
+   | "turn_failed";
+-
+-export type ConfirmationStatus =
+-  | "pending"
+-  | "confirmed"
+-  | "cancelled"
+-  | "executed"
+-  | "failed";
+ 
+ export interface Task {
+   id: string;
+@@ -81,39 +72,18 @@
+   download_url: string;
+ }
+ 
+-export interface Confirmation {
+-  id: string;
+-  turn_id: string;
+-  action_kind: string;
+-  target: string;
+-  summary: string;
+-  risk: string;
+-  canonical_capability: string;
+-  canonical_operation: string;
+-  canonical_targets: string[];
+-  status: ConfirmationStatus;
+-  decision_requested: string;
+-  decision_requested_at: string;
+-  proposer_quiesced: boolean;
+-  created_at: string;
+-  decided_at: string;
+-}
+-
+ export interface Timeline {
+   task: Task;
+   turns: Turn[];
+   events: WorkbenchEvent[];
+   attachments: Attachment[];
+   artifacts: Artifact[];
+-  confirmations: Confirmation[];
+   next_cursor: string;
+   has_more: boolean;
+   events_has_more: boolean;
+   events_next_cursor: number;
+   artifacts_has_more: boolean;
+   artifacts_next_cursor: string;
+-  confirmations_has_more: boolean;
+-  confirmations_next_cursor: string;
+   attachments_has_more: boolean;
+   attachments_next_cursor: string;
+ }
+@@ -135,7 +105,6 @@
+ export interface WorkbenchStats {
+   tasks: { total: number; active: number; archived: number };
+   turns: Record<TurnStatus, number>;
+-  confirmations: Record<ConfirmationStatus, number>;
+   events: Record<string, number>;
+   attachments: number;
+   artifacts: number;
+--- a/frontend/src/api.ts
++++ b/frontend/src/api.ts
+@@ -1,8 +1,6 @@
+ import type {
+   Artifact,
+   Attachment,
+-  Confirmation,
+-  ConfirmationStatus,
+   EventType,
+   RuntimeCapabilities,
+   Task,
+@@ -23,7 +21,6 @@
+   "idle",
+   "queued",
+   "running",
+-  "waiting_confirmation",
+   "completed",
+   "stopped",
+   "failed",
+@@ -36,19 +33,10 @@
+   "tool_completed",
+   "file_changed",
+   "artifact_created",
+-  "confirmation_required",
+   "status_changed",
+   "turn_completed",
+   "turn_failed",
+ ];
+-const confirmationStatuses: readonly ConfirmationStatus[] = [
+-  "pending",
+-  "confirmed",
+-  "cancelled",
+-  "executed",
+-  "failed",
+-];
+-
+ export class ApiError extends Error {
+   readonly status: number;
+   readonly code: string;
+@@ -79,7 +67,6 @@
+   before?: string;
+   eventBefore?: number;
+   artifactAfter?: string;
+-  confirmationAfter?: string;
+   attachmentAfter?: string;
+ }
+ 
+@@ -216,29 +203,6 @@
+   };
+ }
+ 
+-function parseConfirmation(value: unknown): Confirmation {
+-  if (!isRecord(value)) throwInvalidResponse();
+-  const targets = arrayField(value, "canonical_targets");
+-  if (!targets.every((target) => typeof target === "string")) throwInvalidResponse();
+-  return {
+-    id: stringField(value, "id"),
+-    turn_id: stringField(value, "turn_id"),
+-    action_kind: stringField(value, "action_kind"),
+-    target: stringField(value, "target"),
+-    summary: stringField(value, "summary"),
+-    risk: stringField(value, "risk"),
+-    canonical_capability: stringField(value, "canonical_capability"),
+-    canonical_operation: stringField(value, "canonical_operation"),
+-    canonical_targets: targets as string[],
+-    status: enumField(value, "status", confirmationStatuses),
+-    decision_requested: stringField(value, "decision_requested"),
+-    decision_requested_at: stringField(value, "decision_requested_at"),
+-    proposer_quiesced: booleanField(value, "proposer_quiesced"),
+-    created_at: stringField(value, "created_at"),
+-    decided_at: stringField(value, "decided_at"),
+-  };
+-}
+-
+ function parseTimeline(value: unknown): Timeline {
+   if (!isRecord(value)) throwInvalidResponse();
+   return {
+@@ -247,15 +211,12 @@
+     events: arrayField(value, "events").map(parseEvent),
+     attachments: arrayField(value, "attachments").map(parseAttachment),
+     artifacts: arrayField(value, "artifacts").map(parseArtifact),
+-    confirmations: arrayField(value, "confirmations").map(parseConfirmation),
+     next_cursor: stringField(value, "next_cursor"),
+     has_more: booleanField(value, "has_more"),
+     events_has_more: booleanField(value, "events_has_more"),
+     events_next_cursor: integerField(value, "events_next_cursor"),
+     artifacts_has_more: booleanField(value, "artifacts_has_more"),
+     artifacts_next_cursor: stringField(value, "artifacts_next_cursor"),
+-    confirmations_has_more: booleanField(value, "confirmations_has_more"),
+-    confirmations_next_cursor: stringField(value, "confirmations_next_cursor"),
+     attachments_has_more: booleanField(value, "attachments_has_more"),
+     attachments_next_cursor: stringField(value, "attachments_next_cursor"),
+   };
+@@ -295,10 +256,6 @@
+       archived: integerField(value.tasks, "archived"),
+     },
+     turns: parseCountRecord(value.turns, turnStatuses) as Record<TurnStatus, number>,
+-    confirmations: parseCountRecord(
+-      value.confirmations,
+-      confirmationStatuses,
+-    ) as Record<ConfirmationStatus, number>,
+     events: isRecord(value.events)
+       ? Object.fromEntries(
+           Object.entries(value.events).map(([key, count]) => {
+@@ -385,10 +342,6 @@
+   return `${basePath}/tasks/${encodeURIComponent(taskId)}`;
+ }
+ 
+-function confirmationPath(taskId: string, turnId: string, confirmationId: string): string {
+-  return `${taskPath(taskId)}/turns/${encodeURIComponent(turnId)}/confirmations/${encodeURIComponent(confirmationId)}`;
+-}
+-
+ export async function listTasks(options: ListTasksOptions = {}): Promise<TaskPage> {
+   const params = new URLSearchParams();
+   if (options.archived) params.set("archived", options.archived);
+@@ -487,36 +440,6 @@
+   ).data;
+ }
+ 
+-export async function confirmAction(
+-  taskId: string,
+-  turnId: string,
+-  confirmationId: string,
+-  options?: RequestOptions,
+-): Promise<Confirmation> {
+-  return (
+-    await request(
+-      `${confirmationPath(taskId, turnId, confirmationId)}/confirm`,
+-      parseConfirmation,
+-      jsonMutation("POST", {}, options),
+-    )
+-  ).data;
+-}
+-
+-export async function cancelAction(
+-  taskId: string,
+-  turnId: string,
+-  confirmationId: string,
+-  options?: RequestOptions,
+-): Promise<Confirmation> {
+-  return (
+-    await request(
+-      `${confirmationPath(taskId, turnId, confirmationId)}/cancel`,
+-      parseConfirmation,
+-      jsonMutation("POST", {}, options),
+-    )
+-  ).data;
+-}
+-
+ export async function getTimeline(
+   taskId: string,
+   options: TimelineOptions = {},
+@@ -527,7 +450,6 @@
+   if (options.before) params.set("before", options.before);
+   if (options.eventBefore !== undefined) params.set("event_before", String(options.eventBefore));
+   if (options.artifactAfter) params.set("artifact_after", options.artifactAfter);
+-  if (options.confirmationAfter) params.set("confirmation_after", options.confirmationAfter);
+   if (options.attachmentAfter) params.set("attachment_after", options.attachmentAfter);
+   const query = params.size ? `?${params.toString()}` : "";
+   return (
+--- a/frontend/src/events.ts
++++ b/frontend/src/events.ts
+@@ -7,7 +7,6 @@
+   "tool_completed",
+   "file_changed",
+   "artifact_created",
+-  "confirmation_required",
+   "status_changed",
+   "turn_completed",
+   "turn_failed",
+@@ -26,10 +25,9 @@
+   ]),
+   file_changed: new Set(["filename", "path", "change", "status"]),
+   artifact_created: new Set(["artifact_id", "label", "filename", "path", "media_type"]),
+-  confirmation_required: new Set(["action_kind", "confirmation_id", "target", "summary", "risk"]),
+-  status_changed: new Set(["status", "code", "confirmation_id", "confirmation_status"]),
++  status_changed: new Set(["status", "code"]),
+   turn_completed: new Set(["status"]),
+-  turn_failed: new Set(["status", "code", "confirmation_id"]),
++  turn_failed: new Set(["status", "code"]),
+ };
+ 
+ export interface EventState {
+@@ -38,13 +36,12 @@
+ }
+ 
+ export interface TimelineBlock {
+-  kind: "markdown" | "thinking" | "tool" | "file" | "confirmation" | "artifact";
++  kind: "markdown" | "thinking" | "tool" | "file" | "artifact";
+   key: string;
+   eventId: number;
+   text?: string;
+   status?: string;
+   payload?: Record<string, unknown>;
+-  confirmationId?: string;
+   artifactId?: string;
+   startedAt?: string;
+   completedAt?: string;
+@@ -72,7 +69,6 @@
+   if (eventType === "text_delta") return typeof payload.text === "string";
+   if (eventType === "thinking_summary") return typeof payload.text === "string" || typeof payload.summary === "string";
+   if (eventType === "artifact_created") return typeof payload.artifact_id === "string";
+-  if (eventType === "confirmation_required") return typeof payload.confirmation_id === "string";
+   if (["status_changed", "turn_completed", "turn_failed"].includes(eventType)) return typeof payload.status === "string";
+   return true;
+ }
+@@ -187,11 +183,6 @@
+     }
+     if (event.event_type === "file_changed") {
+       blocks.push({ kind: "file", key: `event:${event.id}`, eventId: event.id, status: payloadText(event.payload, "status"), payload: event.payload });
+-      continue;
+-    }
+-    if (event.event_type === "confirmation_required") {
+-      const confirmationId = payloadText(event.payload, "confirmation_id");
+-      if (confirmationId) blocks.push({ kind: "confirmation", key: `confirmation:${confirmationId}`, eventId: event.id, confirmationId });
+       continue;
+     }
+     if (event.event_type === "artifact_created") {
+--- a/frontend/src/app.tsx
++++ b/frontend/src/app.tsx
+@@ -27,7 +27,6 @@
+ import { TurnInspector } from "./components/TurnInspector";
+ import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
+ import type {
+-  ConfirmationStatus,
+   RuntimeCapabilities,
+   Task,
+   TaskPage,
+@@ -115,15 +114,13 @@
+     events,
+     attachments: mergeById(current.attachments, incoming.attachments),
+     artifacts: mergeById(current.artifacts, incoming.artifacts),
+-    confirmations: mergeById(current.confirmations, incoming.confirmations),
+     events_has_more: current.events_has_more || incoming.events_has_more,
+     artifacts_has_more: current.artifacts_has_more || incoming.artifacts_has_more,
+-    confirmations_has_more: current.confirmations_has_more || incoming.confirmations_has_more,
+     attachments_has_more: current.attachments_has_more || incoming.attachments_has_more,
+   };
+ }
+ 
+-type ResourcePageKind = "events" | "artifacts" | "confirmations" | "attachments";
++type ResourcePageKind = "events" | "artifacts" | "attachments";
+ type TimelineRequestChannel = "turns" | "refresh" | ResourcePageKind;
+ interface ResourcePageCursor {
+   before: string;
+@@ -132,20 +129,18 @@
+ type ResourcePageQueues = Record<ResourcePageKind, ResourcePageCursor[]>;
+ 
+ function emptyResourcePageQueues(): ResourcePageQueues {
+-  return { events: [], artifacts: [], confirmations: [], attachments: [] };
++  return { events: [], artifacts: [], attachments: [] };
+ }
+ 
+ function resourceCursor(timeline: Timeline, kind: ResourcePageKind): string | number {
+   if (kind === "events") return timeline.events_next_cursor;
+   if (kind === "artifacts") return timeline.artifacts_next_cursor;
+-  if (kind === "confirmations") return timeline.confirmations_next_cursor;
+   return timeline.attachments_next_cursor;
+ }
+ 
+ function resourceHasMore(timeline: Timeline, kind: ResourcePageKind): boolean {
+   if (kind === "events") return timeline.events_has_more;
+   if (kind === "artifacts") return timeline.artifacts_has_more;
+-  if (kind === "confirmations") return timeline.confirmations_has_more;
+   return timeline.attachments_has_more;
+ }
+ 
+@@ -153,7 +148,6 @@
+   const next = queue[0]?.cursor;
+   if (kind === "events") return { ...timeline, events_has_more: queue.length > 0, events_next_cursor: typeof next === "number" ? next : 0 };
+   if (kind === "artifacts") return { ...timeline, artifacts_has_more: queue.length > 0, artifacts_next_cursor: typeof next === "string" ? next : "" };
+-  if (kind === "confirmations") return { ...timeline, confirmations_has_more: queue.length > 0, confirmations_next_cursor: typeof next === "string" ? next : "" };
+   return { ...timeline, attachments_has_more: queue.length > 0, attachments_next_cursor: typeof next === "string" ? next : "" };
+ }
+ 
+@@ -173,12 +167,6 @@
+     artifacts_has_more: incoming.artifacts_has_more,
+     artifacts_next_cursor: incoming.artifacts_next_cursor,
+   };
+-  if (kind === "confirmations") return {
+-    ...current,
+-    confirmations: mergeById(current.confirmations, incoming.confirmations),
+-    confirmations_has_more: incoming.confirmations_has_more,
+-    confirmations_next_cursor: incoming.confirmations_next_cursor,
+-  };
+   return {
+     ...current,
+     attachments: mergeById(current.attachments, incoming.attachments),
+@@ -187,9 +175,8 @@
+   };
+ }
+ 
+-const turnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"];
+-const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation"];
+-const confirmationStatuses: readonly ConfirmationStatus[] = ["pending", "confirmed", "cancelled", "executed", "failed"];
++const turnStatuses: readonly TurnStatus[] = ["queued", "running", "completed", "stopped", "failed"];
++const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running"];
+ 
+ function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {
+   if (event.event_type === "turn_completed") return "completed";
+@@ -197,17 +184,6 @@
+   if (event.event_type !== "status_changed") return null;
+   const value = event.payload.status;
+   return typeof value === "string" && turnStatuses.includes(value as TurnStatus) ? value as TurnStatus : null;
+-}
+-
+-function confirmationProgressFromEvent(event: WorkbenchEvent): { id: string; status: ConfirmationStatus | null } | null {
+-  if (event.event_type !== "status_changed") return null;
+-  const rawId = event.payload.confirmation_id;
+-  const id = typeof rawId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(rawId) ? rawId : "";
+-  const rawStatus = event.payload.confirmation_status;
+-  const status = typeof rawStatus === "string" && confirmationStatuses.includes(rawStatus as ConfirmationStatus)
+-    ? rawStatus as ConfirmationStatus
+-    : null;
+-  return id || status ? { id, status } : null;
+ }
+ 
+ export interface AppProps {
+@@ -312,7 +288,7 @@
+       const next = replace
+         ? emptyResourcePageQueues()
+         : Object.fromEntries(Object.entries(current).map(([kind, pages]) => [kind, [...pages]])) as ResourcePageQueues;
+-      for (const kind of ["events", "artifacts", "confirmations", "attachments"] as const) {
++      for (const kind of ["events", "artifacts", "attachments"] as const) {
+         if (!resourceHasMore(loaded, kind)) continue;
+         // Attachments belong to the task, not an individual turn window. The API
+         // therefore ignores `before` for this cursor; keep one global queue entry.
+@@ -764,9 +740,7 @@
+       ? { eventBefore: page.cursor as number }
+       : kind === "artifacts"
+         ? { artifactAfter: page.cursor as string }
+-        : kind === "confirmations"
+-          ? { confirmationAfter: page.cursor as string }
+-          : { attachmentAfter: page.cursor as string };
++        : { attachmentAfter: page.cursor as string };
+     const controller = new AbortController();
+     const requestId = startTimelineRequest(kind, controller);
+     setLoadingResources((current) => new Set(current).add(kind));
+@@ -1171,7 +1145,6 @@
+       onEvent: (event) => {
+         if (selectedTaskIdRef.current !== taskId || event.turn_id !== turnId) return;
+         const nextStatus = statusFromEvent(event);
+-        const confirmationProgress = confirmationProgressFromEvent(event);
+         const terminal = nextStatus !== null && ["completed", "stopped", "failed"].includes(nextStatus);
+         writeTimeline((current) => {
+           if (!current || current.task.id !== taskId) return current;
+@@ -1181,23 +1154,17 @@
+           const turns = nextStatus
+             ? current.turns.map((turn) => turn.id === turnId ? { ...turn, status: nextStatus } : turn)
+             : current.turns;
+-          const confirmations = confirmationProgress?.id && confirmationProgress.status
+-            ? current.confirmations.map((confirmation) => confirmation.id === confirmationProgress.id
+-              ? { ...confirmation, status: confirmationProgress.status as ConfirmationStatus }
+-              : confirmation)
+-            : current.confirmations;
+           return {
+             ...current,
+             events: eventState.events,
+             turns,
+-            confirmations,
+             task: nextStatus ? { ...current.task, state: nextStatus } : current.task,
+           };
+         });
+         if (nextStatus) {
+           writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: nextStatus } : task));
+         }
+-        if (event.event_type === "confirmation_required" || event.event_type === "artifact_created" || confirmationProgress || terminal) {
++        if (event.event_type === "artifact_created" || terminal) {
+           scheduleSelectedTimelineRefresh(taskId);
+         }
+         if (event.event_type === "artifact_created" || terminal) scheduleStatsRefresh();
+@@ -1470,7 +1437,6 @@
+                   <div className="resource-pagination" aria-label="对话资源分页">
+                     {resourceQueues.events.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("events")} onClick={() => void loadTimelineResource(selectedTask.id, "events")}>加载更多事件</button>}
+                     {resourceQueues.artifacts.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("artifacts")} onClick={() => void loadTimelineResource(selectedTask.id, "artifacts")}>加载更多产物</button>}
+-                    {resourceQueues.confirmations.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("confirmations")} onClick={() => void loadTimelineResource(selectedTask.id, "confirmations")}>加载更多确认</button>}
+                     {resourceQueues.attachments.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("attachments")} onClick={() => void loadTimelineResource(selectedTask.id, "attachments")}>加载更多附件</button>}
+                   </div>
+                   {timeline.has_more && (
+--- a/frontend/src/components/ConversationTimeline.tsx
++++ b/frontend/src/components/ConversationTimeline.tsx
+@@ -2,17 +2,14 @@
+ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+ 
+ import { timelineBlocks } from "../events";
+-import type { Artifact, Confirmation, Timeline, Turn, WorkbenchEvent } from "../types";
++import type { Artifact, Timeline, Turn, WorkbenchEvent } from "../types";
+ import { ArtifactList } from "./ArtifactList";
+-import { ConfirmationCard } from "./ConfirmationCard";
+ import { displayText, ExecutionStep } from "./ExecutionStep";
+ import { MarkdownContent } from "./MarkdownContent";
+ 
+ interface ConversationTimelineProps {
+   timeline: Timeline;
+   activeTurnId: string | null;
+-  onConfirm?: (confirmation: Confirmation) => Promise<void>;
+-  onCancel?: (confirmation: Confirmation) => Promise<void>;
+ }
+ 
+ export function assistantTurnKey(turn: Turn) {
+@@ -36,17 +33,16 @@
+   return turns.length ? firstItemIndex + turns.length - 1 : null;
+ }
+ 
+-function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, active }: {
++function TurnItem({ turn, events, artifactsById, taskId, active }: {
+   turn: Turn;
+   events: WorkbenchEvent[];
+-  confirmationsById: Map<string, Confirmation>;
+   artifactsById: Map<string, Artifact>;
+   taskId: string;
+   active: boolean;
+ }) {
+   const blocks = useMemo(() => timelineBlocks(turn.id, events, turn.status), [events, turn.id, turn.status]);
+   const renderedText = blocks.some((block) => block.kind === "markdown");
+-  const nonterminal = ["queued", "running", "waiting_confirmation"].includes(turn.status);
++  const nonterminal = ["queued", "running"].includes(turn.status);
+   const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);
+   return (
+     <article className="conversation-turn" data-status={turn.status} data-active={active || undefined}>
+@@ -56,10 +52,6 @@
+           if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownContent key={block.key} text={block.text ?? ""} /> : null;
+           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
+           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} startedAt={block.startedAt} completedAt={block.completedAt} />;
+-          if (block.kind === "confirmation") {
+-            const confirmation = confirmationsById.get(block.confirmationId ?? "");
+-            return confirmation?.turn_id === turn.id ? <ConfirmationCard key={block.key} confirmation={confirmation} /> : null;
+-          }
+           const artifact = artifactsById.get(block.artifactId ?? "");
+           return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
+         })}
+@@ -67,7 +59,6 @@
+         {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownContent text={turn.final_text} />}
+         {turn.status === "queued" && <p className="turn-state" role="status">已排队</p>}
+         {turn.status === "running" && <p className="turn-state" role="status">执行中</p>}
+-        {turn.status === "waiting_confirmation" && <p className="turn-state" role="status">等待确认</p>}
+         {turn.status === "completed" && <p className="turn-state">已完成</p>}
+         {turn.status === "stopped" && <p className="turn-state">已停止</p>}
+         {turn.status === "failed" && <p className="turn-error" role="alert">执行失败：{displayText(turn.error_detail || turn.error_code, "未知错误")}</p>}
+@@ -88,10 +79,6 @@
+     }
+     return indexed;
+   }, [timeline.events]);
+-  const confirmationsById = useMemo(
+-    () => new Map(timeline.confirmations.map((confirmation) => [confirmation.id, confirmation])),
+-    [timeline.confirmations],
+-  );
+   const artifactsById = useMemo(
+     () => new Map(timeline.artifacts.map((artifact) => [artifact.id, artifact])),
+     [timeline.artifacts],
+@@ -137,7 +124,6 @@
+           <TurnItem
+             turn={turn}
+             events={eventsByTurn.get(turn.id) ?? []}
+-            confirmationsById={confirmationsById}
+             artifactsById={artifactsById}
+             taskId={timeline.task.id}
+             active={turn.id === activeTurnId}
+--- a/frontend/src/components/Composer.tsx
++++ b/frontend/src/components/Composer.tsx
+@@ -53,7 +53,7 @@
+ }
+ 
+ function nonterminal(turn: Turn | null) {
+-  return Boolean(turn && ["queued", "running", "waiting_confirmation"].includes(turn.status));
++  return Boolean(turn && ["queued", "running"].includes(turn.status));
+ }
+ 
+ export function Composer({ taskId, activeTurn, attachments, capabilities, onTurnCreated, onTurnStopped, onAttachmentUploaded }: ComposerProps) {
+--- a/frontend/src/components/TurnInspector.tsx
++++ b/frontend/src/components/TurnInspector.tsx
+@@ -36,7 +36,7 @@
+   const toolCount = events.filter((event) => event.event_type === "tool_started").length;
+   const fileCount = events.filter((event) => event.event_type === "file_changed").length;
+   const errorCount = events.filter((event) => event.event_type === "turn_failed" || (event.event_type === "tool_completed" && event.payload.status === "failed")).length;
+-  const truncated = Boolean(timeline && (timeline.has_more || timeline.events_has_more || timeline.artifacts_has_more || timeline.confirmations_has_more || timeline.attachments_has_more));
++  const truncated = Boolean(timeline && (timeline.has_more || timeline.events_has_more || timeline.artifacts_has_more || timeline.attachments_has_more));
+   const runtime = capabilities?.find((item) => item.kind === task.runtime_kind);
+   const unavailableOptionalRuntimes = capabilities
+     ? ["claude", "pi"].filter((kind) => !capabilities.some((item) => item.kind === kind))
+--- a/frontend/src/presentation.ts
++++ b/frontend/src/presentation.ts
+@@ -4,7 +4,6 @@
+   idle: "空闲",
+   queued: "排队中",
+   running: "执行中",
+-  waiting_confirmation: "等待确认",
+   completed: "已完成",
+   stopped: "已停止",
+   failed: "失败",
+--- a/frontend/src/components/status/StatusBadge.tsx
++++ b/frontend/src/components/status/StatusBadge.tsx
+@@ -25,7 +25,6 @@
+   send_unknown: "发送状态未知",
+   ready_to_send: "待发送",
+   stopped: "已停止",
+-  waiting_confirmation: "等待确认",
+   needs_action: "需要处理",
+   needs_feedback: "等待反馈",
+   needs_human: "需要人工处理",
+@@ -88,7 +87,6 @@
+   pending: "warning",
+   warning: "warning",
+   queued: "warning",
+-  waiting_confirmation: "warning",
+   ready_to_send: "warning",
+   needs_action: "warning",
+   needs_feedback: "warning",
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -1402,7 +1402,6 @@
+ .task-state { color: var(--ink-soft); font-size: 0.72rem; }
+ .task-activity { color: var(--ink-soft); font-size: 0.7rem; }
+ .task-state-running, .task-state-queued { color: var(--accent); }
+-.task-state-waiting_confirmation { color: var(--warning); }
+ .task-state-failed { color: var(--danger); }
+ 
+ .task-actions { display: flex; padding-right: 6px; opacity: 0; transition: opacity 120ms ease; }
+@@ -1502,16 +1501,6 @@
+ .execution-failed summary > svg:first-child { color: var(--danger); }
+ .execution-aborted summary > svg:first-child { color: var(--ink-soft); }
+ 
+-.confirmation-card { padding: 15px; border: 1px solid #e1c67f; border-radius: 12px; background: #fffaf0; }
+-.confirmation-title { display: flex; align-items: center; gap: 8px; color: #7b5210; }
+-.confirmation-card dl { margin: 12px 0; }
+-.confirmation-card dl div { display: grid; grid-template-columns: 56px 1fr; gap: 8px; padding: 5px 0; }
+-.confirmation-card dt { color: var(--ink-soft); font-size: 0.75rem; }
+-.confirmation-card dd { margin: 0; font-size: 0.82rem; overflow-wrap: anywhere; }
+-.confirmation-card small { color: var(--ink-soft); }
+-.confirmation-wait { margin: 9px 0; color: var(--warning); font-size: 0.78rem; }
+-.confirmation-actions { display: flex; gap: 8px; }
+-.confirmation-actions button { min-width: 96px; padding: 6px 12px; }
+ 
+ .artifact-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+ .artifact-list a { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px 12px; color: var(--ink); text-decoration: none; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+--- a/frontend/src/components/ConfirmationCard.tsx
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { ShieldAlert } from "lucide-react";
+-
+-import type { Confirmation } from "../types";
+-import { displayText } from "./ExecutionStep";
+-
+-interface ConfirmationCardProps {
+-  confirmation: Confirmation;
+-  onConfirm?: (confirmation: Confirmation) => Promise<void>;
+-  onCancel?: (confirmation: Confirmation) => Promise<void>;
+-}
+-
+-export function ConfirmationCard({ confirmation }: ConfirmationCardProps) {
+-  const outcomeLabel = confirmation.status === "executed"
+-    ? "操作已执行"
+-    : confirmation.status === "cancelled"
+-      ? "操作已取消"
+-      : confirmation.status === "failed"
+-        ? "操作执行失败"
+-        : confirmation.status === "confirmed"
+-          ? "正在执行已确认操作"
+-          : "";
+-
+-  return (
+-    <section className="confirmation-card" aria-label="历史确认记录">
+-      <div className="confirmation-title"><ShieldAlert aria-hidden="true" size={18} /><strong>历史确认记录（只读）</strong></div>
+-      <dl>
+-        <div><dt>操作</dt><dd>{displayText(confirmation.canonical_operation || confirmation.action_kind, "未说明")}</dd></div>
+-        <div><dt>目标</dt><dd>{confirmation.canonical_targets.length ? confirmation.canonical_targets.map((item) => displayText(item, "未说明")).join("、") : displayText(confirmation.target, "未说明")}</dd></div>
+-        <div><dt>效果</dt><dd>{displayText(confirmation.summary, "未说明")} <small>运行时提供，未验证</small></dd></div>
+-        <div><dt>风险</dt><dd>{displayText(confirmation.risk, "未说明")} <small>运行时提供，未验证</small></dd></div>
+-      </dl>
+-      {confirmation.status === "pending" && <p className="confirmation-wait">旧版待确认操作不会再执行</p>}
+-      {outcomeLabel && <p className="confirmation-wait" role="status">{outcomeLabel}</p>}
+-    </section>
+-  );
+-}

@@ -1,0 +1,634 @@
+--- a/app/workbench/executor.py
++++ b/app/workbench/executor.py
+@@ -1,9 +1,7 @@
+-"""Bounded, lease-owned execution and confirmation orchestration."""
++"""Bounded, lease-owned Workbench execution."""
+ 
+ from __future__ import annotations
+ 
+-import hashlib
+-import json
+ import re
+ import sqlite3
+ import threading
+@@ -14,19 +12,9 @@
+ from typing import Any
+ from uuid import uuid4
+ 
+-from app.agent_cli import (
+-    ReviewedWriteAuthorization,
+-    execute_reviewed_write,
+-    review_write_authorization,
+-)
+-from app.history import safe_observability_error
+-from app.leak_check import assert_no_credentials
+-from app.native_cli_metadata import NativeCliMetadataClassifier
+ from app.store import _utc_store_time
+ from app.workbench.models import (
+-    ConfirmationStatus,
+     TurnStatus,
+-    WorkbenchConfirmation,
+     WorkbenchTurn,
+ )
+ from app.workbench.runtime import (
+@@ -36,7 +24,7 @@
+     RuntimeRequest,
+     RuntimeResult,
+ )
+-from app.workbench.store import WORKBENCH_RECOVERY_BATCH_LIMIT, WorkbenchStore
++from app.workbench.store import WorkbenchStore
+ 
+ 
+ _MAX_CLAIMS = 2
+@@ -73,20 +61,11 @@
+     next_sequence: int
+     handle: RuntimeHandle | None = None
+     stop_dispatched: bool = False
+-    confirmation_created: bool = False
+     lease_lost: bool = False
+     shutdown_requested: bool = False
+     quiesced: threading.Event = field(default_factory=threading.Event)
+     heartbeat_stop: threading.Event = field(default_factory=threading.Event)
+     lock: threading.RLock = field(default_factory=threading.RLock)
+-
+-
+-@dataclass
+-class _ConfirmationExecutionState:
+-    confirmation_id: str
+-    heartbeat_stop: threading.Event = field(default_factory=threading.Event)
+-    lease_lost: bool = False
+-    thread: threading.Thread | None = None
+ 
+ 
+ class WorkbenchExecutor:
+@@ -98,16 +77,10 @@
+         workspace: Path,
+         lease_seconds: int = 300,
+         heartbeat_interval_seconds: float | None = None,
+-        confirmation_lease_seconds: int = 300,
+-        confirmation_heartbeat_interval_seconds: float | None = None,
+-        classifier: NativeCliMetadataClassifier | None = None,
+-        write_runner=None,
+         artifact_roots: tuple[Path, ...] = (),
+     ) -> None:
+         if lease_seconds <= 0:
+             raise ValueError("lease_seconds must be positive")
+-        if confirmation_lease_seconds <= 0:
+-            raise ValueError("confirmation_lease_seconds must be positive")
+         self.store = store
+         self.runtimes = runtimes
+         self.workspace = Path(workspace).resolve()
+@@ -124,19 +97,11 @@
+         self.heartbeat_interval_seconds = heartbeat_interval_seconds or max(
+             0.1, min(30.0, lease_seconds / 3)
+         )
+-        self.confirmation_lease_seconds = confirmation_lease_seconds
+-        self.confirmation_heartbeat_interval_seconds = (
+-            confirmation_heartbeat_interval_seconds
+-            or max(0.1, min(30.0, confirmation_lease_seconds / 3))
+-        )
+         self.owner = str(uuid4())
+-        self.classifier = classifier
+-        self.write_runner = write_runner
+         self._pool = ThreadPoolExecutor(
+             max_workers=2, thread_name_prefix="workbench-executor"
+         )
+         self._states: dict[str, _RunState] = {}
+-        self._confirmation_states: dict[str, _ConfirmationExecutionState] = {}
+         self._task_locks: dict[str, threading.Lock] = {}
+         self._map_lock = threading.RLock()
+         self._schedule_lock = threading.Lock()
+@@ -146,24 +111,8 @@
+ 
+     def recover(self, *, now=None) -> int:
+         recovery_now, _ = _utc_store_time(now)
+-        proposer_failures = self._retry_transient_sqlite_lock(
+-            lambda: self._drain_recovery_batches(
+-                self.store.reconcile_unquiesced_proposer_batch,
+-                now=recovery_now,
+-            )
+-        )
+-        ambiguous = self._retry_transient_sqlite_lock(
+-            lambda: self._drain_recovery_batches(
+-                self.store.reconcile_confirmed_without_result_batch,
+-                now=recovery_now,
+-            )
+-        )
+-        return (
+-            proposer_failures
+-            + ambiguous
+-            + self._retry_transient_sqlite_lock(
+-                lambda: self.store.recover_expired_turns(now=recovery_now)
+-            )
++        return self._retry_transient_sqlite_lock(
++            lambda: self.store.recover_expired_turns(now=recovery_now)
+         )
+ 
+     @staticmethod
+@@ -180,22 +129,6 @@
+                     raise
+                 time.sleep(_RECOVERY_SQLITE_LOCK_RETRY_DELAY_SECONDS)
+         raise RuntimeError("SQLite recovery retry loop exhausted")
+-
+-    @staticmethod
+-    def _drain_recovery_batches(operation, *, now) -> int:
+-        processed_ids: list[str] = []
+-        seen_ids: set[str] = set()
+-        while True:
+-            batch = tuple(operation(now=now))
+-            if len(batch) > WORKBENCH_RECOVERY_BATCH_LIMIT:
+-                raise RuntimeError("workbench recovery batch exceeded its safe limit")
+-            unique_batch = set(batch)
+-            if len(unique_batch) != len(batch) or seen_ids.intersection(unique_batch):
+-                raise RuntimeError("workbench recovery batch made no progress")
+-            processed_ids.extend(batch)
+-            seen_ids.update(unique_batch)
+-            if len(batch) < WORKBENCH_RECOVERY_BATCH_LIMIT:
+-                return len(processed_ids)
+ 
+     def run_once(self, *, max_turns: int = _MAX_CLAIMS) -> list[str]:
+         if max_turns < 1 or max_turns > _MAX_CLAIMS:
+@@ -241,112 +174,14 @@
+             self._stop_state_once(state)
+         return self.store.get_turn(turn_id) or turn
+ 
+-    def confirm(self, confirmation_id: str) -> WorkbenchConfirmation:
+-        with self._map_lock:
+-            if self._closed:
+-                raise RuntimeError("workbench executor is closed")
+-        claimed = self.store.claim_confirmation_execution(
+-            confirmation_id,
+-            owner=self.owner,
+-            lease_seconds=self.confirmation_lease_seconds + 1,
+-        )
+-        if claimed is None:
+-            existing = self.store.get_confirmation(confirmation_id)
+-            if existing is None:
+-                raise ValueError("workbench confirmation does not exist")
+-            if existing.status is ConfirmationStatus.CANCELLED:
+-                raise ValueError("confirmation has already been decided")
+-            return existing
+-        state = self._start_confirmation_heartbeat(claimed.id)
+-        failed = True
+-        safe_receipt: dict[str, object]
+-        try:
+-            arguments = json.loads(claimed.arguments_json)
+-            if not isinstance(arguments, dict):
+-                raise ValueError("invalid confirmation arguments")
+-            argv = arguments.get("argv")
+-            action_index = arguments.get("action_index", 0)
+-            if not isinstance(argv, list) or not all(
+-                isinstance(item, str) for item in argv
+-            ):
+-                raise ValueError("invalid confirmation arguments")
+-            authorization: ReviewedWriteAuthorization = review_write_authorization(
+-                argv,
+-                authorization_id=claimed.id,
+-                action_index=action_index,
+-                classifier=self.classifier,
+-            )
+-            if (
+-                authorization.capability != claimed.canonical_capability
+-                or authorization.operation != claimed.canonical_operation
+-                or json.dumps(
+-                    authorization.target_identifiers,
+-                    ensure_ascii=False,
+-                    separators=(",", ":"),
+-                )
+-                != claimed.canonical_targets_json
+-            ):
+-                raise ValueError("confirmation authorization changed")
+-            receipt = execute_reviewed_write(
+-                argv,
+-                authorization_id=claimed.id,
+-                action_index=action_index,
+-                authorization=authorization,
+-                authorization_consumer=lambda reviewed: self.store.consume_confirmation_authorization(
+-                    claimed.id, owner=self.owner, authorization=reviewed
+-                ),
+-                classifier=self.classifier,
+-                process_runner=self.write_runner,
+-            )
+-            failed = isinstance(receipt.get("error"), dict)
+-            safe_receipt = self._safe_receipt(
+-                receipt, failed=failed, target_summary=claimed.target
+-            )
+-        except Exception:
+-            safe_receipt = self._safe_receipt(
+-                {
+-                    "error": {
+-                        "code": "reviewed_write_failed",
+-                        "retryable": False,
+-                    }
+-                },
+-                failed=True,
+-                target_summary=claimed.target,
+-            )
+-            failed = True
+-        if state.lease_lost:
+-            self._stop_confirmation_heartbeat(state)
+-            return self._confirmation_after_lost_lease(claimed.id)
+-        try:
+-            return self.store.finish_confirmation_execution(
+-                claimed.id,
+-                owner=self.owner,
+-                status=(
+-                    ConfirmationStatus.FAILED if failed else ConfirmationStatus.EXECUTED
+-                ),
+-                result_json=safe_receipt,
+-                resume_context=self._receipt_resume_context(safe_receipt),
+-            )
+-        except ValueError:
+-            return self._confirmation_after_lost_lease(claimed.id)
+-        finally:
+-            self._stop_confirmation_heartbeat(state)
+-
+-    def cancel(self, confirmation_id: str) -> WorkbenchConfirmation:
+-        return self.store.cancel_confirmation_execution(
+-            confirmation_id,
+-            resume_context="The user cancelled the reviewed external action. Continue without executing it.",
+-        )
+-
+     def close(self) -> bool:
+         with self._map_lock:
+             if self._closed:
+-                active = bool(self._states or self._confirmation_states)
++                active = bool(self._states)
+                 with self._schedule_lock:
+                     return self._reserved_turns == 0 and not active
+             self._closed = True
+             states = tuple(self._states.values())
+-            confirmation_states = tuple(self._confirmation_states.values())
+         with self._schedule_lock:
+             reserved_turn_ids = tuple(self._reserved_turn_ids)
+         for turn_id in reserved_turn_ids:
+@@ -362,64 +197,14 @@
+             except ValueError:
+                 pass
+             self._stop_state_once(state)
+-        for state in confirmation_states:
+-            state.heartbeat_stop.set()
+         self._pool.shutdown(wait=False, cancel_futures=True)
+         deadline = time.monotonic() + 0.5
+         for state in states:
+             state.quiesced.wait(timeout=max(0.0, deadline - time.monotonic()))
+         with self._map_lock:
+-            active = bool(self._states or self._confirmation_states)
++            active = bool(self._states)
+         with self._schedule_lock:
+             return self._reserved_turns == 0 and not active
+-
+-    def _start_confirmation_heartbeat(
+-        self, confirmation_id: str
+-    ) -> _ConfirmationExecutionState:
+-        state = _ConfirmationExecutionState(confirmation_id=confirmation_id)
+-        thread = threading.Thread(
+-            target=self._confirmation_heartbeat,
+-            args=(state,),
+-            name=f"workbench-confirmation-heartbeat-{confirmation_id}",
+-            daemon=True,
+-        )
+-        state.thread = thread
+-        with self._map_lock:
+-            self._confirmation_states[confirmation_id] = state
+-            if self._closed:
+-                state.heartbeat_stop.set()
+-        thread.start()
+-        return state
+-
+-    def _confirmation_heartbeat(self, state: _ConfirmationExecutionState) -> None:
+-        while not state.heartbeat_stop.wait(
+-            self.confirmation_heartbeat_interval_seconds
+-        ):
+-            try:
+-                self.store.renew_confirmation_execution_lease(
+-                    state.confirmation_id,
+-                    owner=self.owner,
+-                    lease_seconds=self.confirmation_lease_seconds + 1,
+-                )
+-            except Exception:
+-                state.lease_lost = True
+-                state.heartbeat_stop.set()
+-
+-    def _stop_confirmation_heartbeat(self, state: _ConfirmationExecutionState) -> None:
+-        state.heartbeat_stop.set()
+-        if state.thread is not None:
+-            state.thread.join(timeout=0.5)
+-        with self._map_lock:
+-            if self._confirmation_states.get(state.confirmation_id) is state:
+-                self._confirmation_states.pop(state.confirmation_id, None)
+-
+-    def _confirmation_after_lost_lease(
+-        self, confirmation_id: str
+-    ) -> WorkbenchConfirmation:
+-        existing = self.store.get_confirmation(confirmation_id)
+-        if existing is None:
+-            raise ValueError("workbench confirmation does not exist")
+-        return existing
+ 
+     def _execute_turn(self, turn: WorkbenchTurn) -> None:
+         task = self.store.get_task(turn.task_id)
+@@ -488,7 +273,6 @@
+                     or state.shutdown_requested
+                     or state.lease_lost
+                     or (current is not None and current.stop_requested)
+-                    or state.confirmation_created
+                 ):
+                     self._stop_state_once(state)
+                 result = runtime.wait(handle)
+@@ -507,25 +291,7 @@
+                     state.lease_lost = True
+                 with self._map_lock:
+                     self._states.pop(turn.id, None)
+-                try:
+-                    if state.confirmation_created and not state.lease_lost:
+-                        decision = self.store.mark_confirmation_proposer_quiesced(
+-                            turn.id,
+-                            owner=self.owner,
+-                            proposer_run_id=self.store.execution_run_id_for_executor(
+-                                turn.id, owner=self.owner
+-                            ),
+-                        )
+-                        if decision is not None:
+-                            confirmation_id, intent = decision
+-                            if intent == "confirm":
+-                                self.confirm(confirmation_id)
+-                            elif intent == "cancel":
+-                                self.cancel(confirmation_id)
+-                except Exception:
+-                    state.lease_lost = True
+-                finally:
+-                    state.quiesced.set()
++                state.quiesced.set()
+ 
+     def _execute_turn_reserved(self, turn: WorkbenchTurn) -> None:
+         try:
+@@ -550,25 +316,6 @@
+                     state.lease_lost = True
+                     self._stop_state_once(state)
+                     return
+-                if (
+-                    current is not None
+-                    and current.status is TurnStatus.WAITING_CONFIRMATION
+-                    and state.confirmation_created
+-                ):
+-                    try:
+-                        self.store.renew_confirmation_proposer(
+-                            state.turn_id,
+-                            owner=self.owner,
+-                            proposer_run_id=self.store.execution_run_id_for_executor(
+-                                state.turn_id, owner=self.owner
+-                            ),
+-                            lease_seconds=self.lease_seconds + 1,
+-                        )
+-                    except Exception:
+-                        state.lease_lost = True
+-                        self._stop_state_once(state)
+-                        return
+-                    continue
+                 if current is not None and current.status in {
+                     TurnStatus.COMPLETED,
+                     TurnStatus.STOPPED,
+@@ -582,9 +329,8 @@
+     def _on_event(self, state: _RunState, event: RuntimeEvent) -> None:
+         if not isinstance(event, RuntimeEvent):
+             raise ValueError("malformed runtime event")
+-        stop_after = False
+         with state.lock:
+-            if state.lease_lost or state.confirmation_created:
++            if state.lease_lost:
+                 return
+             current = self.store.get_turn(state.turn_id)
+             if current is None or current.status is not TurnStatus.RUNNING:
+@@ -592,37 +338,23 @@
+             if event.event_type in {"turn_completed", "turn_failed"}:
+                 return
+             payload = event.payload_json_value()
+-            if event.event_type == "confirmation_required":
+-                try:
+-                    self._create_confirmation(state, payload)
+-                except ValueError:
+-                    current = self.store.get_turn(state.turn_id)
+-                    if current is not None and current.status is TurnStatus.STOPPED:
+-                        return
+-                    raise
++            try:
++                if event.event_type == "artifact_created":
++                    self._append_artifact_event(state, payload)
+                 else:
+-                    state.confirmation_created = True
+-                    stop_after = True
+-            else:
+-                try:
+-                    if event.event_type == "artifact_created":
+-                        self._append_artifact_event(state, payload)
+-                    else:
+-                        self.store.append_event(
+-                            state.turn_id,
+-                            sequence=state.next_sequence,
+-                            event_type=event.event_type,
+-                            payload=payload,
+-                            owner=self.owner,
+-                        )
+-                except ValueError:
+-                    current = self.store.get_turn(state.turn_id)
+-                    if current is not None and current.status is TurnStatus.STOPPED:
+-                        return
+-                    raise
+-                state.next_sequence += 1
+-        if stop_after:
+-            self._stop_state_once(state)
++                    self.store.append_event(
++                        state.turn_id,
++                        sequence=state.next_sequence,
++                        event_type=event.event_type,
++                        payload=payload,
++                        owner=self.owner,
++                    )
++            except ValueError:
++                current = self.store.get_turn(state.turn_id)
++                if current is not None and current.status is TurnStatus.STOPPED:
++                    return
++                raise
++            state.next_sequence += 1
+ 
+     def _append_artifact_event(self, state: _RunState, payload: dict[str, Any]) -> None:
+         if set(payload) != {"label", "path", "media_type"} or not all(
+@@ -668,45 +400,6 @@
+             owner=self.owner,
+         )
+ 
+-    def _create_confirmation(self, state: _RunState, payload: dict[str, Any]) -> None:
+-        if (
+-            payload.get("kind") != "reviewed_cli"
+-            or payload.get("executed") is not False
+-        ):
+-            raise ValueError("invalid confirmation proposal")
+-        argv = payload.get("argv")
+-        if not isinstance(argv, list) or not all(
+-            isinstance(item, str) for item in argv
+-        ):
+-            raise ValueError("invalid confirmation proposal")
+-        confirmation_id = str(uuid4())
+-        authorization = review_write_authorization(
+-            argv,
+-            authorization_id=confirmation_id,
+-            action_index=0,
+-            classifier=self.classifier,
+-        )
+-        if not authorization.target_identifiers:
+-            raise ValueError("reviewed write has no canonical target")
+-        target = ", ".join(authorization.target_identifiers)
+-        assert_no_credentials(target)
+-        self.store.create_confirmation(
+-            state.turn_id,
+-            action_kind="reviewed_cli",
+-            target=safe_observability_error(target, limit=500),
+-            summary="[Untrusted agent description] "
+-            + self._safe_display(payload.get("summary")),
+-            risk="[Untrusted agent risk] " + self._safe_display(payload.get("risk")),
+-            arguments_json={"argv": argv, "action_index": 0},
+-            confirmation_id=confirmation_id,
+-            canonical_capability=authorization.capability,
+-            canonical_operation=authorization.operation,
+-            canonical_targets=authorization.target_identifiers,
+-            canonical_operation_digest=authorization.operation_digest,
+-            canonical_arguments_digest=authorization.arguments_digest,
+-            owner=self.owner,
+-        )
+-
+     def _finish_runtime(self, state: _RunState, result: RuntimeResult) -> None:
+         if not isinstance(result, RuntimeResult):
+             raise ValueError("malformed runtime result")
+@@ -811,55 +504,3 @@
+                 attachments.append(resolved)
+         return tuple(attachments), tuple(images)
+ 
+-    @staticmethod
+-    def _safe_display(value: object) -> str:
+-        if not isinstance(value, str) or not value.strip():
+-            raise ValueError("invalid confirmation proposal")
+-        assert_no_credentials(value)
+-        return safe_observability_error(value.strip(), limit=500)
+-
+-    @staticmethod
+-    def _safe_receipt(
+-        receipt: dict[str, object], *, failed: bool, target_summary: str
+-    ) -> dict[str, object]:
+-        safe: dict[str, object] = {
+-            "status": "failed" if failed else "executed",
+-            "retryable": False,
+-            "target_summary": target_summary,
+-        }
+-        for key in ("operation_digest", "result_digest"):
+-            digest = receipt.get(key)
+-            if (
+-                isinstance(digest, str)
+-                and len(digest) == 64
+-                and all(character in "0123456789abcdef" for character in digest)
+-            ):
+-                safe[key] = digest
+-        error = receipt.get("error")
+-        if isinstance(error, dict):
+-            code = error.get("code")
+-            safe["code"] = (
+-                code
+-                if isinstance(code, str)
+-                and 0 < len(code) <= 120
+-                and all(character.isalnum() or character in "_-." for character in code)
+-                else "reviewed_write_failed"
+-            )
+-            safe["retryable"] = error.get("retryable") is True
+-        assert_no_credentials(safe)
+-        encoded = json.dumps(
+-            safe, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+-        ).encode("utf-8")
+-        safe["receipt_digest"] = hashlib.sha256(
+-            b"workbench-safe-receipt-v1\0" + encoded
+-        ).hexdigest()
+-        return safe
+-
+-    @staticmethod
+-    def _receipt_resume_context(receipt: dict[str, object]) -> str:
+-        return "Reviewed action receipt: " + json.dumps(
+-            receipt,
+-            ensure_ascii=False,
+-            sort_keys=True,
+-            separators=(",", ":"),
+-        )
+--- a/app/workbench/models.py
++++ b/app/workbench/models.py
+@@ -11,7 +11,6 @@
+ class TurnStatus(StrEnum):
+     QUEUED = "queued"
+     RUNNING = "running"
+-    WAITING_CONFIRMATION = "waiting_confirmation"
+     COMPLETED = "completed"
+     STOPPED = "stopped"
+     FAILED = "failed"
+@@ -55,7 +54,6 @@
+         "tool_completed",
+         "file_changed",
+         "artifact_created",
+-        "confirmation_required",
+         "status_changed",
+         "turn_completed",
+         "turn_failed",
+@@ -82,28 +80,3 @@
+     created_at: str
+ 
+ 
+-class ConfirmationStatus(StrEnum):
+-    PENDING = "pending"
+-    CONFIRMED = "confirmed"
+-    CANCELLED = "cancelled"
+-    EXECUTED = "executed"
+-    FAILED = "failed"
+-
+-
+-class WorkbenchConfirmation(StrictModel):
+-    id: str
+-    turn_id: str
+-    action_kind: str
+-    target: str
+-    summary: str
+-    risk: str
+-    canonical_capability: str = ""
+-    canonical_operation: str = ""
+-    canonical_targets_json: str = "[]"
+-    arguments_json: str
+-    status: ConfirmationStatus
+-    decision_requested: str = ""
+-    decision_requested_at: str = ""
+-    result_json: str = ""
+-    created_at: str
+-    decided_at: str = ""
+--- a/app/workbench/runtime.py
++++ b/app/workbench/runtime.py
+@@ -18,7 +18,6 @@
+     "tool_completed",
+     "file_changed",
+     "artifact_created",
+-    "confirmation_required",
+     "status_changed",
+     "turn_completed",
+     "turn_failed",
+@@ -33,7 +32,6 @@
+         "tool_completed",
+         "file_changed",
+         "artifact_created",
+-        "confirmation_required",
+         "status_changed",
+         "turn_completed",
+         "turn_failed",
+--- a/app/workbench/native_events.py
++++ b/app/workbench/native_events.py
+@@ -100,7 +100,7 @@
+     placeholders = ",".join("?" for _ in ids)
+     return [row["id"] for row in db.execute(
+         f"select id from ({WORKBENCH_TURN_SQL}) as workbench_turns where id in ({placeholders}) "
+-        "and status in ('completed','stopped','failed','waiting_confirmation')", ids
++        "and status in ('completed','stopped','failed')", ids
+     )]
+ 
+ 

@@ -1,0 +1,3761 @@
+{
+  "capture_utc": "2026-10-16T17:36:06.743201+00:00",
+  "boundary": "Read-only tasks schema metadata only; fresh in-memory source factory; no source row/body read, constructor, provider or runtime write.",
+  "worktree_head": "b12f4eb816c14ef521723e707fe659ca2f5b5855",
+  "production_head": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+  "source_user_version": 0,
+  "source_factory_path": "app/task_storage.py",
+  "source_factory_file_sha256": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+  "source_table_ddl_sha256": "ee4330cb187a80d4699db16e56b61e47f992165ed44a840f4ecbe8059888374c",
+  "actual": {
+    "objects": [
+      {
+        "type": "index",
+        "name": "idx_meeting_alignment_jobs_claim",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_meeting_alignment_jobs_claim on tasks(status,available_at,eligible_at,cast(legacy_key as integer)) where record_type='meeting_alignment_jobs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_meeting_alignment_jobs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_meeting_alignment_jobs_identity on tasks(meeting_id) where record_type='meeting_alignment_jobs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_okr_review_requests_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_okr_review_requests_identity on tasks(conversation_id,trigger_message_id) where record_type='okr_review_requests'"
+      },
+      {
+        "type": "index",
+        "name": "idx_okr_review_requests_status",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_okr_review_requests_status on tasks(status,cast(legacy_key as integer)) where record_type='okr_review_requests'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_task_inputs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_reply_task_inputs_identity on tasks(channel,conversation_id,trigger_message_id,input_revision_key) where record_type='reply_task_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_task_inputs_task",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_task_inputs_task on tasks(parent_id,cast(legacy_key as integer)) where record_type='reply_task_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_business_object_key",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_channel_status_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_tasks_channel_status_id on tasks(channel,status,cast(legacy_key as integer)) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_reply_tasks_identity on tasks(channel,conversation_id,trigger_message_id) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_status",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_tasks_status on tasks(status,cast(legacy_key as integer)) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_tasks_public_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_tasks_public_id on tasks(cast(legacy_key as integer),record_type) where record_type not in ('workbench_tasks','workbench_turns')"
+      },
+      {
+        "type": "index",
+        "name": "idx_tasks_text_public_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_tasks_text_public_id on tasks(legacy_key,record_type) where record_type in ('workbench_tasks','workbench_turns')"
+      },
+      {
+        "type": "index",
+        "name": "idx_weekly_okr_analysis_jobs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_weekly_okr_analysis_jobs_identity on tasks(week_end,manager_user_id,source_digest) where record_type='weekly_okr_analysis_jobs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_summary_inputs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_work_summary_inputs_identity on tasks(source_type,source_ref) where record_type='work_summary_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_summary_inputs_status",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_work_summary_inputs_status on tasks(status,cast(legacy_key as integer)) where record_type='work_summary_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_summary_inputs_updated",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_work_summary_inputs_updated on tasks(updated_at desc,cast(legacy_key as integer) desc) where record_type='work_summary_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_one_active_turn",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_workbench_one_active_turn on tasks(parent_id) where record_type='workbench_turns' and status in ('queued','running','waiting_confirmation')"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_tasks_updated_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_tasks_updated_id on tasks(updated_at,legacy_key) where record_type='workbench_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_client_request",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_workbench_turns_client_request on tasks(client_request_id) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_queue",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_turns_queue on tasks(status,created_at,legacy_key) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_recovery",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_turns_recovery on tasks(status,lease_expires_at) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_task_created_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_turns_task_created_id on tasks(parent_id,created_at,legacy_key) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_task_sequence",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_workbench_turns_task_sequence on tasks(parent_id,task_sequence desc) where record_type='workbench_turns'"
+      },
+      {
+        "type": "table",
+        "name": "tasks",
+        "tbl_name": "tasks",
+        "sql": "CREATE TABLE tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs','meeting_alignment_jobs','okr_review_requests','weekly_okr_analysis_jobs','workbench_tasks','workbench_turns')), legacy_key text,channel text,conversation_id text,conversation_title text,single_chat integer,trigger_message_id text,trigger_create_time text,trigger_sender text,available_at text,force_new_decision integer,oa_url text,manual_rerun_attempt_id integer,status text,attempts integer,locked_at text,error text,created_at text,updated_at text,execution_generation text,manual_rerun_revision_key text,recovery_code text,business_object_key text,input_version integer,claimed_input_version integer,current_input_id integer,claimed_input_id integer,parent_id integer,trigger_text text,trigger_message_json text,input_revision_key text,input_provenance_json text,input_compacted integer,source_type text,source_ref text,payload_json text,source_created_at text,body_sha256 text,body_bytes integer,body_compacted integer,meeting_id text,title text,source_json text,participants_json text,ended_at text,eligible_at text,decision_json text,target_kind text,target_id text,target_title text,mentions_json text,final_message text,send_result_json text,calendar_summary_status text,calendar_summary_result_json text,trigger_sender_user_id text,period_label text,period_start text,period_end text,okr_source_json text,codex_session_id text,week_end text,manager_user_id text,source_digest text,lease_owner text,lease_expires_at text,finished_at text,runtime_kind text,provider_session_ref text,archived_at text,client_request_id text,task_sequence integer,user_text text,stop_requested integer,error_code text,error_detail text,resume_context text,execution_run_id text,runtime_quiesced_run_id text,started_at text,completed_at text,foreign key(parent_id) references tasks(id),foreign key(current_input_id) references tasks(id),foreign key(claimed_input_id) references tasks(id),check(record_type<>'reply_tasks' or legacy_key is null or legacy_key=cast(id as text)),check(record_type<>'reply_tasks' or (channel is not null and conversation_id is not null and conversation_title is not null and single_chat is not null and trigger_message_id is not null and trigger_create_time is not null and trigger_sender is not null and available_at is not null and force_new_decision is not null and oa_url is not null and manual_rerun_attempt_id is not null and status is not null and attempts is not null and error is not null and created_at is not null and updated_at is not null and execution_generation is not null and manual_rerun_revision_key is not null and recovery_code is not null and business_object_key is not null and input_version is not null and claimed_input_version is not null)),check(record_type<>'reply_task_inputs' or (parent_id is not null and channel is not null and conversation_id is not null and conversation_title is not null and single_chat is not null and trigger_message_id is not null and trigger_create_time is not null and trigger_sender is not null and trigger_text is not null and trigger_message_json is not null and oa_url is not null and business_object_key is not null and input_revision_key is not null and created_at is not null and input_provenance_json is not null and input_compacted is not null)),check(record_type<>'work_summary_inputs' or (source_type is not null and source_ref is not null and payload_json is not null and status is not null and attempts is not null and error is not null and created_at is not null and updated_at is not null and available_at is not null and source_created_at is not null and body_sha256 is not null and body_bytes is not null and body_compacted is not null)),check(record_type<>'meeting_alignment_jobs' or (meeting_id is not null and title is not null and source_json is not null and participants_json is not null and ended_at is not null and eligible_at is not null and status is not null and attempts is not null and available_at is not null and error is not null and decision_json is not null and target_kind is not null and target_id is not null and target_title is not null and mentions_json is not null and final_message is not null and send_result_json is not null and created_at is not null and updated_at is not null and calendar_summary_status is not null and calendar_summary_result_json is not null)),check(record_type<>'okr_review_requests' or (conversation_id is not null and conversation_title is not null and trigger_message_id is not null and trigger_sender is not null and trigger_sender_user_id is not null and trigger_text is not null and period_label is not null and period_start is not null and period_end is not null and okr_source_json is not null and status is not null and error is not null and codex_session_id is not null and created_at is not null and updated_at is not null)),check(record_type<>'weekly_okr_analysis_jobs' or (week_end is not null and manager_user_id is not null and source_digest is not null and status is not null and lease_owner is not null and lease_expires_at is not null and error is not null and created_at is not null and finished_at is not null and updated_at is not null)),check(record_type<>'reply_tasks' or (parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'reply_task_inputs' or (available_at is null and force_new_decision is null and manual_rerun_attempt_id is null and status is null and attempts is null and locked_at is null and error is null and updated_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'work_summary_inputs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'meeting_alignment_jobs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'okr_review_requests' or (channel is null and single_chat is null and trigger_create_time is null and available_at is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and attempts is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'weekly_okr_analysis_jobs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and available_at is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and attempts is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null)),check(record_type<>'weekly_okr_analysis_jobs' or status in ('running','completed','failed')),check(record_type<>'workbench_tasks' or (archived_at is not null and created_at is not null and provider_session_ref is not null and runtime_kind is not null and title is not null and updated_at is not null)),check(record_type<>'workbench_turns' or (client_request_id is not null and completed_at is not null and created_at is not null and error_code is not null and error_detail is not null and execution_run_id is not null and lease_expires_at is not null and lease_owner is not null and parent_id is not null and resume_context is not null and runtime_quiesced_run_id is not null and started_at is not null and status is not null and stop_requested is not null and task_sequence is not null and updated_at is not null and user_text is not null)),check(record_type<>'workbench_tasks' or (attempts is null and available_at is null and body_bytes is null and body_compacted is null and body_sha256 is null and business_object_key is null and calendar_summary_result_json is null and calendar_summary_status is null and channel is null and claimed_input_id is null and claimed_input_version is null and client_request_id is null and codex_session_id is null and completed_at is null and conversation_id is null and conversation_title is null and current_input_id is null and decision_json is null and eligible_at is null and ended_at is null and error is null and error_code is null and error_detail is null and execution_generation is null and execution_run_id is null and final_message is null and finished_at is null and force_new_decision is null and input_compacted is null and input_provenance_json is null and input_revision_key is null and input_version is null and lease_expires_at is null and lease_owner is null and locked_at is null and manager_user_id is null and manual_rerun_attempt_id is null and manual_rerun_revision_key is null and meeting_id is null and mentions_json is null and oa_url is null and okr_source_json is null and parent_id is null and participants_json is null and payload_json is null and period_end is null and period_label is null and period_start is null and recovery_code is null and resume_context is null and runtime_quiesced_run_id is null and send_result_json is null and single_chat is null and source_created_at is null and source_digest is null and source_json is null and source_ref is null and source_type is null and started_at is null and status is null and stop_requested is null and target_id is null and target_kind is null and target_title is null and task_sequence is null and trigger_create_time is null and trigger_message_id is null and trigger_message_json is null and trigger_sender is null and trigger_sender_user_id is null and trigger_text is null and user_text is null and week_end is null)),check(record_type<>'workbench_turns' or (archived_at is null and attempts is null and available_at is null and body_bytes is null and body_compacted is null and body_sha256 is null and business_object_key is null and calendar_summary_result_json is null and calendar_summary_status is null and channel is null and claimed_input_id is null and claimed_input_version is null and codex_session_id is null and conversation_id is null and conversation_title is null and current_input_id is null and decision_json is null and eligible_at is null and ended_at is null and error is null and execution_generation is null and final_message is null and finished_at is null and force_new_decision is null and input_compacted is null and input_provenance_json is null and input_revision_key is null and input_version is null and locked_at is null and manager_user_id is null and manual_rerun_attempt_id is null and manual_rerun_revision_key is null and meeting_id is null and mentions_json is null and oa_url is null and okr_source_json is null and participants_json is null and payload_json is null and period_end is null and period_label is null and period_start is null and provider_session_ref is null and recovery_code is null and runtime_kind is null and send_result_json is null and single_chat is null and source_created_at is null and source_digest is null and source_json is null and source_ref is null and source_type is null and target_id is null and target_kind is null and target_title is null and title is null and trigger_create_time is null and trigger_message_id is null and trigger_message_json is null and trigger_sender is null and trigger_sender_user_id is null and trigger_text is null and week_end is null)),check(record_type in ('workbench_tasks','workbench_turns') or (runtime_kind is null and provider_session_ref is null and archived_at is null and client_request_id is null and task_sequence is null and user_text is null and stop_requested is null and error_code is null and error_detail is null and resume_context is null and execution_run_id is null and runtime_quiesced_run_id is null and started_at is null and completed_at is null)),check(record_type<>'workbench_turns' or (task_sequence>0 and stop_requested in (0,1) and status in ('queued','running','waiting_confirmation','completed','stopped','failed'))))"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_claimed_input_id_insert",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_claimed_input_id_insert before insert on tasks when new.claimed_input_id is not null and exists(select 1 from tasks where id=new.claimed_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_claimed_input_id_update",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_claimed_input_id_update before update of claimed_input_id on tasks when new.claimed_input_id is not null and exists(select 1 from tasks where id=new.claimed_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_current_input_id_insert",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_current_input_id_insert before insert on tasks when new.current_input_id is not null and exists(select 1 from tasks where id=new.current_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_current_input_id_update",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_current_input_id_update before update of current_input_id on tasks when new.current_input_id is not null and exists(select 1 from tasks where id=new.current_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_parent_id_insert",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_parent_id_insert before insert on tasks when new.parent_id is not null and exists(select 1 from tasks where id=new.parent_id and record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end) begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_parent_id_update",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_parent_id_update before update of parent_id on tasks when new.parent_id is not null and exists(select 1 from tasks where id=new.parent_id and record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end) begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_public_key",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_public_key after insert on tasks when new.legacy_key is null and new.record_type not in ('workbench_tasks','workbench_turns') begin update tasks set legacy_key=cast(new.id as text) where id=new.id; end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_record_type_immutable",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_record_type_immutable before update of record_type on tasks when new.record_type<>old.record_type begin select raise(abort,'task record type is immutable'); end"
+      }
+    ],
+    "table_xinfo": [
+      {
+        "cid": 0,
+        "name": "id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 1,
+        "hidden": 0
+      },
+      {
+        "cid": 1,
+        "name": "record_type",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 2,
+        "name": "legacy_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 3,
+        "name": "channel",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 4,
+        "name": "conversation_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 5,
+        "name": "conversation_title",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 6,
+        "name": "single_chat",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 7,
+        "name": "trigger_message_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 8,
+        "name": "trigger_create_time",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 9,
+        "name": "trigger_sender",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 10,
+        "name": "available_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 11,
+        "name": "force_new_decision",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 12,
+        "name": "oa_url",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 13,
+        "name": "manual_rerun_attempt_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 14,
+        "name": "status",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 15,
+        "name": "attempts",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 16,
+        "name": "locked_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 17,
+        "name": "error",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 18,
+        "name": "created_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 19,
+        "name": "updated_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 20,
+        "name": "execution_generation",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 21,
+        "name": "manual_rerun_revision_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 22,
+        "name": "recovery_code",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 23,
+        "name": "business_object_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 24,
+        "name": "input_version",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 25,
+        "name": "claimed_input_version",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 26,
+        "name": "current_input_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 27,
+        "name": "claimed_input_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 28,
+        "name": "parent_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 29,
+        "name": "trigger_text",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 30,
+        "name": "trigger_message_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 31,
+        "name": "input_revision_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 32,
+        "name": "input_provenance_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 33,
+        "name": "input_compacted",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 34,
+        "name": "source_type",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 35,
+        "name": "source_ref",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 36,
+        "name": "payload_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 37,
+        "name": "source_created_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 38,
+        "name": "body_sha256",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 39,
+        "name": "body_bytes",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 40,
+        "name": "body_compacted",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 41,
+        "name": "meeting_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 42,
+        "name": "title",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 43,
+        "name": "source_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 44,
+        "name": "participants_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 45,
+        "name": "ended_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 46,
+        "name": "eligible_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 47,
+        "name": "decision_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 48,
+        "name": "target_kind",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 49,
+        "name": "target_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 50,
+        "name": "target_title",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 51,
+        "name": "mentions_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 52,
+        "name": "final_message",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 53,
+        "name": "send_result_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 54,
+        "name": "calendar_summary_status",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 55,
+        "name": "calendar_summary_result_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 56,
+        "name": "trigger_sender_user_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 57,
+        "name": "period_label",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 58,
+        "name": "period_start",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 59,
+        "name": "period_end",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 60,
+        "name": "okr_source_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 61,
+        "name": "codex_session_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 62,
+        "name": "week_end",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 63,
+        "name": "manager_user_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 64,
+        "name": "source_digest",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 65,
+        "name": "lease_owner",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 66,
+        "name": "lease_expires_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 67,
+        "name": "finished_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 68,
+        "name": "runtime_kind",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 69,
+        "name": "provider_session_ref",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 70,
+        "name": "archived_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 71,
+        "name": "client_request_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 72,
+        "name": "task_sequence",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 73,
+        "name": "user_text",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 74,
+        "name": "stop_requested",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 75,
+        "name": "error_code",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 76,
+        "name": "error_detail",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 77,
+        "name": "resume_context",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 78,
+        "name": "execution_run_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 79,
+        "name": "runtime_quiesced_run_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 80,
+        "name": "started_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 81,
+        "name": "completed_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      }
+    ],
+    "indices": {
+      "idx_workbench_turns_task_sequence": {
+        "list": {
+          "seq": 0,
+          "name": "idx_workbench_turns_task_sequence",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 72,
+            "name": "task_sequence",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_task_created_id": {
+        "list": {
+          "seq": 1,
+          "name": "idx_workbench_turns_task_created_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 18,
+            "name": "created_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_recovery": {
+        "list": {
+          "seq": 2,
+          "name": "idx_workbench_turns_recovery",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 66,
+            "name": "lease_expires_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_queue": {
+        "list": {
+          "seq": 3,
+          "name": "idx_workbench_turns_queue",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 18,
+            "name": "created_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_one_active_turn": {
+        "list": {
+          "seq": 4,
+          "name": "idx_workbench_one_active_turn",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_client_request": {
+        "list": {
+          "seq": 5,
+          "name": "idx_workbench_turns_client_request",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 71,
+            "name": "client_request_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_tasks_updated_id": {
+        "list": {
+          "seq": 6,
+          "name": "idx_workbench_tasks_updated_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 19,
+            "name": "updated_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_weekly_okr_analysis_jobs_identity": {
+        "list": {
+          "seq": 7,
+          "name": "idx_weekly_okr_analysis_jobs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 62,
+            "name": "week_end",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 63,
+            "name": "manager_user_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 64,
+            "name": "source_digest",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_okr_review_requests_status": {
+        "list": {
+          "seq": 8,
+          "name": "idx_okr_review_requests_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_okr_review_requests_identity": {
+        "list": {
+          "seq": 9,
+          "name": "idx_okr_review_requests_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 4,
+            "name": "conversation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 7,
+            "name": "trigger_message_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_meeting_alignment_jobs_claim": {
+        "list": {
+          "seq": 10,
+          "name": "idx_meeting_alignment_jobs_claim",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 10,
+            "name": "available_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 46,
+            "name": "eligible_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_meeting_alignment_jobs_identity": {
+        "list": {
+          "seq": 11,
+          "name": "idx_meeting_alignment_jobs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 41,
+            "name": "meeting_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_work_summary_inputs_updated": {
+        "list": {
+          "seq": 12,
+          "name": "idx_work_summary_inputs_updated",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 19,
+            "name": "updated_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_work_summary_inputs_status": {
+        "list": {
+          "seq": 13,
+          "name": "idx_work_summary_inputs_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_work_summary_inputs_identity": {
+        "list": {
+          "seq": 14,
+          "name": "idx_work_summary_inputs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 34,
+            "name": "source_type",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 35,
+            "name": "source_ref",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_task_inputs_task": {
+        "list": {
+          "seq": 15,
+          "name": "idx_reply_task_inputs_task",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_task_inputs_identity": {
+        "list": {
+          "seq": 16,
+          "name": "idx_reply_task_inputs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 3,
+            "name": "channel",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 4,
+            "name": "conversation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 7,
+            "name": "trigger_message_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 31,
+            "name": "input_revision_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_business_object_key": {
+        "list": {
+          "seq": 17,
+          "name": "idx_reply_tasks_business_object_key",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 23,
+            "name": "business_object_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_channel_status_id": {
+        "list": {
+          "seq": 18,
+          "name": "idx_reply_tasks_channel_status_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 3,
+            "name": "channel",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_status": {
+        "list": {
+          "seq": 19,
+          "name": "idx_reply_tasks_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_identity": {
+        "list": {
+          "seq": 20,
+          "name": "idx_reply_tasks_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 3,
+            "name": "channel",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 4,
+            "name": "conversation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 7,
+            "name": "trigger_message_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_tasks_text_public_id": {
+        "list": {
+          "seq": 21,
+          "name": "idx_tasks_text_public_id",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "record_type",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_tasks_public_id": {
+        "list": {
+          "seq": 22,
+          "name": "idx_tasks_public_id",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "record_type",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      }
+    },
+    "foreign_key_list": [
+      {
+        "id": 0,
+        "seq": 0,
+        "table": "tasks",
+        "from": "claimed_input_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "id": 1,
+        "seq": 0,
+        "table": "tasks",
+        "from": "current_input_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "id": 2,
+        "seq": 0,
+        "table": "tasks",
+        "from": "parent_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ]
+  },
+  "fresh": {
+    "objects": [
+      {
+        "type": "index",
+        "name": "idx_meeting_alignment_jobs_claim",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_meeting_alignment_jobs_claim on tasks(status,available_at,eligible_at,cast(legacy_key as integer)) where record_type='meeting_alignment_jobs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_meeting_alignment_jobs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_meeting_alignment_jobs_identity on tasks(meeting_id) where record_type='meeting_alignment_jobs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_okr_review_requests_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_okr_review_requests_identity on tasks(conversation_id,trigger_message_id) where record_type='okr_review_requests'"
+      },
+      {
+        "type": "index",
+        "name": "idx_okr_review_requests_status",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_okr_review_requests_status on tasks(status,cast(legacy_key as integer)) where record_type='okr_review_requests'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_task_inputs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_reply_task_inputs_identity on tasks(channel,conversation_id,trigger_message_id,input_revision_key) where record_type='reply_task_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_task_inputs_task",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_task_inputs_task on tasks(parent_id,cast(legacy_key as integer)) where record_type='reply_task_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_business_object_key",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_channel_status_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_tasks_channel_status_id on tasks(channel,status,cast(legacy_key as integer)) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_reply_tasks_identity on tasks(channel,conversation_id,trigger_message_id) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_reply_tasks_status",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_reply_tasks_status on tasks(status,cast(legacy_key as integer)) where record_type='reply_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_tasks_public_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_tasks_public_id on tasks(cast(legacy_key as integer),record_type) where record_type not in ('workbench_tasks','workbench_turns')"
+      },
+      {
+        "type": "index",
+        "name": "idx_tasks_text_public_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_tasks_text_public_id on tasks(legacy_key,record_type) where record_type in ('workbench_tasks','workbench_turns')"
+      },
+      {
+        "type": "index",
+        "name": "idx_weekly_okr_analysis_jobs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_weekly_okr_analysis_jobs_identity on tasks(week_end,manager_user_id,source_digest) where record_type='weekly_okr_analysis_jobs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_summary_inputs_identity",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_work_summary_inputs_identity on tasks(source_type,source_ref) where record_type='work_summary_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_summary_inputs_status",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_work_summary_inputs_status on tasks(status,cast(legacy_key as integer)) where record_type='work_summary_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_summary_inputs_updated",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_work_summary_inputs_updated on tasks(updated_at desc,cast(legacy_key as integer) desc) where record_type='work_summary_inputs'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_one_active_turn",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_workbench_one_active_turn on tasks(parent_id) where record_type='workbench_turns' and status in ('queued','running','waiting_confirmation')"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_tasks_updated_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_tasks_updated_id on tasks(updated_at,legacy_key) where record_type='workbench_tasks'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_client_request",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_workbench_turns_client_request on tasks(client_request_id) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_queue",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_turns_queue on tasks(status,created_at,legacy_key) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_recovery",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_turns_recovery on tasks(status,lease_expires_at) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_task_created_id",
+        "tbl_name": "tasks",
+        "sql": "CREATE INDEX idx_workbench_turns_task_created_id on tasks(parent_id,created_at,legacy_key) where record_type='workbench_turns'"
+      },
+      {
+        "type": "index",
+        "name": "idx_workbench_turns_task_sequence",
+        "tbl_name": "tasks",
+        "sql": "CREATE UNIQUE INDEX idx_workbench_turns_task_sequence on tasks(parent_id,task_sequence desc) where record_type='workbench_turns'"
+      },
+      {
+        "type": "table",
+        "name": "tasks",
+        "tbl_name": "tasks",
+        "sql": "CREATE TABLE tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs','meeting_alignment_jobs','okr_review_requests','weekly_okr_analysis_jobs','workbench_tasks','workbench_turns')), legacy_key text,channel text,conversation_id text,conversation_title text,single_chat integer,trigger_message_id text,trigger_create_time text,trigger_sender text,available_at text,force_new_decision integer,oa_url text,manual_rerun_attempt_id integer,status text,attempts integer,locked_at text,error text,created_at text,updated_at text,execution_generation text,manual_rerun_revision_key text,recovery_code text,business_object_key text,input_version integer,claimed_input_version integer,current_input_id integer,claimed_input_id integer,parent_id integer,trigger_text text,trigger_message_json text,input_revision_key text,input_provenance_json text,input_compacted integer,source_type text,source_ref text,payload_json text,source_created_at text,body_sha256 text,body_bytes integer,body_compacted integer,meeting_id text,title text,source_json text,participants_json text,ended_at text,eligible_at text,decision_json text,target_kind text,target_id text,target_title text,mentions_json text,final_message text,send_result_json text,calendar_summary_status text,calendar_summary_result_json text,trigger_sender_user_id text,period_label text,period_start text,period_end text,okr_source_json text,codex_session_id text,week_end text,manager_user_id text,source_digest text,lease_owner text,lease_expires_at text,finished_at text,runtime_kind text,provider_session_ref text,archived_at text,client_request_id text,task_sequence integer,user_text text,stop_requested integer,error_code text,error_detail text,resume_context text,execution_run_id text,runtime_quiesced_run_id text,started_at text,completed_at text,foreign key(parent_id) references tasks(id),foreign key(current_input_id) references tasks(id),foreign key(claimed_input_id) references tasks(id),check(record_type<>'reply_tasks' or legacy_key is null or legacy_key=cast(id as text)),check(record_type<>'reply_tasks' or (channel is not null and conversation_id is not null and conversation_title is not null and single_chat is not null and trigger_message_id is not null and trigger_create_time is not null and trigger_sender is not null and available_at is not null and force_new_decision is not null and oa_url is not null and manual_rerun_attempt_id is not null and status is not null and attempts is not null and error is not null and created_at is not null and updated_at is not null and execution_generation is not null and manual_rerun_revision_key is not null and recovery_code is not null and business_object_key is not null and input_version is not null and claimed_input_version is not null)),check(record_type<>'reply_task_inputs' or (parent_id is not null and channel is not null and conversation_id is not null and conversation_title is not null and single_chat is not null and trigger_message_id is not null and trigger_create_time is not null and trigger_sender is not null and trigger_text is not null and trigger_message_json is not null and oa_url is not null and business_object_key is not null and input_revision_key is not null and created_at is not null and input_provenance_json is not null and input_compacted is not null)),check(record_type<>'work_summary_inputs' or (source_type is not null and source_ref is not null and payload_json is not null and status is not null and attempts is not null and error is not null and created_at is not null and updated_at is not null and available_at is not null and source_created_at is not null and body_sha256 is not null and body_bytes is not null and body_compacted is not null)),check(record_type<>'meeting_alignment_jobs' or (meeting_id is not null and title is not null and source_json is not null and participants_json is not null and ended_at is not null and eligible_at is not null and status is not null and attempts is not null and available_at is not null and error is not null and decision_json is not null and target_kind is not null and target_id is not null and target_title is not null and mentions_json is not null and final_message is not null and send_result_json is not null and created_at is not null and updated_at is not null and calendar_summary_status is not null and calendar_summary_result_json is not null)),check(record_type<>'okr_review_requests' or (conversation_id is not null and conversation_title is not null and trigger_message_id is not null and trigger_sender is not null and trigger_sender_user_id is not null and trigger_text is not null and period_label is not null and period_start is not null and period_end is not null and okr_source_json is not null and status is not null and error is not null and codex_session_id is not null and created_at is not null and updated_at is not null)),check(record_type<>'weekly_okr_analysis_jobs' or (week_end is not null and manager_user_id is not null and source_digest is not null and status is not null and lease_owner is not null and lease_expires_at is not null and error is not null and created_at is not null and finished_at is not null and updated_at is not null)),check(record_type<>'reply_tasks' or (parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'reply_task_inputs' or (available_at is null and force_new_decision is null and manual_rerun_attempt_id is null and status is null and attempts is null and locked_at is null and error is null and updated_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'work_summary_inputs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'meeting_alignment_jobs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'okr_review_requests' or (channel is null and single_chat is null and trigger_create_time is null and available_at is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and attempts is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'weekly_okr_analysis_jobs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and available_at is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and attempts is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null)),check(record_type<>'weekly_okr_analysis_jobs' or status in ('running','completed','failed')),check(record_type<>'workbench_tasks' or (archived_at is not null and created_at is not null and provider_session_ref is not null and runtime_kind is not null and title is not null and updated_at is not null)),check(record_type<>'workbench_turns' or (client_request_id is not null and completed_at is not null and created_at is not null and error_code is not null and error_detail is not null and execution_run_id is not null and lease_expires_at is not null and lease_owner is not null and parent_id is not null and resume_context is not null and runtime_quiesced_run_id is not null and started_at is not null and status is not null and stop_requested is not null and task_sequence is not null and updated_at is not null and user_text is not null)),check(record_type<>'workbench_tasks' or (attempts is null and available_at is null and body_bytes is null and body_compacted is null and body_sha256 is null and business_object_key is null and calendar_summary_result_json is null and calendar_summary_status is null and channel is null and claimed_input_id is null and claimed_input_version is null and client_request_id is null and codex_session_id is null and completed_at is null and conversation_id is null and conversation_title is null and current_input_id is null and decision_json is null and eligible_at is null and ended_at is null and error is null and error_code is null and error_detail is null and execution_generation is null and execution_run_id is null and final_message is null and finished_at is null and force_new_decision is null and input_compacted is null and input_provenance_json is null and input_revision_key is null and input_version is null and lease_expires_at is null and lease_owner is null and locked_at is null and manager_user_id is null and manual_rerun_attempt_id is null and manual_rerun_revision_key is null and meeting_id is null and mentions_json is null and oa_url is null and okr_source_json is null and parent_id is null and participants_json is null and payload_json is null and period_end is null and period_label is null and period_start is null and recovery_code is null and resume_context is null and runtime_quiesced_run_id is null and send_result_json is null and single_chat is null and source_created_at is null and source_digest is null and source_json is null and source_ref is null and source_type is null and started_at is null and status is null and stop_requested is null and target_id is null and target_kind is null and target_title is null and task_sequence is null and trigger_create_time is null and trigger_message_id is null and trigger_message_json is null and trigger_sender is null and trigger_sender_user_id is null and trigger_text is null and user_text is null and week_end is null)),check(record_type<>'workbench_turns' or (archived_at is null and attempts is null and available_at is null and body_bytes is null and body_compacted is null and body_sha256 is null and business_object_key is null and calendar_summary_result_json is null and calendar_summary_status is null and channel is null and claimed_input_id is null and claimed_input_version is null and codex_session_id is null and conversation_id is null and conversation_title is null and current_input_id is null and decision_json is null and eligible_at is null and ended_at is null and error is null and execution_generation is null and final_message is null and finished_at is null and force_new_decision is null and input_compacted is null and input_provenance_json is null and input_revision_key is null and input_version is null and locked_at is null and manager_user_id is null and manual_rerun_attempt_id is null and manual_rerun_revision_key is null and meeting_id is null and mentions_json is null and oa_url is null and okr_source_json is null and participants_json is null and payload_json is null and period_end is null and period_label is null and period_start is null and provider_session_ref is null and recovery_code is null and runtime_kind is null and send_result_json is null and single_chat is null and source_created_at is null and source_digest is null and source_json is null and source_ref is null and source_type is null and target_id is null and target_kind is null and target_title is null and title is null and trigger_create_time is null and trigger_message_id is null and trigger_message_json is null and trigger_sender is null and trigger_sender_user_id is null and trigger_text is null and week_end is null)),check(record_type in ('workbench_tasks','workbench_turns') or (runtime_kind is null and provider_session_ref is null and archived_at is null and client_request_id is null and task_sequence is null and user_text is null and stop_requested is null and error_code is null and error_detail is null and resume_context is null and execution_run_id is null and runtime_quiesced_run_id is null and started_at is null and completed_at is null)),check(record_type<>'workbench_turns' or (task_sequence>0 and stop_requested in (0,1) and status in ('queued','running','waiting_confirmation','completed','stopped','failed'))))"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_claimed_input_id_insert",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_claimed_input_id_insert before insert on tasks when new.claimed_input_id is not null and exists(select 1 from tasks where id=new.claimed_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_claimed_input_id_update",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_claimed_input_id_update before update of claimed_input_id on tasks when new.claimed_input_id is not null and exists(select 1 from tasks where id=new.claimed_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_current_input_id_insert",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_current_input_id_insert before insert on tasks when new.current_input_id is not null and exists(select 1 from tasks where id=new.current_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_current_input_id_update",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_current_input_id_update before update of current_input_id on tasks when new.current_input_id is not null and exists(select 1 from tasks where id=new.current_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_parent_id_insert",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_parent_id_insert before insert on tasks when new.parent_id is not null and exists(select 1 from tasks where id=new.parent_id and record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end) begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_parent_id_update",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_parent_id_update before update of parent_id on tasks when new.parent_id is not null and exists(select 1 from tasks where id=new.parent_id and record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end) begin select raise(abort,'task parent type mismatch'); end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_public_key",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_public_key after insert on tasks when new.legacy_key is null and new.record_type not in ('workbench_tasks','workbench_turns') begin update tasks set legacy_key=cast(new.id as text) where id=new.id; end"
+      },
+      {
+        "type": "trigger",
+        "name": "trg_tasks_record_type_immutable",
+        "tbl_name": "tasks",
+        "sql": "CREATE TRIGGER trg_tasks_record_type_immutable before update of record_type on tasks when new.record_type<>old.record_type begin select raise(abort,'task record type is immutable'); end"
+      }
+    ],
+    "table_xinfo": [
+      {
+        "cid": 0,
+        "name": "id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 1,
+        "hidden": 0
+      },
+      {
+        "cid": 1,
+        "name": "record_type",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 2,
+        "name": "legacy_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 3,
+        "name": "channel",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 4,
+        "name": "conversation_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 5,
+        "name": "conversation_title",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 6,
+        "name": "single_chat",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 7,
+        "name": "trigger_message_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 8,
+        "name": "trigger_create_time",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 9,
+        "name": "trigger_sender",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 10,
+        "name": "available_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 11,
+        "name": "force_new_decision",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 12,
+        "name": "oa_url",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 13,
+        "name": "manual_rerun_attempt_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 14,
+        "name": "status",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 15,
+        "name": "attempts",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 16,
+        "name": "locked_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 17,
+        "name": "error",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 18,
+        "name": "created_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 19,
+        "name": "updated_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 20,
+        "name": "execution_generation",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 21,
+        "name": "manual_rerun_revision_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 22,
+        "name": "recovery_code",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 23,
+        "name": "business_object_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 24,
+        "name": "input_version",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 25,
+        "name": "claimed_input_version",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 26,
+        "name": "current_input_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 27,
+        "name": "claimed_input_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 28,
+        "name": "parent_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 29,
+        "name": "trigger_text",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 30,
+        "name": "trigger_message_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 31,
+        "name": "input_revision_key",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 32,
+        "name": "input_provenance_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 33,
+        "name": "input_compacted",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 34,
+        "name": "source_type",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 35,
+        "name": "source_ref",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 36,
+        "name": "payload_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 37,
+        "name": "source_created_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 38,
+        "name": "body_sha256",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 39,
+        "name": "body_bytes",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 40,
+        "name": "body_compacted",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 41,
+        "name": "meeting_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 42,
+        "name": "title",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 43,
+        "name": "source_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 44,
+        "name": "participants_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 45,
+        "name": "ended_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 46,
+        "name": "eligible_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 47,
+        "name": "decision_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 48,
+        "name": "target_kind",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 49,
+        "name": "target_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 50,
+        "name": "target_title",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 51,
+        "name": "mentions_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 52,
+        "name": "final_message",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 53,
+        "name": "send_result_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 54,
+        "name": "calendar_summary_status",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 55,
+        "name": "calendar_summary_result_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 56,
+        "name": "trigger_sender_user_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 57,
+        "name": "period_label",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 58,
+        "name": "period_start",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 59,
+        "name": "period_end",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 60,
+        "name": "okr_source_json",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 61,
+        "name": "codex_session_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 62,
+        "name": "week_end",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 63,
+        "name": "manager_user_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 64,
+        "name": "source_digest",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 65,
+        "name": "lease_owner",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 66,
+        "name": "lease_expires_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 67,
+        "name": "finished_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 68,
+        "name": "runtime_kind",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 69,
+        "name": "provider_session_ref",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 70,
+        "name": "archived_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 71,
+        "name": "client_request_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 72,
+        "name": "task_sequence",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 73,
+        "name": "user_text",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 74,
+        "name": "stop_requested",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 75,
+        "name": "error_code",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 76,
+        "name": "error_detail",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 77,
+        "name": "resume_context",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 78,
+        "name": "execution_run_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 79,
+        "name": "runtime_quiesced_run_id",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 80,
+        "name": "started_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 81,
+        "name": "completed_at",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      }
+    ],
+    "indices": {
+      "idx_workbench_turns_task_sequence": {
+        "list": {
+          "seq": 0,
+          "name": "idx_workbench_turns_task_sequence",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 72,
+            "name": "task_sequence",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_task_created_id": {
+        "list": {
+          "seq": 1,
+          "name": "idx_workbench_turns_task_created_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 18,
+            "name": "created_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_recovery": {
+        "list": {
+          "seq": 2,
+          "name": "idx_workbench_turns_recovery",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 66,
+            "name": "lease_expires_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_queue": {
+        "list": {
+          "seq": 3,
+          "name": "idx_workbench_turns_queue",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 18,
+            "name": "created_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_one_active_turn": {
+        "list": {
+          "seq": 4,
+          "name": "idx_workbench_one_active_turn",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_turns_client_request": {
+        "list": {
+          "seq": 5,
+          "name": "idx_workbench_turns_client_request",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 71,
+            "name": "client_request_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_workbench_tasks_updated_id": {
+        "list": {
+          "seq": 6,
+          "name": "idx_workbench_tasks_updated_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 19,
+            "name": "updated_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_weekly_okr_analysis_jobs_identity": {
+        "list": {
+          "seq": 7,
+          "name": "idx_weekly_okr_analysis_jobs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 62,
+            "name": "week_end",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 63,
+            "name": "manager_user_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 64,
+            "name": "source_digest",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_okr_review_requests_status": {
+        "list": {
+          "seq": 8,
+          "name": "idx_okr_review_requests_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_okr_review_requests_identity": {
+        "list": {
+          "seq": 9,
+          "name": "idx_okr_review_requests_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 4,
+            "name": "conversation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 7,
+            "name": "trigger_message_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_meeting_alignment_jobs_claim": {
+        "list": {
+          "seq": 10,
+          "name": "idx_meeting_alignment_jobs_claim",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 10,
+            "name": "available_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 46,
+            "name": "eligible_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_meeting_alignment_jobs_identity": {
+        "list": {
+          "seq": 11,
+          "name": "idx_meeting_alignment_jobs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 41,
+            "name": "meeting_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_work_summary_inputs_updated": {
+        "list": {
+          "seq": 12,
+          "name": "idx_work_summary_inputs_updated",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 19,
+            "name": "updated_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_work_summary_inputs_status": {
+        "list": {
+          "seq": 13,
+          "name": "idx_work_summary_inputs_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_work_summary_inputs_identity": {
+        "list": {
+          "seq": 14,
+          "name": "idx_work_summary_inputs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 34,
+            "name": "source_type",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 35,
+            "name": "source_ref",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_task_inputs_task": {
+        "list": {
+          "seq": 15,
+          "name": "idx_reply_task_inputs_task",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 28,
+            "name": "parent_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_task_inputs_identity": {
+        "list": {
+          "seq": 16,
+          "name": "idx_reply_task_inputs_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 3,
+            "name": "channel",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 4,
+            "name": "conversation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 7,
+            "name": "trigger_message_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 31,
+            "name": "input_revision_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_business_object_key": {
+        "list": {
+          "seq": 17,
+          "name": "idx_reply_tasks_business_object_key",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 23,
+            "name": "business_object_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_channel_status_id": {
+        "list": {
+          "seq": 18,
+          "name": "idx_reply_tasks_channel_status_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 3,
+            "name": "channel",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_status": {
+        "list": {
+          "seq": 19,
+          "name": "idx_reply_tasks_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 14,
+            "name": "status",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_reply_tasks_identity": {
+        "list": {
+          "seq": 20,
+          "name": "idx_reply_tasks_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 3,
+            "name": "channel",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 4,
+            "name": "conversation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 7,
+            "name": "trigger_message_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_tasks_text_public_id": {
+        "list": {
+          "seq": 21,
+          "name": "idx_tasks_text_public_id",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": 2,
+            "name": "legacy_key",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "record_type",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "idx_tasks_public_id": {
+        "list": {
+          "seq": 22,
+          "name": "idx_tasks_public_id",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        "xinfo": [
+          {
+            "seqno": 0,
+            "cid": -2,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "record_type",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      }
+    },
+    "foreign_key_list": [
+      {
+        "id": 0,
+        "seq": 0,
+        "table": "tasks",
+        "from": "claimed_input_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "id": 1,
+        "seq": 0,
+        "table": "tasks",
+        "from": "current_input_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "id": 2,
+        "seq": 0,
+        "table": "tasks",
+        "from": "parent_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ]
+  },
+  "source_projections": {
+    "reply_tasks": "select cast(t.legacy_key as integer) as id,t.channel as channel,t.conversation_id as conversation_id,t.conversation_title as conversation_title,t.single_chat as single_chat,t.trigger_message_id as trigger_message_id,t.trigger_create_time as trigger_create_time,t.trigger_sender as trigger_sender,t.available_at as available_at,t.force_new_decision as force_new_decision,t.oa_url as oa_url,t.manual_rerun_attempt_id as manual_rerun_attempt_id,t.status as status,t.attempts as attempts,t.locked_at as locked_at,t.error as error,t.created_at as created_at,t.updated_at as updated_at,t.execution_generation as execution_generation,t.manual_rerun_revision_key as manual_rerun_revision_key,t.recovery_code as recovery_code,t.business_object_key as business_object_key,t.input_version as input_version,t.claimed_input_version as claimed_input_version,(select cast(i.legacy_key as integer) from tasks i where i.id=t.current_input_id) as current_input_id,(select cast(i.legacy_key as integer) from tasks i where i.id=t.claimed_input_id) as claimed_input_id from tasks t where t.record_type='reply_tasks' and t.record_type not in ('workbench_tasks','workbench_turns')",
+    "reply_task_inputs": "select cast(t.legacy_key as integer) as id,t.parent_id as reply_task_id,t.channel as channel,t.conversation_id as conversation_id,t.conversation_title as conversation_title,t.single_chat as single_chat,t.trigger_message_id as trigger_message_id,t.trigger_create_time as trigger_create_time,t.trigger_sender as trigger_sender,t.trigger_text as trigger_text,t.trigger_message_json as trigger_message_json,t.oa_url as oa_url,t.business_object_key as business_object_key,t.input_revision_key as input_revision_key,t.created_at as created_at,t.input_provenance_json as input_provenance_json,t.input_compacted as input_compacted from tasks t where t.record_type='reply_task_inputs' and t.record_type not in ('workbench_tasks','workbench_turns')",
+    "work_summary_inputs": "select cast(t.legacy_key as integer) as id,t.source_type as source_type,t.source_ref as source_ref,t.payload_json as payload_json,t.status as status,t.attempts as attempts,t.error as error,t.created_at as created_at,t.updated_at as updated_at,t.available_at as available_at,t.source_created_at as source_created_at,t.body_sha256 as body_sha256,t.body_bytes as body_bytes,t.body_compacted as body_compacted from tasks t where t.record_type='work_summary_inputs' and t.record_type not in ('workbench_tasks','workbench_turns')",
+    "meeting_alignment_jobs": "select cast(t.legacy_key as integer) as id,t.meeting_id as meeting_id,t.title as title,t.source_json as source_json,t.participants_json as participants_json,t.ended_at as ended_at,t.eligible_at as eligible_at,t.status as status,t.attempts as attempts,t.locked_at as locked_at,t.available_at as available_at,t.error as error,t.decision_json as decision_json,t.target_kind as target_kind,t.target_id as target_id,t.target_title as target_title,t.mentions_json as mentions_json,t.final_message as final_message,t.send_result_json as send_result_json,t.created_at as created_at,t.updated_at as updated_at,t.calendar_summary_status as calendar_summary_status,t.calendar_summary_result_json as calendar_summary_result_json from tasks t where t.record_type='meeting_alignment_jobs' and t.record_type not in ('workbench_tasks','workbench_turns')",
+    "okr_review_requests": "select cast(t.legacy_key as integer) as id,t.conversation_id as conversation_id,t.conversation_title as conversation_title,t.trigger_message_id as trigger_message_id,t.trigger_sender as trigger_sender,t.trigger_sender_user_id as trigger_sender_user_id,t.trigger_text as trigger_text,t.period_label as period_label,t.period_start as period_start,t.period_end as period_end,t.okr_source_json as okr_source_json,t.status as status,t.error as error,t.codex_session_id as codex_session_id,t.created_at as created_at,t.updated_at as updated_at from tasks t where t.record_type='okr_review_requests' and t.record_type not in ('workbench_tasks','workbench_turns')",
+    "weekly_okr_analysis_jobs": "select cast(t.legacy_key as integer) as id,t.week_end as week_end,t.manager_user_id as manager_user_id,t.source_digest as source_digest,t.status as status,t.lease_owner as lease_owner,t.lease_expires_at as lease_expires_at,t.error as error,t.created_at as created_at,t.finished_at as finished_at,t.updated_at as updated_at from tasks t where t.record_type='weekly_okr_analysis_jobs' and t.record_type not in ('workbench_tasks','workbench_turns')",
+    "workbench_tasks": "select t.legacy_key as id,t.title as title,t.runtime_kind as runtime_kind,t.provider_session_ref as provider_session_ref,t.archived_at as archived_at,t.created_at as created_at,t.updated_at as updated_at from tasks t where t.record_type='workbench_tasks'",
+    "workbench_turns": "select t.legacy_key as id,(select p.legacy_key from tasks p where p.id=t.parent_id) as task_id,t.client_request_id as client_request_id,t.task_sequence as task_sequence,t.user_text as user_text,t.status as status,t.stop_requested as stop_requested,'' as final_text,t.error_code as error_code,t.error_detail as error_detail,t.resume_context as resume_context,t.lease_owner as lease_owner,t.lease_expires_at as lease_expires_at,t.execution_run_id as execution_run_id,t.runtime_quiesced_run_id as runtime_quiesced_run_id,t.started_at as started_at,t.completed_at as completed_at,t.created_at as created_at,t.updated_at as updated_at from tasks t where t.record_type='workbench_turns'"
+  },
+  "verification": {
+    "actual_equals_fresh_except_index_enumeration_seq": true,
+    "table_sha_matches_prior_actual_capture": true
+  },
+  "summary": {
+    "kinds": 8,
+    "physical_columns": 82,
+    "indices": 23,
+    "triggers": 8
+  },
+  "source_insert_defaults": {
+    "reply_tasks": {
+      "channel": "'dingtalk'",
+      "available_at": "''",
+      "force_new_decision": "0",
+      "oa_url": "''",
+      "manual_rerun_attempt_id": "0",
+      "status": "'pending'",
+      "attempts": "0",
+      "error": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp",
+      "execution_generation": "'initial'",
+      "manual_rerun_revision_key": "''",
+      "recovery_code": "''",
+      "business_object_key": "''",
+      "input_version": "1",
+      "claimed_input_version": "0"
+    },
+    "reply_task_inputs": {
+      "trigger_message_json": "'{}'",
+      "oa_url": "''",
+      "input_revision_key": "''",
+      "created_at": "current_timestamp",
+      "input_provenance_json": "'{}'",
+      "input_compacted": "0"
+    },
+    "work_summary_inputs": {
+      "status": "'pending'",
+      "attempts": "0",
+      "error": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp",
+      "available_at": "''",
+      "source_created_at": "''",
+      "body_sha256": "''",
+      "body_bytes": "0",
+      "body_compacted": "0"
+    },
+    "meeting_alignment_jobs": {
+      "title": "''",
+      "source_json": "'{}'",
+      "participants_json": "'[]'",
+      "ended_at": "''",
+      "eligible_at": "''",
+      "status": "'waiting'",
+      "attempts": "0",
+      "available_at": "''",
+      "error": "''",
+      "decision_json": "'{}'",
+      "target_kind": "''",
+      "target_id": "''",
+      "target_title": "''",
+      "mentions_json": "'[]'",
+      "final_message": "''",
+      "send_result_json": "'{}'",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp",
+      "calendar_summary_status": "'not_started'",
+      "calendar_summary_result_json": "'{}'"
+    },
+    "okr_review_requests": {
+      "trigger_sender_user_id": "''",
+      "okr_source_json": "'{}'",
+      "status": "'pending'",
+      "error": "''",
+      "codex_session_id": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp"
+    },
+    "weekly_okr_analysis_jobs": {
+      "status": "'running'",
+      "lease_owner": "''",
+      "lease_expires_at": "''",
+      "error": "''",
+      "created_at": "current_timestamp",
+      "finished_at": "''",
+      "updated_at": "current_timestamp"
+    },
+    "workbench_tasks": {
+      "provider_session_ref": "''",
+      "archived_at": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp"
+    },
+    "workbench_turns": {
+      "stop_requested": "0",
+      "error_code": "''",
+      "error_detail": "''",
+      "resume_context": "''",
+      "lease_owner": "''",
+      "lease_expires_at": "''",
+      "execution_run_id": "''",
+      "runtime_quiesced_run_id": "''",
+      "started_at": "''",
+      "completed_at": "''",
+      "created_at": "current_timestamp",
+      "updated_at": "current_timestamp"
+    }
+  },
+  "source_insert_contract": "Original insert_task fills omitted per-kind SQL defaults in the same native INSERT; explicit None is not replaced. Other native physical columns default NULL. Numeric explicit legacy_key binding normalization belongs to original insert_task, not a SQL-fragment compiler."
+}

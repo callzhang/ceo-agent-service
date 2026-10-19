@@ -1,0 +1,31 @@
+{
+  "recorded_utc": "2026-10-16T20:53:35.966591+00:00",
+  "status": "canonical_store_constructor_spec_quality_pass",
+  "proposal_patch_sha256": "013079516002034a88f015629ce333577601128b21ced9bc88c8532310f3f57d",
+  "source_store_after_nine_proposals": "2d82e4140b34a38025b9b7129d4c90d6262e806d49a9239401f990b633a8c6e5",
+  "candidate_store": "72b40d7917af0cf48ffcb131d347c66799432efbec98a1f61e759d2804253d86",
+  "spec": {
+    "changed_store_functions": 7,
+    "explicitly_retired_methods": 6,
+    "other_function_asts_and_source_exact": 794,
+    "workbench_functions_exact": 79,
+    "finite_columns": 275,
+    "stored_columns": 7,
+    "generated_columns": 268,
+    "native_task_names_retired": 12,
+    "retained_feedback_fks": 3,
+    "physical_child_guard_sql_exact": 10,
+    "database_forbidden_imports": true,
+    "compile_ruff_reverse_reapply": "pass",
+    "findings": []
+  },
+  "quality": {
+    "missing_index_trigger_child_index_explicit_repair_only": true,
+    "wrong_present_index_rejected": true,
+    "codec_five_sqlite_types_no_new_transaction": true,
+    "normal_batch_workflow_bodies_exact": true,
+    "historical_source_factories_exact": true,
+    "findings": []
+  },
+  "boundary": "Unselected Store-only constructor proposal after nine exact callers; root actual-copy, paired four-file proposal, applied reviews and full final11 acceptance remain separate. No production write/deploy."
+}

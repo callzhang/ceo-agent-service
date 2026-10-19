@@ -1,0 +1,23 @@
+{
+  "recorded_utc": "2026-10-16T20:56:36.435341+00:00",
+  "status": "canonical_paired_closure_source_spec_quality_pass",
+  "patch_sha256": "f579a40c384e846f4a65c0de82af8244ff1e87dd82c9da7802bf96b4a182eb52",
+  "spec": {
+    "function_signatures_exact": 388,
+    "unchanged_function_asts": 377,
+    "changed_owners": 11,
+    "database_free_verifier_json_controls": 11,
+    "findings": []
+  },
+  "quality": {
+    "same_transaction_commit_rollback_marker_behavior": true,
+    "historical_factories_and_publication_branches_exact": true,
+    "connection_codec_pragmas_rowfactory_and_no_transaction": true,
+    "current_email_factory_retired_names_absent_and_caller_rollback": true,
+    "typed_publication_and_malformed_declaration_rejection": true,
+    "full_inverse_metadata_unchanged_and_json_transport": true,
+    "compile_ruff_imports_database_forbidden_reverse_reapply": "pass",
+    "findings": []
+  },
+  "boundary": "Source-only canonical four-file proposal; actual copy receipt separately records root executed assembled proposals, not selected worktree application or production. Applied reviews and final11 remain open."
+}

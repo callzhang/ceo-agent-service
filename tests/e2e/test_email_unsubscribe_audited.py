@@ -18,6 +18,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from app.action_storage import email_action_projection
+from app.configs_definitions import config_projection
+from app.email_canonical_storage import email_message_projection
 from app.email_worker import run_email_unsubscribe
 from app.email_browser_profile import (
     EmailBrowserProfile,
@@ -565,24 +568,25 @@ def test_direct_email_worker_unsubscribes_two_page_flow_and_preserves_evidence(
     with sqlite3.connect(database) as db:
         db.row_factory = sqlite3.Row
         action_plan_row = db.execute(
-            "select * from email_action_plans where action_plan_id=?",
+            f"select * from ({email_action_projection('email_action_plans')}) "
+            "where action_plan_id=?",
             (plan.action_plan_id,),
         ).fetchone()
         account_row = db.execute(
-            "select * from email_accounts where account_id=?",
+            f"select * from ({config_projection('email_accounts')}) where account_id=?",
             (ACCOUNT_ID,),
         ).fetchone()
         message_row = db.execute(
-            "select * from email_messages where stable_message_identity=?",
+            f"select * from ({email_message_projection()}) where stable_message_identity=?",
             (MESSAGE_IDENTITY,),
         ).fetchone()
         effect_rows = db.execute(
-            "select * from email_unsubscribe_effects "
-            "where action_identity=? order by rowid",
+            f"select * from ({email_action_projection('email_unsubscribe_effects')}) "
+            "where action_identity=? order by action_identity,effect_digest",
             (payload["action_identity"],),
         ).fetchall()
         step_rows = db.execute(
-            "select * from email_unsubscribe_steps "
+            f"select * from ({email_action_projection('email_unsubscribe_steps')}) "
             "where action_identity=? order by sequence",
             (payload["action_identity"],),
         ).fetchall()

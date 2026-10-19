@@ -1,0 +1,46 @@
+"""Finite current provider-state table and source-shaped projections."""
+
+OBSERVATION_FIELDS = (
+    "account_id", "stable_message_identity", "state", "provider_folder_id",
+    "provider_folder_name", "category_key", "important", "observed_at",
+    "important_signals_json",
+)
+FRESH_OBSERVATION_FIELDS = OBSERVATION_FIELDS[:-2] + (
+    "important_signals_json", "observed_at",
+)
+GENERATION_FIELDS = ("account_id", "provider_folder_id", "observed_at")
+PROVIDER_STATE_DDL = """
+CREATE TABLE provider_state (
+ id INTEGER PRIMARY KEY,
+ record_type TEXT NOT NULL CHECK(record_type IN ('observation','folder_generation')),
+ account_id TEXT NOT NULL CHECK(trim(account_id)!=''),
+ stable_message_identity TEXT,
+ state TEXT,
+ provider_folder_id TEXT,
+ observed_at TEXT NOT NULL CHECK(trim(observed_at)!=''),
+ provider_folder_name TEXT,
+ category_key TEXT,
+ important INTEGER,
+ important_signals_json TEXT,
+ CHECK(
+  (record_type='observation' AND stable_message_identity IS NOT NULL
+   AND trim(stable_message_identity)!='' AND state IS NOT NULL
+   AND state IN ('available','unavailable','excluded')
+   AND (important IS NULL OR important IN (0,1))
+   AND (important_signals_json IS NULL OR json_valid(important_signals_json)))
+  OR
+  (record_type='folder_generation' AND stable_message_identity IS NULL
+   AND state IS NULL AND provider_folder_id IS NOT NULL
+   AND trim(provider_folder_id)!='' AND provider_folder_name IS NULL
+   AND category_key IS NULL AND important IS NULL AND important_signals_json IS NULL)
+ )
+)
+"""
+PROVIDER_STATE_INDEXES = (
+    "CREATE UNIQUE INDEX idx_provider_state_observation_identity ON provider_state(account_id,stable_message_identity) WHERE record_type='observation'",
+    "CREATE UNIQUE INDEX idx_provider_state_generation_identity ON provider_state(account_id,provider_folder_id) WHERE record_type='folder_generation'",
+    "CREATE INDEX idx_provider_state_observation_folder ON provider_state(account_id,provider_folder_id) WHERE record_type='observation'",
+)
+
+OBSERVATION_PROJECTION = ", ".join(OBSERVATION_FIELDS)
+GENERATION_PROJECTION = ", ".join(GENERATION_FIELDS)

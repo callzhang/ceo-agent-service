@@ -5,16 +5,15 @@ provider and never creates Agent, Audit, reply-task, or run records.
 """
 
 from __future__ import annotations
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
 
-from app.store import REPLY_TASK_CURRENT_SQL
+from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore, STORE_SCHEMA_VERSION
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import Message
-from email.parser import Parser
 from hashlib import sha256
 import json
 import logging
@@ -68,14 +67,107 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
+from app.action_email_storage import finite_target_external_sql
+from app.action_email_history_storage import (
+    email_history_rows, insert_email_history, update_email_operation,
+)
+from app.email_canonical_storage import (
+    email_classification_projection as _canonical_classifications,
+    email_message_projection as _canonical_messages,
+    insert_email_classification, upsert_email_message,
+    update_email_classification,
+    update_email_paired_locator,
+)
+
+from app.action_email_schema_release import require_current_email_pair
+from app.provider_state_schema_release import provider_state_schema_is_current
+from app.task20_definitions import TASK20_NEW_KINDS
+from app.task20_current_schema import task20_schema_is_current
+from app.task8_storage import register_task8_functions, task8_set_parts
+from app.state_definitions import STATE_FIELDS, state_projection
+from app.runs11_definitions import run11_projection
+from app.runs11_storage import insert_run11_fact
+from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
+from app.state_schema_release import state_schema_is_current
+from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
+from app.provider_state_storage import (
+    mark_authoritative_missing, mark_inactive_accounts, mark_unavailable_folder,
+    update_important_signals, upsert_folder_generations, upsert_observations,
+)
+from app.email_current_schema import (
+    create_current_email_migration_ledger,
+    current_canonical_email_parent_is_current,
+)
+from app.configs_definitions import CONFIG_FIELDS, config_projection
+from app.configs_storage import insert_config, update_config, delete_config
+from app.runs11_current_schema import current_configs_schema_is_current
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
+from app.action_storage import (
+    ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
+    email_action_projection, email_action_auxiliary_objects_are_current,
+    insert_action, insert_email_action, update_email_action, update_action,
+    delete_action, delete_email_action,
+)
 
 
-EMAIL_SCHEMA_VERSION = 51
+from app.task12_storage import task12_insert_parts, task12_projection, task12_set_parts
+from app.task20_definitions import TASK20_FIELDS, task20_column
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+_EMAIL_CLASSIFICATION_SQL = task12_projection('email_agent_classification_tasks')
+_EMAIL_HISTORICAL_KIND = 'email_historical_candidates'
+_EMAIL_HISTORICAL_SQL = task12_projection(_EMAIL_HISTORICAL_KIND)
+_EMAIL_HISTORICAL_COLUMNS = {
+    field: task20_column(_EMAIL_HISTORICAL_KIND, field)
+    for field in TASK20_FIELDS[_EMAIL_HISTORICAL_KIND]
+}
+
+
+# Finite Email29 source-shaped reads used by the current DAO and validators.
+EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
+EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
+EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
+EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
+EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
+EMAIL_REPLY_RECEIPT_SQL = EMAIL_ACTION_PROJECTIONS["email_reply_receipts"]
+EMAIL_REPLY_CLAIM_SQL = EMAIL_ACTION_PROJECTIONS["email_reply_dispatch_claims"]
+EMAIL_REPLY_CLAIM_LOCATOR_SQL = email_action_projection(
+    "email_reply_dispatch_claims", include_rowid=True
+)
+EMAIL_REPLY_RECEIPT_LOCATOR_SQL = email_action_projection(
+    "email_reply_receipts", include_rowid=True
+)
+EMAIL_UNSUBSCRIBE_RECEIPT_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_receipts"]
+EMAIL_UNSUBSCRIBE_CLAIM_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_claims"]
+EMAIL_UNSUBSCRIBE_EFFECT_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_effects"]
+EMAIL_UNSUBSCRIBE_CONTINUATION_SQL = EMAIL_ACTION_PROJECTIONS[
+    "email_unsubscribe_continuations"
+]
+EMAIL_UNSUBSCRIBE_STEP_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_steps"]
+EMAIL_UNSUBSCRIBE_CANCELLATION_SQL = EMAIL_ACTION_PROJECTIONS[
+    "email_unsubscribe_cancellations"
+]
+EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL = email_action_projection(
+    "email_unsubscribe_claims", include_rowid=True
+)
+EMAIL_UNSUBSCRIBE_CONTINUATION_LOCATOR_SQL = email_action_projection(
+    "email_unsubscribe_continuations", include_rowid=True
+)
+EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL = email_action_projection(
+    "email_unsubscribe_receipts", include_rowid=True
+)
+EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection(
+    "email_actions", include_rowid=True
+)
+
+EMAIL_SCHEMA_VERSION = 52
+EMAIL_CLASSIFICATION_SQL = _canonical_classifications()
+EMAIL_MESSAGE_SQL = _canonical_messages()
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -167,7 +259,7 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
            tasks.trigger_message_json,
            tasks.execution_generation as task_execution_generation,
            tasks.status as task_status
-    from email_unsubscribe_effects as effects
+    from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effects
     join ({AGENT_RUN_SQL}) as audit_runs
       on audit_runs.id=effects.audit_agent_run_id
     join ({REPLY_TASK_CURRENT_SQL}) as tasks
@@ -503,22 +595,6 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "folder_label_watermark": ("integer", True, "0"),
         "important_label_watermark": ("integer", True, "0"),
     },
-    "email_provider_observations": {
-        "account_id": ("text", True, None),
-        "stable_message_identity": ("text", True, None),
-        "state": ("text", True, None),
-        "provider_folder_id": ("text", False, None),
-        "provider_folder_name": ("text", False, None),
-        "category_key": ("text", False, None),
-        "important": ("integer", False, None),
-        "important_signals_json": ("text", False, None),
-        "observed_at": ("text", True, None),
-    },
-    "email_provider_folder_observation_generations": {
-        "account_id": ("text", True, None),
-        "provider_folder_id": ("text", True, None),
-        "observed_at": ("text", True, None),
-    },
     "email_training_snapshot_observations": {
         "snapshot_id": ("text", True, None),
         "account_id": ("text", True, None),
@@ -767,19 +843,6 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "folder_label_watermark >= 0",
         "important_label_watermark >= 0",
     ),
-    "email_provider_observations": (
-        "trim(account_id) != ''",
-        "trim(stable_message_identity) != ''",
-        "state in ('available','unavailable','excluded')",
-        "important is null or important in (0, 1)",
-        "important_signals_json is null or json_valid(important_signals_json)",
-        "trim(observed_at) != ''",
-    ),
-    "email_provider_folder_observation_generations": (
-        "trim(account_id) != ''",
-        "trim(provider_folder_id) != ''",
-        "trim(observed_at) != ''",
-    ),
     "email_training_snapshot_observations": (
         "trim(snapshot_id) != ''",
         "trim(account_id) != ''",
@@ -859,11 +922,6 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_cancellations": ("action_identity",),
     "email_direct_retry_requests": ("action_id", "attempt_number"),
     "email_training_snapshots": ("snapshot_id",),
-    "email_provider_observations": ("account_id", "stable_message_identity"),
-    "email_provider_folder_observation_generations": (
-        "account_id",
-        "provider_folder_id",
-    ),
     "email_training_snapshot_observations": (
         "snapshot_id",
         "account_id",
@@ -1005,10 +1063,6 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_training_observations_provider_truth": (
         "email_training_snapshot_observations",
         ("account_id", "stable_message_identity", "observed_at", "snapshot_id"),
-    ),
-    "idx_email_provider_observations_folder": (
-        "email_provider_observations",
-        ("account_id", "provider_folder_id"),
     ),
     "idx_email_classifier_runtime_model_id": (
         "email_classifier_runtime_samples",
@@ -1405,12 +1459,8 @@ class EmailFeedbackApplication:
         return not self.applied
 
 
-class EmailTrainingInclusionConflict(RuntimeError):
-    """Authoritative training samples cannot be marked as one atomic batch."""
 
 
-class EmailTrainingConsistencyError(RuntimeError):
-    """Registry manifests could not be proven restored after a DB failure."""
 
 
 class EmailTrainingSnapshotConflict(RuntimeError):
@@ -1655,6 +1705,40 @@ def _json_dump(value: object) -> str:
     )
 
 
+def _config_source_rowid(db: sqlite3.Connection, kind: str, field: str, value: object) -> int | None:
+    """Resolve a public Email key to the exact source rowid in a current config projection."""
+    row = db.execute(
+        f"select rowid from ({config_projection(kind, include_rowid=True)}) where {field}=?",
+        (value,),
+    ).fetchone()
+    return int(row["rowid"]) if row is not None else None
+
+
+def _folder_binding_rowid(db: sqlite3.Connection, account_id: str, category_key: str) -> int | None:
+    row = db.execute(
+        f"select rowid from ({config_projection('email_category_folder_bindings', include_rowid=True)}) "
+        "where account_id=? and category_key=?",
+        (account_id, category_key),
+    ).fetchone()
+    return int(row["rowid"]) if row is not None else None
+
+
+def _upsert_current_folder_binding(db: sqlite3.Connection, category_key: str,
+                                   binding: VerifiedEmailFolderBinding) -> None:
+    values = {
+        "account_id": binding.account_id, "category_key": category_key,
+        "provider_folder_id": binding.provider_folder_id,
+        "provider_folder_name": binding.provider_folder_name,
+        "binding_status": binding.binding_status,
+        "last_verified_at": binding.last_verified_at,
+    }
+    identity = _folder_binding_rowid(db, binding.account_id, category_key)
+    if identity is None:
+        insert_config(db, "email_category_folder_bindings", values)
+    else:
+        update_config(db, "email_category_folder_bindings", identity, values)
+
+
 def _historical_candidate_projection(
     message: Mapping[str, object],
     *,
@@ -1791,7 +1875,7 @@ def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
 
 def _explicit_direct_retry_sql(alias: str, attempt_offset: int = 0) -> str:
     return (
-        "exists(select 1 from email_direct_retry_requests retry_request "
+        f"exists(select 1 from ({EMAIL_RETRY_SQL}) retry_request "
         f"where retry_request.action_id={alias}.action_id "
         f"and retry_request.attempt_number={alias}.attempt_count+{attempt_offset})"
     )
@@ -1800,7 +1884,8 @@ def _explicit_direct_retry_sql(alias: str, attempt_offset: int = 0) -> str:
 def _direct_retry_configuration_sql(alias: str) -> str:
     return (
         f"(NOT {_explicit_direct_retry_sql(alias, 1)} OR EXISTS("
-        "select 1 from email_direct_retry_requests r join email_accounts cfg "
+        f"select 1 from ({EMAIL_RETRY_SQL}) r "
+        f"join ({config_projection('email_accounts')}) cfg "
         f"on cfg.account_id={alias}.account_id where r.action_id={alias}.action_id "
         f"and r.attempt_number={alias}.attempt_count+1 "
         "and r.account_configuration_snapshot=json_array(cfg.account_id,cfg.email_address,"
@@ -2385,10 +2470,10 @@ def _audited_unsubscribe_lineage(
     if lineage is None or lineage["audit_agent_run_id"] is None:
         return None
     current_plan = db.execute(
-        """
+        f"""
         select action_plan_id, action_plan_version, classification_id,
                account_id, actions_json
-        from email_action_plans
+        from ({EMAIL_PLAN_SQL})
         where action_plan_id=?
         """,
         (classification["current_action_plan_id"],),
@@ -2527,10 +2612,10 @@ def _current_unsubscribe_task_lineage(
     classification: sqlite3.Row,
 ) -> dict[str, object] | None:
     current_plan = db.execute(
-        """
+        f"""
         select action_plan_id, action_plan_version, classification_id,
                account_id, actions_json
-        from email_action_plans
+        from ({EMAIL_PLAN_SQL})
         where action_plan_id=?
         """,
         (classification["current_action_plan_id"],),
@@ -2590,10 +2675,10 @@ def _current_unsubscribe_task_lineage(
         (task["id"], task["execution_generation"]),
     ).fetchall()
     continuation_row = db.execute(
-        """
+        f"""
         select continuation.controls_json, effects.operations_json
-        from email_unsubscribe_continuations as continuation
-        join email_unsubscribe_effects as effects
+        from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL}) as continuation
+        join ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effects
           on effects.action_identity=continuation.action_identity
          and effects.effect_digest=continuation.effect_digest
         where continuation.action_identity=?
@@ -2964,19 +3049,6 @@ def email_imap_configuration_snapshot(account: Mapping[str, object]) -> str:
     return _json_dump(values)
 
 
-def _training_sample_digest(sample: Mapping[str, object]) -> str:
-    stable_fields = (
-        sample.get("message_id"),
-        sample.get("label"),
-        sample.get("model_text"),
-        sample.get("confirmed_at"),
-        sample.get("classification_source"),
-        sample.get("status"),
-    )
-    payload = json.dumps(
-        stable_fields, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
-    return sha256(payload).hexdigest()
 
 
 class EmailStore:
@@ -2989,22 +3061,36 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION)
+        if self.path.exists():
+            with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                db.execute("begin")
+                if db.execute("select 1 from sqlite_schema where name='actions'").fetchone() and not any(
+                    email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True)
+                    for variant in REPLY_VARIANTS
+                ):
+                    raise EmailPersistenceCorruption("required Email29 action schema is missing or malformed")
+        # The path flock is non-reentrant. Store must finish before Email locks;
+        # Store creates only the neutral classification parent, never EmailStore.
+        AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:
                 self._validate_durable_state(db)
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(self, *, foreign_keys: bool = True) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
         db.execute("pragma busy_timeout = 30000")
-        db.execute("pragma foreign_keys = on")
+        db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
         db.row_factory = sqlite3.Row
+        register_task8_functions(db)
         return db
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = self._open_connection()
+    def _connect(self, *, foreign_keys: bool = True) -> Iterator[sqlite3.Connection]:
+        db = self._open_connection(foreign_keys=foreign_keys)
         started_at = monotonic()
         body_finished_at = started_at
         try:
@@ -3122,210 +3208,23 @@ class EmailStore:
         )
 
     def _initialize(self, *, validate_rows: bool = True) -> bool:
-        with self._connect() as db:
+        with self._connect(foreign_keys=False) as db:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_provider_observation_signal_column(db)
                 if validate_rows:
                     self._validate_durable_state(db)
                 else:
                     self._validate_schema_shape(db)
                     self._validate_account_configuration(db)
                 return validate_rows
-            if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
-                raise EmailPersistenceCorruption(
-                    f"database has newer schema version {latest_version}; "
-                    f"this runtime supports {EMAIL_SCHEMA_VERSION}"
-                )
+            if latest_version is not None:
+                raise EmailPersistenceCorruption("unsupported Email source; paired schema release required")
             db.rollback()
-            try:
-                db.execute("pragma journal_mode = wal")
-            except sqlite3.OperationalError as exc:
-                if "locked" not in str(exc).lower():
-                    raise
-            db.execute("pragma foreign_keys = off")
             db.execute("begin immediate")
-            self._create_migration_table(db)
-            latest_version = self._read_schema_version(db)
-            assert latest_version is not None
-            if latest_version > EMAIL_SCHEMA_VERSION:
-                raise EmailPersistenceCorruption(
-                    f"database has newer schema version {latest_version}; "
-                    f"this runtime supports {EMAIL_SCHEMA_VERSION}"
-                )
-            if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_provider_observation_signal_column(db)
-                if validate_rows:
-                    self._validate_durable_state(db)
-                else:
-                    self._validate_schema_shape(db)
-                    self._validate_account_configuration(db)
-                return validate_rows
-            legacy_reply_claims = False
-            if latest_version == 8:
-                legacy_reply_claims = self._prepare_v8_reply_claim_migration(db)
-            legacy_unsubscribe_claims = False
-            if latest_version == 10:
-                legacy_unsubscribe_claims = self._prepare_v10_unsubscribe_migration(db)
-            legacy_unsubscribe_schema = False
-            if latest_version < 14:
-                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(
-                    db
-                )
-            self._create_base_tables(db)
-            self._create_durable_tables(db)
-            self._ensure_email_context_columns(db)
-            self._ensure_direct_action_retry_column(db)
-            self._ensure_action_authorization_snapshot_column(db)
-            self._ensure_legacy_action_plan_provenance_column(db)
-            self._ensure_unsubscribe_claim_columns(db)
-            self._ensure_unsubscribe_audit_columns(db)
-            self._ensure_unsubscribe_receipt_columns(db)
-            self._ensure_training_snapshot_frozen_column(db)
-            self._ensure_training_snapshot_watermark_columns(db)
-            self._ensure_email_account_move_mode_column(db)
-            self._ensure_provider_observation_signal_column(db)
-            if legacy_reply_claims:
-                self._finish_v8_reply_claim_migration(db)
-            if legacy_unsubscribe_claims:
-                self._finish_v10_unsubscribe_migration(db)
-            if legacy_unsubscribe_schema:
-                self._finish_unsubscribe_schema_migration(db)
-            self._create_indexes_and_triggers(db)
-            is_prototype = False
-            if latest_version < 16:
-                is_prototype = latest_version == 0
-                if latest_version < 2:
-                    self._migrate_prototype_schema(db)
-                self._ensure_legacy_processed_without_plan_column(db)
-                self._ensure_training_inclusion_column(db)
-                self._ensure_training_inclusion_trigger(db)
-                if is_prototype:
-                    self._backfill_prototype_rows(db)
-                if latest_version in {0, 2}:
-                    self._mark_legacy_processed_without_plan(db)
-                db.execute(
-                    "update email_action_plans set legacy_serialization_pre_v16=1"
-                )
-                if not is_prototype:
-                    db.execute(
-                        "insert into email_schema_migrations(version, applied_at) "
-                        "values (16, ?)",
-                        (self._now(),),
-                    )
-                latest_version = 16
-            if latest_version == 16:
-                if is_prototype:
-                    self._migrate_v16_to_v17(db, record_version=False)
-                    latest_version = 17
-                else:
-                    self._migrate_v16_to_v17(db)
-                    latest_version = 17
-            if latest_version == 17:
-                self._migrate_v17_to_v18(db)
-                latest_version = 18
-            if latest_version == 18:
-                self._migrate_v18_to_v19(db, replace_version=is_prototype)
-                latest_version = 19
-            if latest_version == 19:
-                self._migrate_v19_to_v20(db, replace_version=is_prototype)
-                latest_version = 20
-            if latest_version == 20:
-                self._migrate_v20_to_v21(db, replace_version=is_prototype)
-                latest_version = 21
-            if latest_version == 21:
-                self._migrate_v21_to_v22(db, replace_version=is_prototype)
-                latest_version = 22
-            if latest_version == 22:
-                self._migrate_v22_to_v23(db, replace_version=is_prototype)
-                latest_version = 23
-            if latest_version == 23:
-                self._migrate_v23_to_v24(db, replace_version=is_prototype)
-                latest_version = 24
-            if latest_version == 24:
-                self._migrate_v24_to_v25(db, replace_version=is_prototype)
-                latest_version = 25
-            if latest_version == 25:
-                self._migrate_v25_to_v26(db, replace_version=is_prototype)
-                latest_version = 26
-            if latest_version == 26:
-                self._migrate_v26_to_v27(db, replace_version=is_prototype)
-                latest_version = 27
-            if latest_version == 27:
-                self._migrate_v27_to_v28(db, replace_version=is_prototype)
-                latest_version = 28
-            if latest_version == 28:
-                self._migrate_v28_to_v29(db, replace_version=is_prototype)
-                latest_version = 29
-            if latest_version == 29:
-                self._migrate_v29_to_v30(db, replace_version=is_prototype)
-                latest_version = 30
-            if latest_version == 30:
-                self._migrate_v30_to_v31(db, replace_version=is_prototype)
-                latest_version = 31
-            if latest_version == 31:
-                self._migrate_v31_to_v32(db, replace_version=is_prototype)
-                latest_version = 32
-            if latest_version == 32:
-                self._migrate_v32_to_v33(db, replace_version=is_prototype)
-                latest_version = 33
-            if latest_version == 33:
-                self._migrate_v33_to_v34(db, replace_version=is_prototype)
-                latest_version = 34
-            if latest_version == 34:
-                self._migrate_v34_to_v35(db, replace_version=is_prototype)
-                latest_version = 35
-            if latest_version == 35:
-                self._migrate_v35_to_v36(db, replace_version=is_prototype)
-                latest_version = 36
-            if latest_version == 36:
-                self._migrate_v36_to_v37(db, replace_version=is_prototype)
-                latest_version = 37
-            if latest_version == 37:
-                self._migrate_v37_to_v38(db, replace_version=is_prototype)
-                latest_version = 38
-            if latest_version == 38:
-                self._migrate_v38_to_v39(db, replace_version=is_prototype)
-                latest_version = 39
-            if latest_version == 39:
-                self._migrate_v39_to_v40(db, replace_version=is_prototype)
-                latest_version = 40
-            if latest_version == 40:
-                self._migrate_v40_to_v41(db, replace_version=is_prototype)
-                latest_version = 41
-            if latest_version == 41:
-                self._migrate_v41_to_v42(db, replace_version=is_prototype)
-                latest_version = 42
-            if latest_version == 42:
-                self._migrate_v42_to_v43(db, replace_version=is_prototype)
-                latest_version = 43
-            if latest_version == 43:
-                self._migrate_v43_to_v44(db, replace_version=is_prototype)
-                latest_version = 44
-            if latest_version == 44:
-                self._migrate_v44_to_v45(db, replace_version=is_prototype)
-                latest_version = 45
-            if latest_version == 45:
-                self._migrate_v45_to_v46(db, replace_version=is_prototype)
-                latest_version = 46
-            if latest_version == 46:
-                self._migrate_v46_to_v47(db, replace_version=is_prototype)
-                latest_version = 47
-            if latest_version == 47:
-                self._migrate_v47_to_v48(db, replace_version=is_prototype)
-                latest_version = 48
-            if latest_version == 48:
-                self._migrate_v48_to_v49(db, replace_version=is_prototype)
-                latest_version = 49
-            if latest_version == 49:
-                self._migrate_v49_to_v50(db, replace_version=is_prototype)
-                latest_version = 50
-            if latest_version == 50:
-                if is_prototype:
-                    db.execute("update email_schema_migrations set version=51,applied_at=? where version=50", (self._now(),))
-                else:
-                    db.execute("insert into email_schema_migrations(version,applied_at) values (51,?)", (self._now(),))
+            create_current_email_migration_ledger(db)
+            self._seed_current_fresh_state(db)
+            db.execute("insert into email_schema_migrations(version,applied_at) values(?,?)", (EMAIL_SCHEMA_VERSION, self._now()))
             self._validate_durable_state(db)
             return True
 
@@ -4129,81 +4028,7 @@ class EmailStore:
         )
         self._create_category_config_tables(db)
         now = self._now()
-        has_enabled_account = (
-            db.execute(
-                "select 1 from email_accounts where enabled=1 limit 1"
-            ).fetchone()
-            is not None
-        )
-        migrated_keys = set(INITIAL_CATEGORY_CONFIGS)
-        migrated_keys.update(
-            key
-            for key in legacy_rows
-            if key not in {"important", "subscription", "billing"}
-        )
-        for category_key in sorted(migrated_keys):
-            try:
-                validated_key = validate_email_category_key(category_key)
-            except ValueError as exc:
-                raise EmailPersistenceCorruption(
-                    "invalid configured email category"
-                ) from exc
-            legacy = legacy_rows.get(category_key)
-            if category_key == "external_billing" and legacy is None:
-                legacy = legacy_rows.get("billing")
-            definition = INITIAL_CATEGORY_CONFIGS.get(category_key)
-            if definition is None:
-                assert legacy is not None
-                legacy_description = str(legacy["description"]).strip()
-                core = legacy_description or f"Messages classified as {validated_key}."
-                display_name = validated_key.replace("_", " ").title()
-                include = (core,)
-                exclude = ("Messages outside this category.",)
-            else:
-                display_name = str(definition["display_name"])
-                core = str(definition["core"])
-                include = tuple(definition["include"])
-                exclude = tuple(definition["exclude"])
-            db.execute(
-                """
-                insert into email_category_configs (
-                    category_key, display_name, core_description,
-                    include_json, exclude_json, threshold, actions_json,
-                    action_parameters_json, enabled, description_version,
-                    config_version, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    validated_key,
-                    display_name,
-                    core,
-                    _json_dump(list(include)),
-                    _json_dump(list(exclude)),
-                    (
-                        float(legacy["threshold"])
-                        if legacy is not None
-                        else SEEDED_THRESHOLD
-                    ),
-                    str(legacy["actions_json"]) if legacy is not None else "[]",
-                    (
-                        str(legacy["action_parameters_json"])
-                        if legacy is not None
-                        else "{}"
-                    ),
-                    (
-                        int(bool(legacy["enabled"]) and not has_enabled_account)
-                        if legacy is not None
-                        else int(not has_enabled_account)
-                    ),
-                    DESCRIPTION_VERSION,
-                    (
-                        str(legacy["config_version"])
-                        if legacy is not None
-                        else SEEDED_CONFIG_VERSION
-                    ),
-                    str(legacy["updated_at"]) if legacy is not None else now,
-                ),
-            )
+        self._insert_initial_category_configs(db, legacy_rows, now=now)
         db.execute("drop table email_category_configs_v19")
         if replace_version:
             db.execute(
@@ -4869,18 +4694,6 @@ class EmailStore:
             ),
         )
 
-    @classmethod
-    def _ensure_provider_observation_signal_column(cls, db: sqlite3.Connection) -> None:
-        cls._ensure_column(
-            db,
-            table="email_provider_observations",
-            column="important_signals_json",
-            declaration=(
-                "text check(important_signals_json is null or "
-                "json_valid(important_signals_json))"
-            ),
-        )
-
     def _migrate_v32_to_v33(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -4926,11 +4739,7 @@ class EmailStore:
                 foreign key(promotion_config_version) references email_model_promotion_configs(config_version) on delete restrict
             ) without rowid
         """)
-        if db.execute("select 1 from email_model_promotion_configs").fetchone() is None:
-            db.execute(
-                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
-                (str(uuid4()), 0.95, 0.95, 20, 500.0, self._now()),
-            )
+        self._seed_model_promotion_config(db)
         db.execute("""
             create table if not exists email_category_description_revisions (
                 revision_id text primary key not null check(trim(revision_id) != ''),
@@ -4940,17 +4749,7 @@ class EmailStore:
                 created_at text not null check(trim(created_at) != '')
             ) without rowid
         """)
-        for row in db.execute(
-            "select * from email_category_configs order by category_key"
-        ).fetchall():
-            if (
-                db.execute(
-                    "select 1 from email_category_description_revisions where category_key=?",
-                    (row["category_key"],),
-                ).fetchone()
-                is None
-            ):
-                self._append_category_description_revision(db, row)
+        self._seed_initial_category_description_revisions(db)
         for sql in _MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL.values():
             db.execute(
                 sql.replace("create trigger ", "create trigger if not exists ", 1)
@@ -4965,6 +4764,160 @@ class EmailStore:
                 "insert into email_schema_migrations(version, applied_at) values (34, ?)",
                 (self._now(),),
             )
+
+    def _insert_initial_category_configs(
+        self, db: sqlite3.Connection, legacy_rows: Mapping[str, Any], *, now: str
+    ) -> None:
+        """Insert the existing v19 category conversion, with caller-owned DDL/TX."""
+        has_enabled_account = (
+            db.execute(
+                "select 1 from email_accounts where enabled=1 limit 1"
+            ).fetchone()
+            is not None
+        )
+        migrated_keys = set(INITIAL_CATEGORY_CONFIGS)
+        migrated_keys.update(
+            key
+            for key in legacy_rows
+            if key not in {"important", "subscription", "billing"}
+        )
+        for category_key in sorted(migrated_keys):
+            try:
+                validated_key = validate_email_category_key(category_key)
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid configured email category"
+                ) from exc
+            legacy = legacy_rows.get(category_key)
+            if category_key == "external_billing" and legacy is None:
+                legacy = legacy_rows.get("billing")
+            definition = INITIAL_CATEGORY_CONFIGS.get(category_key)
+            if definition is None:
+                assert legacy is not None
+                legacy_description = str(legacy["description"]).strip()
+                core = legacy_description or f"Messages classified as {validated_key}."
+                display_name = validated_key.replace("_", " ").title()
+                include = (core,)
+                exclude = ("Messages outside this category.",)
+            else:
+                display_name = str(definition["display_name"])
+                core = str(definition["core"])
+                include = tuple(definition["include"])
+                exclude = tuple(definition["exclude"])
+            db.execute(
+                """
+                insert into email_category_configs (
+                    category_key, display_name, core_description,
+                    include_json, exclude_json, threshold, actions_json,
+                    action_parameters_json, enabled, description_version,
+                    config_version, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    validated_key,
+                    display_name,
+                    core,
+                    _json_dump(list(include)),
+                    _json_dump(list(exclude)),
+                    (
+                        float(legacy["threshold"])
+                        if legacy is not None
+                        else SEEDED_THRESHOLD
+                    ),
+                    str(legacy["actions_json"]) if legacy is not None else "[]",
+                    (
+                        str(legacy["action_parameters_json"])
+                        if legacy is not None
+                        else "{}"
+                    ),
+                    (
+                        int(bool(legacy["enabled"]) and not has_enabled_account)
+                        if legacy is not None
+                        else int(not has_enabled_account)
+                    ),
+                    DESCRIPTION_VERSION,
+                    (
+                        str(legacy["config_version"])
+                        if legacy is not None
+                        else SEEDED_CONFIG_VERSION
+                    ),
+                    str(legacy["updated_at"]) if legacy is not None else now,
+                ),
+            )
+
+    def _seed_model_promotion_config(self, db: sqlite3.Connection) -> None:
+        if db.execute("select 1 from email_model_promotion_configs").fetchone() is None:
+            db.execute(
+                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
+                (str(uuid4()), 0.95, 0.95, 20, 500.0, self._now()),
+            )
+
+    def _seed_initial_category_description_revisions(self, db: sqlite3.Connection) -> None:
+        for row in db.execute(
+            "select * from email_category_configs order by category_key"
+        ).fetchall():
+            if (
+                db.execute(
+                    "select 1 from email_category_description_revisions where category_key=?",
+                    (row["category_key"],),
+                ).fetchone()
+                is None
+            ):
+                self._append_category_description_revision(db, row)
+
+    def _seed_current_fresh_state(self, db: sqlite3.Connection) -> None:
+        """Prepare only a new database; caller owns tables and transaction.
+
+        Only the fresh Email constructor invokes this inside its schema transaction.
+        Current reopen and verified-source migration must not invoke it.
+        """
+        if db.execute("select 1 from configs where record_type='email_category_configs'").fetchone() is None:
+            now = self._now()
+            has_enabled_account = db.execute(
+                f"select 1 from ({config_projection('email_accounts')}) where enabled=1 limit 1"
+            ).fetchone() is not None
+            for category_key, definition in sorted(INITIAL_CATEGORY_CONFIGS.items()):
+                insert_config(db, "email_category_configs", {
+                    "category_key": category_key,
+                    "display_name": str(definition["display_name"]),
+                    "core_description": str(definition["core"]),
+                    "include_json": _json_dump(list(definition["include"])),
+                    "exclude_json": _json_dump(list(definition["exclude"])),
+                    "threshold": SEEDED_THRESHOLD,
+                    "actions_json": "[]",
+                    "action_parameters_json": "{}",
+                    "enabled": int(not has_enabled_account),
+                    "description_version": DESCRIPTION_VERSION,
+                    "config_version": SEEDED_CONFIG_VERSION,
+                    "updated_at": now,
+                })
+        if db.execute("select 1 from configs where record_type='email_model_promotion_configs'").fetchone() is None:
+            insert_config(db, "email_model_promotion_configs", {
+                "config_version": str(uuid4()),
+                "micro_f1_min": 0.95,
+                "category_precision_min": 0.95,
+                "category_validation_samples_min": 20,
+                "p95_latency_max_ms": 500.0,
+                "created_at": self._now(),
+            })
+        for row in db.execute(
+            f"select * from ({config_projection('email_category_configs')}) order by category_key"
+        ).fetchall():
+            category_key = row["category_key"]
+            if db.execute(
+                f"select 1 from ({config_projection('email_category_description_revisions')}) "
+                "where category_key=?", (category_key,)
+            ).fetchone() is None:
+                previous = db.execute(
+                    f"select max(created_at) from ({config_projection('email_category_description_revisions')})"
+                ).fetchone()[0]
+                insert_config(db, "email_category_description_revisions", {
+                    "revision_id": str(uuid4()),
+                    "category_key": category_key,
+                    "config_version": row["config_version"],
+                    "config_json": _json_dump(self._category_config_row(row)),
+                    "created_at": self._next_account_timestamp(previous),
+                })
 
     def _migrate_v34_to_v35(
         self, db: sqlite3.Connection, *, replace_version: bool = False
@@ -5292,7 +5245,7 @@ class EmailStore:
     def current_model_promotion_config(self) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_model_promotion_configs order by created_at desc limit 1"
+                f"select * from ({config_projection('email_model_promotion_configs')}) order by created_at desc limit 1"
             ).fetchone()
         if row is None:
             raise EmailPersistenceCorruption("missing model promotion config")
@@ -5303,7 +5256,7 @@ class EmailStore:
             return [
                 dict(row)
                 for row in db.execute(
-                    "select * from email_model_promotion_configs order by created_at desc"
+                    f"select * from ({config_projection('email_model_promotion_configs')}) order by created_at desc"
                 )
             ]
 
@@ -5824,22 +5777,20 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             current = db.execute(
-                "select config_version from email_model_promotion_configs order by created_at desc limit 1"
+                f"select config_version from ({config_projection('email_model_promotion_configs')}) order by created_at desc limit 1"
             ).fetchone()
             if current is None or current["config_version"] != expected_current_version:
                 raise ValueError("model promotion config changed")
             version = str(uuid4())
-            db.execute(
-                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
-                (
-                    version,
-                    *values.values(),
-                    self._next_model_control_timestamp(db, "email_model_promotion_configs"),
+            insert_config(db, "email_model_promotion_configs", {
+                "config_version": version, **values,
+                "created_at": self._next_model_control_timestamp(
+                    db, f"({config_projection('email_model_promotion_configs')})"
                 ),
-            )
+            })
             return dict(
                 db.execute(
-                    "select * from email_model_promotion_configs where config_version=?",
+                    f"select * from ({config_projection('email_model_promotion_configs')}) where config_version=?",
                     (version,),
                 ).fetchone()
             )
@@ -5912,7 +5863,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_model_mode_transitions where request_id=?",
+                f"select * from ({config_projection('email_model_mode_transitions')}) where request_id=?",
                 (request_id,),
             ).fetchone()
             if existing is not None:
@@ -5921,7 +5872,7 @@ class EmailStore:
                 return dict(existing)
             if (
                 db.execute(
-                    "select 1 from email_model_promotion_configs where config_version=?",
+                    f"select 1 from ({config_projection('email_model_promotion_configs')}) where config_version=?",
                     (promotion_config_version,),
                 ).fetchone()
                 is None
@@ -5929,19 +5880,16 @@ class EmailStore:
                 raise ValueError("unknown promotion_config_version")
             result = payload | {
                 "created_at": self._next_model_control_timestamp(
-                    db, "email_model_mode_transitions"
+                    db, f"({config_projection('email_model_mode_transitions')})"
                 )
             }
-            db.execute(
-                "insert into email_model_mode_transitions values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                tuple(result.values()),
-            )
+            insert_config(db, "email_model_mode_transitions", result)
             return result
 
     def get_model_mode_transition(self, request_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_model_mode_transitions where request_id=?",
+                f"select * from ({config_projection('email_model_mode_transitions')}) where request_id=?",
                 (request_id,),
             ).fetchone()
             return dict(row) if row is not None else None
@@ -5951,7 +5899,7 @@ class EmailStore:
             return [
                 dict(row)
                 for row in db.execute(
-                    "select * from email_model_mode_transitions order by created_at desc"
+                    f"select * from ({config_projection('email_model_mode_transitions')}) order by created_at desc"
                 )
             ]
 
@@ -7025,6 +6973,12 @@ class EmailStore:
     @classmethod
     def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
         try:
+            if not task20_schema_is_current(db):
+                raise EmailPersistenceCorruption("required Tasks20 declaration is missing or malformed")
+            if not state_schema_is_current(db):
+                raise EmailPersistenceCorruption("required State declaration is missing or malformed")
+            if not provider_state_schema_is_current(db):
+                raise EmailPersistenceCorruption("required provider-state declaration is missing or malformed")
             table_rows = {
                 _schema_identifier(row["name"], field="sqlite_master table name"): row
                 for row in db.execute(
@@ -7032,7 +6986,25 @@ class EmailStore:
                 )
             }
             table_names = set(table_rows)
-            missing_tables = set(_REQUIRED_TABLE_COLUMNS) - table_names
+            # Historical maps remain the source contract. Current validation
+            # retains the original nonaction coverage and validates actions
+            # against the exact accepted finite manifest separately.
+            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS,
+                                     "email_training_snapshot_observations",
+                                     "email_classifier_runtime_samples",
+                                     "email_historical_classification_history",
+                                     "email_historical_operations",
+                                     "email_classifications", "email_messages"}
+            if not current_canonical_email_parent_is_current(db):
+                raise EmailPersistenceCorruption(
+                    "required canonical Email declaration is missing or malformed"
+                )
+            required_tables = {
+                table: columns
+                for table, columns in _REQUIRED_TABLE_COLUMNS.items()
+                if table not in EMAIL_ACTION_PROJECTIONS and table not in retired_config_tables
+            }
+            missing_tables = set(required_tables) - table_names
             if missing_tables:
                 missing = ", ".join(sorted(missing_tables))
                 raise EmailPersistenceCorruption(
@@ -7043,22 +7015,42 @@ class EmailStore:
                 for row in db.execute("pragma table_list")
                 if row["wr"]
             }
-            missing_without_rowid = _REQUIRED_WITHOUT_ROWID_TABLES - without_rowid_tables
+            missing_without_rowid = (
+                _REQUIRED_WITHOUT_ROWID_TABLES & required_tables.keys()
+            ) - without_rowid_tables
             if missing_without_rowid:
                 raise EmailPersistenceCorruption(
                     "required WITHOUT ROWID table contract is missing: "
                     + ", ".join(sorted(missing_without_rowid))
                 )
 
+            if not any(
+                current_configs_schema_is_current(
+                    db,
+                    action_variant=variant,
+                    include_followup_sync=True,
+                    include_business_sync=True,
+                    include_task_delivery=True,
+                    include_errors=True, include_feedback=True,
+                    include_business_actions=True,
+                    include_email_history=True,
+                    canonical_email=True,
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True,
+                )
+                for variant in REPLY_VARIANTS
+            ):
+                raise EmailPersistenceCorruption(
+                    "required Email31/config schema is missing or malformed"
+                )
+
             indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
             table_order = [
                 table
-                for table in _REQUIRED_TABLE_COLUMNS
+                for table in required_tables
                 if table != "email_category_folder_bindings"
             ]
-            table_order.append("email_category_folder_bindings")
             for table in table_order:
-                required_columns = _REQUIRED_TABLE_COLUMNS[table]
+                required_columns = required_tables[table]
                 column_rows = list(
                     db.execute(f"pragma table_info({json.dumps(table)})")
                 )
@@ -7186,6 +7178,8 @@ class EmailStore:
                         )
 
             for index_name, (table, required_columns) in _REQUIRED_INDEXES.items():
+                if table not in required_tables:
+                    continue
                 index_row = indexes_by_table[table].get(index_name)
                 if (
                     index_row is None
@@ -7213,6 +7207,8 @@ class EmailStore:
                 required_columns,
                 required_predicate,
             ) in _REQUIRED_PARTIAL_UNIQUE_INDEXES.items():
+                if table not in required_tables:
+                    continue
                 index_row = indexes_by_table[table].get(index_name)
                 sql_row = db.execute(
                     "select sql from sqlite_master where type='index' and name=?",
@@ -7239,7 +7235,18 @@ class EmailStore:
                     "select name, tbl_name, sql from sqlite_master where type='trigger'"
                 )
             }
-            for trigger_name, expected_sql in _REQUIRED_TRIGGER_SQL.items():
+            translated_triggers = finite_target_external_sql()
+            required_triggers = {
+                name: sql
+                for name, sql in _REQUIRED_TRIGGER_SQL.items()
+                if _REQUIRED_TRIGGER_TABLES.get(name, "email_classifications")
+                in required_tables
+            }
+            required_triggers.update(
+                (name, sql) for name, sql in translated_triggers.items()
+                if _REQUIRED_TRIGGER_TABLES.get(name, "email_classifications") not in retired_config_tables
+            )
+            for trigger_name, expected_sql in required_triggers.items():
                 trigger = trigger_rows.get(trigger_name)
                 if (
                     trigger is None
@@ -7268,8 +7275,8 @@ class EmailStore:
     def _validate_durable_state(self, db: sqlite3.Connection) -> None:
         self._validate_schema_shape(db)
         for row in db.execute(
-            "select r.*, a.attempt_count from email_direct_retry_requests r "
-            "join email_actions a on a.action_id=r.action_id"
+            f"select r.*, a.attempt_count from ({EMAIL_RETRY_SQL}) r "
+            f"join ({EMAIL_DIRECT_ACTION_SQL}) a on a.action_id=r.action_id"
         ):
             if row["attempt_number"] > row["attempt_count"] + 1:
                 raise EmailPersistenceCorruption("retry request exceeds the next action attempt")
@@ -7282,7 +7289,7 @@ class EmailStore:
             ) from exc
 
     def _validate_account_configuration(self, db: sqlite3.Connection) -> None:
-        for row in db.execute("select * from email_accounts"):
+        for row in db.execute(config_projection("email_accounts")):
             self._account_row(row)
             folders = _json_load(
                 row["scan_folders_json"],
@@ -7298,7 +7305,7 @@ class EmailStore:
                 )
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
-        configs = db.execute("select * from email_model_promotion_configs").fetchall()
+        configs = db.execute(config_projection("email_model_promotion_configs")).fetchall()
         if not configs:
             raise EmailPersistenceCorruption("missing model promotion config")
         versions = {row["config_version"] for row in configs}
@@ -7315,11 +7322,11 @@ class EmailStore:
                         )
                     }
                 )
-            for row in db.execute("select * from email_model_mode_transitions"):
+            for row in db.execute(config_projection("email_model_mode_transitions")):
                 self._validate_model_mode_transition(row)
                 if row["promotion_config_version"] not in versions:
                     raise ValueError("unknown promotion_config_version")
-            for row in db.execute("select * from email_category_description_revisions"):
+            for row in db.execute(config_projection("email_category_description_revisions")):
                 config = _json_load(
                     row["config_json"], field="config_json", expected_type=dict
                 )
@@ -7332,7 +7339,7 @@ class EmailStore:
         except ValueError as exc:
             raise EmailPersistenceCorruption(str(exc)) from exc
         for row in db.execute(
-            """
+            f"""
             select stable_message_identity, status, owner, lease_expires_at,
                    json_type(input_json) as input_json_type,
                    json_extract(input_json, '$.stable_message_identity')
@@ -7344,7 +7351,7 @@ class EmailStore:
                    json_type(result_json) as result_json_type,
                    json_type(result_json, '$.unsubscribe_url')
                        as result_unsubscribe_url_type
-            from email_agent_classification_tasks
+            from ({_EMAIL_CLASSIFICATION_SQL})
             """
         ):
             if row["input_json_type"] != "object":
@@ -7398,11 +7405,11 @@ class EmailStore:
 
         messages: dict[str, sqlite3.Row] = {}
         for row in db.execute(
-            """
+            f"""
             select stable_message_identity, account_id, folder, uidvalidity, uid,
                    rfc_message_id, thread_identity, recipients_json,
                    references_json, in_reply_to, attachment_metadata_json
-            from email_messages
+            from ({EMAIL_MESSAGE_SQL})
             """
         ):
             recipients = _json_load(
@@ -7449,7 +7456,7 @@ class EmailStore:
 
         plans: dict[str, EmailActionPlan] = {}
         plans_by_classification: dict[int, list[EmailActionPlan]] = {}
-        for row in db.execute("select * from email_action_plans"):
+        for row in db.execute(f"select * from ({EMAIL_PLAN_SQL})"):
             plan = self._stored_action_plan(row)
             plans[plan.action_plan_id] = plan
             plans_by_classification.setdefault(plan.classification_id, []).append(plan)
@@ -7464,7 +7471,7 @@ class EmailStore:
         classifications = {
             row["id"]: row
             for row in db.execute(
-                """
+                f"""
                 select id, account_id, folder, uidvalidity, uid, rfc_message_id,
                        thread_id, stable_message_identity, category,
                        predicted_category, confirmed_category, confidence,
@@ -7472,7 +7479,7 @@ class EmailStore:
                        classification_source, agent_result_json,
                        current_action_plan_id,
                        legacy_processed_without_plan
-                from email_classifications
+                from ({EMAIL_CLASSIFICATION_SQL})
                 """
             )
         }
@@ -7718,7 +7725,7 @@ class EmailStore:
                     f"ActionPlan {plan.action_plan_id} has no matching classification"
                 )
 
-        for row in db.execute("select * from email_feedback_requests"):
+        for row in db.execute(f"select * from ({EMAIL_FEEDBACK_SQL})"):
             try:
                 request_id = _validate_feedback_request_id(row["feedback_request_id"])
                 expected_plan_id = _validate_expected_action_plan_id(
@@ -7759,7 +7766,7 @@ class EmailStore:
                     f"feedback request {request_id} has an inconsistent plan version"
                 )
 
-        for row in db.execute("select * from email_reply_receipts"):
+        for row in db.execute(f"select * from ({EMAIL_REPLY_RECEIPT_SQL})"):
             receipt = self._email_reply_receipt_row(row)
             provider_receipt = receipt["provider_receipt"]
             if set(provider_receipt) != {
@@ -7820,7 +7827,7 @@ class EmailStore:
                     "email reply receipt does not match its immutable ActionPlan"
                 )
 
-        for row in db.execute("select * from email_reply_dispatch_claims"):
+        for row in db.execute(f"select * from ({EMAIL_REPLY_CLAIM_SQL})"):
             claim = self._email_reply_dispatch_claim_row(row)
             plan = plans.get(claim["action_plan_id"])
             classification = classifications.get(claim["classification_id"])
@@ -7856,7 +7863,7 @@ class EmailStore:
             if (
                 claim["status"] == "done"
                 and db.execute(
-                    "select 1 from email_reply_receipts where action_identity=?",
+                    f"select 1 from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                     (claim["action_identity"],),
                 ).fetchone()
                 is None
@@ -7866,7 +7873,7 @@ class EmailStore:
                 )
             if claim["status"] == "dispatching":
                 live_account = db.execute(
-                    "select * from email_accounts where account_id=?",
+                    f"select * from ({config_projection('email_accounts')}) where account_id=?",
                     (claim["account_id"],),
                 ).fetchone()
                 live_message = messages.get(claim["stable_message_identity"])
@@ -7884,9 +7891,9 @@ class EmailStore:
                     )
 
         unsubscribe_effects: dict[tuple[str, str], dict[str, Any]] = {}
-        for row in db.execute("select * from email_unsubscribe_effects"):
+        for row in db.execute(f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})"):
             effect_claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (row["action_identity"],),
             ).fetchone()
             if effect_claim is None:
@@ -7941,7 +7948,7 @@ class EmailStore:
                 )
 
         unsubscribe_claims: dict[str, dict[str, Any]] = {}
-        for row in db.execute("select * from email_unsubscribe_claims"):
+        for row in db.execute(f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL})"):
             claim = self._email_unsubscribe_claim_row(row)
             unsubscribe_claims[claim["action_identity"]] = claim
             plan = plans.get(claim["action_plan_id"])
@@ -7993,7 +8000,7 @@ class EmailStore:
                     "unsubscribe claim does not match its immutable ActionPlan"
                 )
             receipt_exists = db.execute(
-                "select 1 from email_unsubscribe_receipts where action_identity=?",
+                f"select 1 from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (claim["action_identity"],),
             ).fetchone()
             if claim["status"] == "done" and receipt_exists is None:
@@ -8002,7 +8009,7 @@ class EmailStore:
                 )
             if claim["status"] == "dispatching":
                 live_account = db.execute(
-                    "select * from email_accounts where account_id=?",
+                    f"select * from ({config_projection('email_accounts')}) where account_id=?",
                     (claim["account_id"],),
                 ).fetchone()
                 if (
@@ -8018,7 +8025,7 @@ class EmailStore:
                     )
 
             continuation = db.execute(
-                "select * from email_unsubscribe_continuations where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL}) where action_identity=?",
                 (claim["action_identity"],),
             ).fetchone()
             if (claim["status"] == "awaiting_audit") != (continuation is not None):
@@ -8049,7 +8056,7 @@ class EmailStore:
 
         next_sequences: dict[str, int] = {}
         for row in db.execute(
-            "select * from email_unsubscribe_steps order by action_identity, sequence"
+            f"select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) order by action_identity, sequence"
         ):
             claim = unsubscribe_claims.get(row["action_identity"])
             expected_sequence = next_sequences.get(row["action_identity"], 1)
@@ -8087,7 +8094,7 @@ class EmailStore:
                     "unsubscribe continuation prefix is not fully journaled"
                 )
 
-        for row in db.execute("select * from email_unsubscribe_receipts"):
+        for row in db.execute(f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})"):
             receipt = self._email_unsubscribe_receipt_row(row)
             claim = unsubscribe_claims.get(receipt["action_identity"])
             try:
@@ -8122,7 +8129,7 @@ class EmailStore:
                     "unsubscribe receipt does not match its exact accepted effect"
                 )
 
-        for row in db.execute("select * from email_category_configs"):
+        for row in db.execute(config_projection("email_category_configs")):
             try:
                 validate_email_category_key(row["category_key"])
                 validate_category_descriptions(
@@ -8160,7 +8167,7 @@ class EmailStore:
                     "invalid configured email action"
                 ) from exc
 
-        for row in db.execute("select * from email_category_folder_bindings"):
+        for row in db.execute(config_projection("email_category_folder_bindings")):
             try:
                 VerifiedEmailFolderBinding(
                     account_id=row["account_id"],
@@ -8177,7 +8184,7 @@ class EmailStore:
 
         self._validate_category_binding_completeness(db)
 
-        action_rows = list(db.execute("select * from email_actions"))
+        action_rows = list(db.execute(f"select * from ({EMAIL_DIRECT_ACTION_SQL})"))
         actions_by_plan: dict[str, list[sqlite3.Row]] = {}
         actions_by_id: dict[str, sqlite3.Row] = {}
         for row in action_rows:
@@ -8229,7 +8236,7 @@ class EmailStore:
 
         attempts_by_action: dict[str, list[sqlite3.Row]] = {}
         for row in db.execute(
-            "select * from email_action_attempts order by action_id, attempt_number"
+            f"select * from ({EMAIL_ATTEMPT_SQL}) order by action_id, attempt_number"
         ):
             if row["status"] not in _TERMINAL_ATTEMPT_STATUSES:
                 raise EmailPersistenceCorruption(
@@ -8303,7 +8310,7 @@ class EmailStore:
         return {
             row["action_plan_id"]: row
             for row in db.execute(
-                "select * from email_action_plans "
+                f"select * from ({EMAIL_PLAN_SQL}) "
                 "where action_plan_id in (select value from json_each(?))",
                 (_json_dump(plan_ids),),
             )
@@ -8446,11 +8453,11 @@ class EmailStore:
         applied: bool,
     ) -> EmailFeedbackApplication:
         classification = db.execute(
-            "select * from email_classifications where id=?",
+            f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
             (request["classification_id"],),
         ).fetchone()
         plan_row = db.execute(
-            "select * from email_action_plans where action_plan_id=?",
+            f"select * from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
             (request["resulting_action_plan_id"],),
         ).fetchone()
         if classification is None or plan_row is None:
@@ -8490,7 +8497,7 @@ class EmailStore:
         classification: EmailClassification,
     ) -> sqlite3.Row | None:
         by_id = db.execute(
-            "select id, stable_message_identity from email_classifications where id=?",
+            f"select id, stable_message_identity from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
             (classification.classification_id,),
         ).fetchone()
         if by_id is not None and (
@@ -8501,7 +8508,7 @@ class EmailStore:
                 f"to {by_id['stable_message_identity']}"
             )
         by_identity = db.execute(
-            "select * from email_classifications where stable_message_identity=?",
+            f"select * from ({EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
             (classification.stable_message_identity,),
         ).fetchone()
         if by_identity is not None and (
@@ -8522,7 +8529,6 @@ class EmailStore:
         recipients: Sequence[str],
         subject: str,
         normalized_text: str,
-        preview: str,
         attachment_metadata: Sequence[EmailAttachmentMetadata],
         in_reply_to: str,
         references: Sequence[str],
@@ -8539,47 +8545,28 @@ class EmailStore:
         normalized_in_reply_to = _normalized_message_id(in_reply_to)
         normalized_references = _normalized_message_ids(references)
         locator = classification.provider_locator
-        db.execute(
-            """
-            insert into email_messages (
-                account_id, stable_message_identity, folder, uidvalidity, uid,
-                rfc_message_id, in_reply_to, references_json, thread_identity,
-                sender, recipients_json,
-                subject, normalized_text, preview, attachment_metadata_json,
-                received_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            on conflict(stable_message_identity) do update set
-                folder=excluded.folder,
-                uidvalidity=excluded.uidvalidity,
-                uid=excluded.uid,
-                in_reply_to=excluded.in_reply_to,
-                references_json=excluded.references_json,
-                thread_identity=excluded.thread_identity,
-                updated_at=excluded.updated_at
-            """,
-            (
-                locator.account_id,
-                classification.stable_message_identity,
-                locator.folder,
-                locator.uidvalidity,
-                locator.uid,
-                locator.rfc_message_id or "",
-                normalized_in_reply_to,
-                _json_dump(list(normalized_references)),
-                locator.thread_id or "",
-                sender,
-                _json_dump(list(recipients)),
-                subject,
-                normalized_text,
-                preview,
-                _json_dump(
-                    [item.model_dump(mode="json") for item in attachment_metadata]
-                ),
-                received_at,
-                now,
-                now,
+        upsert_email_message(db, {
+            "account_id": locator.account_id,
+            "stable_message_identity": classification.stable_message_identity,
+            "folder": locator.folder,
+            "uidvalidity": locator.uidvalidity,
+            "uid": locator.uid,
+            "rfc_message_id": locator.rfc_message_id or "",
+            "in_reply_to": normalized_in_reply_to,
+            "references_json": _json_dump(list(normalized_references)),
+            "thread_identity": locator.thread_id or "",
+            "sender": sender,
+            "recipients_json": _json_dump(list(recipients)),
+            "subject": subject,
+            "normalized_text": normalized_text,
+            "preview": "",
+            "attachment_metadata_json": _json_dump(
+                [item.model_dump(mode="json") for item in attachment_metadata]
             ),
-        )
+            "received_at": received_at,
+            "created_at": now,
+            "updated_at": now,
+        })
 
     def _persist_action_plan(
         self,
@@ -8589,7 +8576,7 @@ class EmailStore:
         now: str,
     ) -> None:
         existing_by_id = db.execute(
-            "select * from email_action_plans where action_plan_id=?",
+            f"select * from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
             (plan.action_plan_id,),
         ).fetchone()
         encoded_actions = _json_dump([action.value for action in plan.actions])
@@ -8645,8 +8632,8 @@ class EmailStore:
             self._ensure_direct_action_rows(db, plan, now=now)
             return
         version_row = db.execute(
-            """
-            select action_plan_id from email_action_plans
+            f"""
+            select action_plan_id from ({EMAIL_PLAN_SQL})
             where classification_id=? and action_plan_version=?
             """,
             (plan.classification_id, plan.action_plan_version),
@@ -8657,7 +8644,7 @@ class EmailStore:
                 f"classification {plan.classification_id}"
             )
         latest = db.execute(
-            "select max(action_plan_version) from email_action_plans where classification_id=?",
+            f"select max(action_plan_version) from ({EMAIL_PLAN_SQL}) where classification_id=?",
             (plan.classification_id,),
         ).fetchone()[0]
         expected_version = 1 if latest is None else int(latest) + 1
@@ -8666,31 +8653,25 @@ class EmailStore:
                 f"ActionPlan version must be {expected_version} for classification "
                 f"{plan.classification_id}"
             )
-        db.execute(
-            """
-            insert into email_action_plans (
-                action_plan_id, action_plan_version, classification_id,
-                account_id, category, classification_source, confidence,
-                model_id, config_version, actions_json, action_parameters_json,
-                authorization_snapshot_json, legacy_serialization_pre_v16, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                plan.action_plan_id,
-                plan.action_plan_version,
-                plan.classification_id,
-                plan.account_id,
-                plan.category,
-                plan.classification_source,
-                plan.confidence,
-                plan.model_id,
-                plan.config_version,
-                encoded_actions,
-                encoded_parameters,
-                encoded_authorizations,
-                0,
-                plan.created_at.isoformat(),
-            ),
+        insert_email_action(
+            db,
+            "email_action_plans",
+            {
+                "action_plan_id": plan.action_plan_id,
+                "action_plan_version": plan.action_plan_version,
+                "classification_id": plan.classification_id,
+                "account_id": plan.account_id,
+                "category": plan.category,
+                "classification_source": plan.classification_source,
+                "confidence": plan.confidence,
+                "model_id": plan.model_id,
+                "config_version": plan.config_version,
+                "actions_json": encoded_actions,
+                "action_parameters_json": encoded_parameters,
+                "authorization_snapshot_json": encoded_authorizations,
+                "legacy_serialization_pre_v16": 0,
+                "created_at": plan.created_at.isoformat(),
+            },
         )
         self._ensure_direct_action_rows(db, plan, now=now)
 
@@ -8703,26 +8684,22 @@ class EmailStore:
     ) -> None:
         for action in plan.direct_actions:
             parameters = dict(plan.action_parameters.get(action, {}))
-            db.execute(
-                """
-                insert into email_actions (
-                    action_id, action_plan_id, classification_id, account_id,
-                    action_type, parameters_json, config_version, status,
-                    created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-                on conflict(action_plan_id, action_type) do nothing
-                """,
-                (
-                    _direct_action_id(plan.action_plan_id, action),
-                    plan.action_plan_id,
-                    plan.classification_id,
-                    plan.account_id,
-                    action.value,
-                    _json_dump(parameters),
-                    plan.config_version,
-                    now,
-                    now,
-                ),
+            insert_email_action(
+                db,
+                "email_actions",
+                {
+                    "action_id": _direct_action_id(plan.action_plan_id, action),
+                    "action_plan_id": plan.action_plan_id,
+                    "classification_id": plan.classification_id,
+                    "account_id": plan.account_id,
+                    "action_type": action.value,
+                    "parameters_json": _json_dump(parameters),
+                    "config_version": plan.config_version,
+                    "status": "pending",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                ignore_plan_action_conflict=True,
             )
 
     @staticmethod
@@ -8750,10 +8727,7 @@ class EmailStore:
         ):
             raise ValueError("cursor_last_seen_uid must be a non-negative integer")
         current = db.execute(
-            """
-            select uidvalidity, last_seen_uid from email_scan_cursors
-            where account_id=? and folder=?
-            """,
+            '\n            select uidvalidity, last_seen_uid from (' + state_projection('email_scan_cursors') + ')\n            where account_id=? and folder=?\n            ',
             (account_id, folder),
         ).fetchone()
         if current is None:
@@ -8761,22 +8735,11 @@ class EmailStore:
                 raise EmailCursorConflict(
                     f"cursor generation expected {expected_uidvalidity}, but no cursor exists"
                 )
-            db.execute(
-                """
-                insert into email_scan_cursors (
-                    account_id, folder, uidvalidity, last_seen_uid,
-                    last_success_at, last_error
-                ) values (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    account_id,
-                    folder,
-                    uidvalidity,
-                    last_seen_uid,
-                    last_success_at,
-                    last_error,
-                ),
-            )
+            insert_state(db, "email_scan_cursors", {
+                    "account_id": account_id, "folder": folder,
+                    "uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
+                    "last_success_at": last_success_at, "last_error": last_error,
+                })
             return
         current_uidvalidity = int(current["uidvalidity"])
         if (
@@ -8788,21 +8751,15 @@ class EmailStore:
                 f"found {current_uidvalidity}"
             )
         if current_uidvalidity == uidvalidity:
-            db.execute(
-                """
-                update email_scan_cursors
-                set last_seen_uid=max(last_seen_uid, ?),
-                    last_success_at=?, last_error=?
-                where account_id=? and folder=? and uidvalidity=?
-                """,
-                (
-                    last_seen_uid,
-                    last_success_at,
-                    last_error,
-                    account_id,
-                    folder,
-                    uidvalidity,
-                ),
+            update_state_rows(
+                db, "email_scan_cursors",
+                {"last_success_at": last_success_at, "last_error": last_error},
+                update_json={"last_seen_uid":
+                    "case when state.last_seen_uid>=? then " +
+                    state_json_field("last_seen_uid", "state") + " else json_quote(?) end"},
+                update_parameters=(last_seen_uid, last_seen_uid),
+                where_sql="account_id=? and folder=? and uidvalidity=?",
+                parameters=(account_id, folder, uidvalidity),
             )
             return
         if expected_uidvalidity is None:
@@ -8810,22 +8767,13 @@ class EmailStore:
                 "cursor generation change requires expected_cursor_uidvalidity; "
                 f"current generation is {current_uidvalidity}"
             )
-        updated = db.execute(
-            """
-            update email_scan_cursors
-            set uidvalidity=?, last_seen_uid=?, last_success_at=?, last_error=?
-            where account_id=? and folder=? and uidvalidity=?
-            """,
-            (
-                uidvalidity,
-                last_seen_uid,
-                last_success_at,
-                last_error,
-                account_id,
-                folder,
-                expected_uidvalidity,
-            ),
-        ).rowcount
+        updated = update_state_rows(
+            db, "email_scan_cursors",
+            {"uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
+             "last_success_at": last_success_at, "last_error": last_error},
+            where_sql="account_id=? and folder=? and uidvalidity=?",
+            parameters=(account_id, folder, expected_uidvalidity),
+        )
         if updated != 1:
             raise EmailCursorConflict(
                 f"cursor generation changed while replacing {expected_uidvalidity}"
@@ -8854,6 +8802,9 @@ class EmailStore:
     ) -> dict[str, Any]:
         """Atomically persist scan state and advance its folder cursor last."""
 
+        from app.email_preview import email_preview
+
+        preview = email_preview(normalized_text)
         _validate_model_text(model_text)
         agent_result_json = _validated_agent_result_json(classification, agent_result)
         now = self._now()
@@ -8880,7 +8831,6 @@ class EmailStore:
                 recipients=recipients,
                 subject=subject,
                 normalized_text=normalized_text,
-                preview=preview,
                 attachment_metadata=attachment_metadata,
                 in_reply_to=in_reply_to,
                 references=references,
@@ -8893,60 +8843,40 @@ class EmailStore:
                     if classification.status is EmailClassificationStatus.PROCESSED
                     else None
                 )
-                db.execute(
-                    """
-                    insert into email_classifications (
-                        id, account_id, folder, uidvalidity, uid, rfc_message_id,
-                        thread_id, stable_message_identity, sender, subject, preview,
-                        model_text, received_at, category, predicted_category,
-                        confirmed_category, confidence, margin, probabilities_json,
-                        model_id, config_version, status, classification_source,
-                        agent_result_json,
-                        current_action_plan_id, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?)
-                    """,
-                    (
-                        classification.classification_id,
-                        locator.account_id,
-                        locator.folder,
-                        locator.uidvalidity,
-                        locator.uid,
-                        locator.rfc_message_id,
-                        locator.thread_id,
-                        classification.stable_message_identity,
-                        sender,
-                        subject,
-                        preview,
-                        model_text,
-                        received_at,
-                        classification.category,
-                        classification.category,
-                        confirmed_category,
-                        classification.confidence,
-                        classification.margin,
-                        _json_dump(classification.probabilities),
-                        classification.model_id,
-                        classification.config_version,
-                        classification.status.value,
-                        classification.classification_source,
-                        agent_result_json,
-                        now,
-                    ),
-                )
+                insert_email_classification(db, {
+                    "id": classification.classification_id,
+                    "account_id": locator.account_id,
+                    "folder": locator.folder,
+                    "uidvalidity": locator.uidvalidity,
+                    "uid": locator.uid,
+                    "rfc_message_id": locator.rfc_message_id,
+                    "thread_id": locator.thread_id,
+                    "stable_message_identity": classification.stable_message_identity,
+                    "sender": sender,
+                    "subject": subject,
+                    "preview": preview,
+                    "model_text": model_text,
+                    "received_at": received_at,
+                    "category": classification.category,
+                    "predicted_category": classification.category,
+                    "confirmed_category": confirmed_category,
+                    "confidence": classification.confidence,
+                    "margin": classification.margin,
+                    "probabilities_json": _json_dump(classification.probabilities),
+                    "model_id": classification.model_id,
+                    "config_version": classification.config_version,
+                    "status": classification.status.value,
+                    "classification_source": classification.classification_source,
+                    "agent_result_json": agent_result_json,
+                    "current_action_plan_id": None,
+                    "updated_at": now,
+                })
                 if classification.action_plan is not None:
                     self._persist_action_plan(db, classification.action_plan, now=now)
-                    db.execute(
-                        """
-                        update email_classifications
-                        set current_action_plan_id=?,
-                            legacy_processed_without_plan=0
-                        where id=?
-                        """,
-                        (
-                            classification.action_plan.action_plan_id,
-                            classification.classification_id,
-                        ),
-                    )
+                    update_email_classification(db, classification.classification_id, {
+                        "current_action_plan_id": classification.action_plan.action_plan_id,
+                        "legacy_processed_without_plan": 0,
+                    })
             else:
                 if (
                     existing["classification_source"] == "agent"
@@ -8955,21 +8885,13 @@ class EmailStore:
                     raise EmailClassificationConflict(
                         "canonical Agent result diverges from retry"
                     )
-                db.execute(
-                    """
-                    update email_classifications
-                    set folder=?, uidvalidity=?, uid=?, thread_id=?, updated_at=?
-                    where id=?
-                    """,
-                    (
-                        locator.folder,
-                        locator.uidvalidity,
-                        locator.uid,
-                        locator.thread_id,
-                        now,
-                        classification.classification_id,
-                    ),
-                )
+                update_email_classification(db, classification.classification_id, {
+                    "folder": locator.folder,
+                    "uidvalidity": locator.uidvalidity,
+                    "uid": locator.uid,
+                    "thread_id": locator.thread_id,
+                    "updated_at": now,
+                })
             if cursor_uidvalidity is not None and cursor_last_seen_uid is not None:
                 self._advance_cursor(
                     db,
@@ -8982,7 +8904,7 @@ class EmailStore:
                     expected_uidvalidity=expected_cursor_uidvalidity,
                 )
             row = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification.classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [row] if row else [])
@@ -9017,10 +8939,7 @@ class EmailStore:
                 expected_uidvalidity=expected_cursor_uidvalidity,
             )
             row = db.execute(
-                """
-                select * from email_scan_cursors
-                where account_id=? and folder=?
-                """,
+                '\n                select * from (' + state_projection('email_scan_cursors') + ')\n                where account_id=? and folder=?\n                ',
                 (account_id, folder),
             ).fetchone()
         assert row is not None
@@ -9070,31 +8989,20 @@ class EmailStore:
         created_at = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
-                """
-                insert or ignore into email_historical_classification_history (
-                    event_id, stable_message_identity, model_id,
-                    predicted_category, threshold, probability, important,
-                    action_outcome, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    stable_identity,
-                    model_id,
-                    predicted_category,
-                    threshold,
-                    probability,
-                    None if important_value is None else int(important_value),
-                    action_outcome,
-                    created_at,
-                ),
-            )
-            row = db.execute(
-                "select * from email_historical_classification_history "
-                "where event_id=?",
-                (event_id,),
-            ).fetchone()
+            insert_email_history(db, "email_historical_classification_history", {
+                "event_id": event_id,
+                "stable_message_identity": stable_identity,
+                "model_id": model_id,
+                "predicted_category": predicted_category,
+                "threshold": threshold,
+                "probability": probability,
+                "important": None if important_value is None else int(important_value),
+                "action_outcome": action_outcome,
+                "created_at": created_at,
+            }, ignore_public_duplicate=True)
+            rows = email_history_rows(db, "email_historical_classification_history",
+                                      where="event_id=?", parameters=(event_id,))
+            row = rows[0] if rows else None
         assert row is not None
         return _historical_outcome_row(row)
 
@@ -9103,8 +9011,7 @@ class EmailStore:
     ) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_historical_traversals "
-                "where account_id=? and folder=? and model_id=?",
+                'select * from (' + state_projection('email_historical_traversals') + ') where account_id=? and folder=? and model_id=?',
                 (account_id, folder, model_id),
             ).fetchone()
         return {
@@ -9138,45 +9045,44 @@ class EmailStore:
                 normalized_input_hash = sha256(
                     str(candidate.normalized_text).encode("utf-8")
                 ).hexdigest()
-                db.execute(
-                    """
-                    insert into email_historical_candidates (
-                        account_id, folder, model_id, stable_message_identity,
-                        normalized_text, provider_message_json, uidvalidity, uid,
-                        state, reason, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?)
-                    on conflict(account_id, folder, model_id, stable_message_identity)
-                    do update set normalized_text=excluded.normalized_text,
-                        provider_message_json=excluded.provider_message_json,
-                        uidvalidity=excluded.uidvalidity, uid=excluded.uid,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        account_id,
-                        folder,
-                        model_id,
-                        candidate.stable_message_identity,
-                        normalized_input_hash,
-                        _json_dump(projection),
-                        int(message.get("uidValidity") or uidvalidity),
-                        int(message.get("uid") or 0),
-                        now,
-                    ),
+                parts = task12_insert_parts(db, _EMAIL_HISTORICAL_KIND, {
+                    'account_id': account_id, 'folder': folder, 'model_id': model_id,
+                    'stable_message_identity': candidate.stable_message_identity,
+                    'normalized_text': normalized_input_hash,
+                    'provider_message_json': _json_dump(projection),
+                    'uidvalidity': int(message.get('uidValidity') or uidvalidity),
+                    'uid': int(message.get('uid') or 0),
+                    'state': 'pending', 'reason': '', 'updated_at': now,
+                })
+                update_parts = task12_set_parts(_EMAIL_HISTORICAL_KIND, {}, update_sql={
+                    field: 'excluded.' + _EMAIL_HISTORICAL_COLUMNS[field]
+                    for field in ('normalized_text', 'provider_message_json',
+                                  'uidvalidity', 'uid', 'updated_at')
+                })
+                conflict_columns = ','.join(
+                    _EMAIL_HISTORICAL_COLUMNS[field]
+                    for field in ('account_id', 'folder', 'model_id', 'stable_message_identity')
                 )
-            db.execute(
-                """
-                insert into email_historical_traversals (
-                    account_id, folder, model_id, uidvalidity, last_seen_uid, updated_at
-                ) values (?, ?, ?, ?, ?, ?)
-                on conflict(account_id, folder, model_id) do update set
-                    uidvalidity=excluded.uidvalidity,
-                    last_seen_uid=case
-                        when email_historical_traversals.uidvalidity=excluded.uidvalidity
-                        then max(email_historical_traversals.last_seen_uid, excluded.last_seen_uid)
-                        else excluded.last_seen_uid end,
-                    updated_at=excluded.updated_at
-                """,
-                (account_id, folder, model_id, uidvalidity, last_seen_uid, now),
+                db.execute(
+                    parts.sql + f" on conflict({conflict_columns}) "
+                    "where record_type='email_historical_candidates' do update set "
+                    + update_parts.sql,
+                    (*parts.parameters, *update_parts.parameters),
+                )
+            upsert_state(
+                db, "email_historical_traversals",
+                {"account_id": account_id, "folder": folder, "model_id": model_id,
+                 "uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
+                 "updated_at": now},
+                {
+                    "uidvalidity": state_json_field("uidvalidity"),
+                    "last_seen_uid":
+                        "case when state.uidvalidity=excluded.uidvalidity and "
+                        "state.last_seen_uid>=excluded.last_seen_uid then " +
+                        state_json_field("last_seen_uid", "state") +
+                        " else " + state_json_field("last_seen_uid") + " end",
+                    "updated_at": state_json_field("updated_at"),
+                },
             )
 
     def list_historical_candidates(
@@ -9188,8 +9094,8 @@ class EmailStore:
         deferred_quota = min(2, limit)
         with self._connect() as db:
             deferred_rows = db.execute(
-                """
-                select * from email_historical_candidates
+                f"""
+                select * from ({_EMAIL_HISTORICAL_SQL})
                 where account_id=? and folder=? and model_id=?
                   and state='deferred'
                   and next_retry_at != '' and next_retry_at <= ?
@@ -9202,8 +9108,8 @@ class EmailStore:
             ).fetchall()
             reserved = list(deferred_rows[:deferred_quota])
             pending_rows = db.execute(
-                """
-                select * from email_historical_candidates
+                f"""
+                select * from ({_EMAIL_HISTORICAL_SQL})
                 where account_id=? and folder=? and model_id=? and state='pending'
                 order by uid, stable_message_identity
                 limit ?
@@ -9248,34 +9154,25 @@ class EmailStore:
                 + timedelta(seconds=HISTORICAL_DEFER_RETRY_SECONDS)
             ).isoformat(timespec="seconds")
         with self._connect() as db:
+            parts = task12_set_parts(_EMAIL_HISTORICAL_KIND, {
+                'state': state, 'reason': reason, 'attempted_at': attempted_at,
+                'next_retry_at': next_retry_at, 'updated_at': now,
+            })
             updated = db.execute(
-                """
-                update email_historical_candidates
-                set state=?, reason=?, attempted_at=?, next_retry_at=?, updated_at=?
-                where account_id=? and folder=? and model_id=?
-                  and stable_message_identity=?
-                """,
-                (
-                    state,
-                    reason,
-                    attempted_at,
-                    next_retry_at,
-                    now,
-                    account_id,
-                    folder,
-                    model_id,
-                    stable_message_identity,
-                ),
+                f"update tasks set {parts.sql} where record_type='email_historical_candidates' "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['account_id']}=? "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['folder']}=? "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['model_id']}=? "
+                f"and {_EMAIL_HISTORICAL_COLUMNS['stable_message_identity']}=?",
+                (*parts.parameters, account_id, folder, model_id, stable_message_identity),
             ).rowcount
         if updated != 1:
             raise ValueError("historical queued candidate is missing")
 
     def list_historical_classification_history(self) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute(
-                "select * from email_historical_classification_history "
-                "order by created_at, event_id"
-            ).fetchall()
+            rows = email_history_rows(db, "email_historical_classification_history",
+                                      order="created_at,event_id")
         return [_historical_outcome_row(row) for row in rows]
 
     def begin_historical_operation(
@@ -9311,21 +9208,16 @@ class EmailStore:
         )
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
-                """
-                insert or ignore into email_historical_operations (
-                    operation_id, account_id, stable_message_identity, model_id,
-                    classification_id, action_plan_id, action_ids_json,
-                    predicted_category, threshold, probability, important,
-                    status, action_outcome, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', '', ?, ?)
-                """,
-                (operation_id, *immutable, now, now),
-            )
-            row = db.execute(
-                "select * from email_historical_operations where operation_id=?",
-                (operation_id,),
-            ).fetchone()
+            insert_email_history(db, "email_historical_operations", dict(zip(
+                ("operation_id", "account_id", "stable_message_identity", "model_id",
+                 "classification_id", "action_plan_id", "action_ids_json",
+                 "predicted_category", "threshold", "probability", "important",
+                 "status", "action_outcome", "created_at", "updated_at"),
+                (operation_id, *immutable, "processing", "", now, now), strict=True,
+            )), ignore_public_duplicate=True)
+            rows = email_history_rows(db, "email_historical_operations",
+                                      where="operation_id=?", parameters=(operation_id,))
+            row = rows[0] if rows else None
         assert row is not None
         observed = (
             row["account_id"], row["stable_message_identity"], row["model_id"],
@@ -9339,38 +9231,28 @@ class EmailStore:
 
     def list_processing_historical_operations(self) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute(
-                "select * from email_historical_operations where status='processing' "
-                "order by created_at, operation_id"
-            ).fetchall()
+            rows = email_history_rows(db, "email_historical_operations",
+                                      where="status='processing'",
+                                      order="created_at,operation_id")
         return [self._historical_operation_row(row) for row in rows]
 
     def complete_historical_operation(self, outcome: object) -> None:
         stable_identity = str(getattr(outcome, "stable_message_identity"))
         model_id = str(getattr(outcome, "model_id"))
         with self._connect() as db:
-            db.execute(
-                """
-                update email_historical_operations
-                set status='terminal', action_outcome=?, updated_at=?
-                where model_id=? and stable_message_identity=? and status='processing'
-                """,
-                (
-                    str(getattr(outcome, "action_outcome")),
-                    self._now(), model_id, stable_identity,
-                ),
+            update_email_operation(
+                db, model_id=model_id, stable_message_identity=stable_identity,
+                outcome=str(getattr(outcome, "action_outcome")), updated_at=self._now(),
             )
 
     def touch_historical_operation(
         self, *, model_id: str, stable_message_identity: str
     ) -> None:
         with self._connect() as db:
-            db.execute(
-                """
-                update email_historical_operations set updated_at=?
-                where model_id=? and stable_message_identity=? and status='processing'
-                """,
-                (self._now(), model_id, stable_message_identity),
+            update_email_operation(
+                db, model_id=model_id,
+                stable_message_identity=stable_message_identity,
+                updated_at=self._now(),
             )
 
     @staticmethod
@@ -9408,7 +9290,7 @@ class EmailStore:
     def get_scan_cursor(self, account_id: str, folder: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_scan_cursors where account_id=? and folder=?",
+                'select * from (' + state_projection('email_scan_cursors') + ') where account_id=? and folder=?',
                 (account_id, folder),
             ).fetchone()
         return None if row is None else dict(row)
@@ -9438,7 +9320,7 @@ class EmailStore:
                 expected_uidvalidity=expected_uidvalidity,
             )
             row = db.execute(
-                "select * from email_scan_cursors where account_id=? and folder=?",
+                'select * from (' + state_projection('email_scan_cursors') + ') where account_id=? and folder=?',
                 (account_id, folder),
             ).fetchone()
         assert row is not None
@@ -9447,14 +9329,14 @@ class EmailStore:
     def list_accounts(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_accounts order by account_id"
+                f"select * from ({config_projection('email_accounts')}) order by account_id"
             ).fetchall()
         return [self._account_row(row) for row in rows]
 
     def get_account(self, account_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
         return None if row is None else self._account_row(row)
@@ -9468,7 +9350,7 @@ class EmailStore:
 
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select
                     classifications.id as classification_id,
                     classifications.account_id as account_id,
@@ -9480,12 +9362,12 @@ class EmailStore:
                     plans.action_plan_id as action_plan_id,
                     plans.action_plan_version as action_plan_version,
                     plans.actions_json as actions_json
-                from email_classifications as classifications
-                join email_messages as messages
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
-                join email_action_plans as plans
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.classification_id=classifications.id
                  and plans.action_plan_id=?
                 where classifications.id=?
@@ -9516,7 +9398,7 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_reply_receipts where action_identity=?",
+                f"select * from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_reply_receipt_row(row)
@@ -9568,14 +9450,14 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             authorization = db.execute(
-                """
+                f"""
                 select plans.actions_json, plans.action_plan_version,
                        messages.thread_identity
-                from email_classifications as classifications
-                join email_action_plans as plans
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=classifications.current_action_plan_id
                  and plans.classification_id=classifications.id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -9593,7 +9475,7 @@ class EmailStore:
                 ),
             ).fetchone()
             account = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
             if (
@@ -9621,13 +9503,13 @@ class EmailStore:
             account_snapshot = self._account_row(account)
             account_snapshot_json = _json_dump(account_snapshot)
             receipt = db.execute(
-                "select 1 from email_reply_receipts where action_identity=?",
+                f"select 1 from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if receipt is not None:
                 return {**immutable, "status": "done", "acquired": False}
             existing = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if existing is not None:
@@ -9638,71 +9520,69 @@ class EmailStore:
                     )
                 if claim["status"] != "retryable":
                     return {**claim, "acquired": False}
-                updated = db.execute(
-                    """
-                    update email_reply_dispatch_claims
-                    set owner_id=?, owner_generation=?, lease_token=?,
-                        account_updated_at=?, account_snapshot_json=?,
-                        status='dispatching', claimed_at=?, updated_at=?
-                    where action_identity=? and status='retryable'
-                      and owner_id=? and owner_generation=? and lease_token=?
-                    """,
+                mutation_values = {
+                    "owner_id": owner["owner_id"],
+                    "owner_generation": owner["generation"],
+                    "lease_token": owner["lease_token"],
+                    "account_updated_at": expected_account_updated_at,
+                    "account_snapshot_json": account_snapshot_json,
+                    "status": "dispatching",
+                    "claimed_at": claimed_at,
+                    "updated_at": claimed_at,
+                }
+                mutation_rows = db.execute(
+                    f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='retryable' and owner_id=? and owner_generation=? and lease_token=?""",
                     (
-                        owner["owner_id"],
-                        owner["generation"],
-                        owner["lease_token"],
-                        expected_account_updated_at,
-                        account_snapshot_json,
-                        claimed_at,
-                        claimed_at,
                         action_identity,
                         claim["owner_id"],
                         claim["owner_generation"],
                         claim["lease_token"],
                     ),
-                ).rowcount
+                ).fetchall()
+                updated = sum(
+                    update_email_action(
+                        db,
+                        "email_reply_dispatch_claims",
+                        source_row["rowid"],
+                        mutation_values,
+                    ).rowcount
+                    for source_row in mutation_rows
+                )
                 if updated != 1:
                     raise EmailReplyDispatchConflict(
                         "email reply retryable claim changed concurrently"
                     )
                 row = db.execute(
-                    "select * from email_reply_dispatch_claims where action_identity=?",
+                    f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                     (action_identity,),
                 ).fetchone()
                 assert row is not None
                 return {**self._email_reply_dispatch_claim_row(row), "acquired": True}
-            db.execute(
-                """
-                insert into email_reply_dispatch_claims (
-                    action_identity, effect_digest, action_plan_id,
-                    classification_id, account_id, stable_message_identity,
-                    outgoing_message_id, owner_id, owner_generation, lease_token,
-                    sender, thread_identity, account_updated_at,
-                    account_snapshot_json, status, claimed_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          'dispatching', ?, ?)
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    action_plan_id,
-                    classification_id,
-                    account_id,
-                    stable_message_identity,
-                    outgoing_message_id,
-                    owner["owner_id"],
-                    owner["generation"],
-                    owner["lease_token"],
-                    sender,
-                    thread_identity,
-                    expected_account_updated_at,
-                    account_snapshot_json,
-                    claimed_at,
-                    claimed_at,
-                ),
+            insert_email_action(
+                db,
+                "email_reply_dispatch_claims",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": effect_digest,
+                    "action_plan_id": action_plan_id,
+                    "classification_id": classification_id,
+                    "account_id": account_id,
+                    "stable_message_identity": stable_message_identity,
+                    "outgoing_message_id": outgoing_message_id,
+                    "owner_id": owner["owner_id"],
+                    "owner_generation": owner["generation"],
+                    "lease_token": owner["lease_token"],
+                    "sender": sender,
+                    "thread_identity": thread_identity,
+                    "account_updated_at": expected_account_updated_at,
+                    "account_snapshot_json": account_snapshot_json,
+                    "status": "dispatching",
+                    "claimed_at": claimed_at,
+                    "updated_at": claimed_at,
+                },
             )
             row = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert row is not None
@@ -9714,7 +9594,7 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_reply_dispatch_claim_row(row)
@@ -9730,21 +9610,25 @@ class EmailStore:
         owner = _validate_email_reply_owner(owner)
         with self._connect() as db:
             db.execute("begin immediate")
-            updated = db.execute(
-                """
-                update email_reply_dispatch_claims
-                set status='uncertain', updated_at=?
-                where action_identity=? and status='dispatching'
-                  and owner_id=? and owner_generation=? and lease_token=?
-                """,
+            mutation_values = {"status": "uncertain", "updated_at": self._now()}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
                 (
-                    self._now(),
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).rowcount
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db,
+                    "email_reply_dispatch_claims",
+                    source_row["rowid"],
+                    mutation_values,
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if updated != 1:
                 raise EmailReplyDispatchConflict(
                     "email reply dispatch owner fence changed"
@@ -9762,20 +9646,20 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                """
+                f"""
                 select claims.*, classifications.current_action_plan_id,
                        classifications.status as classification_status,
                        plans.actions_json, accounts.enabled,
                        accounts.email_address, accounts.updated_at as live_account_updated_at,
                        messages.thread_identity as live_thread_identity
-                from email_reply_dispatch_claims as claims
-                join email_classifications as classifications
+                from ({EMAIL_REPLY_CLAIM_SQL}) as claims
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=claims.classification_id
-                join email_action_plans as plans
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=claims.action_plan_id
-                join email_accounts as accounts
+                join ({config_projection('email_accounts')}) as accounts
                   on accounts.account_id=claims.account_id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=claims.account_id
                  and messages.stable_message_identity=claims.stable_message_identity
                 where claims.action_identity=? and claims.status='dispatching'
@@ -9807,21 +9691,25 @@ class EmailStore:
                 raise EmailReplyDispatchConflict(
                     "email reply retry authorization changed"
                 )
-            updated = db.execute(
-                """
-                update email_reply_dispatch_claims
-                set status='retryable', updated_at=?
-                where action_identity=? and status='dispatching'
-                  and owner_id=? and owner_generation=? and lease_token=?
-                """,
+            mutation_values = {"status": "retryable", "updated_at": self._now()}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
                 (
-                    self._now(),
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).rowcount
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db,
+                    "email_reply_dispatch_claims",
+                    source_row["rowid"],
+                    mutation_values,
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if updated != 1:
                 raise EmailReplyDispatchConflict(
                     "email reply dispatch owner fence changed"
@@ -9842,20 +9730,20 @@ class EmailStore:
         recovered_at = _required_utc_timestamp(recovered_at, field="recovered_at")
         with self._connect() as db:
             db.execute("begin immediate")
-            updated = db.execute(
-                """
-                update email_reply_dispatch_claims
-                set status='uncertain', updated_at=?
-                where status='dispatching' and owner_id=?
-                  and owner_generation=? and lease_token=?
-                """,
-                (
-                    recovered_at,
-                    owner["owner_id"],
-                    owner["generation"],
-                    owner["lease_token"],
-                ),
-            ).rowcount
+            mutation_values = {"status": "uncertain", "updated_at": recovered_at}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
+                (owner["owner_id"], owner["generation"], owner["lease_token"]),
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db,
+                    "email_reply_dispatch_claims",
+                    source_row["rowid"],
+                    mutation_values,
+                ).rowcount
+                for source_row in mutation_rows
+            )
             return updated
 
     @staticmethod
@@ -9969,35 +9857,28 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_reply_receipts where action_identity=?",
+                f"select * from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if row is None:
-                db.execute(
-                    """
-                    insert into email_reply_receipts (
-                        action_identity, effect_digest, action_plan_id,
-                        classification_id, account_id, stable_message_identity,
-                        outgoing_message_id, provider_operation, provider_target,
-                        provider_result_id, provider_receipt_json, display_excerpt,
-                        created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        action_plan_id,
-                        classification_id,
-                        account_id,
-                        stable_message_identity,
-                        outgoing_message_id,
-                        provider_operation,
-                        provider_target,
-                        provider_result_id,
-                        _json_dump(requested_provider_receipt),
-                        receipt_base["display_excerpt"],
-                        created_at,
-                    ),
+                insert_email_action(
+                    db,
+                    "email_reply_receipts",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "action_plan_id": action_plan_id,
+                        "classification_id": classification_id,
+                        "account_id": account_id,
+                        "stable_message_identity": stable_message_identity,
+                        "outgoing_message_id": outgoing_message_id,
+                        "provider_operation": provider_operation,
+                        "provider_target": provider_target,
+                        "provider_result_id": provider_result_id,
+                        "provider_receipt_json": _json_dump(requested_provider_receipt),
+                        "display_excerpt": receipt_base["display_excerpt"],
+                        "created_at": created_at,
+                    },
                 )
             else:
                 persisted = self._email_reply_receipt_row(row)
@@ -10036,23 +9917,28 @@ class EmailStore:
                         **persisted_receipt,
                         "smtp_acceptance_id": requested_smtp_id,
                     }
-                    updated = db.execute(
-                        """
-                        update email_reply_receipts set provider_receipt_json=?
-                        where action_identity=? and provider_receipt_json=?
-                        """,
-                        (
-                            _json_dump(enriched_receipt),
-                            action_identity,
-                            _json_dump(persisted_receipt),
-                        ),
-                    ).rowcount
+                    mutation_values = {
+                        "provider_receipt_json": _json_dump(enriched_receipt)
+                    }
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_REPLY_RECEIPT_LOCATOR_SQL}) where action_identity=? and provider_receipt_json=?""",
+                        (action_identity, _json_dump(persisted_receipt)),
+                    ).fetchall()
+                    updated = sum(
+                        update_email_action(
+                            db,
+                            "email_reply_receipts",
+                            source_row["rowid"],
+                            mutation_values,
+                        ).rowcount
+                        for source_row in mutation_rows
+                    )
                     if updated != 1:
                         raise EmailReplyReceiptConflict(
                             "email reply receipt changed concurrently"
                         )
             claim = db.execute(
-                "select * from email_reply_dispatch_claims where action_identity=?",
+                f"select * from ({EMAIL_REPLY_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if claim is not None:
@@ -10076,28 +9962,31 @@ class EmailStore:
                         raise EmailReplyDispatchConflict(
                             "email reply claim completion requires its owner fence"
                         )
-                    updated = db.execute(
-                        """
-                        update email_reply_dispatch_claims
-                        set status='done', updated_at=?
-                        where action_identity=?
-                          and status in ('dispatching', 'retryable', 'uncertain')
-                          and owner_id=? and owner_generation=? and lease_token=?
-                        """,
+                    mutation_values = {"status": "done", "updated_at": self._now()}
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status in ('dispatching', 'retryable', 'uncertain') and owner_id=? and owner_generation=? and lease_token=?""",
                         (
-                            self._now(),
                             action_identity,
                             validated_claim_owner["owner_id"],
                             validated_claim_owner["generation"],
                             validated_claim_owner["lease_token"],
                         ),
-                    ).rowcount
+                    ).fetchall()
+                    updated = sum(
+                        update_email_action(
+                            db,
+                            "email_reply_dispatch_claims",
+                            source_row["rowid"],
+                            mutation_values,
+                        ).rowcount
+                        for source_row in mutation_rows
+                    )
                     if updated != 1:
                         raise EmailReplyDispatchConflict(
                             "email reply dispatch owner fence changed"
                         )
             row = db.execute(
-                "select * from email_reply_receipts where action_identity=?",
+                f"select * from ({EMAIL_REPLY_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert row is not None
@@ -10206,11 +10095,16 @@ class EmailStore:
         claimed_at = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
-            if db.execute(
-                "select 1 from email_unsubscribe_cancellations where action_identity=?",
-                (action_identity,),
-            ).fetchone() is not None:
-                raise EmailUnsubscribeClaimConflict("unsubscribe cancelled by principal")
+            if (
+                db.execute(
+                    f"select 1 from ({EMAIL_UNSUBSCRIBE_CANCELLATION_SQL}) where action_identity=?",
+                    (action_identity,),
+                ).fetchone()
+                is not None
+            ):
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe cancelled by principal"
+                )
             task_join = ""
             task_predicates = ""
             task_args: tuple[object, ...] = ()
@@ -10290,13 +10184,13 @@ class EmailStore:
                        messages.account_id as message_account_id,
                        messages.thread_identity,
                        accounts.enabled, accounts.updated_at as account_updated_at
-                from email_classifications as classifications
-                join email_action_plans as plans
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_PLAN_SQL}) as plans
                   on plans.action_plan_id=?
                  and plans.classification_id=classifications.id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.stable_message_identity=?
-                join email_accounts as accounts on accounts.account_id=?
+                join ({config_projection('email_accounts')}) as accounts on accounts.account_id=?
                 {task_join}
                 where classifications.id=?
                 {task_predicates}
@@ -10345,7 +10239,7 @@ class EmailStore:
             if not authorized:
                 return None
             receipt = db.execute(
-                "select * from email_unsubscribe_receipts where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if receipt is not None:
@@ -10356,7 +10250,7 @@ class EmailStore:
                     )
                 return {"acquired": False, "status": "done"}
             claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             expected_claim = {
@@ -10369,11 +10263,11 @@ class EmailStore:
                 persisted = self._email_unsubscribe_claim_row(claim)
                 if persisted["status"] == "awaiting_audit":
                     continuation = db.execute(
-                        "select * from email_unsubscribe_continuations where action_identity=?",
+                        f"select * from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL}) where action_identity=?",
                         (action_identity,),
                     ).fetchone()
                     prior_effect = db.execute(
-                        "select * from email_unsubscribe_effects where action_identity=? and effect_digest=?",
+                        f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=? and effect_digest=?",
                         (action_identity, persisted["effect_digest"]),
                     ).fetchone()
                     if continuation is None or prior_effect is None:
@@ -10475,51 +10369,52 @@ class EmailStore:
                         raise EmailUnsubscribeClaimConflict(
                             "unsubscribe continuation requires a fresh owner fence"
                         )
-                    db.execute(
-                        """
-                        update email_unsubscribe_claims
-                        set effect_digest=?, operations_json=?, owner_id=?,
-                            owner_generation=?, lease_token=?, account_updated_at=?,
-                            audit_agent_run_id=?,
-                            status='dispatching', phase='prepared',
-                            claimed_at=?, updated_at=?
-                        where action_identity=? and status='awaiting_audit'
-                        """,
-                        (
-                            effect_digest,
-                            operations_json,
-                            owner["owner_id"],
-                            owner["generation"],
-                            owner["lease_token"],
-                            live["account_updated_at"],
-                            audit_agent_run_id,
-                            claimed_at,
-                            claimed_at,
-                            action_identity,
-                        ),
-                    )
-                    db.execute(
-                        """
-                        insert into email_unsubscribe_effects (
-                            action_identity, effect_digest, previous_effect_digest,
-                            operations_json, audit_agent_run_id, created_at
-                        ) values (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            action_identity,
-                            effect_digest,
-                            previous_effect_digest,
-                            operations_json,
-                            audit_agent_run_id,
-                            claimed_at,
-                        ),
-                    )
-                    db.execute(
-                        "delete from email_unsubscribe_continuations where action_identity=?",
+                    mutation_values = {
+                        "effect_digest": effect_digest,
+                        "operations_json": operations_json,
+                        "owner_id": owner["owner_id"],
+                        "owner_generation": owner["generation"],
+                        "lease_token": owner["lease_token"],
+                        "account_updated_at": live["account_updated_at"],
+                        "audit_agent_run_id": audit_agent_run_id,
+                        "status": "dispatching",
+                        "phase": "prepared",
+                        "claimed_at": claimed_at,
+                        "updated_at": claimed_at,
+                    }
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and status='awaiting_audit'""",
                         (action_identity,),
+                    ).fetchall()
+                    for source_row in mutation_rows:
+                        update_email_action(
+                            db,
+                            "email_unsubscribe_claims",
+                            source_row["rowid"],
+                            mutation_values,
+                        )
+                    insert_action(
+                        db,
+                        "email_unsubscribe_effects",
+                        {
+                            "action_identity": action_identity,
+                            "effect_digest": effect_digest,
+                            "previous_effect_digest": previous_effect_digest,
+                            "operations_json": operations_json,
+                            "audit_agent_run_id": audit_agent_run_id,
+                            "created_at": claimed_at,
+                        },
                     )
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_UNSUBSCRIBE_CONTINUATION_LOCATOR_SQL}) where action_identity=?""",
+                        (action_identity,),
+                    ).fetchall()
+                    for source_row in mutation_rows:
+                        delete_email_action(
+                            db, "email_unsubscribe_continuations", source_row["rowid"]
+                        )
                     row = db.execute(
-                        "select * from email_unsubscribe_claims where action_identity=?",
+                        f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                         (action_identity,),
                     ).fetchone()
                     assert row is not None
@@ -10558,55 +10453,45 @@ class EmailStore:
                     raise EmailUnsubscribeClaimConflict(
                         "unsubscribe initial effect must contain one entry operation"
                     )
-                db.execute(
-                    """
-                    insert into email_unsubscribe_claims (
-                        action_identity, effect_digest, action_plan_id,
-                        action_plan_version, classification_id, account_id,
-                        stable_message_identity, thread_identity, entry_reference,
-                        operations_json, owner_id, owner_generation, lease_token,
-                        account_updated_at, status, phase, audit_agent_run_id,
-                        claimed_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              'dispatching', 'prepared', ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        action_plan_id,
-                        action_plan_version,
-                        classification_id,
-                        account_id,
-                        stable_message_identity,
-                        thread_identity,
-                        entry_reference,
-                        operations_json,
-                        owner["owner_id"],
-                        owner["generation"],
-                        owner["lease_token"],
-                        live["account_updated_at"],
-                        audit_agent_run_id,
-                        claimed_at,
-                        claimed_at,
-                    ),
+                insert_email_action(
+                    db,
+                    "email_unsubscribe_claims",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "action_plan_id": action_plan_id,
+                        "action_plan_version": action_plan_version,
+                        "classification_id": classification_id,
+                        "account_id": account_id,
+                        "stable_message_identity": stable_message_identity,
+                        "thread_identity": thread_identity,
+                        "entry_reference": entry_reference,
+                        "operations_json": operations_json,
+                        "owner_id": owner["owner_id"],
+                        "owner_generation": owner["generation"],
+                        "lease_token": owner["lease_token"],
+                        "account_updated_at": live["account_updated_at"],
+                        "status": "dispatching",
+                        "phase": "prepared",
+                        "audit_agent_run_id": audit_agent_run_id,
+                        "claimed_at": claimed_at,
+                        "updated_at": claimed_at,
+                    },
                 )
-                db.execute(
-                    """
-                    insert into email_unsubscribe_effects (
-                        action_identity, effect_digest, previous_effect_digest,
-                        operations_json, audit_agent_run_id, created_at
-                    ) values (?, ?, '', ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        operations_json,
-                        audit_agent_run_id,
-                        claimed_at,
-                    ),
+                insert_action(
+                    db,
+                    "email_unsubscribe_effects",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "previous_effect_digest": "",
+                        "operations_json": operations_json,
+                        "audit_agent_run_id": audit_agent_run_id,
+                        "created_at": claimed_at,
+                    },
                 )
             row = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert row is not None
@@ -10622,7 +10507,7 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_unsubscribe_claim_row(row)
@@ -10642,15 +10527,15 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin")
             claim_row = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             continuation_row = db.execute(
-                """
+                f"""
                 select continuation.*, effect.previous_effect_digest,
                        effect.operations_json
-                from email_unsubscribe_continuations as continuation
-                join email_unsubscribe_effects as effect
+                from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL}) as continuation
+                join ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effect
                   on effect.action_identity=continuation.action_identity
                  and effect.effect_digest=continuation.effect_digest
                 where continuation.action_identity=?
@@ -10658,11 +10543,11 @@ class EmailStore:
                 (action_identity,),
             ).fetchone()
             receipt_row = db.execute(
-                "select * from email_unsubscribe_receipts where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             effect_rows = db.execute(
-                "select * from email_unsubscribe_effects "
+                f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
                 "where action_identity=? limit ?",
                 (
                     action_identity,
@@ -10760,7 +10645,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin")
             claim_row = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             claim = (
@@ -10769,7 +10654,7 @@ class EmailStore:
                 else self._email_unsubscribe_claim_row(claim_row)
             )
             receipt_row = db.execute(
-                "select * from email_unsubscribe_receipts where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if receipt_row is None:
@@ -10792,7 +10677,7 @@ class EmailStore:
                 )
             receipt = self._email_unsubscribe_receipt_row(receipt_row)
             effect_rows = db.execute(
-                "select * from email_unsubscribe_effects "
+                f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
                 "where action_identity=? limit ?",
                 (
                     action_identity,
@@ -10808,7 +10693,7 @@ class EmailStore:
                 for row in effect_rows
             }
             steps = db.execute(
-                "select * from email_unsubscribe_steps "
+                f"select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) "
                 "where action_identity=? order by sequence",
                 (action_identity,),
             ).fetchall()
@@ -11039,13 +10924,13 @@ class EmailStore:
             expected_audit_agent_run_id=expected_audit_agent_run_id,
         )
         classification = db.execute(
-            """
+            f"""
             select classifications.id, classifications.account_id,
                    classifications.stable_message_identity,
                    classifications.current_action_plan_id,
                    messages.thread_identity as message_thread_identity
-            from email_classifications as classifications
-            join email_messages as messages
+            from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+            join ({EMAIL_MESSAGE_SQL}) as messages
               on messages.account_id=classifications.account_id
              and messages.stable_message_identity=
                  classifications.stable_message_identity
@@ -11059,7 +10944,7 @@ class EmailStore:
             else _audited_unsubscribe_lineage(
                 db,
                 receipt=db.execute(
-                    "select * from email_unsubscribe_receipts where action_identity=?",
+                    f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                     (claim["action_identity"],),
                 ).fetchone(),
                 classification=classification,
@@ -11294,7 +11179,7 @@ class EmailStore:
 
         with self._connect() as db:
             row = db.execute(
-                "select * from email_unsubscribe_effects "
+                f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
                 "where action_identity=? and effect_digest=?",
                 (action_identity, effect_digest),
             ).fetchone()
@@ -11389,8 +11274,8 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                """
-                select * from email_unsubscribe_claims
+                f"""
+                select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL})
                 where action_identity=? and effect_digest=? and status='dispatching'
                   and owner_id=? and owner_generation=? and lease_token=?
                 """,
@@ -11403,8 +11288,8 @@ class EmailStore:
                 ),
             ).fetchone()
             effect_row = db.execute(
-                """
-                select * from email_unsubscribe_effects
+                f"""
+                select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})
                 where action_identity=? and effect_digest=?
                 """,
                 (action_identity, effect_digest),
@@ -11426,67 +11311,56 @@ class EmailStore:
                     "unsubscribe continuation effect binding changed"
                 )
             previous = db.execute(
-                "select coalesce(max(sequence), 0) from email_unsubscribe_steps where action_identity=?",
+                f"select coalesce(max(sequence), 0) from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()[0]
             if sequence != previous + 1 or sequence != len(validated_operations):
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe continuation journal is not contiguous"
                 )
-            db.execute(
-                """
-                insert into email_unsubscribe_steps (
-                    action_identity, effect_digest, sequence, operation,
-                    state, reference, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    sequence,
-                    step["operation"],
-                    step["state"],
-                    step["reference"],
-                    now,
-                ),
+            insert_action(
+                db,
+                "email_unsubscribe_steps",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": effect_digest,
+                    "sequence": sequence,
+                    "operation": step["operation"],
+                    "state": step["state"],
+                    "reference": step["reference"],
+                    "created_at": now,
+                },
             )
-            db.execute(
-                """
-                insert into email_unsubscribe_continuations (
-                    action_identity, effect_digest, observation_reference,
-                    controls_json, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?)
-                on conflict(action_identity) do update set
-                    effect_digest=excluded.effect_digest,
-                    observation_reference=excluded.observation_reference,
-                    controls_json=excluded.controls_json,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    observation_reference,
-                    _json_dump(validated_controls),
-                    now,
-                    now,
-                ),
+            insert_email_action(
+                db,
+                "email_unsubscribe_continuations",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": effect_digest,
+                    "observation_reference": observation_reference,
+                    "controls_json": _json_dump(validated_controls),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                update_continuation_conflict=True,
             )
-            updated = db.execute(
-                """
-                update email_unsubscribe_claims
-                set status='awaiting_audit', updated_at=?
-                where action_identity=? and effect_digest=? and status='dispatching'
-                  and owner_id=? and owner_generation=? and lease_token=?
-                """,
+            mutation_values = {"status": "awaiting_audit", "updated_at": now}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and effect_digest=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
                 (
-                    now,
                     action_identity,
                     effect_digest,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).rowcount
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if updated != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe continuation owner fence changed"
@@ -11501,11 +11375,11 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select continuation.*, effect.previous_effect_digest,
                        effect.operations_json
-                from email_unsubscribe_continuations as continuation
-                join email_unsubscribe_effects as effect
+                from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL}) as continuation
+                join ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effect
                   on effect.action_identity=continuation.action_identity
                  and effect.effect_digest=continuation.effect_digest
                 where continuation.action_identity=?
@@ -11553,8 +11427,8 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                """
-                select * from email_unsubscribe_claims
+                f"""
+                select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL})
                 where action_identity=? and effect_digest=?
                   and status='dispatching' and owner_id=?
                   and owner_generation=? and lease_token=?
@@ -11572,8 +11446,8 @@ class EmailStore:
                     "unsubscribe journal owner fence changed"
                 )
             existing = db.execute(
-                """
-                select * from email_unsubscribe_steps
+                f"""
+                select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                 where action_identity=? and sequence=?
                 """,
                 (action_identity, sequence),
@@ -11592,8 +11466,8 @@ class EmailStore:
                     )
                 return persisted
             previous = db.execute(
-                """
-                select coalesce(max(sequence), 0) from email_unsubscribe_steps
+                f"""
+                select coalesce(max(sequence), 0) from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                 where action_identity=?
                 """,
                 (action_identity,),
@@ -11602,25 +11476,21 @@ class EmailStore:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe journal sequence is not contiguous"
                 )
-            cursor = db.execute(
-                """
-                insert into email_unsubscribe_steps (
-                    action_identity, effect_digest, sequence, operation,
-                    state, reference, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    sequence,
-                    operation,
-                    state,
-                    reference,
-                    created_at,
-                ),
+            cursor = insert_action(
+                db,
+                "email_unsubscribe_steps",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": effect_digest,
+                    "sequence": sequence,
+                    "operation": operation,
+                    "state": state,
+                    "reference": reference,
+                    "created_at": created_at,
+                },
             )
             row = db.execute(
-                "select * from email_unsubscribe_steps where id=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -11632,8 +11502,8 @@ class EmailStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                """
-                select * from email_unsubscribe_steps
+                f"""
+                select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                 where action_identity=? order by sequence
                 """,
                 (action_identity,),
@@ -11671,7 +11541,7 @@ class EmailStore:
                 select claims.action_identity, claims.effect_digest,
                        claims.owner_id, claims.owner_generation,
                        claims.lease_token, runs.status as run_status
-                from email_unsubscribe_claims as claims
+                from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) as claims
                 join ({AGENT_RUN_SQL}) as runs
                   on runs.id=claims.audit_agent_run_id
                 where claims.status in ('dispatching', 'uncertain')
@@ -11713,7 +11583,7 @@ class EmailStore:
             claim = db.execute(
                 f"""
                 select claims.effect_digest, runs.status as run_status
-                from email_unsubscribe_claims as claims
+                from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) as claims
                 join ({AGENT_RUN_SQL}) as runs
                   on runs.id=claims.audit_agent_run_id
                 where claims.action_identity=?
@@ -11724,29 +11594,40 @@ class EmailStore:
             if claim is None or claim["run_status"] not in {"failed", "completed"}:
                 return False
             related = db.execute(
-                """
+                f"""
                 select
-                    (select count(*) from email_unsubscribe_steps
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                      where action_identity=?) as steps,
-                    (select count(*) from email_unsubscribe_receipts
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                      where action_identity=?) as receipts,
-                    (select count(*) from email_unsubscribe_continuations
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL})
                      where action_identity=?) as continuations
                 """,
                 (action_identity, action_identity, action_identity),
             ).fetchone()
             if related is None or any(int(related[name]) for name in related.keys()):
                 return False
-            db.execute(
-                "delete from email_unsubscribe_effects "
-                "where action_identity=? and effect_digest=?",
+            mutation_rows = db.execute(
+                f"""select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=? and effect_digest=?""",
                 (action_identity, claim["effect_digest"]),
-            )
+            ).fetchall()
+            for source_row in mutation_rows:
+                delete_action(
+                    db,
+                    "email_unsubscribe_effects",
+                    (source_row["action_identity"], source_row["effect_digest"]),
+                )
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
+                (action_identity,),
+            ).fetchall()
             return (
-                db.execute(
-                    "delete from email_unsubscribe_claims where action_identity=?",
-                    (action_identity,),
-                ).rowcount
+                sum(
+                    delete_email_action(
+                        db, "email_unsubscribe_claims", source_row["rowid"]
+                    ).rowcount
+                    for source_row in mutation_rows
+                )
                 == 1
             )
 
@@ -11782,11 +11663,11 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             steps = db.execute(
-                "select * from email_unsubscribe_steps where action_identity=? "
+                f"select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=? "
                 "order by sequence",
                 (action_identity,),
             ).fetchall()
@@ -11795,7 +11676,7 @@ class EmailStore:
             effects = {
                 row["effect_digest"]: row
                 for row in db.execute(
-                    "select * from email_unsubscribe_effects where action_identity=?",
+                    f"select * from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=?",
                     (action_identity,),
                 )
             }
@@ -11845,59 +11726,96 @@ class EmailStore:
                 )
                 if digest == stale_digest:
                     continue
-                db.execute(
-                    """
-                    insert or ignore into email_unsubscribe_effects (
-                        action_identity, effect_digest, previous_effect_digest,
-                        operations_json, created_at
-                    ) values (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        digest,
-                        stale["previous_effect_digest"],
-                        _json_dump(validated),
-                        stale["created_at"],
-                    ),
+                insert_action(
+                    db,
+                    "email_unsubscribe_effects",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": digest,
+                        "previous_effect_digest": stale["previous_effect_digest"],
+                        "operations_json": _json_dump(validated),
+                        "created_at": stale["created_at"],
+                    },
+                    ignore=True,
                 )
-                moved_steps = db.execute(
-                    "update email_unsubscribe_steps set effect_digest=? "
-                    "where action_identity=? and effect_digest=?",
-                    (digest, action_identity, stale_digest),
-                ).rowcount
-                moved_claim = db.execute(
-                    "update email_unsubscribe_claims "
-                    "set effect_digest=?, operations_json=?, updated_at=current_timestamp "
-                    "where action_identity=? and effect_digest=?",
-                    (digest, _json_dump(validated), action_identity, stale_digest),
-                ).rowcount
-                moved_receipt = db.execute(
-                    "update email_unsubscribe_receipts set effect_digest=? "
-                    "where action_identity=? and effect_digest=?",
-                    (digest, action_identity, stale_digest),
-                ).rowcount
+                mutation_values = {"effect_digest": digest}
+                mutation_rows = db.execute(
+                    f"""select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=? and effect_digest=?""",
+                    (action_identity, stale_digest),
+                ).fetchall()
+                moved_steps = sum(
+                    update_action(
+                        db, "email_unsubscribe_steps", source_row["id"], mutation_values
+                    ).rowcount
+                    for source_row in mutation_rows
+                )
+                mutation_timestamp = db.execute("select current_timestamp").fetchone()[
+                    0
+                ]
+                mutation_values = {
+                    "effect_digest": digest,
+                    "operations_json": _json_dump(validated),
+                    "updated_at": mutation_timestamp,
+                }
+                mutation_rows = db.execute(
+                    f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and effect_digest=?""",
+                    (action_identity, stale_digest),
+                ).fetchall()
+                moved_claim = sum(
+                    update_email_action(
+                        db,
+                        "email_unsubscribe_claims",
+                        source_row["rowid"],
+                        mutation_values,
+                    ).rowcount
+                    for source_row in mutation_rows
+                )
+                mutation_values = {"effect_digest": digest}
+                mutation_rows = db.execute(
+                    f"""select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=? and effect_digest=?""",
+                    (action_identity, stale_digest),
+                ).fetchall()
+                moved_receipt = sum(
+                    update_email_action(
+                        db,
+                        "email_unsubscribe_receipts",
+                        source_row["rowid"],
+                        mutation_values,
+                    ).rowcount
+                    for source_row in mutation_rows
+                )
                 still_referenced = db.execute(
-                    """
+                    f"""
                     select
-                      (select count(*) from email_unsubscribe_steps
+                      (select count(*) from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                         where action_identity=? and effect_digest=?) as steps,
-                      (select count(*) from email_unsubscribe_claims
+                      (select count(*) from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL})
                         where action_identity=? and effect_digest=?) as claims,
-                      (select count(*) from email_unsubscribe_receipts
+                      (select count(*) from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                         where action_identity=? and effect_digest=?) as receipts,
-                      (select count(*) from email_unsubscribe_continuations
+                      (select count(*) from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL})
                         where action_identity=? and effect_digest=?) as continuations,
-                      (select count(*) from email_unsubscribe_effects
+                      (select count(*) from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})
                         where action_identity=? and previous_effect_digest=?) as children
                     """,
                     (action_identity, stale_digest) * 5,
                 ).fetchone()
-                if not any(int(still_referenced[key]) for key in still_referenced.keys()):
-                    db.execute(
-                        "delete from email_unsubscribe_effects "
-                        "where action_identity=? and effect_digest=?",
+                if not any(
+                    int(still_referenced[key]) for key in still_referenced.keys()
+                ):
+                    mutation_rows = db.execute(
+                        f"""select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=? and effect_digest=?""",
                         (action_identity, stale_digest),
-                    )
+                    ).fetchall()
+                    for source_row in mutation_rows:
+                        delete_action(
+                            db,
+                            "email_unsubscribe_effects",
+                            (
+                                source_row["action_identity"],
+                                source_row["effect_digest"],
+                            ),
+                        )
                 repaired.append(
                     {
                         "stale_effect_digest": stale_digest,
@@ -11969,42 +11887,40 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if claim is None:
                 return False
-            db.execute(
-                """
-                update email_unsubscribe_claims
-                   set effect_digest=?, operations_json=?, status='done',
-                       phase='terminal', owner_id=?, owner_generation=1,
-                       lease_token=?, updated_at=?
-                 where action_identity=?
-                """,
-                (
-                    effect_digest,
-                    _json_dump(validated_operations),
-                    _DIRECT_UNSUBSCRIBE_OWNER_ID,
-                    f"direct-unsubscribe:{effect_digest[:24]}",
-                    now,
-                    action_identity,
-                ),
-            )
-            db.execute(
-                """
-                insert or ignore into email_unsubscribe_effects (
-                    action_identity, effect_digest, previous_effect_digest,
-                    operations_json, created_at
-                ) values (?, ?, ?, ?, ?)
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    previous_effect_digest,
-                    _json_dump(validated_operations),
-                    now,
-                ),
+            mutation_values = {
+                "effect_digest": effect_digest,
+                "operations_json": _json_dump(validated_operations),
+                "status": "done",
+                "phase": "terminal",
+                "owner_id": _DIRECT_UNSUBSCRIBE_OWNER_ID,
+                "owner_generation": 1,
+                "lease_token": f"direct-unsubscribe:{effect_digest[:24]}",
+                "updated_at": now,
+            }
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
+                (action_identity,),
+            ).fetchall()
+            for source_row in mutation_rows:
+                update_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
+                )
+            insert_action(
+                db,
+                "email_unsubscribe_effects",
+                {
+                    "action_identity": action_identity,
+                    "effect_digest": effect_digest,
+                    "previous_effect_digest": previous_effect_digest,
+                    "operations_json": _json_dump(validated_operations),
+                    "created_at": now,
+                },
+                ignore=True,
             )
             return True
 
@@ -12021,20 +11937,17 @@ class EmailStore:
         recovered_at = _required_utc_timestamp(recovered_at, field="recovered_at")
         with self._connect() as db:
             db.execute("begin immediate")
-            return db.execute(
-                """
-                update email_unsubscribe_claims
-                set status='uncertain', updated_at=?
-                where status='dispatching' and owner_id=?
-                  and owner_generation=? and lease_token=?
-                """,
-                (
-                    recovered_at,
-                    owner["owner_id"],
-                    owner["generation"],
-                    owner["lease_token"],
-                ),
-            ).rowcount
+            mutation_values = {"status": "uncertain", "updated_at": recovered_at}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
+                (owner["owner_id"], owner["generation"], owner["lease_token"]),
+            ).fetchall()
+            return sum(
+                update_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
+                ).rowcount
+                for source_row in mutation_rows
+            )
 
     def mark_email_unsubscribe_uncertain(
         self,
@@ -12045,21 +11958,26 @@ class EmailStore:
         owner = _validate_email_unsubscribe_owner(owner)
         with self._connect() as db:
             db.execute("begin immediate")
-            updated = db.execute(
-                """
-                update email_unsubscribe_claims
-                set status='uncertain', phase='effect_uncertain', updated_at=?
-                where action_identity=? and status='dispatching'
-                  and owner_id=? and owner_generation=? and lease_token=?
-                """,
+            mutation_values = {
+                "status": "uncertain",
+                "phase": "effect_uncertain",
+                "updated_at": self._now(),
+            }
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
                 (
-                    self._now(),
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).rowcount
+            ).fetchall()
+            updated = sum(
+                update_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if updated != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe claim owner fence changed"
@@ -12078,7 +11996,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if claim is None or any(
@@ -12096,13 +12014,13 @@ class EmailStore:
                     "unsubscribe failed claim owner fence changed"
                 )
             related = db.execute(
-                """
+                f"""
                 select
-                    (select count(*) from email_unsubscribe_steps
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                      where action_identity=?) as steps,
-                    (select count(*) from email_unsubscribe_receipts
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                      where action_identity=?) as receipts,
-                    (select count(*) from email_unsubscribe_continuations
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL})
                      where action_identity=?) as continuations
                 """,
                 (action_identity, action_identity, action_identity),
@@ -12111,15 +12029,28 @@ class EmailStore:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe failed operation has durable browser state"
                 )
-            deleted_effect = db.execute(
-                "delete from email_unsubscribe_effects "
-                "where action_identity=? and effect_digest=?",
+            mutation_rows = db.execute(
+                f"""select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=? and effect_digest=?""",
                 (action_identity, effect_digest),
-            ).rowcount
-            deleted_claim = db.execute(
-                "delete from email_unsubscribe_claims where action_identity=?",
+            ).fetchall()
+            deleted_effect = sum(
+                delete_action(
+                    db,
+                    "email_unsubscribe_effects",
+                    (source_row["action_identity"], source_row["effect_digest"]),
+                ).rowcount
+                for source_row in mutation_rows
+            )
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
                 (action_identity,),
-            ).rowcount
+            ).fetchall()
+            deleted_claim = sum(
+                delete_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"]
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if deleted_effect != 1 or deleted_claim != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe failed operation changed concurrently"
@@ -12138,7 +12069,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             audit = db.execute(
@@ -12178,15 +12109,15 @@ class EmailStore:
                     "unsubscribe retry is not bound to the failed Audit claim"
                 )
             related = db.execute(
-                """
+                f"""
                 select
-                    (select count(*) from email_unsubscribe_steps
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                      where action_identity=?) as steps,
-                    (select count(*) from email_unsubscribe_receipts
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                      where action_identity=?) as receipts,
-                    (select count(*) from email_unsubscribe_continuations
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_CONTINUATION_SQL})
                      where action_identity=?) as continuations,
-                    (select count(*) from email_unsubscribe_effects
+                    (select count(*) from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL})
                      where action_identity=?) as effects
                 """,
                 (action_identity,) * 4,
@@ -12201,14 +12132,28 @@ class EmailStore:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe explicit retry has durable browser state"
                 )
-            deleted_effect = db.execute(
-                "delete from email_unsubscribe_effects where action_identity=?",
+            mutation_rows = db.execute(
+                f"""select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=?""",
                 (action_identity,),
-            ).rowcount
-            deleted_claim = db.execute(
-                "delete from email_unsubscribe_claims where action_identity=?",
+            ).fetchall()
+            deleted_effect = sum(
+                delete_action(
+                    db,
+                    "email_unsubscribe_effects",
+                    (source_row["action_identity"], source_row["effect_digest"]),
+                ).rowcount
+                for source_row in mutation_rows
+            )
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
                 (action_identity,),
-            ).rowcount
+            ).fetchall()
+            deleted_claim = sum(
+                delete_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"]
+                ).rowcount
+                for source_row in mutation_rows
+            )
             if deleted_effect != 1 or deleted_claim != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe explicit retry changed concurrently"
@@ -12237,7 +12182,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if row is None:
@@ -12261,13 +12206,20 @@ class EmailStore:
                     "unsubscribe phase owner fence changed"
                 )
             if current != phase:
-                db.execute(
-                    "update email_unsubscribe_claims set phase=?, updated_at=? "
-                    "where action_identity=?",
-                    (phase, self._now(), action_identity),
-                )
+                mutation_values = {"phase": phase, "updated_at": self._now()}
+                mutation_rows = db.execute(
+                    f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
+                    (action_identity,),
+                ).fetchall()
+                for source_row in mutation_rows:
+                    update_email_action(
+                        db,
+                        "email_unsubscribe_claims",
+                        source_row["rowid"],
+                        mutation_values,
+                    )
             updated = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert updated is not None
@@ -12387,7 +12339,10 @@ class EmailStore:
         # it took, and none of those steps had a lease to write itself under.
         # They are written here, with the terminal one last.
         validated_steps: list[dict[str, object]] = []
-        for step in (*journal_steps, *((final_step,) if final_step is not None else ())):
+        for step in (
+            *journal_steps,
+            *((final_step,) if final_step is not None else ()),
+        ):
             if set(step) != {"sequence", "operation", "state", "reference"}:
                 raise ValueError("unsubscribe terminal step fields are invalid")
             _require_positive_int(step["sequence"], field="sequence")
@@ -12397,9 +12352,7 @@ class EmailStore:
                     "operation": _validate_unsubscribe_opaque(
                         step["operation"], field="operation"
                     ),
-                    "state": _validate_unsubscribe_opaque(
-                        step["state"], field="state"
-                    ),
+                    "state": _validate_unsubscribe_opaque(step["state"], field="state"),
                     "reference": _validate_unsubscribe_opaque(
                         step["reference"], field="reference"
                     ),
@@ -12408,15 +12361,15 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             plan = db.execute(
-                """
+                f"""
                 select plans.*, classifications.stable_message_identity
                   as classification_message_identity,
                        messages.account_id as message_account_id,
                        messages.thread_identity as message_thread_identity
-                from email_action_plans as plans
-                join email_classifications as classifications
+                from ({EMAIL_PLAN_SQL}) as plans
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=plans.classification_id
-                join email_messages as messages
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -12452,7 +12405,7 @@ class EmailStore:
                     "unsubscribe terminal evidence does not match immutable plan"
                 )
             claim = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             expected_claim = {**binding, "operations": validated_operations}
@@ -12462,51 +12415,45 @@ class EmailStore:
                         "unsubscribe continuation terminal is missing its prefix claim"
                     )
                 account = db.execute(
-                    "select updated_at from email_accounts where account_id=?",
+                    f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
                     (account_id,),
                 ).fetchone()
-                db.execute(
-                    """
-                    insert into email_unsubscribe_claims (
-                        action_identity, effect_digest, action_plan_id,
-                        action_plan_version, classification_id, account_id,
-                        stable_message_identity, thread_identity, entry_reference,
-                        operations_json, owner_id, owner_generation, lease_token,
-                        account_updated_at, status, phase, claimed_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              'reconciliation', 1, ?, ?, 'done', 'terminal', ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        action_plan_id,
-                        action_plan_version,
-                        classification_id,
-                        account_id,
-                        stable_message_identity,
-                        thread_identity,
-                        entry_reference,
-                        _json_dump(validated_operations),
-                        f"receipt-{effect_digest[:24]}",
-                        account["updated_at"] if account is not None else "historical",
-                        created_at,
-                        created_at,
-                    ),
+                insert_email_action(
+                    db,
+                    "email_unsubscribe_claims",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "action_plan_id": action_plan_id,
+                        "action_plan_version": action_plan_version,
+                        "classification_id": classification_id,
+                        "account_id": account_id,
+                        "stable_message_identity": stable_message_identity,
+                        "thread_identity": thread_identity,
+                        "entry_reference": entry_reference,
+                        "operations_json": _json_dump(validated_operations),
+                        "owner_id": "reconciliation",
+                        "owner_generation": 1,
+                        "lease_token": f"receipt-{effect_digest[:24]}",
+                        "account_updated_at": account["updated_at"]
+                        if account is not None
+                        else "historical",
+                        "status": "done",
+                        "phase": "terminal",
+                        "claimed_at": created_at,
+                        "updated_at": created_at,
+                    },
                 )
-                db.execute(
-                    """
-                    insert into email_unsubscribe_effects (
-                        action_identity, effect_digest, previous_effect_digest,
-                        operations_json, created_at
-                    ) values (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        previous_effect_digest,
-                        _json_dump(validated_operations),
-                        created_at,
-                    ),
+                insert_action(
+                    db,
+                    "email_unsubscribe_effects",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "previous_effect_digest": previous_effect_digest,
+                        "operations_json": _json_dump(validated_operations),
+                        "created_at": created_at,
+                    },
                 )
             else:
                 persisted_claim = self._email_unsubscribe_claim_row(claim)
@@ -12530,7 +12477,7 @@ class EmailStore:
                             "unsubscribe claim completion requires its owner fence"
                         )
             existing_receipt = db.execute(
-                "select * from email_unsubscribe_receipts where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             # entry_url is deliberately absent from this comparison: it is the
@@ -12550,39 +12497,31 @@ class EmailStore:
                 "completed_at": completed_at,
             }
             if existing_receipt is None:
-                db.execute(
-                    """
-                    insert into email_unsubscribe_receipts (
-                        action_identity, effect_digest, action_plan_id,
-                        action_plan_version, classification_id, account_id,
-                        stable_message_identity, thread_identity, entry_reference,
-                        entry_url, outcome, receipt_id, evidence, result_text,
-                        observation_digest, result_text_truncated,
-                        result_text_digest, started_at, completed_at, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        action_identity,
-                        effect_digest,
-                        action_plan_id,
-                        action_plan_version,
-                        classification_id,
-                        account_id,
-                        stable_message_identity,
-                        thread_identity,
-                        entry_reference,
-                        entry_url,
-                        outcome,
-                        receipt_id,
-                        evidence,
-                        normalized_result_text,
-                        observation_digest,
-                        int(result_text_truncated),
-                        result_text_digest,
-                        started_at,
-                        completed_at,
-                        created_at,
-                    ),
+                insert_email_action(
+                    db,
+                    "email_unsubscribe_receipts",
+                    {
+                        "action_identity": action_identity,
+                        "effect_digest": effect_digest,
+                        "action_plan_id": action_plan_id,
+                        "action_plan_version": action_plan_version,
+                        "classification_id": classification_id,
+                        "account_id": account_id,
+                        "stable_message_identity": stable_message_identity,
+                        "thread_identity": thread_identity,
+                        "entry_reference": entry_reference,
+                        "entry_url": entry_url,
+                        "outcome": outcome,
+                        "receipt_id": receipt_id,
+                        "evidence": evidence,
+                        "result_text": normalized_result_text,
+                        "observation_digest": observation_digest,
+                        "result_text_truncated": int(result_text_truncated),
+                        "result_text_digest": result_text_digest,
+                        "started_at": started_at,
+                        "completed_at": completed_at,
+                        "created_at": created_at,
+                    },
                 )
             else:
                 persisted_receipt = self._email_unsubscribe_receipt_row(
@@ -12597,42 +12536,37 @@ class EmailStore:
                     # An explicit retry may promote a page that the old
                     # detector misclassified. Attempt rows remain immutable
                     # history; this row is the current projection.
-                    db.execute(
-                        """
-                        update email_unsubscribe_receipts
-                           set effect_digest=?, action_plan_id=?,
-                               action_plan_version=?, classification_id=?,
-                               account_id=?, stable_message_identity=?,
-                               thread_identity=?, entry_reference=?,
-                               entry_url=?, outcome=?, receipt_id=?,
-                               evidence=?, result_text=?,
-                               observation_digest=?, result_text_truncated=?,
-                               result_text_digest=?, started_at=?,
-                               completed_at=?
-                         where action_identity=?
-                        """,
-                        (
-                            effect_digest,
-                            action_plan_id,
-                            action_plan_version,
-                            classification_id,
-                            account_id,
-                            stable_message_identity,
-                            thread_identity,
-                            entry_reference,
-                            entry_url,
-                            outcome,
-                            receipt_id,
-                            evidence,
-                            normalized_result_text,
-                            observation_digest,
-                            int(result_text_truncated),
-                            result_text_digest,
-                            started_at,
-                            completed_at,
-                            action_identity,
-                        ),
-                    )
+                    mutation_values = {
+                        "effect_digest": effect_digest,
+                        "action_plan_id": action_plan_id,
+                        "action_plan_version": action_plan_version,
+                        "classification_id": classification_id,
+                        "account_id": account_id,
+                        "stable_message_identity": stable_message_identity,
+                        "thread_identity": thread_identity,
+                        "entry_reference": entry_reference,
+                        "entry_url": entry_url,
+                        "outcome": outcome,
+                        "receipt_id": receipt_id,
+                        "evidence": evidence,
+                        "result_text": normalized_result_text,
+                        "observation_digest": observation_digest,
+                        "result_text_truncated": int(result_text_truncated),
+                        "result_text_digest": result_text_digest,
+                        "started_at": started_at,
+                        "completed_at": completed_at,
+                    }
+                    mutation_rows = db.execute(
+                        f"""select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?""",
+                        (action_identity,),
+                    ).fetchall()
+                    for source_row in mutation_rows:
+                        update_email_action(
+                            db,
+                            "email_unsubscribe_receipts",
+                            source_row["rowid"],
+                            mutation_values,
+                        )
                 elif any(
                     persisted_receipt[key] != value
                     for key, value in requested_receipt.items()
@@ -12642,15 +12576,15 @@ class EmailStore:
                     )
             for validated_step in validated_steps:
                 previous = db.execute(
-                    """
-                    select coalesce(max(sequence), 0) from email_unsubscribe_steps
+                    f"""
+                    select coalesce(max(sequence), 0) from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                     where action_identity=?
                     """,
                     (action_identity,),
                 ).fetchone()[0]
                 existing_step = db.execute(
-                    """
-                    select * from email_unsubscribe_steps
+                    f"""
+                    select * from ({EMAIL_UNSUBSCRIBE_STEP_SQL})
                     where action_identity=? and sequence=?
                     """,
                     (action_identity, validated_step["sequence"]),
@@ -12660,22 +12594,18 @@ class EmailStore:
                         raise EmailUnsubscribeClaimConflict(
                             "unsubscribe terminal journal is not contiguous"
                         )
-                    db.execute(
-                        """
-                        insert into email_unsubscribe_steps (
-                            action_identity, effect_digest, sequence, operation,
-                            state, reference, created_at
-                        ) values (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            action_identity,
-                            effect_digest,
-                            validated_step["sequence"],
-                            validated_step["operation"],
-                            validated_step["state"],
-                            validated_step["reference"],
-                            created_at,
-                        ),
+                    insert_action(
+                        db,
+                        "email_unsubscribe_steps",
+                        {
+                            "action_identity": action_identity,
+                            "effect_digest": effect_digest,
+                            "sequence": validated_step["sequence"],
+                            "operation": validated_step["operation"],
+                            "state": validated_step["state"],
+                            "reference": validated_step["reference"],
+                            "created_at": created_at,
+                        },
                     )
                 elif existing_step["effect_digest"] != effect_digest or any(
                     existing_step[key] != validated_step[key]
@@ -12684,21 +12614,29 @@ class EmailStore:
                     raise EmailUnsubscribeClaimConflict(
                         "unsubscribe terminal journal is bound differently"
                     )
-            db.execute(
-                """
-                update email_unsubscribe_claims
-                set status='done', phase='terminal', updated_at=?
-                where action_identity=?
-                  and status in ('dispatching', 'awaiting_audit', 'uncertain')
-                """,
-                (created_at, action_identity),
-            )
-            db.execute(
-                "delete from email_unsubscribe_continuations where action_identity=?",
+            mutation_values = {
+                "status": "done",
+                "phase": "terminal",
+                "updated_at": created_at,
+            }
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and status in ('dispatching', 'awaiting_audit', 'uncertain')""",
                 (action_identity,),
-            )
+            ).fetchall()
+            for source_row in mutation_rows:
+                update_email_action(
+                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
+                )
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CONTINUATION_LOCATOR_SQL}) where action_identity=?""",
+                (action_identity,),
+            ).fetchall()
+            for source_row in mutation_rows:
+                delete_email_action(
+                    db, "email_unsubscribe_continuations", source_row["rowid"]
+                )
             row = db.execute(
-                "select * from email_unsubscribe_receipts where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
             assert row is not None
@@ -12710,7 +12648,7 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_unsubscribe_receipts where action_identity=?",
+                f"select * from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_unsubscribe_receipt_row(row)
@@ -12769,7 +12707,7 @@ class EmailStore:
             db.execute("begin immediate")
             if (
                 db.execute(
-                    "select 1 from email_accounts where account_id=?",
+                    f"select 1 from ({config_projection('email_accounts')}) where account_id=?",
                     (values["account_id"],),
                 ).fetchone()
                 is not None
@@ -12788,7 +12726,7 @@ class EmailStore:
             )
             self._validate_category_binding_completeness(db)
             row = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (values["account_id"],),
             ).fetchone()
         assert row is not None
@@ -12828,7 +12766,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
             if existing is None:
@@ -12841,53 +12779,36 @@ class EmailStore:
                 allow_shared_email=allow_shared_email,
                 excluding_account_id=account_id,
             )
-            db.execute(
-                """
-                update email_accounts set
-                    display_name=?, email_address=?, imap_host=?, imap_port=?,
-                    imap_tls=?, imap_username=?, imap_secret_reference=?,
-                    imap_move_mode=?,
-                    smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
-                    smtp_secret_reference=?, enabled=?, scan_folders_json=?,
-                    scan_interval_seconds=?, agent_lookback_days=?,
-                    model_lookback_days=?, scan_read_state=?, updated_at=?
-                where account_id=?
-                """,
-                (
-                    values["display_name"],
-                    values["email_address"],
-                    values["imap_host"],
-                    values["imap_port"],
-                    int(bool(values["imap_tls"])),
-                    values["imap_username"],
-                    values["imap_secret_reference"],
-                    # A save that does not mention the move mode keeps it. The
-                    # console never sends it, and falling back to "move" turned
-                    # a server with no MOVE command into one whose every move
-                    # failed, the moment its owner flipped an unrelated switch.
-                    values.get("imap_move_mode", existing["imap_move_mode"]),
-                    values["smtp_host"],
-                    values["smtp_port"],
-                    int(bool(values["smtp_tls"])),
-                    values["smtp_username"],
-                    values["smtp_secret_reference"],
-                    int(bool(values["enabled"])),
-                    _json_dump(list(values["scan_folders"])),
-                    values["scan_interval_seconds"],
-                    int(values.get("agent_lookback_days", existing["agent_lookback_days"])),
-                    int(values.get("model_lookback_days", existing["model_lookback_days"])),
-                    str(values.get("scan_read_state", existing["scan_read_state"])),
-                    updated_at,
-                    account_id,
-                ),
-            )
+            update_config(db, "email_accounts", _config_source_rowid(db, "email_accounts", "account_id", account_id), {
+                "display_name": values["display_name"],
+                "email_address": values["email_address"],
+                "imap_host": values["imap_host"],
+                "imap_port": values["imap_port"],
+                "imap_tls": int(bool(values["imap_tls"])),
+                "imap_username": values["imap_username"],
+                "imap_secret_reference": values["imap_secret_reference"],
+                # A save that does not mention the move mode keeps it.
+                "imap_move_mode": values.get("imap_move_mode", existing["imap_move_mode"]),
+                "smtp_host": values["smtp_host"],
+                "smtp_port": values["smtp_port"],
+                "smtp_tls": int(bool(values["smtp_tls"])),
+                "smtp_username": values["smtp_username"],
+                "smtp_secret_reference": values["smtp_secret_reference"],
+                "enabled": int(bool(values["enabled"])),
+                "scan_folders_json": _json_dump(list(values["scan_folders"])),
+                "scan_interval_seconds": values["scan_interval_seconds"],
+                "agent_lookback_days": int(values.get("agent_lookback_days", existing["agent_lookback_days"])),
+                "model_lookback_days": int(values.get("model_lookback_days", existing["model_lookback_days"])),
+                "scan_read_state": str(values.get("scan_read_state", existing["scan_read_state"])),
+                "updated_at": updated_at,
+            })
             category_snapshot = self._disable_categories_missing_active_bindings(
                 db,
                 updated_at=updated_at,
             )
             self._validate_category_binding_completeness(db)
             row = db.execute(
-                "select * from email_accounts where account_id=?",
+                f"select * from ({config_projection('email_accounts')}) where account_id=?",
                 (account_id,),
             ).fetchone()
         assert row is not None
@@ -12909,17 +12830,22 @@ class EmailStore:
                 )
             ):
                 return False
-            cursor = db.execute(
-                "delete from email_accounts where account_id=? and updated_at=?",
-                (account_id, expected_updated_at),
+            current = db.execute(
+                f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
+                (account_id,),
+            ).fetchone()
+            deleted = (
+                delete_config(db, "email_accounts", _config_source_rowid(db, "email_accounts", "account_id", account_id))
+                if current is not None and current["updated_at"] == expected_updated_at
+                else 0
             )
-            if cursor.rowcount == 1 and category_enablement_snapshot is not None:
+            if deleted == 1 and category_enablement_snapshot is not None:
                 self._restore_category_enablement_snapshot(
                     db,
                     category_enablement_snapshot,
                 )
                 self._validate_category_binding_completeness(db)
-        return cursor.rowcount == 1
+        return deleted == 1
 
     def restore_account_if_unchanged(
         self,
@@ -12937,45 +12863,36 @@ class EmailStore:
                 )
             ):
                 return False
-            cursor = db.execute(
-                """
-                update email_accounts set
-                    display_name=?, email_address=?, imap_host=?, imap_port=?,
-                    imap_tls=?, imap_username=?, imap_secret_reference=?,
-                    imap_move_mode=?,
-                    smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
-                    smtp_secret_reference=?, enabled=?, scan_folders_json=?,
-                    scan_interval_seconds=?, agent_lookback_days=?,
-                    model_lookback_days=?, scan_read_state=?, created_at=?, updated_at=?
-                where account_id=? and updated_at=?
-                """,
-                (
-                    snapshot["display_name"],
-                    snapshot["email_address"],
-                    snapshot["imap_host"],
-                    snapshot["imap_port"],
-                    int(bool(snapshot["imap_tls"])),
-                    snapshot["imap_username"],
-                    snapshot["imap_secret_reference"],
-                    snapshot.get("imap_move_mode", "move"),
-                    snapshot["smtp_host"],
-                    snapshot["smtp_port"],
-                    int(bool(snapshot["smtp_tls"])),
-                    snapshot["smtp_username"],
-                    snapshot["smtp_secret_reference"],
-                    int(bool(snapshot["enabled"])),
-                    _json_dump(list(snapshot["scan_folders"])),
-                    snapshot["scan_interval_seconds"],
-                    int(snapshot.get("agent_lookback_days", 30)),
-                    int(snapshot.get("model_lookback_days", 365)),
-                    str(snapshot.get("scan_read_state", "unread")),
-                    snapshot["created_at"],
-                    snapshot["updated_at"],
-                    snapshot["account_id"],
-                    expected_updated_at,
-                ),
-            )
-            if cursor.rowcount == 1:
+            current = db.execute(
+                f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
+                (snapshot["account_id"],),
+            ).fetchone()
+            restored = 0
+            if current is not None and current["updated_at"] == expected_updated_at:
+                restored = update_config(db, "email_accounts", _config_source_rowid(db, "email_accounts", "account_id", snapshot["account_id"]), {
+                    "display_name": snapshot["display_name"],
+                    "email_address": snapshot["email_address"],
+                    "imap_host": snapshot["imap_host"],
+                    "imap_port": snapshot["imap_port"],
+                    "imap_tls": int(bool(snapshot["imap_tls"])),
+                    "imap_username": snapshot["imap_username"],
+                    "imap_secret_reference": snapshot["imap_secret_reference"],
+                    "imap_move_mode": snapshot.get("imap_move_mode", "move"),
+                    "smtp_host": snapshot["smtp_host"],
+                    "smtp_port": snapshot["smtp_port"],
+                    "smtp_tls": int(bool(snapshot["smtp_tls"])),
+                    "smtp_username": snapshot["smtp_username"],
+                    "smtp_secret_reference": snapshot["smtp_secret_reference"],
+                    "enabled": int(bool(snapshot["enabled"])),
+                    "scan_folders_json": _json_dump(list(snapshot["scan_folders"])),
+                    "scan_interval_seconds": snapshot["scan_interval_seconds"],
+                    "agent_lookback_days": int(snapshot.get("agent_lookback_days", 30)),
+                    "model_lookback_days": int(snapshot.get("model_lookback_days", 365)),
+                    "scan_read_state": str(snapshot.get("scan_read_state", "unread")),
+                    "created_at": snapshot["created_at"],
+                    "updated_at": snapshot["updated_at"],
+                })
+            if restored == 1:
                 if category_enablement_snapshot is None:
                     self._disable_categories_missing_active_bindings(
                         db,
@@ -12987,7 +12904,7 @@ class EmailStore:
                         category_enablement_snapshot,
                     )
                 self._validate_category_binding_completeness(db)
-        return cursor.rowcount == 1
+        return restored == 1
 
     @staticmethod
     def _categories_missing_active_bindings(
@@ -13002,10 +12919,10 @@ class EmailStore:
         """
 
         rows = db.execute(
-            """
+            f"""
             select configs.category_key
-            from email_category_configs as configs
-            left join email_category_folder_bindings as bindings
+            from ({config_projection('email_category_configs')}) as configs
+            left join ({config_projection('email_category_folder_bindings')}) as bindings
               on bindings.category_key=configs.category_key
              and bindings.account_id=?
             where coalesce(bindings.binding_status, '') != 'active'
@@ -13013,7 +12930,7 @@ class EmailStore:
                 configs.enabled=1
                 or bindings.account_id is not null
                 or exists (
-                    select 1 from email_category_folder_bindings as elsewhere
+                    select 1 from ({config_projection('email_category_folder_bindings')}) as elsewhere
                     where elsewhere.category_key=configs.category_key
                       and elsewhere.binding_status='active'
                 )
@@ -13053,18 +12970,14 @@ class EmailStore:
                 if not self._bindings_cover_enabled_accounts(db, state.category_key):
                     still_disabled.append(state.category_key)
                     continue
-                db.execute(
-                    """
-                    update email_category_configs set enabled=?, updated_at=?
-                    where category_key=? and enabled=0 and updated_at=?
-                    """,
-                    (
-                        int(state.enabled),
-                        now,
-                        state.category_key,
-                        state.mutation_updated_at,
-                    ),
-                )
+                row = db.execute(
+                    f"select enabled, updated_at from ({config_projection('email_category_configs')}) "
+                    "where category_key=?", (state.category_key,),
+                ).fetchone()
+                if row is not None and row["enabled"] == 0 and row["updated_at"] == state.mutation_updated_at:
+                    update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", state.category_key), {
+                        "enabled": int(state.enabled), "updated_at": now,
+                    })
             self._validate_category_binding_completeness(db)
         return tuple(sorted(still_disabled))
 
@@ -13075,40 +12988,27 @@ class EmailStore:
         updated_at: str,
     ) -> EmailCategoryEnablementSnapshot:
         rows = db.execute(
-            """
-            select category_key, enabled, updated_at
-            from email_category_configs
+            f"""
+            select configs.category_key, configs.enabled, configs.updated_at
+            from ({config_projection('email_category_configs')}) as configs
             where enabled=1 and exists (
-                select 1 from email_accounts as accounts
+                select 1 from ({config_projection('email_accounts')}) as accounts
                 where accounts.enabled=1
                   and not exists (
-                      select 1 from email_category_folder_bindings as bindings
+                      select 1 from ({config_projection('email_category_folder_bindings')}) as bindings
                       where bindings.account_id=accounts.account_id
                         and bindings.category_key=
-                            email_category_configs.category_key
+                            configs.category_key
                         and bindings.binding_status='active'
                   )
             )
             order by category_key
             """
         ).fetchall()
-        db.execute(
-            """
-            update email_category_configs set enabled=0, updated_at=?
-            where enabled=1 and exists (
-                select 1 from email_accounts as accounts
-                where accounts.enabled=1
-                  and not exists (
-                      select 1 from email_category_folder_bindings as bindings
-                      where bindings.account_id=accounts.account_id
-                        and bindings.category_key=
-                            email_category_configs.category_key
-                        and bindings.binding_status='active'
-                  )
-            )
-            """,
-            (updated_at,),
-        )
+        for row in rows:
+            update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", row["category_key"]), {
+                "enabled": 0, "updated_at": updated_at,
+            })
         return EmailCategoryEnablementSnapshot(
             states=tuple(
                 EmailCategoryEnablementState(
@@ -13132,7 +13032,7 @@ class EmailStore:
             if type(state) is not EmailCategoryEnablementState:
                 return False
             row = db.execute(
-                "select enabled, updated_at from email_category_configs "
+                f"select enabled, updated_at from ({config_projection('email_category_configs')}) "
                 "where category_key=?",
                 (state.category_key,),
             ).fetchone()
@@ -13150,18 +13050,17 @@ class EmailStore:
         snapshot: EmailCategoryEnablementSnapshot,
     ) -> None:
         for state in snapshot.states:
-            updated = db.execute(
-                """
-                update email_category_configs set enabled=?, updated_at=?
-                where category_key=? and enabled=0 and updated_at=?
-                """,
-                (
-                    int(state.enabled),
-                    state.updated_at,
-                    state.category_key,
-                    state.mutation_updated_at,
-                ),
-            ).rowcount
+            row = db.execute(
+                f"select enabled, updated_at from ({config_projection('email_category_configs')}) "
+                "where category_key=?", (state.category_key,),
+            ).fetchone()
+            updated = (
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", state.category_key), {
+                    "enabled": int(state.enabled), "updated_at": state.updated_at,
+                })
+                if row is not None and row["enabled"] == 0 and row["updated_at"] == state.mutation_updated_at
+                else 0
+            )
             if updated != 1:
                 raise EmailPersistenceCorruption(
                     "category enablement changed during account compensation"
@@ -13170,11 +13069,11 @@ class EmailStore:
     @staticmethod
     def _validate_category_binding_completeness(db: sqlite3.Connection) -> None:
         incomplete = db.execute(
-            """
+            f"""
             select configs.category_key, accounts.account_id
-            from email_category_configs as configs
-            cross join email_accounts as accounts
-            left join email_category_folder_bindings as bindings
+            from ({config_projection('email_category_configs')}) as configs
+            cross join ({config_projection('email_accounts')}) as accounts
+            left join ({config_projection('email_category_folder_bindings')}) as bindings
               on bindings.category_key=configs.category_key
              and bindings.account_id=accounts.account_id
              and bindings.binding_status='active'
@@ -13199,8 +13098,8 @@ class EmailStore:
         if allow_shared_email:
             return
         row = db.execute(
-            """
-            select 1 from email_accounts
+            f"""
+            select 1 from ({config_projection('email_accounts')})
             where lower(email_address)=lower(?) and account_id != ?
             """,
             (email_address, excluding_account_id),
@@ -13216,43 +13115,30 @@ class EmailStore:
         created_at: str,
         updated_at: str,
     ) -> None:
-        db.execute(
-            """
-            insert into email_accounts (
-                account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, imap_move_mode,
-                smtp_host,
-                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
-                enabled, scan_folders_json, scan_interval_seconds, created_at,
-                updated_at, agent_lookback_days, model_lookback_days,
-                scan_read_state
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                values["account_id"],
-                values["display_name"],
-                values["email_address"],
-                values["imap_host"],
-                values["imap_port"],
-                int(bool(values["imap_tls"])),
-                values["imap_username"],
-                values["imap_secret_reference"],
-                values.get("imap_move_mode", "move"),
-                values["smtp_host"],
-                values["smtp_port"],
-                int(bool(values["smtp_tls"])),
-                values["smtp_username"],
-                values["smtp_secret_reference"],
-                int(bool(values["enabled"])),
-                _json_dump(list(values["scan_folders"])),
-                values["scan_interval_seconds"],
-                created_at,
-                updated_at,
-                int(values.get("agent_lookback_days", 30)),
-                int(values.get("model_lookback_days", 365)),
-                str(values.get("scan_read_state", "unread")),
-            ),
-        )
+        insert_config(db, "email_accounts", {
+            "account_id": values["account_id"],
+            "display_name": values["display_name"],
+            "email_address": values["email_address"],
+            "imap_host": values["imap_host"],
+            "imap_port": values["imap_port"],
+            "imap_tls": int(bool(values["imap_tls"])),
+            "imap_username": values["imap_username"],
+            "imap_secret_reference": values["imap_secret_reference"],
+            "imap_move_mode": values.get("imap_move_mode", "move"),
+            "smtp_host": values["smtp_host"],
+            "smtp_port": values["smtp_port"],
+            "smtp_tls": int(bool(values["smtp_tls"])),
+            "smtp_username": values["smtp_username"],
+            "smtp_secret_reference": values["smtp_secret_reference"],
+            "enabled": int(bool(values["enabled"])),
+            "scan_folders_json": _json_dump(list(values["scan_folders"])),
+            "scan_interval_seconds": values["scan_interval_seconds"],
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "agent_lookback_days": int(values.get("agent_lookback_days", 30)),
+            "model_lookback_days": int(values.get("model_lookback_days", 365)),
+            "scan_read_state": str(values.get("scan_read_state", "unread")),
+        })
 
     @staticmethod
     def _account_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -13285,73 +13171,55 @@ class EmailStore:
             "updated_at": row["updated_at"],
         }
 
-    def list_classifications(
-        self,
-        *,
-        status: EmailClassificationStatus | None,
-        limit: int,
-        offset: int,
-        q: str = "",
-        category: str = "",
-        action_status: str = "",
-        source: str = "",
+    def classification_source_candidates(
+        self, *, status: EmailClassificationStatus | None,
+        limit: int | None = None, offset: int = 0, category: str = "",
+        action_status: str = "", source: str = "", unsubscribe: bool = False,
+        classification_id: int | None = None, preview_query: str = "",
     ) -> tuple[list[dict[str, Any]], int]:
-        """One page of classifications, newest first, optionally filtered.
+        """Existing business eligibility/order without reading either input body."""
+        from app.email_canonical_definitions import CLASS_FIELDS
 
-        `status=None` lists everything the owner sees on the "all" tab: mail
-        that is processed and mail waiting for a label, as one ordered list.
-        """
-
+        if offset < 0 or (limit is not None and limit <= 0):
+            raise ValueError("classification pagination is invalid")
         with self._connect() as db:
-            search, search_params = self._classification_search(db, q)
-            filters, filter_params = self._classification_filters(
-                category=category, action_status=action_status, source=source
-            )
-            statuses = (
-                (EmailClassificationStatus.PROCESSED, EmailClassificationStatus.PENDING_FEEDBACK)
-                if status is None
-                else (status,)
-            )
-            where = (
-                "classifications.status in ("
-                + ",".join("?" for _ in statuses)
-                + ")"
-                + search
-                + filters
-            )
-            params = (*(item.value for item in statuses), *search_params, *filter_params)
-            total = int(
-                db.execute(
-                    "select count(*) from email_classifications as classifications where "
-                    + where,
-                    params,
-                ).fetchone()[0]
-            )
+            if classification_id is not None:
+                where, params = "classifications.id=?", (classification_id,)
+            elif unsubscribe:
+                where, params = self._unsubscribe_classification_membership(db), ()
+            else:
+                statuses = ((EmailClassificationStatus.PROCESSED, EmailClassificationStatus.PENDING_FEEDBACK)
+                            if status is None else (status,))
+                filters, filter_params = self._classification_filters(
+                    category=category, action_status=action_status, source=source,
+                )
+                where = "classifications.status in (" + ",".join("?" for _ in statuses) + ")" + filters
+                params = (*(item.value for item in statuses), *filter_params)
+            if preview_query:
+                db.create_function("email_casefold", 1, str.casefold, deterministic=True)
+                where = "(" + where + ") and (" + " or ".join(
+                    "instr(email_casefold(coalesce(classifications." + field + ",'')),?)>0"
+                    for field in ("sender", "subject", "preview")
+                ) + ")"
+                params = (*params, preview_query, preview_query, preview_query)
+            total = db.execute(
+                f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications where " + where,
+                params,
+            ).fetchone()[0]
+            fields = ",".join('classifications."' + name + '"' for name in CLASS_FIELDS if name != "model_text")
+            pagination = " limit ? offset ?" if limit is not None else ""
             rows = db.execute(
-                """
-                select classifications.*,
-                       messages.normalized_text as message_text,
-                       messages.attachment_metadata_json
-                           as message_attachment_metadata_json
-                from email_classifications as classifications
-                left join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where """ + where + """
-                order by classifications.updated_at desc, classifications.id desc
-                limit ? offset ?
-                """,
-                (*params, limit, offset),
+                f"select {fields}, messages.attachment_metadata_json as message_attachment_metadata_json "
+                f"from ({EMAIL_CLASSIFICATION_SQL}) as classifications "
+                f"left join ({EMAIL_MESSAGE_SQL}) as messages "
+                "on messages.account_id=classifications.account_id "
+                "and messages.stable_message_identity=classifications.stable_message_identity "
+                "where " + where + " order by classifications.updated_at desc,classifications.id desc" + pagination,
+                (*params, limit, offset) if limit is not None else params,
             ).fetchall()
-            plan_rows = self._current_action_plan_rows(db, rows)
-        items = []
-        for row in rows:
-            message = Parser().parsestr(row["message_text"] or "")
-            item = self._classification_evidence_row(row, plan_rows)
-            item["message_text"] = _display_message_body(message)
-            items.append(item)
-        return items, total
+            plans = self._current_action_plan_rows(db, rows)
+        return [self._classification_evidence_row(row, plans) for row in rows], int(total)
+
 
     # What "action status" means to the owner, mapped onto the stored states.
     _ACTION_STATUS_FILTERS: ClassVar[Mapping[str, tuple[str, ...]]] = {
@@ -13386,7 +13254,7 @@ class EmailStore:
             wanted = action_status.strip()
             if wanted == "none":
                 clauses.append(
-                    " and not exists (select 1 from email_actions as filter_action"
+                    f" and not exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as filter_action"
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id)"
                 )
@@ -13397,7 +13265,7 @@ class EmailStore:
                 if wanted == "failed_not_retriable":
                     retriable_sql = f"not {retriable_sql}"
                 clauses.append(
-                    " and exists (select 1 from email_actions as filter_action"
+                    f" and exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as filter_action"
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id"
                     " and filter_action.status='failed'"
@@ -13408,7 +13276,7 @@ class EmailStore:
                 if statuses is None:
                     raise ValueError("action_status is invalid")
                 clauses.append(
-                    " and exists (select 1 from email_actions as filter_action"
+                    f" and exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as filter_action"
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id"
                     " and filter_action.status in ("
@@ -13437,11 +13305,11 @@ class EmailStore:
                 select actions.classification_id, actions.action_type,
                        actions.status, actions.error, actions.attempt_count,
                        actions.next_attempt_at, actions.provider_operation,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count+1) as explicit_retry_scheduled,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count+1) as explicit_retry_scheduled,
                        {_direct_retry_configuration_sql('actions')} as explicit_retry_configuration_matches
-                from email_actions as actions
-                join email_classifications as classifications
+                from ({EMAIL_DIRECT_ACTION_SQL}) as actions
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=actions.classification_id
                  and classifications.current_action_plan_id=actions.action_plan_id
                 where actions.classification_id in ("""
@@ -13466,105 +13334,45 @@ class EmailStore:
             states[int(row["classification_id"])].append(state)
         return states
 
+
     @staticmethod
-    def _classification_search(db: sqlite3.Connection, q: str) -> tuple[str, tuple[str, ...]]:
-        query = q.strip().casefold()
-        if not query:
-            return "", ()
-        db.create_function("email_casefold", 1, lambda value: (value or "").casefold(), deterministic=True)
-        db.create_function("email_visible_body", 1, lambda value: _display_message_body(Parser().parsestr(value or "")).casefold(), deterministic=True)
-        return """
-            and (
-                instr(email_casefold(classifications.sender), ?) > 0
-                or instr(email_casefold(classifications.subject), ?) > 0
-                or exists (
-                    select 1 from email_messages as search_message
-                    where search_message.account_id=classifications.account_id
-                      and search_message.stable_message_identity=classifications.stable_message_identity
-                      and instr(email_visible_body(search_message.normalized_text), ?) > 0
-                )
-            )
-        """, (query, query, query)
-
-    def list_unsubscribe_classifications(
-        self, *, limit: int, offset: int, q: str = ""
-    ) -> tuple[list[dict[str, Any]], int]:
-        """List every email with a durable unsubscribe lifecycle record.
-
-        A claim exists once Audit has accepted an effect; a receipt exists for
-        a terminal outcome.  Queued email tasks are included when the shared
-        task tables are available, so the Console can expose work before Audit
-        reaches the browser phase.
-        """
-        if limit <= 0 or offset < 0:
-            raise ValueError("unsubscribe list pagination is invalid")
-        with self._connect() as db:
-            search, search_params = self._classification_search(db, q)
-            task_tables = {
-                str(row["name"])
-                for row in db.execute(
-                    "select name from sqlite_master where type='table' "
-                    "and name in ('tasks', 'runs')"
-                ).fetchall()
-            }
-            task_clause = ""
-            if task_tables == {"tasks", "runs"}:
-                task_clause = f"""
-                    or classifications.id in (
-                        select json_extract(
-                                   tasks.trigger_message_json,
-                                   '$.classification_id'
-                               )
-                        from ({REPLY_TASK_CURRENT_SQL}) as tasks
-                        where tasks.channel='email'
-                          and json_valid(tasks.trigger_message_json)
-                          and json_extract(
-                                tasks.trigger_message_json,
-                                '$.action_type'
-                              )='unsubscribe'
-                    )
-                """
-            where = """
-                classifications.id in (
-                    select claims.classification_id
-                    from email_unsubscribe_claims as claims
-                )
-                or classifications.id in (
-                    select receipts.classification_id
-                    from email_unsubscribe_receipts as receipts
-                )
-            """ + task_clause
-            where = "(" + where + ")" + search
-            total = int(
-                db.execute(
-                    "select count(*) from email_classifications as classifications "
-                    f"where {where}", search_params
-                ).fetchone()[0]
-            )
-            rows = db.execute(
-                """
-                select classifications.*, messages.normalized_text as message_text,
-                       messages.attachment_metadata_json
-                           as message_attachment_metadata_json
-                from email_classifications as classifications
-                left join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where """ + where + """
-                order by classifications.updated_at desc, classifications.id desc
-                limit ? offset ?
-                """,
-                (*search_params, limit, offset),
+    def _unsubscribe_classification_membership(db: sqlite3.Connection) -> str:
+        task_tables = {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='table' "
+                "and name in ('tasks', 'runs')"
             ).fetchall()
-            plan_rows = self._current_action_plan_rows(db, rows)
-        items = []
-        for row in rows:
-            message = Parser().parsestr(row["message_text"] or "")
-            item = self._classification_evidence_row(row, plan_rows)
-            item["message_text"] = _display_message_body(message)
-            items.append(item)
-        return items, total
+        }
+        task_clause = ""
+        if task_tables == {"tasks", "runs"}:
+            task_clause = f"""
+                or classifications.id in (
+                    select json_extract(
+                               tasks.trigger_message_json,
+                               '$.classification_id'
+                           )
+                    from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                    where tasks.channel='email'
+                      and json_valid(tasks.trigger_message_json)
+                      and json_extract(
+                            tasks.trigger_message_json,
+                            '$.action_type'
+                          )='unsubscribe'
+                )
+            """
+        where = f"""
+            classifications.id in (
+                select claims.classification_id
+                from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) as claims
+            )
+            or classifications.id in (
+                select receipts.classification_id
+                from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) as receipts
+            )
+        """ + task_clause
+        return "(" + where + ")"
+
 
     @staticmethod
     def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -13585,7 +13393,6 @@ class EmailStore:
                 row["recipients_json"], field="recipients_json", expected_type=list
             ),
             "subject": row["subject"],
-            "normalized_text": row["normalized_text"],
             "attachment_metadata": _json_load(
                 row["attachment_metadata_json"],
                 field="attachment_metadata_json",
@@ -13600,15 +13407,27 @@ class EmailStore:
         account_id: str,
         stable_message_identity: str,
     ) -> list[dict[str, Any]]:
-        """Return the complete stored relation component for one message."""
+        """Return the complete relation component using only message metadata."""
 
         account_id = account_id.strip()
         stable_message_identity = stable_message_identity.strip()
         if not account_id or not stable_message_identity:
             raise ValueError("email context identity must be non-empty")
+        from app.email_canonical_definitions import canonical_column
+
+        fields = (
+            "id", "account_id", "stable_message_identity", "folder", "uidvalidity",
+            "uid", "rfc_message_id", "in_reply_to", "references_json", "thread_identity",
+            "sender", "recipients_json", "subject", "attachment_metadata_json", "received_at",
+        )
+        selected = ",".join(
+            f'{canonical_column("email_messages", field)} as "{field}"'
+            for field in fields
+        )
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_messages where account_id=? order by received_at, id",
+                f"select {selected} from main.emails where account_id=? "
+                "order by message_received_at, message_id",
                 (account_id,),
             ).fetchall()
         trigger = next(
@@ -13679,17 +13498,17 @@ class EmailStore:
 
         with self._connect() as db:
             reply_rows = db.execute(
-                """
+                f"""
                 select provider_result_id, provider_operation, display_excerpt, created_at
-                from email_reply_receipts
+                from ({EMAIL_REPLY_RECEIPT_SQL})
                 where account_id=? and stable_message_identity=?
                 """,
                 (account_id, stable_message_identity),
             ).fetchall()
             unsubscribe_rows = db.execute(
-                """
+                f"""
                 select receipt_id, outcome, created_at
-                from email_unsubscribe_receipts
+                from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                 where account_id=? and stable_message_identity=?
                 """,
                 (account_id, stable_message_identity),
@@ -13721,80 +13540,100 @@ class EmailStore:
         ]
 
     def get_classification(self, classification_id: int) -> dict[str, Any] | None:
+        """Return runtime identity, business state and recipient metadata only."""
+        from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
+
+        fields = ",".join(
+            f'{canonical_column("email_classifications", field)} as "{field}"'
+            for field in CLASS_FIELDS if field != "model_text"
+        )
         with self._connect() as db:
             row = db.execute(
-                """
-                select classifications.*, messages.normalized_text as message_text,
-                       messages.recipients_json as message_recipients_json,
-                       messages.attachment_metadata_json
-                           as message_attachment_metadata_json
-                from email_classifications as classifications
-                left join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where classifications.id=?
-                """,
+                f"select {fields}, message_recipients_json, message_attachment_metadata_json "
+                "from main.emails where classification_id=?",
                 (classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [row] if row else [])
         if row is None:
             return None
-        message = Parser().parsestr(row["message_text"] or "")
         return {
             **self._classification_evidence_row(row, plan_rows),
-            "message_text": _display_message_body(message),
-            "cc": message.get("Cc", ""),
-            # The stored body carries no header block for almost every message,
-            # so recipients read from its "To:" line came back empty and the
-            # console said 未提供 for mail whose recipients were saved.
             "recipients": _json_load(
                 row["message_recipients_json"] or "[]",
-                field="recipients_json",
-                expected_type=list,
+                field="recipients_json", expected_type=list,
             ),
         }
 
-    def owner_labelled_stamp(self) -> str:
-        """Changes whenever the owner labels or relabels a message; cheap to read."""
-
+    def count_unincluded_training_examples(self) -> int:
+        """Count the existing eligible owner-feedback set without loading inputs."""
         with self._connect() as db:
-            count, latest = db.execute(
-                """
-                select count(*), coalesce(max(updated_at), '')
-                from email_classifications
-                where classification_source='user'
-                  and coalesce(confirmed_category, '') != ''
-                """
-            ).fetchone()
-        return f"{count}:{latest}"
+            return int(db.execute(
+                "select count(*) from main.emails "
+                "where classification_id is not null "
+                "and class_classification_source='user' and class_status='processed' "
+                "and class_confirmed_category is not null and class_confirmed_category<>'' "
+                "and (trim(class_model_text)<>'' or json_type(message_source_reference_json,'$.model_input')='object') "
+                "and class_included_in_model_id is null"
+            ).fetchone()[0])
 
-    def owner_labelled_examples(self) -> tuple[list[dict[str, str]], str]:
+    def _owner_labelled_rows(self):
+        with self._connect() as db:
+            return db.execute(
+                """
+                select classification_id, account_id, stable_message_identity,
+                       class_sender as sender, class_subject as subject,
+                       class_model_text as model_text,
+                       class_confirmed_category as confirmed_category,
+                       class_updated_at as updated_at, message_source_reference_json
+                from emails
+                where classification_id is not null and class_classification_source='user'
+                  and coalesce(class_confirmed_category, '') != ''
+                order by classification_id
+                """
+            ).fetchall()
+
+    @staticmethod
+    def _owner_labelled_rows_stamp(rows) -> str:
+        """Same original bytes have the same identity before and after retirement."""
+        digest = sha256()
+        for row in rows:
+            text = str(row["model_text"])
+            reference = json.loads(row["message_source_reference_json"] or '{}')
+            model_reference = reference.get('model_input')
+            input_hash = (sha256(text.encode('utf-8')).hexdigest()
+                          if text or model_reference is None
+                          else model_reference['sha256'])
+            fields = [row[key] for key in (
+                'classification_id', 'account_id', 'stable_message_identity',
+                'sender', 'subject', 'confirmed_category', 'updated_at')]
+            digest.update(json.dumps([*fields, input_hash], ensure_ascii=False).encode('utf-8'))
+            digest.update(b'\n')
+        return digest.hexdigest()
+
+    def owner_labelled_stamp(self) -> str:
+        """Digest the existing owner facts; second-resolution clocks can coincide."""
+        return self._owner_labelled_rows_stamp(self._owner_labelled_rows())
+
+    def owner_labelled_examples(self, *, source_reader=None) -> tuple[list[dict[str, str]], str]:
         """Messages the owner has labelled, and the stamp they were read at.
 
         The Agent is shown the ones most like the message it is classifying, so
         it files mail the way the owner does.
         """
+        rows = self._owner_labelled_rows()
+        stamp = self._owner_labelled_rows_stamp(rows)
+        from app.email_model_input_reader import read_owner_model_inputs
 
-        stamp = self.owner_labelled_stamp()
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select stable_message_identity, sender, subject, model_text,
-                       confirmed_category
-                from email_classifications
-                where classification_source='user'
-                  and coalesce(confirmed_category, '') != ''
-                order by id
-                """
-            ).fetchall()
+        inputs = read_owner_model_inputs(self, rows, source_reader=source_reader)
+        if self.owner_labelled_stamp() != stamp:
+            raise ValueError("Email owner labels changed during input read")
         return (
             [
                 {
                     "identity": str(row["stable_message_identity"]),
                     "sender": str(row["sender"]),
                     "subject": str(row["subject"]),
-                    "text": str(row["model_text"]),
+                    "text": inputs[(row["account_id"], row["stable_message_identity"])],
                     "category": str(row["confirmed_category"]),
                 }
                 for row in rows
@@ -13805,9 +13644,16 @@ class EmailStore:
     def get_classification_by_stable_identity(
         self, stable_message_identity: str
     ) -> dict[str, Any] | None:
+        from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
+
+        fields = ",".join(
+            f'{canonical_column("email_classifications", field)} as "{field}"'
+            for field in CLASS_FIELDS if field != "model_text"
+        )
         with self._connect() as db:
             row = db.execute(
-                "select * from email_classifications where stable_message_identity=?",
+                f"select {fields} from main.emails "
+                "where stable_message_identity=? and classification_id is not null",
                 (stable_message_identity,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [row] if row else [])
@@ -13823,7 +13669,7 @@ class EmailStore:
         """Check durable row presence without claiming its plan is valid."""
         with self._connect() as db:
             return db.execute(
-                "select 1 from email_classifications where stable_message_identity=?",
+                f"select 1 from ({EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
                 (stable_message_identity,),
             ).fetchone() is not None
 
@@ -13852,7 +13698,7 @@ class EmailStore:
                 chunk = normalized[start : start + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
                 rows = db.execute(
-                    "select stable_message_identity from email_classifications "
+                    f"select stable_message_identity from ({EMAIL_CLASSIFICATION_SQL}) "
                     f"where stable_message_identity in ({placeholders})",
                     chunk,
                 ).fetchall()
@@ -13871,7 +13717,7 @@ class EmailStore:
 
         with self._connect() as db:
             receipt = db.execute(
-                "select entry_reference, entry_url from email_unsubscribe_receipts "
+                f"select entry_reference, entry_url from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) "
                 "where action_identity=?",
                 (action_identity,),
             ).fetchone()
@@ -13882,10 +13728,23 @@ class EmailStore:
             )
             if not validated:
                 return False
-            cursor = db.execute(
-                "update email_unsubscribe_receipts set entry_url=? "
-                "where action_identity=? and entry_url=''",
-                (validated, action_identity),
+            db.execute("begin immediate")
+            mutation_values = {"entry_url": validated}
+            mutation_rows = db.execute(
+                f"""select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=? and entry_url=''""",
+                (action_identity,),
+            ).fetchall()
+            cursor = ActionWriteResult(
+                None,
+                sum(
+                    update_email_action(
+                        db,
+                        "email_unsubscribe_receipts",
+                        source_row["rowid"],
+                        mutation_values,
+                    ).rowcount
+                    for source_row in mutation_rows
+                ),
             )
             return cursor.rowcount == 1
 
@@ -13906,13 +13765,13 @@ class EmailStore:
             if generic_tables != {"tasks", "runs"}:
                 return None
             classification = db.execute(
-                """
+                f"""
                 select classifications.id, classifications.account_id,
                        classifications.stable_message_identity,
                        classifications.current_action_plan_id,
                        messages.thread_identity as message_thread_identity
-                from email_classifications as classifications
-                join email_messages as messages
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -13923,12 +13782,12 @@ class EmailStore:
             if classification is None:
                 return None
             receipts = db.execute(
-                """
+                f"""
                 select action_identity, effect_digest, action_plan_id,
                        action_plan_version, classification_id, account_id,
                        stable_message_identity, thread_identity, entry_reference,
                        entry_url
-                from email_unsubscribe_receipts
+                from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                 where classification_id=? and trim(entry_url) != ''
                 order by created_at desc, action_identity desc
                 """,
@@ -13954,8 +13813,8 @@ class EmailStore:
     ) -> frozenset[int]:
         with self._connect() as db:
             rows = db.execute(
-                """
-                select uid from email_classifications
+                f"""
+                select uid from ({EMAIL_CLASSIFICATION_SQL})
                 where account_id=? and folder=? and uidvalidity=?
                 """,
                 (account_id, folder, uidvalidity),
@@ -13969,9 +13828,9 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select uid, stable_message_identity, subject, sender
-                from email_classifications
+                from ({EMAIL_CLASSIFICATION_SQL})
                 where account_id=? and folder=? and uidvalidity=?
                 """,
                 (account_id, folder, uidvalidity),
@@ -13993,9 +13852,9 @@ class EmailStore:
         with self._connect() as db:
             if uidvalidity is None:
                 rows = db.execute(
-                    """
+                    f"""
                     select uid, folder, stable_message_identity, subject, sender
-                    from email_classifications
+                    from ({EMAIL_CLASSIFICATION_SQL})
                     where account_id=?
                     order by updated_at desc, id desc
                     limit 50
@@ -14004,9 +13863,9 @@ class EmailStore:
                 ).fetchall()
             else:
                 rows = db.execute(
-                    """
+                    f"""
                     select uid, folder, stable_message_identity, subject, sender
-                    from email_classifications
+                    from ({EMAIL_CLASSIFICATION_SQL})
                     where account_id=? and uidvalidity=?
                     order by updated_at desc, id desc
                     limit 50
@@ -14082,13 +13941,13 @@ class EmailStore:
         _require_positive_int(classification_id, field="classification_id")
         with self._connect_or_reuse(db) as db:
             classification = db.execute(
-                """
+                f"""
                 select classifications.id, classifications.account_id,
                        classifications.stable_message_identity,
                        classifications.current_action_plan_id,
                        messages.thread_identity as message_thread_identity
-                from email_classifications as classifications
-                join email_messages as messages
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
@@ -14099,24 +13958,24 @@ class EmailStore:
             if classification is None:
                 return []
             action_rows = db.execute(
-                """
+                f"""
                 select action_id, action_type, status, attempt_count,
                        provider_operation, provider_result_id, error,
                        started_at, finished_at, created_at
-                from email_actions
+                from ({EMAIL_DIRECT_ACTION_SQL})
                 where classification_id=?
                 order by created_at, action_id
                 """,
                 (classification_id,),
             ).fetchall()
             attempts = db.execute(
-                """
+                f"""
                 select attempts.action_id, attempts.attempt_number,
                        attempts.status, attempts.provider_operation,
                        attempts.provider_result_id, attempts.error,
                        attempts.started_at, attempts.finished_at
-                from email_action_attempts as attempts
-                join email_actions as actions
+                from ({EMAIL_ATTEMPT_SQL}) as attempts
+                join ({EMAIL_DIRECT_ACTION_SQL}) as actions
                   on actions.action_id=attempts.action_id
                 where actions.classification_id=?
                 order by attempts.action_id, attempts.attempt_number
@@ -14124,24 +13983,24 @@ class EmailStore:
                 (classification_id,),
             ).fetchall()
             reply_rows = db.execute(
-                """
+                f"""
                 select action_identity, provider_operation, provider_result_id,
                        display_excerpt, created_at
-                from email_reply_receipts
+                from ({EMAIL_REPLY_RECEIPT_SQL})
                 where classification_id=?
                 order by created_at, action_identity
                 """,
                 (classification_id,),
             ).fetchall()
             unsubscribe_rows = db.execute(
-                """
+                f"""
                 select action_identity, effect_digest, action_plan_id,
                        action_plan_version, classification_id, account_id,
                        stable_message_identity, thread_identity, receipt_id,
                        evidence, result_text, observation_digest,
                        result_text_truncated, result_text_digest, outcome,
                        created_at, completed_at
-                from email_unsubscribe_receipts
+                from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                 where classification_id=?
                 order by created_at, action_identity
                 """,
@@ -14201,11 +14060,11 @@ class EmailStore:
                         row["result_text_digest"],
                     )
             unsubscribe_steps = db.execute(
-                """
+                f"""
                 select steps.action_identity, steps.sequence, steps.operation,
                        steps.state, steps.reference
-                from email_unsubscribe_steps as steps
-                join email_unsubscribe_receipts as receipts
+                from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) as steps
+                join ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) as receipts
                   on receipts.action_identity=steps.action_identity
                 where receipts.classification_id=?
                 order by steps.action_identity, steps.sequence
@@ -14350,72 +14209,23 @@ class EmailStore:
             event.pop("_sort_created_at", None)
         return events
 
-    def list_training_examples(
-        self, *, include_inclusion: bool = False
-    ) -> list[dict[str, Any]]:
-        """Return only user-confirmed, redacted texts for local retraining."""
 
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select id, account_id, stable_message_identity, model_text,
-                       confirmed_category as label, included_in_model_id,
-                       confirmed_at, classification_source, status
-                from email_classifications
-                where classification_source='user'
-                  and status='processed'
-                  and confirmed_category is not null
-                  and confirmed_category != ''
-                  and trim(model_text) != ''
-                order by id asc
-                """
-            ).fetchall()
-        result = []
-        for row in rows:
-            sample = {
-                "message_id": row["stable_message_identity"],
-                "model_text": row["model_text"],
-                "label": row["label"],
-                **(
-                    {
-                        "classification_id": row["id"],
-                        "account_id": row["account_id"],
-                        "included_in_model_id": row["included_in_model_id"],
-                        "confirmed_at": row["confirmed_at"],
-                        "classification_source": row["classification_source"],
-                        "status": row["status"],
-                    }
-                    if include_inclusion
-                    else {}
-                ),
-            }
-            if include_inclusion:
-                sample["sample_digest"] = _training_sample_digest(sample)
-            result.append(sample)
-        return result
-
-    def list_selected_training_records(self) -> list[dict[str, Any]]:
-        """Return the service-produced labels that can be frozen for training.
-
-        The caller decides which sources and categories participate.  This
-        method deliberately does not require a provider-folder snapshot: user
-        feedback and Agent labels are valid, independently selectable sources.
-        """
-
-        with self._connect() as db:
-            rows = db.execute(
-                """
+    @staticmethod
+    def _selected_training_rows(db: sqlite3.Connection, *, include_input: bool):
+        input_fields = (
+            ", messages.recipients_json, messages.subject, messages.normalized_text,"
+            " messages.attachment_metadata_json, messages.rfc_message_id,"
+            " messages.in_reply_to, messages.references_json" if include_input else ""
+        )
+        return db.execute(f"""
                 select classifications.id, classifications.account_id,
                        classifications.stable_message_identity,
                        classifications.thread_id, classifications.classification_source,
                        classifications.category, classifications.confirmed_category,
                        classifications.confirmed_at, classifications.updated_at,
-                       messages.sender, messages.recipients_json, messages.subject,
-                       messages.normalized_text, messages.attachment_metadata_json,
-                       messages.rfc_message_id, messages.in_reply_to,
-                       messages.references_json
-                from email_classifications as classifications
-                join email_messages as messages
+                       messages.sender, messages.updated_at as message_updated_at{input_fields}
+                from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                join ({EMAIL_MESSAGE_SQL}) as messages
                   on messages.stable_message_identity=classifications.stable_message_identity
                 where classifications.status='processed'
                   and classifications.classification_source in ('agent', 'user')
@@ -14428,9 +14238,83 @@ class EmailStore:
                         and classifications.confirmed_category != '')
                   )
                 order by classifications.id asc
-                """
-            ).fetchall()
+                """).fetchall()
+
+    @staticmethod
+    def _selected_training_label(row: sqlite3.Row) -> dict[str, Any]:
         from app.email_important import important_training_label
+
+        return {
+            "classification_id": int(row["id"]),
+            "account_id": str(row["account_id"]),
+            "stable_message_identity": str(row["stable_message_identity"]),
+            "provider_thread_id": str(row["thread_id"]) if row["thread_id"] else None,
+            "source": (
+                "agent_auto_label"
+                if row["classification_source"] == "agent"
+                else "user_feedback"
+            ),
+            "category_key": str(
+                row["category"]
+                if row["classification_source"] == "agent"
+                else row["confirmed_category"]
+            ),
+            "important": important_training_label(
+                category=str(
+                    row["category"]
+                    if row["classification_source"] == "agent"
+                    else row["confirmed_category"]
+                ),
+                sender=str(row["sender"] or ""),
+            ),
+            "label_recorded_at": str(
+                row["confirmed_at"] or row["updated_at"]
+            ),
+        }
+
+    def list_selected_training_labels(self) -> list[dict[str, Any]]:
+        """Existing selected source labels, without reading either input text."""
+        with self._connect() as db:
+            rows = self._selected_training_rows(db, include_input=False)
+        return [self._selected_training_label(row) for row in rows]
+
+    def list_selected_training_source_metadata(self) -> list[dict[str, Any]]:
+        """Current selected labels and existing update clocks, without input text."""
+        with self._connect() as db:
+            rows = self._selected_training_rows(db, include_input=False)
+        return [
+            {**self._selected_training_label(row),
+             "classification_updated_at": row["updated_at"],
+             "message_updated_at": row["message_updated_at"]}
+            for row in rows
+        ]
+
+    def latest_training_snapshot_reference(
+        self, snapshot_version: str,
+    ) -> dict[str, object] | None:
+        """Read an external frozen baseline's persisted identity, never its input."""
+        with self._connect() as db:
+            row = db.execute(
+                f"select snapshot_id,snapshot_version,snapshot_digest,description_version,"
+                "input_schema_version,seed,observed_at "
+                f"from ({config_projection('email_training_snapshots')}) "
+                "where frozen=1 and snapshot_version=? "
+                "and json_extract(manifest_json, '$.sample_count') is not null "
+                "order by observed_at desc,snapshot_id desc limit 1",
+                (snapshot_version,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def list_selected_training_records(self) -> list[dict[str, Any]]:
+        """Return the service-produced labels that can be frozen for training.
+
+        The caller decides which sources and categories participate.  This
+        method deliberately does not require a provider-folder snapshot: user
+        feedback and Agent labels are valid, independently selectable sources.
+        """
+
+        with self._connect() as db:
+            rows = self._selected_training_rows(db, include_input=True)
         from app.email_training_snapshot import canonical_model_input
 
         def stored_address(value: object) -> dict[str, str]:
@@ -14471,34 +14355,7 @@ class EmailStore:
                     "attachments": attachments,
                 }
             )
-            result.append({
-                "classification_id": int(row["id"]),
-                "account_id": str(row["account_id"]),
-                "stable_message_identity": str(row["stable_message_identity"]),
-                "provider_thread_id": str(row["thread_id"]) if row["thread_id"] else None,
-                "normalized_model_input": model_input,
-                "source": (
-                    "agent_auto_label"
-                    if row["classification_source"] == "agent"
-                    else "user_feedback"
-                ),
-                "category_key": str(
-                    row["category"]
-                    if row["classification_source"] == "agent"
-                    else row["confirmed_category"]
-                ),
-                "important": important_training_label(
-                    category=str(
-                        row["category"]
-                        if row["classification_source"] == "agent"
-                        else row["confirmed_category"]
-                    ),
-                    sender=str(row["sender"] or ""),
-                ),
-                "label_recorded_at": str(
-                    row["confirmed_at"] or row["updated_at"]
-                ),
-            })
+            result.append({**self._selected_training_label(row), "normalized_model_input": model_input})
         return result
 
     def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
@@ -14522,7 +14379,7 @@ class EmailStore:
         created_at = self._now()
         with self._connect() as db:
             existing = db.execute(
-                "select snapshot_digest from email_training_snapshots "
+                f"select snapshot_digest from ({config_projection('email_training_snapshots')}) "
                 "where snapshot_id=?",
                 (snapshot.snapshot_id,),
             ).fetchone()
@@ -14540,10 +14397,10 @@ class EmailStore:
             # label back to what that snapshot already said read as a smaller
             # number, and promotion refused the run for "regressing".
             previous_snapshot = db.execute(
-                """
+                f"""
                 select snapshot_id, folder_label_watermark,
                        important_label_watermark
-                from email_training_snapshots
+                from ({config_projection('email_training_snapshots')})
                 where frozen=1 and snapshot_version=?
                   and json_extract(manifest_json, '$.sample_count') is not null
                 order by observed_at desc, snapshot_id desc
@@ -14551,10 +14408,10 @@ class EmailStore:
                 """,
                 (snapshot.snapshot_version,),
             ).fetchone() or db.execute(
-                """
+                f"""
                 select snapshot_id, folder_label_watermark,
                        important_label_watermark
-                from email_training_snapshots
+                from ({config_projection('email_training_snapshots')})
                 where frozen=1
                   and snapshot_version='email-folder-training-snapshot-v1'
                   and json_extract(manifest_json, '$.sample_count') is not null
@@ -14592,38 +14449,19 @@ class EmailStore:
                     important_label_watermark += 1
             write_snapshot(self.path, snapshot)
             try:
-                db.execute(
-                    """
-                    insert into email_training_snapshots (
-                        snapshot_id, snapshot_version, description_version,
-                        input_schema_version, seed, observed_at, snapshot_digest,
-                        manifest_json, frozen, created_at,
-                        folder_label_watermark, important_label_watermark
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                    """,
-                    (
-                        snapshot.snapshot_id,
-                        snapshot.snapshot_version,
-                        snapshot.description_version,
-                        snapshot.input_schema_version,
-                        snapshot.seed,
-                        snapshot.observed_at,
-                        snapshot.snapshot_digest,
-                        manifest_json,
-                        created_at,
-                        folder_label_watermark,
-                        important_label_watermark,
-                    ),
-                )
-                frozen = db.execute(
-                    "update email_training_snapshots set frozen=1 "
-                    "where snapshot_id=? and frozen=0",
-                    (snapshot.snapshot_id,),
-                ).rowcount
-                if frozen != 1:
-                    raise EmailTrainingSnapshotConflict(
-                        "training snapshot could not be atomically frozen"
-                    )
+                db.execute("begin immediate")
+                insert_config(db, "email_training_snapshots", {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "snapshot_version": snapshot.snapshot_version,
+                    "description_version": snapshot.description_version,
+                    "input_schema_version": snapshot.input_schema_version,
+                    "seed": snapshot.seed, "observed_at": snapshot.observed_at,
+                    "snapshot_digest": snapshot.snapshot_digest,
+                    "manifest_json": manifest_json, "frozen": 1,
+                    "created_at": created_at,
+                    "folder_label_watermark": folder_label_watermark,
+                    "important_label_watermark": important_label_watermark,
+                })
             except sqlite3.IntegrityError as exc:
                 raise EmailTrainingSnapshotConflict(
                     "training snapshot already exists or violates frozen constraints"
@@ -14644,10 +14482,10 @@ class EmailStore:
 
         with self._connect() as db:
             latest = db.execute(
-                "select snapshot_id, snapshot_digest from email_training_snapshots "
+                f"select snapshot_id, snapshot_digest from ({config_projection('email_training_snapshots')}) "
                 "where frozen=1 and json_extract(manifest_json, '$.sample_count') is not null "
                 "and snapshot_version=(select snapshot_version from "
-                "email_training_snapshots where snapshot_id=?) "
+                f"({config_projection('email_training_snapshots')}) where snapshot_id=?) "
                 "order by observed_at desc, snapshot_id desc limit 1",
                 (snapshot_id,),
             ).fetchone()
@@ -14666,7 +14504,7 @@ class EmailStore:
                 "select snapshot_digest from ("
                 "select snapshot_digest, row_number() over ("
                 "partition by snapshot_version order by observed_at desc, snapshot_id desc"
-                ") as ordinal from email_training_snapshots where frozen=1 "
+                f") as ordinal from ({config_projection('email_training_snapshots')}) where frozen=1 "
                 "and json_extract(manifest_json, '$.sample_count') is not null"
                 ") where ordinal=1"
             ).fetchall()
@@ -14690,7 +14528,7 @@ class EmailStore:
                 (str(row["account_id"]), str(row["stable_message_identity"])): row["predicted_category"]
                 for row in db.execute(
                     "select account_id, stable_message_identity, predicted_category "
-                    "from email_classifications where predicted_category is not null"
+                    f"from ({EMAIL_CLASSIFICATION_SQL}) where predicted_category is not null"
                 )
             }
         result = []
@@ -14740,30 +14578,31 @@ class EmailStore:
         ):
             raise ValueError("runtime timings must be finite and non-negative")
         with self._connect() as db:
-            db.execute(
-                """
-                insert into email_classifier_runtime_samples (
-                    model_id, outcome, fallback_code, cache_hit, runtime_warm,
-                    queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_id.strip(),
-                    outcome,
-                    fallback_code,
-                    int(cache_hit),
-                    int(runtime_warm),
-                    *(float(value) for value in values),
-                    self._now(),
-                ),
+            insert_run11_fact(
+                db, "email_classifier_runtime_samples",
+                {
+                    "model_id": model_id.strip(),
+                    "outcome": outcome,
+                    "fallback_code": fallback_code,
+                    "cache_hit": int(cache_hit),
+                    "runtime_warm": int(runtime_warm),
+                    "queue_ms": float(queue_ms),
+                    "http_ms": float(http_ms),
+                    "embedding_ms": float(embedding_ms),
+                    "head_ms": float(head_ms),
+                    "total_ms": float(total_ms),
+                    "recorded_at": self._now(),
+                },
             )
             db.execute(
                 """
-                delete from email_classifier_runtime_samples
-                where id not in (
-                    select id from email_classifier_runtime_samples
-                    order by id desc limit ?
-                )
+                delete from runs
+                where record_type='email_classifier_runtime_samples'
+                  and id not in (
+                    select id from runs indexed by idx_runs11_sample_id
+                    where record_type='email_classifier_runtime_samples'
+                    order by cast(legacy_key as integer) desc limit ?
+                  )
                 """,
                 (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
             )
@@ -14796,8 +14635,7 @@ class EmailStore:
         try:
             with self._connect() as db:
                 rows = db.execute(
-                    "select value from service_state "
-                    "where key like 'email_model_scan_progress:%'"
+                    'select value from (' + state_projection('service_state') + ") where key like 'email_model_scan_progress:%'"
                 ).fetchall()
         except sqlite3.Error:
             return None
@@ -14841,10 +14679,8 @@ class EmailStore:
         ).isoformat()
         with self._connect() as db:
             rows = db.execute(
-                """
-                select total_ms, recorded_at from email_classifier_runtime_samples
-                where recorded_at >= ?
-                """,
+                "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
+                + ") where recorded_at >= ?",
                 (cutoff,),
             ).fetchall()
         times = sorted(float(row["total_ms"]) for row in rows)
@@ -14855,10 +14691,8 @@ class EmailStore:
             # changed for that, so report the last batch it did judge and say so.
             with self._connect() as db:
                 last = db.execute(
-                    """
-                    select total_ms, recorded_at from email_classifier_runtime_samples
-                    order by id desc limit ?
-                    """,
+                    "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
+                    + ") order by id desc limit ?",
                     (_RUNTIME_LATENCY_FALLBACK_SAMPLES,),
                 ).fetchall()
             times = sorted(float(row["total_ms"]) for row in last)
@@ -14896,12 +14730,10 @@ class EmailStore:
             raise ValueError("model_id must be non-empty")
         with self._connect() as db:
             rows = db.execute(
-                """
-                select outcome, fallback_code, cache_hit, runtime_warm,
-                       queue_ms, http_ms, embedding_ms, head_ms, total_ms
-                from email_classifier_runtime_samples
-                where model_id=? order by id desc limit ?
-                """,
+                "select outcome, fallback_code, cache_hit, runtime_warm, "
+                "queue_ms, http_ms, embedding_ms, head_ms, total_ms from ("
+                + run11_projection("email_classifier_runtime_samples")
+                + ") where model_id=? order by id desc limit ?",
                 (model_id.strip(), MAX_CLASSIFIER_RUNTIME_SAMPLES),
             ).fetchall()
 
@@ -14969,12 +14801,12 @@ class EmailStore:
 
         with self._connect() as db:
             latest = db.execute(
-                """
+                f"""
                 select snapshot_id, snapshot_version, snapshot_digest,
                        description_version, input_schema_version, observed_at,
                        folder_label_watermark, important_label_watermark,
                        manifest_json
-                from email_training_snapshots
+                from ({config_projection('email_training_snapshots')})
                 where frozen=1
                   and snapshot_version='email-folder-training-snapshot-v1'
                   and json_extract(manifest_json, '$.sample_count') is not null
@@ -14986,10 +14818,10 @@ class EmailStore:
                 return None
             summary = json.loads(str(latest["manifest_json"]))
             description_rows = db.execute(
-                """
+                f"""
                 select category_key, core_description, include_json, exclude_json,
                        description_version
-                from email_category_configs where enabled=1
+                from ({config_projection('email_category_configs')}) where enabled=1
                 order by category_key
                 """
             ).fetchall()
@@ -15088,8 +14920,8 @@ class EmailStore:
         )
         with self._connect() as db:
             rows = db.execute(
-                """
-                select started_at, finished_at from email_actions
+                f"""
+                select started_at, finished_at from ({EMAIL_DIRECT_ACTION_SQL})
                 where status in ('done', 'skipped') and finished_at>=?
                 """,
                 (cutoff,),
@@ -15130,7 +14962,7 @@ class EmailStore:
             actions = {
                 str(row["status"]): int(row["n"])
                 for row in db.execute(
-                    "select status, count(*) as n from email_actions "
+                    f"select status, count(*) as n from ({EMAIL_DIRECT_ACTION_SQL}) "
                     "where created_at>=? group by status",
                     (since,),
                 )
@@ -15140,8 +14972,8 @@ class EmailStore:
             # whose current plan has one), not only within the 24 hours.
             actions["failed"] = int(
                 db.execute(
-                    "select count(*) from email_classifications as classifications "
-                    "where exists (select 1 from email_actions as failed_action "
+                    f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications "
+                    f"where exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as failed_action "
                     "where failed_action.classification_id=classifications.id "
                     "and failed_action.action_plan_id="
                     "classifications.current_action_plan_id "
@@ -15152,8 +14984,8 @@ class EmailStore:
             # again, so the bar can point at what still needs a person.
             actions["failed_retriable"] = int(
                 db.execute(
-                    "select count(*) from email_classifications as classifications "
-                    "where exists (select 1 from email_actions as failed_action "
+                    f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications "
+                    f"where exists (select 1 from ({EMAIL_DIRECT_ACTION_SQL}) as failed_action "
                     "where failed_action.classification_id=classifications.id "
                     "and failed_action.action_plan_id="
                     "classifications.current_action_plan_id "
@@ -15166,7 +14998,7 @@ class EmailStore:
             classification_queue = {
                 str(row["status"]): int(row["n"])
                 for row in db.execute(
-                    "select status, count(*) as n from email_agent_classification_tasks "
+                    f"select status, count(*) as n from ({_EMAIL_CLASSIFICATION_SQL}) "
                     "where status in ('pending','processing') group by status"
                 )
             }
@@ -15187,7 +15019,7 @@ class EmailStore:
             )
             waiting = int(
                 db.execute(
-                    "select count(*) from email_classifications "
+                    f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) "
                     "where status='pending_feedback'"
                 ).fetchone()[0]
             )
@@ -15200,12 +15032,12 @@ class EmailStore:
                     "last_error": row["last_error"],
                 }
                 for row in db.execute(
-                    """
+                    f"""
                     select cursors.account_id, cursors.folder,
                            cursors.last_seen_uid, cursors.last_success_at,
                            cursors.last_error, accounts.display_name
-                    from email_scan_cursors as cursors
-                    left join email_accounts as accounts
+                    from ({state_projection('email_scan_cursors')}) as cursors
+                    left join ({config_projection('email_accounts')}) as accounts
                       on accounts.account_id=cursors.account_id
                     order by cursors.account_id, cursors.folder
                     """
@@ -15249,12 +15081,160 @@ class EmailStore:
             return False
         with self._connect() as db:
             cursor = db.execute(
-                "update email_messages set recipients_json=? "
+                "update emails set message_recipients_json=? "
                 "where account_id=? and stable_message_identity=? "
-                "and recipients_json='[]'",
+                "and message_recipients_json='[]'",
                 (_json_dump(values), account_id, stable_message_identity),
             )
             return cursor.rowcount == 1
+
+    @staticmethod
+    def _completed_email_input_sql():
+        """Existing completion predicates shared by the two original inputs."""
+        return f"""class_status='processed'
+            and not exists(select 1 from ({_EMAIL_CLASSIFICATION_SQL}) t
+                where t.stable_message_identity=emails.stable_message_identity and t.status<>'done')
+            and not exists(select 1 from ({REPLY_TASK_CURRENT_SQL}) t where t.channel='email'
+                and json_extract(t.trigger_message_json,'$.classification_id')=emails.classification_id
+                and t.status not in ('done','skipped'))
+            and not exists(select 1 from actions a where a.email_classification_id=emails.classification_id
+                and ((a.record_type='email_actions' and a.email_status not in ('done','skipped'))
+                  or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
+                      and a.email_status<>'done')))"""
+
+    def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
+        """Retire one completed original with an exact source and no unfinished dependency."""
+        from app.email_body_source import locate_original
+        from app.email_preview import email_preview
+        from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+        eligible = self._completed_email_input_sql() + " and json_type(message_source_reference_json,'$.kind') is null " \
+            "and typeof(message_normalized_text)='text' and message_normalized_text<>''"
+        with self._connect() as db:
+            row = db.execute("select id,account_id,stable_message_identity,message_normalized_text,"
+                "message_updated_at,class_updated_at,class_current_action_plan_id,message_source_reference_json from emails "
+                "where classification_id=? and " + eligible, (classification_id,)).fetchone()
+            if row is None:
+                return False
+            original = dict(row)
+            attempts = db.execute(f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
+                f"from ({RUNTIME_ATTEMPT_SQL}) a join ({_EMAIL_CLASSIFICATION_SQL}) t "
+                "on a.workload_kind='email_classification' and a.workload_key=t.task_id "
+                "where t.stable_message_identity=? and a.status not in ('starting','running') order by a.id desc",
+                (original["stable_message_identity"],)).fetchall()
+        reference = locate_original(original["message_normalized_text"], attempts=attempts,
+            read_message=lambda: source_reader.read(original["account_id"], original["stable_message_identity"]))
+        if reference is None:
+            return False
+        reference = json.loads(original['message_source_reference_json'] or '{}') | reference
+        with self._connect() as db:
+            cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=?,class_preview=?,message_preview='' "
+                "where id=? and message_normalized_text=? and message_source_reference_json is ? and message_updated_at is ? "
+                "and class_updated_at is ? and class_current_action_plan_id is ? and " + eligible,
+                (_json_dump(reference), email_preview(original["message_normalized_text"]), original["id"], original["message_normalized_text"], original['message_source_reference_json'],
+                 original["message_updated_at"], original["class_updated_at"], original["class_current_action_plan_id"]))
+            return cursor.rowcount == 1
+
+    def compact_email_model_input(self, classification_id: int, *, source_reader) -> bool:
+        """Replace a completed exact model input with its native/provider proof."""
+        from app.email_body_source import locate_original
+        from app.email_classifier_model import CpuTfidfLogisticClassifier
+        from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+        eligible = self._completed_email_input_sql() + " and typeof(class_model_text)='text' and class_model_text<>'' " \
+            "and json_type(message_source_reference_json,'$.model_input') is null"
+        with self._connect() as db:
+            row = db.execute("select id,account_id,stable_message_identity,class_model_text,"
+                "message_source_reference_json,message_updated_at,class_updated_at,"
+                "class_current_action_plan_id,class_included_in_model_id from emails "
+                "where classification_id=? and " + eligible, (classification_id,)).fetchone()
+            if row is None:
+                return False
+            original = dict(row)
+            attempts = db.execute(f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
+                f"from ({RUNTIME_ATTEMPT_SQL}) a join ({_EMAIL_CLASSIFICATION_SQL}) t "
+                "on a.workload_kind='email_classification' and a.workload_key=t.task_id "
+                "where t.stable_message_identity=? and a.status not in ('starting','running') order by a.id desc",
+                (original["stable_message_identity"],)).fetchall()
+        model_reference = locate_original(original['class_model_text'], attempts=attempts,
+            read_message=lambda: source_reader.read(original['account_id'], original['stable_message_identity']),
+            representations=(CpuTfidfLogisticClassifier.FEATURE_VERSION,))
+        if model_reference is None:
+            return False
+        reference = json.loads(original['message_source_reference_json'] or '{}')
+        reference['model_input'] = model_reference
+        with self._connect() as db:
+            cursor = db.execute("update emails set class_model_text='',message_source_reference_json=? "
+                "where id=? and class_model_text=? and message_source_reference_json is ? "
+                "and message_updated_at is ? and class_updated_at is ? "
+                "and class_current_action_plan_id is ? and class_included_in_model_id is ? and " + eligible,
+                (_json_dump(reference), original['id'], original['class_model_text'],
+                 original['message_source_reference_json'], original['message_updated_at'],
+                 original['class_updated_at'], original['class_current_action_plan_id'],
+                 original['class_included_in_model_id']))
+            if cursor.rowcount != 1:
+                return False
+            # The existing raw-field trigger invalidates inclusion on model_text
+            # changes. These are identical proven bytes, so preserve its prior
+            # inclusion in the same transaction, invisible to other readers.
+            db.execute("update emails set class_included_in_model_id=? where id=?",
+                (original['class_included_in_model_id'], original['id']))
+            return True
+
+    def compact_email_inputs(self, classification_id: int, *, source_reader) -> bool:
+        """Retire both completed inputs using one request-local source read."""
+        from types import SimpleNamespace
+
+        messages = {}
+        def read(account, identity):
+            key = (account, identity)
+            if key not in messages:
+                messages[key] = source_reader.read(account, identity)
+            return messages[key]
+        reader = SimpleNamespace(read=read)
+        body = self.compact_email_message_body(classification_id, source_reader=reader)
+        model = self.compact_email_model_input(classification_id, source_reader=reader)
+        return body or model
+
+    def get_email_source_location(
+        self, account_id: str, stable_message_identity: str,
+    ) -> dict[str, object] | None:
+        key = (account_id, stable_message_identity)
+        return self.get_email_source_locations([key]).get(key)
+
+    def get_email_source_locations(
+        self, identities: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], dict[str, object]]:
+        """Only source coordinates/current folder facts; never original content."""
+        if not identities:
+            return {}
+        with self._connect() as db:
+            rows = db.execute(
+                """with requested as (
+                    select json_extract(value, '$[0]') as account_id,
+                           json_extract(value, '$[1]') as stable_message_identity
+                    from json_each(?)
+                )
+                select messages.account_id, messages.stable_message_identity,
+                       messages.message_folder as folder, messages.uidvalidity, messages.uid,
+                       messages.message_rfc_message_id as rfc_message_id,
+                       messages.message_thread_identity as thread_identity,
+                       messages.message_updated_at as updated_at, messages.message_source_reference_json,
+                       observations.state, observations.provider_folder_name, observations.observed_at
+                from requested
+                join emails as messages
+                  on messages.account_id=requested.account_id
+                 and messages.stable_message_identity=requested.stable_message_identity
+                left join provider_state as observations
+                  on observations.record_type='observation'
+                 and observations.account_id=messages.account_id
+                 and observations.stable_message_identity=messages.stable_message_identity""",
+                (_json_dump(list(identities)),),
+            ).fetchall()
+        return {
+            (row["account_id"], row["stable_message_identity"]): dict(row)
+            for row in rows
+        }
 
     def get_stored_email_locator(
         self, classification_id: int
@@ -15264,10 +15244,10 @@ class EmailStore:
         _require_positive_int(classification_id, field="classification_id")
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select account_id, folder, uidvalidity, uid, rfc_message_id,
                        thread_id, stable_message_identity
-                from email_classifications where id=?
+                from ({EMAIL_CLASSIFICATION_SQL}) where id=?
                 """,
                 (classification_id,),
             ).fetchone()
@@ -15298,21 +15278,12 @@ class EmailStore:
         names = tuple(sorted(str(name) for name in signal_names))
         trusted = {"\\flagged", "$important"}
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                update email_provider_observations
-                set important=?, important_signals_json=?
-                where account_id=? and stable_message_identity=?
-                  and state='available'
-                """,
-                (
-                    int(any(name.casefold() in trusted for name in names)),
-                    _json_dump(list(names)),
-                    account_id,
-                    stable_message_identity,
-                ),
+            db.execute("begin immediate")
+            return update_important_signals(
+                db, account_id, stable_message_identity,
+                int(any(name.casefold() in trusted for name in names)),
+                _json_dump(list(names)),
             )
-            return cursor.rowcount == 1
 
     def get_provider_classification_state(
         self, classification_id: int
@@ -15323,7 +15294,7 @@ class EmailStore:
         with self._connect() as db:
             classification = db.execute(
                 "select account_id, stable_message_identity "
-                "from email_classifications where id=?",
+                f"from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification_id,),
             ).fetchone()
             if classification is None:
@@ -15336,11 +15307,13 @@ class EmailStore:
                        observations.provider_folder_name,
                        coalesce(generations.observed_at, observations.observed_at)
                            as observed_at
-                from email_provider_observations as observations
-                left join email_provider_folder_observation_generations as generations
-                  on generations.account_id=observations.account_id
+                from provider_state as observations
+                left join provider_state as generations
+                  on generations.record_type='folder_generation'
+                 and generations.account_id=observations.account_id
                  and generations.provider_folder_id=observations.provider_folder_id
-                where observations.account_id=?
+                where observations.record_type='observation'
+                  and observations.account_id=?
                   and observations.stable_message_identity=?
                 """,
                 (
@@ -15365,7 +15338,7 @@ class EmailStore:
         with self._connect() as db:
             for classification_id in classification_ids:
                 row = db.execute(
-                    """
+                    f"""
                     select observations.state, observations.category_key,
                            observations.important,
                            observations.important_signals_json,
@@ -15373,13 +15346,15 @@ class EmailStore:
                            observations.provider_folder_name,
                            coalesce(generations.observed_at, observations.observed_at)
                                as observed_at
-                    from email_classifications as classifications
-                    left join email_provider_observations as observations
-                      on observations.account_id=classifications.account_id
+                    from ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                    left join provider_state as observations
+                      on observations.record_type='observation'
+                     and observations.account_id=classifications.account_id
                      and observations.stable_message_identity=
                          classifications.stable_message_identity
-                    left join email_provider_folder_observation_generations as generations
-                      on generations.account_id=observations.account_id
+                    left join provider_state as generations
+                      on generations.record_type='folder_generation'
+                     and generations.account_id=observations.account_id
                      and generations.provider_folder_id=observations.provider_folder_id
                     where classifications.id=?
                     """,
@@ -15570,91 +15545,21 @@ class EmailStore:
                 )
             db.commit()
             db.execute("begin immediate")
-            db.executemany(
-                """
-                insert into email_provider_observations (
-                    account_id, stable_message_identity, state,
-                    provider_folder_id, provider_folder_name, category_key,
-                    important, important_signals_json, observed_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(account_id, stable_message_identity) do update set
-                    state=excluded.state,
-                    provider_folder_id=excluded.provider_folder_id,
-                    provider_folder_name=excluded.provider_folder_name,
-                    category_key=excluded.category_key,
-                    important=excluded.important,
-                    important_signals_json=excluded.important_signals_json,
-                    observed_at=excluded.observed_at
-                where email_provider_observations.state is not excluded.state
-                   or email_provider_observations.provider_folder_id
-                        is not excluded.provider_folder_id
-                   or email_provider_observations.provider_folder_name
-                        is not excluded.provider_folder_name
-                   or email_provider_observations.category_key is not excluded.category_key
-                   or email_provider_observations.important is not excluded.important
-                   or email_provider_observations.important_signals_json
-                        is not excluded.important_signals_json
-                """,
-                rows,
+            upsert_observations(
+                db, [dict(zip(FRESH_OBSERVATION_FIELDS, row, strict=True)) for row in rows]
             )
             for account_id, folder_id in parsed_authoritative:
-                db.execute(
-                    "update email_provider_observations "
-                    "set state='unavailable', provider_folder_id=null, "
-                    "provider_folder_name=null, category_key=null, important=null, "
-                    "important_signals_json=null, observed_at=? "
-                    "where account_id=? and provider_folder_id=? "
-                    "and not exists (select 1 from current_provider_membership as current "
-                    "where current.account_id=email_provider_observations.account_id "
-                    "and current.provider_folder_id=? "
-                    "and current.stable_message_identity="
-                    "email_provider_observations.stable_message_identity) "
-                    "and (state is not 'unavailable' or provider_folder_id is not null "
-                    "or provider_folder_name is not null or category_key is not null "
-                    "or important is not null or important_signals_json is not null "
-                    "or observed_at is not ?)",
-                    (observed_at, account_id, folder_id, folder_id, observed_at),
-                )
+                mark_authoritative_missing(db, account_id, folder_id, observed_at)
             if active_accounts is not None:
-                db.execute(
-                    "update email_provider_observations "
-                    "set state='unavailable', provider_folder_id=null, "
-                    "provider_folder_name=null, category_key=null, important=null, "
-                    "important_signals_json=null, observed_at=? "
-                    "where not exists (select 1 from current_provider_accounts as active "
-                    "where active.account_id=email_provider_observations.account_id) "
-                    "and (state is not 'unavailable' or provider_folder_id is not null "
-                    "or provider_folder_name is not null or category_key is not null "
-                    "or important is not null or important_signals_json is not null "
-                    "or observed_at is not ?)",
-                    (observed_at, observed_at),
-                )
+                mark_inactive_accounts(db, observed_at)
             for account_id, folder_id in parsed_unavailable:
-                db.execute(
-                    """
-                    update email_provider_observations
-                    set state='unavailable', category_key=null, important=null,
-                        important_signals_json=null,
-                        observed_at=?
-                    where account_id=? and provider_folder_id=?
-                      and (state is not 'unavailable' or category_key is not null
-                           or important is not null
-                           or important_signals_json is not null
-                           or observed_at is not ?)
-                    """,
-                    (observed_at, account_id, folder_id, observed_at),
-                )
-            db.executemany(
-                "insert into email_provider_folder_observation_generations "
-                "(account_id, provider_folder_id, observed_at) values (?, ?, ?) "
-                "on conflict(account_id, provider_folder_id) do update set "
-                "observed_at=excluded.observed_at "
-                "where email_provider_folder_observation_generations.observed_at "
-                "is not excluded.observed_at",
-                (
-                    (account_id, folder_id, observed_at)
+                mark_unavailable_folder(db, account_id, folder_id, observed_at)
+            upsert_folder_generations(
+                db, [
+                    {"account_id": account_id, "provider_folder_id": folder_id,
+                     "observed_at": observed_at}
                     for account_id, folder_id in folder_generations
-                ),
+                ],
             )
 
     @staticmethod
@@ -15681,14 +15586,14 @@ class EmailStore:
         from app.email_training_data import TrainingSnapshotUnavailable, pinned_digest, read_snapshot
 
         snapshot = db.execute(
-            "select * from email_training_snapshots where snapshot_id=?", (snapshot_id,)
+            f"select * from ({config_projection('email_training_snapshots')}) where snapshot_id=?", (snapshot_id,)
         ).fetchone()
         if snapshot is None:
             return None
         if snapshot["frozen"] != 1:
             raise EmailPersistenceCorruption("training snapshot is not frozen")
         latest = db.execute(
-            "select snapshot_id from email_training_snapshots where frozen=1 "
+            f"select snapshot_id from ({config_projection('email_training_snapshots')}) where frozen=1 "
             "and snapshot_version=? "
             "and json_extract(manifest_json, '$.sample_count') is not null "
             "order by observed_at desc, snapshot_id desc limit 1",
@@ -15786,168 +15691,10 @@ class EmailStore:
         )
         return result
 
-    def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
-        return [
-            row
-            for row in self.list_training_examples(include_inclusion=True)
-            if row["included_in_model_id"] is None
-        ]
 
-    def mark_training_examples_included(
-        self, samples: Sequence[Mapping[str, object]], *, model_id: str
-    ) -> None:
-        self.commit_training_promotion(
-            samples,
-            model_id=model_id,
-            promote=lambda: None,
-            restore=lambda: None,
-        )
 
-    def commit_training_promotion(
-        self,
-        validation_snapshots: Sequence[Mapping[str, object]],
-        *,
-        inclusion_snapshots: Sequence[Mapping[str, object]] | None = None,
-        model_id: str,
-        promote: Callable[[], object],
-        restore: Callable[[], object],
-    ) -> None:
-        validation_by_identity = {
-            str(item.get("message_id", "")): item for item in validation_snapshots
-        }
-        inclusion_items = (
-            validation_snapshots if inclusion_snapshots is None else inclusion_snapshots
-        )
-        inclusion_by_identity = {
-            str(item.get("message_id", "")): item for item in inclusion_items
-        }
-        validation_identities = tuple(validation_by_identity)
-        inclusion_identities = tuple(inclusion_by_identity)
-        if (
-            not validation_identities
-            or not inclusion_identities
-            or not model_id.strip()
-        ):
-            raise ValueError("sample identities and model_id are required")
-        if len(validation_by_identity) != len(validation_snapshots) or len(
-            inclusion_by_identity
-        ) != len(inclusion_items):
-            raise ValueError("training sample identities must be unique")
-        if not set(inclusion_identities).issubset(validation_by_identity):
-            raise ValueError("inclusion snapshots must be part of validation snapshots")
-        for identity, inclusion_snapshot in inclusion_by_identity.items():
-            validation_snapshot = validation_by_identity[identity]
-            if (
-                inclusion_snapshot.get("sample_digest")
-                != validation_snapshot.get("sample_digest")
-                or inclusion_snapshot.get("included_in_model_id") is not None
-            ):
-                raise ValueError(
-                    "inclusion snapshots must match unincluded validation snapshots"
-                )
-        promotion_attempted = False
-        with self._connect() as db:
-            try:
-                db.execute("begin immediate")
-                self._verify_training_snapshots(
-                    db,
-                    validation_by_identity,
-                    validation_identities,
-                    inclusion_identities=inclusion_identities,
-                    model_id=model_id,
-                )
-                promotion_attempted = True
-                promote()
-                self._update_training_inclusion(
-                    db, inclusion_identities, model_id=model_id
-                )
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                if promotion_attempted:
-                    try:
-                        restore()
-                    except Exception as restore_exc:
-                        raise EmailTrainingConsistencyError(
-                            "training promotion manifest restore could not be proven"
-                        ) from restore_exc
-                raise exc
 
-    @staticmethod
-    def _verify_training_snapshots(
-        db,
-        snapshots,
-        identities,
-        *,
-        inclusion_identities,
-        model_id: str,
-    ) -> None:
-        placeholders = ",".join("?" for _ in identities)
-        rows = db.execute(
-            f"""
-                select id, account_id, stable_message_identity, model_text,
-                       confirmed_category as label, included_in_model_id,
-                       confirmed_at, classification_source, status
-                from email_classifications
-                where stable_message_identity in ({placeholders})
-                  and classification_source='user'
-                  and status='processed'
-                  and confirmed_category is not null
-                  and confirmed_category != ''
-                  and trim(model_text) != ''
-                """,
-            identities,
-        ).fetchall()
-        if {row["stable_message_identity"] for row in rows} != set(identities):
-            raise EmailTrainingInclusionConflict(
-                "training sample set changed before inclusion"
-            )
-        inclusion_identity_set = set(inclusion_identities)
-        for row in rows:
-            current = {
-                "message_id": row["stable_message_identity"],
-                "model_text": row["model_text"],
-                "label": row["label"],
-                "classification_id": row["id"],
-                "account_id": row["account_id"],
-                "included_in_model_id": row["included_in_model_id"],
-                "confirmed_at": row["confirmed_at"],
-                "classification_source": row["classification_source"],
-                "status": row["status"],
-            }
-            expected_digest = snapshots[row["stable_message_identity"]].get(
-                "sample_digest"
-            )
-            if expected_digest != _training_sample_digest(current):
-                raise EmailTrainingInclusionConflict(
-                    "training sample changed before inclusion"
-                )
-            expected_inclusion = snapshots[row["stable_message_identity"]].get(
-                "included_in_model_id"
-            )
-            current_inclusion = row["included_in_model_id"]
-            idempotent_inclusion = (
-                row["stable_message_identity"] in inclusion_identity_set
-                and expected_inclusion is None
-                and current_inclusion == model_id
-            )
-            if current_inclusion != expected_inclusion and not idempotent_inclusion:
-                raise EmailTrainingInclusionConflict(
-                    "training sample inclusion changed before promotion"
-                )
 
-    @staticmethod
-    def _update_training_inclusion(db, identities, *, model_id: str) -> None:
-        placeholders = ",".join("?" for _ in identities)
-        db.execute(
-            f"""
-            update email_classifications
-            set included_in_model_id=?
-            where stable_message_identity in ({placeholders})
-              and included_in_model_id is null
-            """,
-            (model_id, *identities),
-        )
 
     def confirm_classification(
         self,
@@ -16035,7 +15782,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             request = db.execute(
-                "select * from email_feedback_requests where feedback_request_id=?",
+                f"select * from ({EMAIL_FEEDBACK_SQL}) where feedback_request_id=?",
                 (feedback_request_id,),
             ).fetchone()
             if request is not None:
@@ -16051,7 +15798,7 @@ class EmailStore:
                     )
                 return self._feedback_application(db, request, applied=False)
             row = db.execute(
-                "select * from email_classifications where id=?", (row_id,)
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?", (row_id,)
             ).fetchone()
             if row is None:
                 return None
@@ -16074,9 +15821,9 @@ class EmailStore:
                         "email classification current ActionPlan changed"
                     )
                 current_plan = db.execute(
-                    """
+                    f"""
                     select action_plan_version
-                    from email_action_plans
+                    from ({EMAIL_PLAN_SQL})
                     where action_plan_id=? and classification_id=?
                     """,
                     (expected_current_action_plan_id, row_id),
@@ -16124,16 +15871,16 @@ class EmailStore:
             self._persist_action_plan(db, action_plan, now=applied_at)
             updated_count = db.execute(
                 """
-                update email_classifications
-                set category=?, confirmed_category=?, status=?,
-                    classification_source='user', config_version=?,
-                    current_action_plan_id=?,
-                    legacy_processed_without_plan=0,
-                    agent_result_json='null',
-                    confirmed_at=?, updated_at=?
-                where id=?
-                  and status=?
-                  and current_action_plan_id is ?
+                update emails
+                set class_category=?, class_confirmed_category=?, class_status=?,
+                    class_classification_source='user', class_config_version=?,
+                    class_current_action_plan_id=?,
+                    class_legacy_processed_without_plan=0,
+                    class_agent_result_json='null',
+                    class_confirmed_at=?, class_updated_at=?
+                where classification_id=?
+                  and class_status=?
+                  and class_current_action_plan_id is ?
                 """,
                 (
                     category,
@@ -16152,25 +15899,20 @@ class EmailStore:
                 raise EmailClassificationConflict(
                     "email classification was changed concurrently"
                 )
-            db.execute(
-                """
-                insert into email_feedback_requests (
-                    feedback_request_id, classification_id, category,
-                    expected_current_action_plan_id, resulting_action_plan_id,
-                    applied_at
-                ) values (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    feedback_request_id,
-                    row_id,
-                    category,
-                    expected_current_action_plan_id,
-                    action_plan.action_plan_id,
-                    applied_at,
-                ),
+            insert_email_action(
+                db,
+                "email_feedback_requests",
+                {
+                    "feedback_request_id": feedback_request_id,
+                    "classification_id": row_id,
+                    "category": category,
+                    "expected_current_action_plan_id": expected_current_action_plan_id,
+                    "resulting_action_plan_id": action_plan.action_plan_id,
+                    "applied_at": applied_at,
+                },
             )
             request = db.execute(
-                "select * from email_feedback_requests where feedback_request_id=?",
+                f"select * from ({EMAIL_FEEDBACK_SQL}) where feedback_request_id=?",
                 (feedback_request_id,),
             ).fetchone()
             assert request is not None
@@ -16189,9 +15931,9 @@ class EmailStore:
         str,
     ]:
         selected_config = db.execute(
-            """
+            f"""
             select actions_json, action_parameters_json, enabled, config_version
-            from email_category_configs where category_key=?
+            from ({config_projection('email_category_configs')}) where category_key=?
             """,
             (category,),
         ).fetchone()
@@ -16217,9 +15959,9 @@ class EmailStore:
                     selected_config["config_version"],
                 )
             binding = db.execute(
-                """
+                f"""
                 select provider_folder_name
-                from email_category_folder_bindings
+                from ({config_projection('email_category_folder_bindings')})
                 where account_id=? and category_key=? and binding_status='active'
                 """,
                 (account_id, category),
@@ -16268,7 +16010,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_classifications where stable_message_identity=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
                 (stable_message_identity,),
             ).fetchone()
             if row is None:
@@ -16285,8 +16027,8 @@ class EmailStore:
             ):
                 return None
             unfinished = db.execute(
-                """
-                select 1 from email_actions
+                f"""
+                select 1 from ({EMAIL_DIRECT_ACTION_SQL})
                 where classification_id=? and status in ('pending', 'processing')
                 """,
                 (row["id"],),
@@ -16305,8 +16047,8 @@ class EmailStore:
             if not actions:
                 return None
             current_plan = db.execute(
-                """
-                select action_plan_version from email_action_plans
+                f"""
+                select action_plan_version from ({EMAIL_PLAN_SQL})
                 where action_plan_id=? and classification_id=?
                 """,
                 (row["current_action_plan_id"], row["id"]),
@@ -16327,56 +16069,24 @@ class EmailStore:
                 created_at=plan_created_at,
             )
             self._assert_no_email_reply_dispatch_in_flight(db, int(row["id"]))
-            db.execute(
-                """
-                update email_classifications
-                set folder=?, uidvalidity=?, uid=?, thread_id=?, updated_at=?
-                where id=?
-                """,
-                (
-                    locator.folder,
-                    locator.uidvalidity,
-                    locator.uid,
-                    locator.thread_id,
-                    applied_at,
-                    int(row["id"]),
-                ),
-            )
-            # The stored message carries the same locator, and durable
-            # validation refuses a store where the two disagree.
-            db.execute(
-                """
-                update email_messages
-                set folder=?, uidvalidity=?, uid=?
-                where stable_message_identity=?
-                """,
-                (
-                    locator.folder,
-                    locator.uidvalidity,
-                    locator.uid,
-                    stable_message_identity,
-                ),
+            update_email_paired_locator(
+                db, classification_id=int(row["id"]),
+                account_id=str(row["account_id"]),
+                stable_message_identity=stable_message_identity,
+                class_folder=locator.folder, message_folder=locator.folder,
+                uidvalidity=locator.uidvalidity, uid=locator.uid,
+                class_thread_id=locator.thread_id,
+                class_updated_at=applied_at,
             )
             self._persist_action_plan(db, action_plan, now=applied_at)
-            db.execute(
-                """
-                update email_classifications
-                set current_action_plan_id=?,
-                    config_version=?, legacy_processed_without_plan=0,
-                    updated_at=?
-                where id=?
-                """,
-                (
-                    action_plan.action_plan_id,
-                    # The plan carries the category's current configuration, and
-                    # durable validation requires the row to say the same.
-                    config_version,
-                    applied_at,
-                    int(row["id"]),
-                ),
-            )
+            update_email_classification(db, int(row["id"]), {
+                "current_action_plan_id": action_plan.action_plan_id,
+                "config_version": config_version,
+                "legacy_processed_without_plan": 0,
+                "updated_at": applied_at,
+            })
             updated = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (int(row["id"]),),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
@@ -16406,7 +16116,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification_id,),
             ).fetchone()
             if row is None:
@@ -16417,7 +16127,7 @@ class EmailStore:
                 raise EmailActionPlanConflict("ActionPlan account does not match")
             self._assert_no_email_reply_dispatch_in_flight(db, classification_id)
             existing = db.execute(
-                "select action_plan_id from email_action_plans where action_plan_id=?",
+                f"select action_plan_id from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
                 (action_plan.action_plan_id,),
             ).fetchone()
             if existing is not None and (
@@ -16429,33 +16139,22 @@ class EmailStore:
             now = self._now()
             self._persist_action_plan(db, action_plan, now=now)
             if row["current_action_plan_id"] != action_plan.action_plan_id:
-                db.execute(
-                    """
-                    update email_classifications
-                    set category=?, confirmed_category=?, status='processed',
-                        classification_source=?, confidence=?, model_id=?,
-                        config_version=?,
-                        current_action_plan_id=?, legacy_processed_without_plan=0,
-                        agent_result_json=?,
-                        confirmed_at=?, updated_at=?
-                    where id=?
-                    """,
-                    (
-                        action_plan.category,
-                        confirmed_category_value,
-                        action_plan.classification_source,
-                        action_plan.confidence,
-                        action_plan.model_id,
-                        action_plan.config_version,
-                        action_plan.action_plan_id,
-                        agent_result_json,
-                        now,
-                        now,
-                        classification_id,
-                    ),
-                )
+                update_email_classification(db, classification_id, {
+                    "category": action_plan.category,
+                    "confirmed_category": confirmed_category_value,
+                    "status": "processed",
+                    "classification_source": action_plan.classification_source,
+                    "confidence": action_plan.confidence,
+                    "model_id": action_plan.model_id,
+                    "config_version": action_plan.config_version,
+                    "current_action_plan_id": action_plan.action_plan_id,
+                    "legacy_processed_without_plan": 0,
+                    "agent_result_json": agent_result_json,
+                    "confirmed_at": now,
+                    "updated_at": now,
+                })
             updated = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
@@ -16469,8 +16168,8 @@ class EmailStore:
     ) -> None:
         if (
             db.execute(
-                """
-            select 1 from email_reply_dispatch_claims
+                f"""
+            select 1 from ({EMAIL_REPLY_CLAIM_SQL})
             where classification_id=? and status='dispatching'
             """,
                 (classification_id,),
@@ -16478,6 +16177,28 @@ class EmailStore:
             is not None
         ):
             raise EmailReplyDispatchConflict("email_reply_dispatch_in_flight")
+
+    @staticmethod
+    def _update_direct_action(
+        db: sqlite3.Connection, action_id: str, values: dict, *,
+        expected_status: str | None = None,
+        expected_started_at: str | None = None,
+        expected_attempt_count: int | None = None,
+    ):
+        # Every caller owns its original writer transaction. Recheck the exact
+        # source predicates before resolving its structural ROWID; the accepted
+        # writer updates that source identity rather than the physical action ID.
+        locator = db.execute(
+            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=? "
+            "and (? is null or status=?) and (? is null or started_at=?) "
+            "and (? is null or attempt_count=?)",
+            (action_id, expected_status, expected_status,
+             expected_started_at, expected_started_at,
+             expected_attempt_count, expected_attempt_count),
+        ).fetchone()
+        if locator is None:
+            return ActionWriteResult(None, 0)
+        return update_email_action(db, "email_actions", locator[0], values)
 
     def append_action_attempt(
         self,
@@ -16498,7 +16219,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             action = db.execute(
-                "select * from email_actions where action_id=?", (action_id,)
+                f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?", (action_id,)
             ).fetchone()
             if action is None:
                 raise EmailActionAttemptConflict(
@@ -16511,7 +16232,7 @@ class EmailStore:
                     f"invalid current action status for {action_id}"
                 )
             latest = db.execute(
-                "select max(attempt_number) from email_action_attempts where action_id=?",
+                f"select max(attempt_number) from ({EMAIL_ATTEMPT_SQL}) where action_id=?",
                 (action_id,),
             ).fetchone()[0]
             expected_attempt = 1 if latest is None else int(latest) + 1
@@ -16523,49 +16244,38 @@ class EmailStore:
                 raise EmailActionAttemptConflict(
                     f"attempt number must be {expected_attempt} for {action_id}"
                 )
-            cursor = db.execute(
-                """
-                insert into email_action_attempts (
-                    action_id, attempt_number, status, provider_operation,
-                    provider_target, provider_result_id, error, started_at,
-                    finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_id,
-                    attempt_number,
-                    status,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    started_at,
-                    finished_at,
-                ),
+            cursor = insert_action(
+                db,
+                "email_action_attempts",
+                {
+                    "action_id": action_id,
+                    "attempt_number": attempt_number,
+                    "status": status,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                },
             )
-            db.execute(
-                """
-                update email_actions
-                set status=?, attempt_count=?, started_at=?, finished_at=?,
-                    provider_operation=?, provider_target=?, provider_result_id=?,
-                    error=?, updated_at=?
-                where action_id=?
-                """,
-                (
-                    status,
-                    attempt_number,
-                    started_at,
-                    finished_at,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    self._now(),
-                    action_id,
-                ),
+            self._update_direct_action(
+                db,
+                action_id,
+                {
+                    "status": status,
+                    "attempt_count": attempt_number,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "updated_at": self._now(),
+                },
             )
             row = db.execute(
-                "select * from email_action_attempts where id=?",
+                f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
         assert row is not None
@@ -16623,22 +16333,22 @@ class EmailStore:
                 phase_started_at = monotonic()
                 try:
                     attempt_number = int(row["attempt_count"]) + 1
-                    updated = db.execute(
-                        """
-                        update email_actions
-                        set status='processing', started_at=?, finished_at='',
-                            next_attempt_at='',
-                            provider_operation='', provider_target='',
-                            provider_result_id='', error='', updated_at=?
-                        where action_id=? and status=? and attempt_count=?
-                        """,
-                        (
-                            claimed_at,
-                            claimed_at,
-                            row["action_id"],
-                            row["status"],
-                            row["attempt_count"],
-                        ),
+                    updated = self._update_direct_action(
+                        db,
+                        row["action_id"],
+                        {
+                            "status": "processing",
+                            "started_at": claimed_at,
+                            "finished_at": "",
+                            "next_attempt_at": "",
+                            "provider_operation": "",
+                            "provider_target": "",
+                            "provider_result_id": "",
+                            "error": "",
+                            "updated_at": claimed_at,
+                        },
+                        expected_status=row["status"],
+                        expected_attempt_count=row["attempt_count"],
                     ).rowcount
                     if updated != 1:
                         raise EmailActionAttemptConflict(
@@ -16682,10 +16392,10 @@ class EmailStore:
     ) -> sqlite3.Row | None:
         eligible: list[sqlite3.Row] = []
         candidate_classifications = db.execute(
-            """
+            f"""
             select distinct a.classification_id
-            from email_actions as a
-            cross join email_classifications as c on c.id=a.classification_id
+            from ({EMAIL_DIRECT_ACTION_SQL}) as a
+            cross join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
             where a.status in ('pending', 'failed')
               and c.status='processed'
               and c.current_action_plan_id=a.action_plan_id
@@ -16693,16 +16403,16 @@ class EmailStore:
         ).fetchall()
         for candidate_classification in candidate_classifications:
             siblings = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id, p.actions_json,
                        p.action_plan_version,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
-                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
+                join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.classification_id=?
                   and c.status='processed'
                 """,
@@ -16761,7 +16471,7 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                "select action_id, action_type from email_actions where action_plan_id=?",
+                f"select action_id, action_type from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
         action_types = {row["action_type"] for row in rows}
@@ -16793,7 +16503,7 @@ class EmailStore:
     def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
         with self._connect() as db:
             rows = db.execute(
-                "select action_id, status from email_actions where action_plan_id=?",
+                f"select action_id, status from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
         return {str(row["action_id"]): str(row["status"]) for row in rows}
@@ -16805,15 +16515,15 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select a.action_id, a.action_type, a.status,
                        t.provider_operation, t.provider_target,
                        t.provider_result_id, t.finished_at
-                from email_actions as a
-                join email_action_attempts as t
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_ATTEMPT_SQL}) as t
                   on t.id=(
                     select max(latest.id)
-                    from email_action_attempts as latest
+                    from ({EMAIL_ATTEMPT_SQL}) as latest
                     where latest.action_id=a.action_id and latest.status='done'
                   )
                 where a.action_plan_id=? and a.status='done'
@@ -16830,11 +16540,11 @@ class EmailStore:
 
         missing_ids: list[int] = []
         with self._connect() as db:
-            identity_sql = """
+            identity_sql = f"""
                 select c.id, c.account_id, c.stable_message_identity,
                        p.action_plan_version
-                from email_classifications as c
-                join email_action_plans as p
+                from ({EMAIL_CLASSIFICATION_SQL}) as c
+                join ({EMAIL_PLAN_SQL}) as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
                   and instr(p.actions_json, '"unsubscribe"') > 0
@@ -16856,8 +16566,8 @@ class EmailStore:
                     action_plan_version=int(row["action_plan_version"]),
                 )
                 receipt = db.execute(
-                    """
-                    select 1 from email_unsubscribe_receipts
+                    f"""
+                    select 1 from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                     where action_identity=?
                     """,
                     (action_identity,),
@@ -16880,8 +16590,8 @@ class EmailStore:
                 hydrated = db.execute(
                     f"""
                     select c.*, p.action_plan_version, p.actions_json
-                    from email_classifications as c
-                    join email_action_plans as p
+                    from ({EMAIL_CLASSIFICATION_SQL}) as c
+                    join ({EMAIL_PLAN_SQL}) as p
                       on p.action_plan_id=c.current_action_plan_id
                     where c.id in ({placeholders})
                     order by c.id
@@ -16895,7 +16605,7 @@ class EmailStore:
     def get_email_unsubscribe_cancellation(self, action_identity: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select decision_json from email_unsubscribe_cancellations where action_identity=?",
+                f"select decision_json from ({EMAIL_UNSUBSCRIBE_CANCELLATION_SQL}) where action_identity=?",
                 (action_identity,),
             ).fetchone()
         return None if row is None else _json_load(
@@ -16903,9 +16613,15 @@ class EmailStore:
         )
 
     def cancel_failed_email_unsubscribe_task(
-        self, *, task_id: int, expected_action_identity: str,
-        expected_execution_generation: str, expected_input_version: int,
-        reason: str, profile: object, apply: bool = False,
+        self,
+        *,
+        task_id: int,
+        expected_action_identity: str,
+        expected_execution_generation: str,
+        expected_input_version: int,
+        reason: str,
+        profile: object,
+        apply: bool = False,
     ) -> dict[str, Any]:
         """Record an explicit retention decision, never a provider opt-out receipt."""
         # The same profile lock serializes direct browser execution. Do not
@@ -16913,20 +16629,38 @@ class EmailStore:
         with profile.lock(timeout_seconds=0), self._connect() as db:
             db.execute("begin immediate")
             decision = self._unsubscribe_cancellation_decision(
-                db, task_id=task_id, expected_action_identity=expected_action_identity,
+                db,
+                task_id=task_id,
+                expected_action_identity=expected_action_identity,
                 expected_execution_generation=expected_execution_generation,
-                expected_input_version=expected_input_version, reason=reason,
+                expected_input_version=expected_input_version,
+                reason=reason,
             )
-            if not apply or db.execute(
-                "select 1 from email_unsubscribe_cancellations where action_identity=?",
-                (expected_action_identity,),
-            ).fetchone() is not None:
+            if (
+                not apply
+                or db.execute(
+                    f"select 1 from ({EMAIL_UNSUBSCRIBE_CANCELLATION_SQL}) where action_identity=?",
+                    (expected_action_identity,),
+                ).fetchone()
+                is not None
+            ):
                 return decision
-            db.execute("insert into email_unsubscribe_cancellations(action_identity,decision_json) values (?,?)", (expected_action_identity, _json_dump(decision)))
+            insert_email_action(
+                db,
+                "email_unsubscribe_cancellations",
+                {
+                    "action_identity": expected_action_identity,
+                    "decision_json": _json_dump(decision),
+                },
+            )
+            parts = task8_set_parts("reply_tasks", {
+                "status": "skipped", "error": "email_unsubscribe_cancelled_by_principal",
+                "available_at": "", "locked_at": None, "updated_at": decision["recorded_at"],
+            })
             db.execute(
-                "update tasks set status='skipped', error='email_unsubscribe_cancelled_by_principal', "
-                "available_at='', locked_at=null, updated_at=? where record_type='reply_tasks' and id=?",
-                (decision["recorded_at"], task_id),
+                f"update tasks set {parts.sql} where record_type='reply_tasks' "
+                f"and {task20_column('reply_tasks', 'id')}=?",
+                (*parts.parameters, task_id),
             )
             return decision
 
@@ -16960,7 +16694,7 @@ class EmailStore:
                 or task["execution_generation"] != expected_execution_generation
                 or task["input_version"] != expected_input_version):
             raise EmailActionPlanConflict("unsubscribe cancellation task identity changed")
-        existing = db.execute("select decision_json from email_unsubscribe_cancellations where action_identity=?", (expected_action_identity,)).fetchone()
+        existing = db.execute(f"select decision_json from ({EMAIL_UNSUBSCRIBE_CANCELLATION_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()
         if existing is not None:
             decision = _json_load(existing["decision_json"], field="unsubscribe cancellation", expected_type=dict)
             if (decision["task_id"] == task_id and task["status"] == "skipped"
@@ -16971,7 +16705,7 @@ class EmailStore:
         if task["status"] != "failed" or task["locked_at"]:
             raise EmailActionPlanConflict("unsubscribe cancellation task is active or terminal")
         if db.execute(
-            "select 1 from service_state where key=?",
+            'select 1 from (' + state_projection('service_state') + ') where key=?',
             (f"email_unsubscribe_execution_pending:v1:{expected_action_identity}",),
         ).fetchone():
             raise EmailActionPlanConflict("unsubscribe execution requires reconciliation")
@@ -16979,7 +16713,7 @@ class EmailStore:
         payload = _task_payload(typed_task)
         _validate_task_identity(typed_task, payload)
         source = db.execute(
-            "select 1 from email_classifications c join email_action_plans p "
+            f"select 1 from ({EMAIL_CLASSIFICATION_SQL}) c join ({EMAIL_PLAN_SQL}) p "
             "on p.action_plan_id=c.current_action_plan_id where c.id=? and c.status='processed' "
             "and c.account_id=? and c.stable_message_identity=? "
             "and p.action_plan_id=? and p.action_plan_version=?",
@@ -16990,13 +16724,13 @@ class EmailStore:
         if source is None:
             raise EmailActionPlanConflict("unsubscribe cancellation source changed")
         if (db.execute(f'select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?', (task_id,)).fetchone()
-                or db.execute("select 1 from dispatcher_claim_leases where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
-                or db.execute("select 1 from email_unsubscribe_claims where action_identity=?", (expected_action_identity,)).fetchone()
-                or db.execute("select 1 from email_unsubscribe_effects where action_identity=?", (expected_action_identity,)).fetchone()
-                or db.execute("select 1 from email_unsubscribe_receipts where action_identity=?", (expected_action_identity,)).fetchone()):
+                or db.execute('select 1 from (' + state_projection('dispatcher_claim_leases') + ") where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
+                or db.execute(f"select 1 from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()
+                or db.execute(f"select 1 from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()
+                or db.execute(f"select 1 from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL}) where action_identity=?", (expected_action_identity,)).fetchone()):
             raise EmailActionPlanConflict("unsubscribe cancellation has an active owner or effect")
         last_step = db.execute(
-            "select state from email_unsubscribe_steps where action_identity=? order by sequence desc limit 1",
+            f"select state from ({EMAIL_UNSUBSCRIBE_STEP_SQL}) where action_identity=? order by sequence desc limit 1",
             (expected_action_identity,),
         ).fetchone()
         if last_step is not None:
@@ -17022,11 +16756,18 @@ class EmailStore:
         terminal: list[dict[str, Any]] = []
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select c.id, c.account_id, c.stable_message_identity,
                        p.action_plan_version
-                from email_classifications as c
-                join email_action_plans as p
+                from (
+                    select classification_id as id, account_id,
+                           stable_message_identity,
+                           class_current_action_plan_id as current_action_plan_id,
+                           class_status as status
+                    from main.emails
+                    where classification_id is not null
+                ) as c
+                join ({EMAIL_PLAN_SQL}) as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
                   and instr(p.actions_json, '"unsubscribe"') > 0
@@ -17041,8 +16782,8 @@ class EmailStore:
                     action_plan_version=int(row["action_plan_version"]),
                 )
                 receipt = db.execute(
-                    """
-                    select 1 from email_unsubscribe_receipts
+                    f"""
+                    select 1 from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
                     where action_identity=?
                     """,
                     (action_identity,),
@@ -17050,7 +16791,7 @@ class EmailStore:
                 if receipt is not None:
                     continue
                 cancellation = db.execute(
-                    "select 1 from email_unsubscribe_cancellations where action_identity=?",
+                    f"select 1 from ({EMAIL_UNSUBSCRIBE_CANCELLATION_SQL}) where action_identity=?",
                     (action_identity,),
                 ).fetchone()
                 if cancellation is not None:
@@ -17070,10 +16811,10 @@ class EmailStore:
                 }:
                     continue
                 classification = db.execute(
-                    """
+                    f"""
                     select c.*, p.action_plan_version, p.actions_json
-                    from email_classifications as c
-                    join email_action_plans as p
+                    from ({EMAIL_CLASSIFICATION_SQL}) as c
+                    join ({EMAIL_PLAN_SQL}) as p
                       on p.action_plan_id=c.current_action_plan_id
                     where c.id=? and c.status='processed'
                       and p.action_plan_version=?
@@ -17107,14 +16848,14 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (action_plan.classification_id,),
             ).fetchone()
             if row is None or row["current_action_plan_id"] != action_plan.action_plan_id:
                 raise EmailActionPlanConflict("model ActionPlan is not current")
             self._persist_action_plan(db, action_plan, now=self._now())
             updated = db.execute(
-                "select * from email_classifications where id=?",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
                 (action_plan.classification_id,),
             ).fetchone()
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
@@ -17132,16 +16873,16 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id, p.actions_json,
                        p.action_plan_version,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
-                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
-                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
+                join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and c.status='processed'
                 """,
                 (action_id,),
@@ -17149,7 +16890,7 @@ class EmailStore:
             if row is None or row["action_plan_id"] != row["current_action_plan_id"]:
                 return None
             siblings = db.execute(
-                "select action_type, status from email_actions where action_plan_id=?",
+                f"select action_type, status from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
                 (row["action_plan_id"],),
             ).fetchall()
             if any(item["status"] == "processing" for item in siblings):
@@ -17169,15 +16910,22 @@ class EmailStore:
             ):
                 return None
             attempt_number = int(row["attempt_count"]) + 1
-            updated = db.execute(
-                """
-                update email_actions
-                set status='processing', started_at=?, finished_at='',
-                    next_attempt_at='', provider_operation='', provider_target='',
-                    provider_result_id='', error='', updated_at=?
-                where action_id=? and status=? and attempt_count=?
-                """,
-                (claimed_at, claimed_at, row["action_id"], row["status"], row["attempt_count"]),
+            updated = self._update_direct_action(
+                db,
+                row["action_id"],
+                {
+                    "status": "processing",
+                    "started_at": claimed_at,
+                    "finished_at": "",
+                    "next_attempt_at": "",
+                    "provider_operation": "",
+                    "provider_target": "",
+                    "provider_result_id": "",
+                    "error": "",
+                    "updated_at": claimed_at,
+                },
+                expected_status=row["status"],
+                expected_attempt_count=row["attempt_count"],
             ).rowcount
             if updated != 1:
                 raise EmailActionAttemptConflict(
@@ -17213,8 +16961,8 @@ class EmailStore:
                 f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.status='failed' and a.account_id=?
                   and a.action_type in ({placeholders})
                   and c.status='processed'
@@ -17256,20 +17004,20 @@ class EmailStore:
             raise ValueError("exact move/trash source verification is required")
         with self._connect() as db:
             db.execute("begin immediate" if apply else "begin")
-            account = db.execute("select * from email_accounts where account_id=?", (expected.account_id,)).fetchone()
+            account = db.execute(f"select * from ({config_projection('email_accounts')}) where account_id=?", (expected.account_id,)).fetchone()
             if account is None:
                 return False
             current_configuration_snapshot = email_imap_configuration_snapshot(dict(account))
             if account_configuration_snapshot != current_configuration_snapshot:
                 return False
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity, p.actions_json,
                        p.action_plan_version
-                from email_actions a join email_classifications c
+                from ({EMAIL_DIRECT_ACTION_SQL}) a join ({EMAIL_CLASSIFICATION_SQL}) c
                   on c.id=a.classification_id
-                join email_action_plans p on p.action_plan_id=a.action_plan_id
+                join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and a.status='failed' and c.status='processed'
                   and a.action_plan_id=c.current_action_plan_id
                 """, (expected.action_id,),
@@ -17283,13 +17031,13 @@ class EmailStore:
                 actual != expected or row["parameters_json"] != failed.parameters_json
                 or row["next_attempt_at"]
                 or db.execute(
-                    "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                    f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                     (expected.action_id, expected.attempt_number),
                 ).fetchone() is not None
                 or row["error"] != failed.error
                 or row["provider_operation"] != failed.provider_operation
                 or db.execute(
-                    "select 1 from email_actions where action_plan_id=? and status='processing'",
+                    f"select 1 from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=? and status='processing'",
                     (expected.action_plan_id,),
                 ).fetchone() is not None
                 or not self._direct_action_predecessors_done(db, row)
@@ -17302,16 +17050,26 @@ class EmailStore:
                     "plan": expected.action_plan_id, "config": expected.config_version,
                     "parameters": failed.parameters_json,
                 }, sort_keys=True).encode("utf-8")).hexdigest()
-                db.execute(
-                    "insert into email_direct_retry_requests values (?,?,?,?,?)",
-                    (expected.action_id, expected.attempt_number, proof, current_configuration_snapshot, requested_at),
+                insert_action(
+                    db,
+                    "email_direct_retry_requests",
+                    {
+                        "action_id": expected.action_id,
+                        "attempt_number": expected.attempt_number,
+                        "source_readback_digest": proof,
+                        "account_configuration_snapshot": current_configuration_snapshot,
+                        "requested_at": requested_at,
+                    },
                 )
-                db.execute(
-                    """update email_actions set next_attempt_at=?,
-                       updated_at=? where action_id=? and status='failed'
-                       and attempt_count=?""",
-                    (requested_at, requested_at,
-                     expected.action_id, expected.attempt_number - 1),
+                self._update_direct_action(
+                    db,
+                    expected.action_id,
+                    {
+                        "next_attempt_at": requested_at,
+                        "updated_at": requested_at,
+                    },
+                    expected_status="failed",
+                    expected_attempt_count=expected.attempt_number - 1,
                 )
             return True
 
@@ -17338,12 +17096,12 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.action_id=? and c.status='processed'
                 """,
                 (action_id,),
@@ -17356,21 +17114,28 @@ class EmailStore:
             ):
                 return None
             busy = db.execute(
-                "select 1 from email_actions "
+                f"select 1 from ({EMAIL_DIRECT_ACTION_SQL}) "
                 "where action_plan_id=? and status='processing'",
                 (row["action_plan_id"],),
             ).fetchone()
             if busy is not None:
                 return None
-            db.execute(
-                """
-                update email_actions
-                set status='processing', started_at=?, finished_at='',
-                    next_attempt_at='', provider_operation='', provider_target='',
-                    provider_result_id='', error='', updated_at=?
-                where action_id=? and status='failed' and attempt_count=?
-                """,
-                (claimed_at, claimed_at, action_id, expected_attempt_count),
+            self._update_direct_action(
+                db,
+                action_id,
+                {
+                    "status": "processing",
+                    "started_at": claimed_at,
+                    "finished_at": "",
+                    "next_attempt_at": "",
+                    "provider_operation": "",
+                    "provider_target": "",
+                    "provider_result_id": "",
+                    "error": "",
+                    "updated_at": claimed_at,
+                },
+                expected_status="failed",
+                expected_attempt_count=expected_attempt_count,
             )
             return self._claimed_direct_action(
                 row,
@@ -17394,7 +17159,7 @@ class EmailStore:
                 "direct action is absent from its ActionPlan"
             )
         siblings = db.execute(
-            "select action_type, status, parameters_json from email_actions "
+            f"select action_type, status, parameters_json from ({EMAIL_DIRECT_ACTION_SQL}) "
             "where classification_id=? and action_plan_id=?",
             (row["classification_id"], row["action_plan_id"]),
         ).fetchall()
@@ -17432,13 +17197,13 @@ class EmailStore:
     @staticmethod
     def _direct_retry_configuration_matches(db: sqlite3.Connection, row: sqlite3.Row) -> bool:
         request = db.execute(
-            "select account_configuration_snapshot from email_direct_retry_requests "
+            f"select account_configuration_snapshot from ({EMAIL_RETRY_SQL}) "
             "where action_id=? and attempt_number=?",
             (row["action_id"], int(row["attempt_count"]) + 1),
         ).fetchone()
         if request is None:
             return True
-        account = db.execute("select * from email_accounts where account_id=?", (row["account_id"],)).fetchone()
+        account = db.execute(f"select * from ({config_projection('email_accounts')}) where account_id=?", (row["account_id"],)).fetchone()
         return account is not None and request[0] == email_imap_configuration_snapshot(dict(account))
 
     @staticmethod
@@ -17462,8 +17227,8 @@ class EmailStore:
             action_plan_version=int(row["action_plan_version"]),
         )
         receipt = db.execute(
-            """
-            select outcome from email_unsubscribe_receipts
+            f"""
+            select outcome from ({EMAIL_UNSUBSCRIBE_RECEIPT_SQL})
             where action_identity=? and action_plan_id=? and classification_id=?
             """,
             (action_identity, row["action_plan_id"], row["classification_id"]),
@@ -17564,13 +17329,13 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                """
+                f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.status as classification_status,
                        c.current_action_plan_id
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.action_id=?
                 """,
                 (action.action_id,),
@@ -17580,7 +17345,7 @@ class EmailStore:
                     f"unknown direct email action {action.action_id}"
                 )
             if db.execute(
-                "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                 (action.action_id, action.attempt_number),
             ).fetchone() is not None:
                 next_attempt_at = ""
@@ -17625,100 +17390,64 @@ class EmailStore:
                     f"direct action is no longer current for {action.action_id}"
                 )
             if updated_locator is not None:
-                classification_updated = db.execute(
-                    """
-                    update email_classifications
-                    set folder=?, uidvalidity=?, uid=?, updated_at=?
-                    where id=? and account_id=? and stable_message_identity=?
-                      and folder=? and uidvalidity=? and uid=?
-                    """,
-                    (
-                        updated_locator.folder,
-                        updated_locator.uidvalidity,
-                        updated_locator.uid,
-                        finished_at,
-                        action.classification_id,
-                        action.account_id,
-                        action.locator.stable_message_identity,
-                        action.locator.folder,
-                        action.locator.uidvalidity,
-                        action.locator.uid,
-                    ),
-                ).rowcount
-                message_updated = db.execute(
-                    """
-                    update email_messages
-                    set folder=?, uidvalidity=?, uid=?, updated_at=?
-                    where account_id=? and stable_message_identity=?
-                      and folder=? and uidvalidity=? and uid=?
-                    """,
-                    (
-                        updated_locator.folder,
-                        updated_locator.uidvalidity,
-                        updated_locator.uid,
-                        finished_at,
-                        action.account_id,
-                        action.locator.stable_message_identity,
-                        action.locator.folder,
-                        action.locator.uidvalidity,
-                        action.locator.uid,
-                    ),
-                ).rowcount
-                if classification_updated != 1 or message_updated != 1:
+                paired_updated = update_email_paired_locator(
+                    db, classification_id=action.classification_id,
+                    account_id=action.account_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                    class_folder=updated_locator.folder,
+                    message_folder=updated_locator.folder,
+                    uidvalidity=updated_locator.uidvalidity,
+                    uid=updated_locator.uid,
+                    class_updated_at=finished_at,
+                    message_updated_at=finished_at,
+                    expected_class_folder=action.locator.folder,
+                    expected_message_folder=action.locator.folder,
+                    expected_uidvalidity=action.locator.uidvalidity,
+                    expected_uid=action.locator.uid,
+                )
+                if paired_updated != 1:
                     raise EmailActionAttemptConflict(
                         f"provider locator changed for {action.action_id}"
                     )
-            cursor = db.execute(
-                """
-                insert into email_action_attempts (
-                    action_id, attempt_number, status, provider_operation,
-                    provider_target, provider_result_id, error, started_at,
-                    finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action.action_id,
-                    action.attempt_number,
-                    status,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    action.claim_started_at,
-                    finished_at,
-                ),
+            cursor = insert_action(
+                db,
+                "email_action_attempts",
+                {
+                    "action_id": action.action_id,
+                    "attempt_number": action.attempt_number,
+                    "status": status,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "started_at": action.claim_started_at,
+                    "finished_at": finished_at,
+                },
             )
-            updated = db.execute(
-                """
-                update email_actions
-                set status=?, attempt_count=?, finished_at=?,
-                    next_attempt_at=?,
-                    provider_operation=?, provider_target=?, provider_result_id=?,
-                    error=?, updated_at=?
-                where action_id=? and status='processing' and started_at=?
-                  and attempt_count=?
-                """,
-                (
-                    status,
-                    action.attempt_number,
-                    finished_at,
-                    next_attempt_at,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    error,
-                    finished_at,
-                    action.action_id,
-                    action.claim_started_at,
-                    action.attempt_number - 1,
-                ),
+            updated = self._update_direct_action(
+                db,
+                action.action_id,
+                {
+                    "status": status,
+                    "attempt_count": action.attempt_number,
+                    "finished_at": finished_at,
+                    "next_attempt_at": next_attempt_at,
+                    "provider_operation": provider_operation,
+                    "provider_target": provider_target,
+                    "provider_result_id": provider_result_id,
+                    "error": error,
+                    "updated_at": finished_at,
+                },
+                expected_status="processing",
+                expected_started_at=action.claim_started_at,
+                expected_attempt_count=action.attempt_number - 1,
             ).rowcount
             if updated != 1:
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {action.action_id}"
                 )
             attempt = db.execute(
-                "select * from email_action_attempts where id=?",
+                f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
         assert attempt is not None
@@ -17743,10 +17472,10 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             rows = db.execute(
-                """
+                f"""
                 select a.*, c.stable_message_identity
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
+                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.status='processing' and a.started_at < ?
                 order by a.action_id
                 """,
@@ -17755,51 +17484,45 @@ class EmailStore:
             for row in rows:
                 attempt_number = int(row["attempt_count"]) + 1
                 explicit_retry = db.execute(
-                    "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                    f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                     (row["action_id"], attempt_number),
                 ).fetchone() is not None
-                db.execute(
-                    """
-                    insert into email_action_attempts (
-                        action_id, attempt_number, status, provider_operation,
-                        provider_target, provider_result_id, error, started_at,
-                        finished_at
-                    ) values (?, ?, 'failed', 'startup_recovery', ?, '',
-                              'stale_processing_recovered', ?, ?)
-                    """,
-                    (
-                        row["action_id"],
-                        attempt_number,
-                        row["stable_message_identity"],
-                        row["started_at"],
-                        recovered_at,
-                    ),
+                insert_action(
+                    db,
+                    "email_action_attempts",
+                    {
+                        "action_id": row["action_id"],
+                        "attempt_number": attempt_number,
+                        "status": "failed",
+                        "provider_operation": "startup_recovery",
+                        "provider_target": row["stable_message_identity"],
+                        "provider_result_id": "",
+                        "error": "stale_processing_recovered",
+                        "started_at": row["started_at"],
+                        "finished_at": recovered_at,
+                    },
                 )
-                updated = db.execute(
-                    """
-                    update email_actions
-                set status='failed', attempt_count=?, finished_at=?,
-                        next_attempt_at=?,
-                        provider_operation='startup_recovery', provider_target=?,
-                        provider_result_id='', error='stale_processing_recovered',
-                        updated_at=?
-                    where action_id=? and status='processing' and started_at=?
-                      and attempt_count=?
-                    """,
-                    (
-                        attempt_number,
-                        recovered_at,
-                        _next_attempt_at(
+                updated = self._update_direct_action(
+                    db,
+                    row["action_id"],
+                    {
+                        "status": "failed",
+                        "attempt_count": attempt_number,
+                        "finished_at": recovered_at,
+                        "next_attempt_at": _next_attempt_at(
                             recovered_at,
                             attempt_number=attempt_number,
                             retryable=not explicit_retry,
                         ),
-                        row["stable_message_identity"],
-                        recovered_at,
-                        row["action_id"],
-                        row["started_at"],
-                        row["attempt_count"],
-                    ),
+                        "provider_operation": "startup_recovery",
+                        "provider_target": row["stable_message_identity"],
+                        "provider_result_id": "",
+                        "error": "stale_processing_recovered",
+                        "updated_at": recovered_at,
+                    },
+                    expected_status="processing",
+                    expected_started_at=row["started_at"],
+                    expected_attempt_count=row["attempt_count"],
                 ).rowcount
                 if updated != 1:
                     raise EmailActionAttemptConflict(
@@ -17813,12 +17536,12 @@ class EmailStore:
         """Mail the service flagged important in the mailbox within [start, end)."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select classifications.sender, classifications.subject,
                        classifications.preview, classifications.category,
                        classifications.received_at, actions.finished_at
-                from email_actions as actions
-                join email_classifications as classifications
+                from ({EMAIL_DIRECT_ACTION_SQL}) as actions
+                join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=actions.classification_id
                 where actions.action_type='flag_important'
                   and actions.status='done'
@@ -17835,8 +17558,8 @@ class EmailStore:
     def list_action_attempts(self, action_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                """
-                select * from email_action_attempts
+                f"""
+                select * from ({EMAIL_ATTEMPT_SQL})
                 where action_id=? order by attempt_number
                 """,
                 (action_id,),
@@ -17846,7 +17569,7 @@ class EmailStore:
     def list_category_configs(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_category_configs order by category_key"
+                f"select * from ({config_projection('email_category_configs')}) order by category_key"
             ).fetchall()
         return [self._category_config_row(row) for row in rows]
 
@@ -17854,7 +17577,7 @@ class EmailStore:
         category_key = validate_email_category_key(category_key)
         with self._connect() as db:
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
         return None if row is None else self._category_config_row(row)
@@ -17913,12 +17636,12 @@ class EmailStore:
             enabled_accounts = {
                 row["account_id"]
                 for row in db.execute(
-                    "select account_id from email_accounts where enabled=1"
+                    f"select account_id from ({config_projection('email_accounts')}) where enabled=1"
                 )
             }
             existing_accounts = {
                 row["account_id"]
-                for row in db.execute("select account_id from email_accounts")
+                for row in db.execute(f"select account_id from ({config_projection('email_accounts')})")
             }
             if not set(account_ids) <= existing_accounts:
                 raise EmailFolderBindingConflict("folder binding account is unknown")
@@ -17929,61 +17652,39 @@ class EmailStore:
             }
             final_enabled = bool(enabled and enabled_accounts <= active_accounts)
             try:
-                db.execute(
-                    """
-                    insert into email_category_configs (
-                        category_key, display_name, core_description,
-                        include_json, exclude_json, threshold, actions_json,
-                        action_parameters_json, enabled, description_version,
-                        config_version, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        category_key,
-                        display_name,
-                        core_description,
-                        _json_dump(list(include_values)),
-                        _json_dump(list(exclude_values)),
-                        threshold,
-                        _json_dump([action.value for action in actions]),
-                        _json_dump(
-                            {
-                                action.value: dict(parameters)
-                                for action, parameters in action_parameters.items()
-                            }
-                        ),
-                        int(final_enabled),
-                        description_version,
-                        config_version,
-                        now,
-                    ),
-                )
+                insert_config(db, "email_category_configs", {
+                    "category_key": category_key, "display_name": display_name,
+                    "core_description": core_description,
+                    "include_json": _json_dump(list(include_values)),
+                    "exclude_json": _json_dump(list(exclude_values)),
+                    "threshold": threshold,
+                    "actions_json": _json_dump([action.value for action in actions]),
+                    "action_parameters_json": _json_dump({
+                        action.value: dict(parameters)
+                        for action, parameters in action_parameters.items()
+                    }),
+                    "enabled": int(final_enabled),
+                    "description_version": description_version,
+                    "config_version": config_version, "updated_at": now,
+                })
                 for binding in bindings:
-                    db.execute(
-                        """
-                        insert into email_category_folder_bindings (
-                            account_id, category_key, provider_folder_id,
-                            provider_folder_name, binding_status, last_verified_at
-                        ) values (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            binding.account_id,
-                            category_key,
-                            binding.provider_folder_id,
-                            binding.provider_folder_name,
-                            binding.binding_status,
-                            binding.last_verified_at,
-                        ),
-                    )
+                    insert_config(db, "email_category_folder_bindings", {
+                        "account_id": binding.account_id,
+                        "category_key": category_key,
+                        "provider_folder_id": binding.provider_folder_id,
+                        "provider_folder_name": binding.provider_folder_name,
+                        "binding_status": binding.binding_status,
+                        "last_verified_at": binding.last_verified_at,
+                    })
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email category or folder binding conflicts with stored state"
                 ) from exc
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
-            self._append_category_description_revision(db, row)
+            self._append_category_description_revision(db, row, current=True)
         assert row is not None
         return self._category_config_row(row)
 
@@ -17994,12 +17695,12 @@ class EmailStore:
     ) -> bool:
         return (
             db.execute(
-                """
+                f"""
                 select not exists (
-                    select 1 from email_accounts as accounts
+                    select 1 from ({config_projection('email_accounts')}) as accounts
                     where accounts.enabled=1
                       and not exists (
-                          select 1 from email_category_folder_bindings as bindings
+                          select 1 from ({config_projection('email_category_folder_bindings')}) as bindings
                           where bindings.account_id=accounts.account_id
                             and bindings.category_key=?
                             and bindings.binding_status='active'
@@ -18065,6 +17766,7 @@ class EmailStore:
         *,
         previous_row: sqlite3.Row | None = None,
         expected_current_version: str | None = None,
+        current: bool = False,
     ) -> None:
         config = self._category_config_row(row)
         if (
@@ -18080,16 +17782,24 @@ class EmailStore:
                 raise EmailFolderBindingConflict(
                     "config_version must be new and never used"
                 )
-            db.execute(
-                "update email_category_configs set updated_at=? where category_key=?",
-                (previous["updated_at"], config["category_key"]),
-            )
+            if current:
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", config["category_key"]), {
+                    "updated_at": previous["updated_at"],
+                })
+            else:
+                db.execute(
+                    "update email_category_configs set updated_at=? where category_key=?",
+                    (previous["updated_at"], config["category_key"]),
+                )
             return
         # A description version identifies semantic content within one category;
         # configuration-only changes may append another snapshot of that content.
+        revision_source = (
+            f"({config_projection('email_category_description_revisions')})"
+            if current else "email_category_description_revisions"
+        )
         for revision in db.execute(
-            "select config_json from email_category_description_revisions "
-            "where category_key=?",
+            f"select config_json from {revision_source} where category_key=?",
             (config["category_key"],),
         ):
             previous = _json_load(
@@ -18106,18 +17816,21 @@ class EmailStore:
                 raise EmailFolderBindingConflict(
                     "description_version already identifies different category content"
                 )
-        db.execute(
-            "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
-            (
-                str(uuid4()),
-                config["category_key"],
-                config["config_version"],
-                _json_dump(config),
-                self._next_model_control_timestamp(
-                    db, "email_category_description_revisions"
-                ),
-            ),
-        )
+        created_at = self._next_model_control_timestamp(db, revision_source)
+        values = {
+            "revision_id": str(uuid4()),
+            "category_key": config["category_key"],
+            "config_version": config["config_version"],
+            "config_json": _json_dump(config),
+            "created_at": created_at,
+        }
+        if current:
+            insert_config(db, "email_category_description_revisions", values)
+        else:
+            db.execute(
+                "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
+                tuple(values.values()),
+            )
 
     def list_category_description_revisions(
         self, category_key: str
@@ -18140,7 +17853,7 @@ class EmailStore:
                     )
                 }
                 for row in db.execute(
-                    "select * from email_category_description_revisions where category_key=? order by created_at desc",
+                    f"select * from ({config_projection('email_category_description_revisions')}) where category_key=? order by created_at desc",
                     (category_key,),
                 )
             ]
@@ -18175,7 +17888,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
@@ -18188,36 +17901,25 @@ class EmailStore:
             final_enabled = bool(
                 enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
-            db.execute(
-                """
-                update email_category_configs set
-                    core_description=?, include_json=?, exclude_json=?,
-                    threshold=?, enabled=?, description_version=?,
-                    config_version=?, updated_at=?
-                where category_key=?
-                """,
-                (
-                    core_description,
-                    _json_dump(list(include_values)),
-                    _json_dump(list(exclude_values)),
-                    float(threshold),
-                    int(final_enabled),
-                    description_version,
-                    config_version,
-                    self._now(),
-                    category_key,
-                ),
-            )
+            update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                "core_description": core_description,
+                "include_json": _json_dump(list(include_values)),
+                "exclude_json": _json_dump(list(exclude_values)),
+                "threshold": float(threshold), "enabled": int(final_enabled),
+                "description_version": description_version,
+                "config_version": config_version, "updated_at": self._now(),
+            })
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             self._append_category_description_revision(
                 db, row, previous_row=existing,
                 expected_current_version=expected_current_version,
+                current=True,
             )
             row = db.execute(
-                "select * from email_category_configs where category_key=?", (category_key,)
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?", (category_key,)
             ).fetchone()
         assert row is not None
         return self._category_config_row(row)
@@ -18265,7 +17967,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
@@ -18278,7 +17980,7 @@ class EmailStore:
             enabled_accounts = {
                 row["account_id"]
                 for row in db.execute(
-                    "select account_id from email_accounts where enabled=1"
+                    f"select account_id from ({config_projection('email_accounts')}) where enabled=1"
                 )
             }
             if set(account_ids) != enabled_accounts:
@@ -18287,65 +17989,34 @@ class EmailStore:
                 )
             try:
                 for binding in bindings:
-                    db.execute(
-                        """
-                        insert into email_category_folder_bindings (
-                            account_id, category_key, provider_folder_id,
-                            provider_folder_name, binding_status, last_verified_at
-                        ) values (?, ?, ?, ?, ?, ?)
-                        on conflict(account_id, category_key) do update set
-                            provider_folder_id=excluded.provider_folder_id,
-                            provider_folder_name=excluded.provider_folder_name,
-                            binding_status=excluded.binding_status,
-                            last_verified_at=excluded.last_verified_at
-                        """,
-                        (
-                            binding.account_id,
-                            category_key,
-                            binding.provider_folder_id,
-                            binding.provider_folder_name,
-                            binding.binding_status,
-                            binding.last_verified_at,
-                        ),
-                    )
+                    _upsert_current_folder_binding(db, category_key, binding)
                 final_enabled = bool(
                     enabled and self._bindings_cover_enabled_accounts(db, category_key)
                 )
-                db.execute(
-                    """
-                    update email_category_configs set
-                        core_description=?, include_json=?, exclude_json=?,
-                        threshold=?, enabled=?, description_version=?,
-                        config_version=?, updated_at=?
-                    where category_key=?
-                    """,
-                    (
-                        core_description,
-                        _json_dump(list(include_values)),
-                        _json_dump(list(exclude_values)),
-                        float(threshold),
-                        int(final_enabled),
-                        description_version,
-                        config_version,
-                        now,
-                        category_key,
-                    ),
-                )
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                    "core_description": core_description,
+                    "include_json": _json_dump(list(include_values)),
+                    "exclude_json": _json_dump(list(exclude_values)),
+                    "threshold": float(threshold), "enabled": int(final_enabled),
+                    "description_version": description_version,
+                    "config_version": config_version, "updated_at": now,
+                })
                 self._validate_category_binding_completeness(db)
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email category or folder binding conflicts with stored state"
                 ) from exc
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             self._append_category_description_revision(
                 db, row, previous_row=existing,
                 expected_current_version=expected_current_version,
+                current=True,
             )
             row = db.execute(
-                "select * from email_category_configs where category_key=?", (category_key,)
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?", (category_key,)
             ).fetchone()
         assert row is not None
         return self._category_config_row(row)
@@ -18374,22 +18045,13 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             try:
-                updated = db.execute(
-                    """
-                    update email_category_folder_bindings set
-                        provider_folder_id=?, provider_folder_name=?,
-                        binding_status=?, last_verified_at=?
-                    where account_id=? and category_key=?
-                    """,
-                    (
-                        binding.provider_folder_id,
-                        binding.provider_folder_name,
-                        binding.binding_status,
-                        binding.last_verified_at,
-                        binding.account_id,
-                        category_key,
-                    ),
-                ).rowcount
+                identity = _folder_binding_rowid(db, binding.account_id, category_key)
+                updated = update_config(db, "email_category_folder_bindings", identity, {
+                    "provider_folder_id": binding.provider_folder_id,
+                    "provider_folder_name": binding.provider_folder_name,
+                    "binding_status": binding.binding_status,
+                    "last_verified_at": binding.last_verified_at,
+                }) if identity is not None else 0
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email folder binding conflicts with stored state"
@@ -18397,16 +18059,12 @@ class EmailStore:
             if updated != 1:
                 raise EmailFolderBindingConflict("email folder binding does not exist")
             if binding.binding_status != "active":
-                db.execute(
-                    "update email_category_configs set enabled=0, updated_at=? "
-                    "where category_key=?",
-                    (self._now(), category_key),
-                )
+                update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                    "enabled": 0, "updated_at": self._now(),
+                })
             row = db.execute(
-                """
-                select * from email_category_folder_bindings
-                where account_id=? and category_key=?
-                """,
+                f"select * from ({config_projection('email_category_folder_bindings')}) "
+                "where account_id=? and category_key=?",
                 (binding.account_id, category_key),
             ).fetchone()
         assert row is not None
@@ -18425,46 +18083,24 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             try:
-                db.execute(
-                    """
-                    insert into email_category_folder_bindings (
-                        account_id, category_key, provider_folder_id,
-                        provider_folder_name, binding_status, last_verified_at
-                    ) values (?, ?, ?, ?, ?, ?)
-                    on conflict(account_id, category_key) do update set
-                        provider_folder_id=excluded.provider_folder_id,
-                        provider_folder_name=excluded.provider_folder_name,
-                        binding_status=excluded.binding_status,
-                        last_verified_at=excluded.last_verified_at
-                    """,
-                    (
-                        binding.account_id,
-                        category_key,
-                        binding.provider_folder_id,
-                        binding.provider_folder_name,
-                        binding.binding_status,
-                        binding.last_verified_at,
-                    ),
-                )
+                _upsert_current_folder_binding(db, category_key, binding)
             except sqlite3.IntegrityError as exc:
                 raise EmailFolderBindingConflict(
                     "email folder binding conflicts with stored state"
                 ) from exc
             complete = self._bindings_cover_enabled_accounts(db, category_key)
             if not complete:
-                db.execute(
-                    """
-                    update email_category_configs
-                    set enabled=0, updated_at=?
-                    where category_key=? and enabled=1
-                    """,
-                    (now, category_key),
-                )
+                category = db.execute(
+                    f"select enabled from ({config_projection('email_category_configs')}) "
+                    "where category_key=?", (category_key,),
+                ).fetchone()
+                if category is not None and category["enabled"] == 1:
+                    update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                        "enabled": 0, "updated_at": now,
+                    })
             row = db.execute(
-                """
-                select * from email_category_folder_bindings
-                where account_id=? and category_key=?
-                """,
+                f"select * from ({config_projection('email_category_folder_bindings')}) "
+                "where account_id=? and category_key=?",
                 (binding.account_id, category_key),
             ).fetchone()
             self._validate_category_binding_completeness(db)
@@ -18478,18 +18114,14 @@ class EmailStore:
         with self._connect() as db:
             if category_key is None:
                 rows = db.execute(
-                    """
-                    select * from email_category_folder_bindings
-                    order by account_id, category_key
-                    """
+                    f"select * from ({config_projection('email_category_folder_bindings')}) "
+                    "order by account_id, category_key"
                 ).fetchall()
             else:
                 validated_key = validate_email_category_key(category_key)
                 rows = db.execute(
-                    """
-                    select * from email_category_folder_bindings
-                    where category_key=? order by account_id
-                    """,
+                    f"select * from ({config_projection('email_category_folder_bindings')}) "
+                    "where category_key=? order by account_id",
                     (validated_key,),
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -18526,7 +18158,7 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
@@ -18534,31 +18166,18 @@ class EmailStore:
             final_enabled = bool(
                 enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
-            db.execute(
-                """
-                update email_category_configs set
-                    core_description=?, threshold=?, actions_json=?,
-                    action_parameters_json=?, enabled=?, config_version=?,
-                    updated_at=? where category_key=?
-                """,
-                (
-                    description,
-                    threshold,
-                    _json_dump([action.value for action in actions]),
-                    _json_dump(
-                        {
-                            action.value: dict(parameters)
-                            for action, parameters in action_parameters.items()
-                        }
-                    ),
-                    int(final_enabled),
-                    config_version,
-                    now,
-                    category_key,
-                ),
-            )
+            update_config(db, "email_category_configs", _config_source_rowid(db, "email_category_configs", "category_key", category_key), {
+                "core_description": description, "threshold": threshold,
+                "actions_json": _json_dump([action.value for action in actions]),
+                "action_parameters_json": _json_dump({
+                    action.value: dict(parameters)
+                    for action, parameters in action_parameters.items()
+                }),
+                "enabled": int(final_enabled),
+                "config_version": config_version, "updated_at": now,
+            })
             row = db.execute(
-                "select * from email_category_configs where category_key=?",
+                f"select * from ({config_projection('email_category_configs')}) where category_key=?",
                 (category_key,),
             ).fetchone()
         assert row is not None

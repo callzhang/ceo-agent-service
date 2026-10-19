@@ -1,0 +1,272 @@
+--- a/app/dispatcher/adapters.py
++++ b/app/dispatcher/adapters.py
+@@ -2,0 +3,2 @@
++from app.state_definitions import state_projection
++from app.state_storage import state_json_field, update_state, upsert_state
+@@ -20,0 +23 @@
++_LEASE_PROJECTION = "(" + state_projection("dispatcher_claim_leases", include_rowid=True) + ")"
+@@ -125 +128 @@
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+@@ -189 +192 @@
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+@@ -233,11 +236,11 @@
+-                cleared = db.execute(
+-                    "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+-                    "updated_at=? where adapter_name=? and source_id=? and owner=? "
+-                    "and owner_pid=? and generation=? and lease_expires_at=?",
+-                    (
+-                        now_text,
+-                        self.name,
+-                        str(candidate["id"]),
+-                        candidate["claim_owner"],
+-                        candidate["claim_owner_pid"],
+-                        candidate["claim_generation"],
++                cleared = update_state(
++                    db, "dispatcher_claim_leases",
++                    _lease_rowid(db, self.name, str(candidate["id"])),
++                    {"owner": "", "lease_expires_at": "", "updated_at": now_text},
++                    where_sql=(
++                        "adapter_name=? and source_id=? and owner=? and owner_pid=? "
++                        "and generation=? and lease_expires_at=?"
++                    ),
++                    parameters=(
++                        self.name, str(candidate["id"]), candidate["claim_owner"],
++                        candidate["claim_owner_pid"], candidate["claim_generation"],
+@@ -247 +250 @@
+-                if cleared.rowcount != 1:
++                if cleared != 1:
+@@ -406 +409 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -418 +421 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -427 +430 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -442 +445 @@
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+@@ -490 +493 @@
+-                    f"from ({REPLY_TASK_SQL}) task left join dispatcher_claim_leases claim "
++                    f"from ({REPLY_TASK_SQL}) task left join {_LEASE_PROJECTION} claim "
+@@ -638 +641 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -651 +654 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -662 +665 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -678 +681 @@
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+@@ -745 +748 @@
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+@@ -861 +864 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -871 +874 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -879 +882 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -892 +895 @@
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+@@ -935 +938 @@
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+@@ -1039 +1042 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1051 +1054 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1060 +1063 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1075 +1078 @@
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+@@ -1121 +1124 @@
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+@@ -1233 +1236 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1243 +1246 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1252 +1255 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1265 +1268 @@
+-                    "left join dispatcher_claim_leases source_claim "
++                    f"left join {_LEASE_PROJECTION} source_claim "
+@@ -1315 +1318 @@
+-                "left join dispatcher_claim_leases claim "
++                f"left join {_LEASE_PROJECTION} claim "
+@@ -1346 +1349 @@
+-                    "left join dispatcher_claim_leases claim "
++                    f"left join {_LEASE_PROJECTION} claim "
+@@ -1785,0 +1789,9 @@
++
++def _lease_rowid(db: sqlite3.Connection, adapter_name: str, source_id: str) -> int | None:
++    row = db.execute(
++        f"select rowid from {_LEASE_PROJECTION} where adapter_name=? and source_id=?",
++        (adapter_name, source_id),
++    ).fetchone()
++    return None if row is None else int(row["rowid"])
++
++
+@@ -1798 +1810 @@
+-        "from dispatcher_claim_leases where adapter_name=? and source_id=?",
++        f"from {_LEASE_PROJECTION} where adapter_name=? and source_id=?",
+@@ -1804,9 +1816,8 @@
+-    db.execute(
+-        "insert into dispatcher_claim_leases "
+-        "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, updated_at) "
+-        "values (?, ?, ?, ?, ?, ?, ?) "
+-        "on conflict(adapter_name, source_id) do update set "
+-        "owner=excluded.owner, owner_pid=excluded.owner_pid, generation=excluded.generation, "
+-        "lease_expires_at=excluded.lease_expires_at, terminal_at='', last_error='', "
+-        "updated_at=excluded.updated_at",
+-        (adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, now),
++    upsert_state(
++        db, "dispatcher_claim_leases",
++        {"adapter_name": adapter_name, "source_id": source_id,
++         "owner": owner, "owner_pid": owner_pid, "generation": generation,
++         "lease_expires_at": lease_expires_at, "updated_at": now},
++        {field: state_json_field(field) for field in (
++            "owner", "owner_pid", "generation", "lease_expires_at", "updated_at"
++        )} | {"terminal_at": "json_quote('')", "last_error": "json_quote('')"},
+@@ -1891,10 +1902,6 @@
+-    cursor = db.execute(
+-        "update dispatcher_claim_leases set owner='', lease_expires_at='', updated_at=? "
+-        "where adapter_name=? and source_id=? and owner=? and generation=?",
+-        (
+-            now,
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-        ),
++    changed = update_state(
++        db, "dispatcher_claim_leases",
++        _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++        {"owner": "", "lease_expires_at": "", "updated_at": now},
++        where_sql="adapter_name=? and source_id=? and owner=? and generation=?",
++        parameters=(envelope.adapter_name, envelope.source_id, owner, envelope.generation),
+@@ -1902 +1909 @@
+-    if cursor.rowcount != 1:
++    if changed != 1:
+@@ -1934,12 +1941,7 @@
+-    cursor = db.execute(
+-        "update dispatcher_claim_leases set lease_expires_at=?, last_error='', "
+-        "updated_at=? where adapter_name=? and source_id=? and owner=? "
+-        "and generation=? and lease_expires_at>? and terminal_at=''",
+-        (
+-            lease_expires_at,
+-            now,
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-            now,
++    changed = update_state(
++        db, "dispatcher_claim_leases",
++        _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++        {"lease_expires_at": lease_expires_at, "last_error": "", "updated_at": now},
++        where_sql=(
++            "adapter_name=? and source_id=? and owner=? and generation=? "
++            "and lease_expires_at>? and terminal_at=''"
+@@ -1946,0 +1949,2 @@
++        parameters=(envelope.adapter_name, envelope.source_id, owner,
++                    envelope.generation, now),
+@@ -1948 +1952 @@
+-    if cursor.rowcount != 1:
++    if changed != 1:
+@@ -1976 +1980 @@
+-        "select 1 from dispatcher_claim_leases where adapter_name=? "
++        f"select 1 from {_LEASE_PROJECTION} where adapter_name=? "
+@@ -1979,7 +1983,2 @@
+-        (
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-            now,
+-        ),
++        (envelope.adapter_name, envelope.source_id, owner,
++         envelope.generation, now),
+@@ -2015,12 +2014,7 @@
+-    cursor = db.execute(
+-        "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+-        "terminal_at=?, last_error='', updated_at=? where adapter_name=? "
+-        "and source_id=? and owner=? and generation=?",
+-        (
+-            now,
+-            now,
+-            envelope.adapter_name,
+-            envelope.source_id,
+-            owner,
+-            envelope.generation,
+-        ),
++    changed = update_state(
++        db, "dispatcher_claim_leases",
++        _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++        {"owner": "", "lease_expires_at": "", "terminal_at": now,
++         "last_error": "", "updated_at": now},
++        where_sql="adapter_name=? and source_id=? and owner=? and generation=?",
++        parameters=(envelope.adapter_name, envelope.source_id, owner, envelope.generation),
+@@ -2028 +2022 @@
+-    if cursor.rowcount != 1:
++    if changed != 1:
+@@ -2031,4 +2025,6 @@
+-        "delete from dispatcher_claim_leases where terminal_at<>'' "
+-        "and (terminal_at,rowid)<("
+-        "select terminal_at,rowid from dispatcher_claim_leases where terminal_at<>'' "
+-        "order by terminal_at desc,rowid desc limit 1 offset 9999)"
++        "delete from state where record_type='dispatcher_claim_leases' "
++        "and terminal_at<>'' and (terminal_at,cast(legacy_key as integer))<("
++        "select terminal_at,cast(legacy_key as integer) from state "
++        "where record_type='dispatcher_claim_leases' and terminal_at<>'' "
++        "order by terminal_at desc,cast(legacy_key as integer) desc "
++        "limit 1 offset 9999)"
+@@ -2054,9 +2050,7 @@
+-        db.execute(
+-            "update dispatcher_claim_leases set owner_pid=0, lease_expires_at='' "
+-            "where adapter_name=? and source_id=? and owner=? and generation=?",
+-            (
+-                envelope.adapter_name,
+-                envelope.source_id,
+-                owner,
+-                envelope.generation,
+-            ),
++        update_state(
++            db, "dispatcher_claim_leases",
++            _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++            {"owner_pid": 0, "lease_expires_at": ""},
++            where_sql="adapter_name=? and source_id=? and owner=? and generation=?",
++            parameters=(envelope.adapter_name, envelope.source_id,
++                        owner, envelope.generation),
+@@ -2075,9 +2069,4 @@
+-        db.execute(
+-            "update dispatcher_claim_leases set last_error=?, updated_at=? "
+-            "where adapter_name=? and source_id=?",
+-            (
+-                error,
+-                _sqlite_time(now),
+-                envelope.adapter_name,
+-                envelope.source_id,
+-            ),
++        update_state(
++            db, "dispatcher_claim_leases",
++            _lease_rowid(db, envelope.adapter_name, envelope.source_id),
++            {"last_error": error, "updated_at": _sqlite_time(now)},

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.state_publication_sources import publication_dispatcher_source
 from app.scheduled_config_storage import publication_scheduled_source
 
 from contextlib import closing, nullcontext
@@ -48,37 +49,104 @@ class UpgradeStateStore(Protocol):
 
 
 class ExistingSchemaUpgradeStateStore:
-    """Persist deploy progress without constructing a newer application store.
+    """Persist deploy progress using the release's explicitly selected schema.
 
-    A full AutoReplyStore construction can migrate the live database before
-    the quiet wait and backup. The existing service_state table is enough for
-    this upgrader's progress record.
+    This DAO never constructs an application store or migrates the database.
+    It selects the committed release role at construction and before updater
+    progress writes; explicit getters and setters never reselect a backend.
     """
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = Path(database_path)
+        self.bind_schema_source()
+        self.bind_committed_schema()
+
+    def bind_committed_schema(self) -> None:
+        """Select the progress backend from one committed, read-only snapshot."""
+        from app.action_email_schema_release import (
+            SOURCE_EMAIL_VERSION, TARGET_EMAIL_VERSION, TARGET_STORE_VERSION,
+        )
+        from app.state_definitions import state_projection
+
+        if not self.database_path.exists():
+            self.bind_schema_source()
+            return
+        with closing(sqlite3.connect(
+            self.database_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30
+        )) as db:
+            db.execute("begin")
+            ledger = db.execute(
+                "select 1 from main.sqlite_schema where type='table' "
+                "and name='email_schema_migrations' collate nocase"
+            ).fetchone()
+            version = db.execute(
+                "select max(version) from main.email_schema_migrations"
+            ).fetchone()[0] if ledger else None
+            if version is not None:
+                if type(version) is not int or not (
+                    0 < version <= SOURCE_EMAIL_VERSION or version == TARGET_EMAIL_VERSION
+                ):
+                    raise ValueError("unsupported committed Email schema role")
+                current = version == TARGET_EMAIL_VERSION
+            elif db.execute(
+                "select 1 from main.sqlite_schema where name='state' collate nocase"
+            ).fetchone():
+                marker = db.execute(
+                    f"select value from ({state_projection('service_state')}) "
+                    "where key='store_schema_version'"
+                ).fetchone()
+                if marker is None or marker[0] != TARGET_STORE_VERSION:
+                    raise ValueError("unsupported committed Store-only State schema role")
+                current = True
+            else:
+                current = False
+        if current:
+            self.bind_schema_current()
+        else:
+            self.bind_schema_source()
+
+    def bind_schema_source(self) -> None:
+        self._state_schema_current = False
+
+    def bind_schema_current(self) -> None:
+        self._state_schema_current = True
 
     def get_service_state(self, key: str) -> str | None:
+        from app.state_definitions import state_projection
+
+        projection = ("(" + state_projection("service_state") + ")"
+                      if self._state_schema_current else "service_state")
         with sqlite3.connect(
             f"file:{self.database_path}?mode=rw", uri=True, timeout=30
         ) as db:
-            row = db.execute("select value from service_state where key=?", (key,)).fetchone()
+            row = db.execute(
+                f"select value from {projection} where key=?", (key,)
+            ).fetchone()
             return None if row is None else str(row[0])
 
     def set_service_state(self, key: str, value: str) -> None:
+        from app.state_storage import state_json_field, upsert_state
+
         for attempt in range(UPGRADE_STATE_WRITE_RETRY_ATTEMPTS):
             try:
                 with sqlite3.connect(
                     f"file:{self.database_path}?mode=rw", uri=True, timeout=30
                 ) as db:
                     db.execute("begin immediate")
-                    db.execute(
-                        """insert into service_state (key, value, updated_at)
-                           values (?, ?, current_timestamp)
-                           on conflict(key) do update set
-                             value=excluded.value, updated_at=current_timestamp""",
-                        (key, value),
-                    )
+                    if self._state_schema_current:
+                        upsert_state(
+                            db, "service_state", {"key": key, "value": value},
+                            {"value": state_json_field("value"),
+                             "updated_at": "json_quote(current_timestamp)"},
+                        )
+                    else:
+                        db.execute(
+                            """insert into service_state (key, value, updated_at)
+                               values (?, ?, current_timestamp)
+                               on conflict(key) do update set
+                                 value=excluded.value, updated_at=current_timestamp""",
+                            (key, value),
+                        )
                 return
             except sqlite3.OperationalError as exc:
                 message = str(exc).casefold()
@@ -352,7 +420,7 @@ def in_flight_work(database_path: Path) -> int:
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
-            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-14.1')}) as claim "
             "        where claim.adapter_name='reply' "
             "          and claim.source_id=cast(task.id as text) "
             "          and coalesce(claim.terminal_at,'')='' "
@@ -362,14 +430,14 @@ def in_flight_work(database_path: Path) -> int:
             "    where (jobs.status='processing' and ("
             f"      exists (select 1 from ({meeting_runs}) as runs "
             "        where runs.job_id=jobs.id and runs.status='running') "
-            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-14.1')}) as claim "
             "        where claim.adapter_name='meeting' "
             "          and claim.source_id=cast(jobs.id as text) "
             "          and coalesce(claim.terminal_at,'')='' "
             "          and julianday(claim.lease_expires_at)>julianday('now')))) "
             "    or (jobs.status='ready_to_send' "
             "      and coalesce(jobs.locked_at,'')<>''))"
-            " + (select count(*) from dispatcher_claim_leases"
+            f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-14.1')})"
             "    where coalesce(terminal_at,'')=''"
             "    and julianday(lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
@@ -466,7 +534,7 @@ class RepositoryUpdater:
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
         publication: Callable[[], UpgradePublication] | None = None,
-        database_publication: Callable[[], UpgradePublication | None] | None = None,
+        database_publication: Callable[[Path | None], UpgradePublication | None] | None = None,
         pre_checkout_cleanup: Callable[[], None] | None = None,
     ) -> None:
         self.repository = GitRepository(repository_root)
@@ -518,7 +586,7 @@ class RepositoryUpdater:
                     category="upgrade_merge",
                 )
                 if self.database_publication is not None:
-                    database_release = self.database_publication()
+                    database_release = self.database_publication(backup_path)
                 self._persist(operation, "verifying", backup_path=backup_path)
                 self.dependency_sync()
                 if database_release is not None:
@@ -733,6 +801,8 @@ class RepositoryUpdater:
             "error": error,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        if isinstance(self.store, ExistingSchemaUpgradeStateStore):
+            self.store.bind_committed_schema()
         self.store.set_service_state(
             UPGRADE_OPERATION_STATE_KEY,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
@@ -770,7 +840,7 @@ def main() -> int:
         wait_for_quiet=lambda: wait_until_quiet(Path(args.db)),
         stop=_default_stop,
         restart=_default_start,
-        database_publication=lambda: prepare_database_schema_release(repository_root, Path(args.db)),
+        database_publication=lambda backup: prepare_database_schema_release(repository_root, Path(args.db), recovery_source_path=backup),
         dependency_sync=lambda: build_frontend(repository_root, changed_paths()),
         verification=lambda: verify_imports(repository_root),
         health=lambda: wait_for_health(),

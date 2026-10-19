@@ -1,0 +1,19 @@
+{
+  "patch_sha256": "25ba3d7e84828be021a498332606d6ed9579ad8116725cf205ba0ba5a9a0047b",
+  "target_tasks_hash": "1afb0380b4280bc061eea303bfbfc43262c0768aad47ead8f5e2d60dbc2da9ff",
+  "files": {
+    "app/action_email_schema_release.py": {
+      "before": "758f361905f4beeb1e615c301ee8103dd2eda1cce6fe13846a37e2c5a70ae196",
+      "after": "0a8eb8bdf777d911275b3d1ed721a8d5b7c94d402a65d536feb2475ff5da5dc8"
+    },
+    "app/task20_schema_release.py": {
+      "before": "27389ce5aae538f8812a5db6351fb2fa37a9fcec221ecd74430f29f6be204caf",
+      "after": "db0bda4c8947bf59fa708b5d67331f86b03657f8fceb42d8baca4378ae5bb3b2"
+    },
+    "app/confirmation_schema_release.py": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "aab9a5d8da35a810df42cab038a3915106c0a688baa6a37d26722db696da7bdf"
+    }
+  },
+  "scope": "Unselected pure retirement plus paired coordinator; original source factories untouched; data-copy regression pending."
+}

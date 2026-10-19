@@ -1,0 +1,1729 @@
+{
+  "status": "unselected source proposal; no public-method/constructor/migration acceptance",
+  "source_head": "39d20d6615ac34d776bfa89213cf50261ea58b10",
+  "scope": [
+    "app/reviewed_candidate_store.py",
+    "app/dispatcher/adapters.py",
+    "app/scheduled_task_recovery.py",
+    "app/reply_task_deferral.py",
+    "app/dingtalk_delivery_repair.py",
+    "app/error_code_migration.py",
+    "app/storage_maintenance.py",
+    "app/work_summary_payload.py"
+  ],
+  "files": {
+    "app/reviewed_candidate_store.py": {
+      "source_sha256": "e1e9df1b6c9c247cbc1f8d19f96c1c25f93a02030b4798b26841a4fc39f2f15f",
+      "candidate_sha256": "8bc37995d49f1d0dafdc8663655de5145335918037ebd5d1cc1b2d15e7525321",
+      "function_signatures": 36,
+      "changed_bodies": [
+        "ReviewedCandidateStoreMixin.wake_selected_candidate_execution"
+      ],
+      "unchanged_bodies": 35
+    },
+    "app/dispatcher/adapters.py": {
+      "source_sha256": "7b7ab7d8b5225b66d666b8d744fca14bf77c6724ab4c2b739e5c31c149ae49ad",
+      "candidate_sha256": "e2962e5f5395a98e93b7d3b9cbb342de7f38f8f36c2eb11b7c240ac8402a2cf1",
+      "function_signatures": 87,
+      "changed_bodies": [
+        "ReplyQueueAdapter._channel_clause",
+        "ReplyQueueAdapter.claim",
+        "ReplyQueueAdapter.release",
+        "ReplyQueueAdapter.handle_handler_error",
+        "ScheduledExecutionQueueAdapter._channel_clause",
+        "MeetingQueueAdapter.claim",
+        "MeetingQueueAdapter.release",
+        "OkrReviewQueueAdapter.metrics",
+        "OkrReviewQueueAdapter.claim",
+        "OkrReviewQueueAdapter.release",
+        "WorkSummaryQueueAdapter.claim",
+        "WorkSummaryQueueAdapter.release"
+      ],
+      "unchanged_bodies": 75
+    },
+    "app/scheduled_task_recovery.py": {
+      "source_sha256": "fc521a22d9d90b2d438c7044479fded6ed15b69f375dca4720fa80c02072451f",
+      "candidate_sha256": "a4168d4a4a7da9b8a55589a50cfd09e433d460e6a8b0d2f672997b5c38aec7e2",
+      "function_signatures": 1,
+      "changed_bodies": [
+        "close_superseded_scheduled_reply_tasks"
+      ],
+      "unchanged_bodies": 0
+    },
+    "app/reply_task_deferral.py": {
+      "source_sha256": "a7ff5a4a8b9077c98a8d51fdfd2abd221e8caade9886b20e09dd93486e79a64d",
+      "candidate_sha256": "487a00a890d95850a66838f6ece5820fd2c45ebb5a1247dcb02a65e6bd8a6bcc",
+      "function_signatures": 14,
+      "changed_bodies": [
+        "_connect",
+        "apply_deferral",
+        "resume_deferral"
+      ],
+      "unchanged_bodies": 11
+    },
+    "app/dingtalk_delivery_repair.py": {
+      "source_sha256": "7adf012e42f87b343ca0955ec016e27a540b7da0f34a61f8c2eaf7dcb1bb4c1f",
+      "candidate_sha256": "02fed7987f18595e3f1e1e961af1ad7fc45520f8dbe8a69bffb01ad46225e924",
+      "function_signatures": 6,
+      "changed_bodies": [
+        "collect_native_chat_readback",
+        "apply_delivery_reverification",
+        "apply_native_chat_readback"
+      ],
+      "unchanged_bodies": 3
+    },
+    "app/error_code_migration.py": {
+      "source_sha256": "047548f29f5a11aa64b86efe92658f6559a1062d77b83887072d34ede56029f1",
+      "candidate_sha256": "ed9fbcc4115b6123cc339c91a70046af0f760997db5e3f4d73acc173cedb246e",
+      "function_signatures": 1,
+      "changed_bodies": [
+        "migrate_legacy_meeting_projections"
+      ],
+      "unchanged_bodies": 0
+    },
+    "app/storage_maintenance.py": {
+      "source_sha256": "d1021d40b06d5e78c680625a200fff3bb92eaa6d95338e72ad966c06acf522f6",
+      "candidate_sha256": "78a897414c9abc9f030344f32c555a9dd8d2df135c6c5fd2a2241e8546bbc34a",
+      "function_signatures": 7,
+      "changed_bodies": [
+        "compact_settled_reply_inputs",
+        "compact_terminal_work_summary_inputs",
+        "compact_native_duplicates"
+      ],
+      "unchanged_bodies": 4
+    },
+    "app/work_summary_payload.py": {
+      "source_sha256": "dd4011560f7c7293b756a46a82e171ee98ad7b1e202fdd45f4f19cdd9c66c5c6",
+      "candidate_sha256": "fae1a40234c1c1d49605fee2c833f7d697cc6720866d76b5dd7efac566412e98",
+      "function_signatures": 4,
+      "changed_bodies": [
+        "migrate_work_summary_payloads"
+      ],
+      "unchanged_bodies": 3
+    }
+  },
+  "patch_sha256": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415",
+  "native_tasks_sql_sites": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 290,
+      "owner": "ReviewedCandidateStoreMixin.wake_selected_candidate_execution",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='pending',available_at='',locked_at=null,\n                    updated_at=current_timestamp where record_type='reply_tasks' and id=? and execution_generation=? and status='needs_human'",
+      "interpolations": {},
+      "parameter_ast": "(candidate['task_id'], candidate['execution_generation'])",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'pending'\", 'available_at': \"''\", 'locked_at': 'null', 'updated_at': 'current_timestamp'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'status')}='needs_human'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 521,
+      "owner": "ReplyQueueAdapter.claim",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='processing', attempts=attempts+1, claimed_input_version=input_version, claimed_input_id=current_input_id, locked_at=?, available_at='', updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing') and __F0__",
+      "interpolations": {
+        "__F0__": "self._channel_clause('tasks')"
+      },
+      "parameter_ast": "(now_text, now_text, row['id'])",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'processing'\", 'attempts': f\"{task20_column('reply_tasks', 'attempts')}+1\", 'claimed_input_version': f\"{task20_column('reply_tasks', 'input_version')}\", 'locked_at': '?', 'available_at': \"''\", 'updated_at': '?'}, structural_sql={'claimed_input_id': 'current_input_id'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing') and {self._channel_clause('tasks')}\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 562,
+      "owner": "ReplyQueueAdapter.release",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='pending', attempts=max(attempts-1,0), locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status='processing'",
+      "interpolations": {},
+      "parameter_ast": "(_sqlite_time(now), int(envelope.source_id))",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'pending'\", 'attempts': f\"max({task20_column('reply_tasks', 'attempts')}-1,0)\", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 589,
+      "owner": "ReplyQueueAdapter.handle_handler_error",
+      "operation": "UPDATE",
+      "source_sql_template": "\n                update tasks\n                set status=?,\n                    locked_at=null, available_at=?, error=?, updated_at=?\n                where record_type='reply_tasks' and id=? and status='processing'\n                ",
+      "interpolations": {},
+      "parameter_ast": "('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id))",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"\n                update tasks\n                set {task8_set_parts('reply_tasks', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': '?'}).sql}\n                where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'\n                \"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 779,
+      "owner": "MeetingQueueAdapter.claim",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='processing', attempts=attempts+1, locked_at=?, updated_at=? where id=__F0__ and record_type='meeting_alignment_jobs' and status in ('waiting','pending','retry','processing')",
+      "interpolations": {
+        "__F0__": "task_id_expression('meeting_alignment_jobs', '?')"
+      },
+      "parameter_ast": "(now_text, now_text, row['id'])",
+      "kind": "meeting_alignment_jobs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': \"'processing'\", 'attempts': f\"{task20_column('meeting_alignment_jobs', 'attempts')}+1\", 'locked_at': '?', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')} in ('waiting','pending','retry','processing')\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 820,
+      "owner": "MeetingQueueAdapter.release",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='retry', attempts=max(attempts-1,0), locked_at=null, updated_at=? where id=__F0__ and record_type='meeting_alignment_jobs' and status='processing'",
+      "interpolations": {
+        "__F0__": "task_id_expression('meeting_alignment_jobs', '?')"
+      },
+      "parameter_ast": "(_sqlite_time(now), int(envelope.source_id))",
+      "kind": "meeting_alignment_jobs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': \"'retry'\", 'attempts': f\"max({task20_column('meeting_alignment_jobs', 'attempts')}-1,0)\", 'locked_at': 'null', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')}='processing'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 965,
+      "owner": "OkrReviewQueueAdapter.claim",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='processing', error='', updated_at=? where record_type='okr_review_requests' and cast(legacy_key as integer)=? and status in ('pending','processing')",
+      "interpolations": {},
+      "parameter_ast": "(now_text, row['id'])",
+      "kind": "okr_review_requests",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': \"'processing'\", 'error': \"''\", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')} in ('pending','processing')\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1001,
+      "owner": "OkrReviewQueueAdapter.release",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='pending', updated_at=? where record_type='okr_review_requests' and cast(legacy_key as integer)=? and status='processing'",
+      "interpolations": {},
+      "parameter_ast": "(_sqlite_time(now), int(envelope.source_id))",
+      "kind": "okr_review_requests",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': \"'pending'\", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1152,
+      "owner": "WorkSummaryQueueAdapter.claim",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='processing', attempts=attempts+1, error='', available_at='', updated_at=? where record_type='work_summary_inputs' and id=__F0__ and status in ('pending','processing')",
+      "interpolations": {
+        "__F0__": "task_id_expression('work_summary_inputs', '?')"
+      },
+      "parameter_ast": "(now_text, row['id'])",
+      "kind": "work_summary_inputs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': \"'processing'\", 'attempts': f\"{task20_column('work_summary_inputs', 'attempts')}+1\", 'error': \"''\", 'available_at': \"''\", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('pending','processing')\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1192,
+      "owner": "WorkSummaryQueueAdapter.release",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='pending', attempts=max(attempts-1,0), updated_at=? where record_type='work_summary_inputs' and id=__F0__ and status='processing'",
+      "interpolations": {
+        "__F0__": "task_id_expression('work_summary_inputs', '?')"
+      },
+      "parameter_ast": "(_sqlite_time(now), int(envelope.source_id))",
+      "kind": "work_summary_inputs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': \"'pending'\", 'attempts': f\"max({task20_column('work_summary_inputs', 'attempts')}-1,0)\", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')}='processing'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 859,
+      "owner": "OkrReviewQueueAdapter.metrics",
+      "operation": "SELECT",
+      "source_sql_template": "select count(*) from tasks where record_type='okr_review_requests' and status='pending'",
+      "interpolations": {},
+      "parameter_ast": null
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "line": 123,
+      "owner": "close_superseded_scheduled_reply_tasks",
+      "operation": "UPDATE",
+      "source_sql_template": "\n                update tasks\n                   set status='done',\n                       error='',\n                       available_at='',\n                       locked_at=null,\n                       recovery_code='superseded_by_service_command',\n                       updated_at=?\n                 where record_type='reply_tasks' and id=? and status='failed'\n                ",
+      "interpolations": {},
+      "parameter_ast": "(now_text, int(row['task_id']))",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"\n                update tasks\n                   set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'done'\", 'error': \"''\", 'available_at': \"''\", 'locked_at': 'null', 'recovery_code': \"'superseded_by_service_command'\", 'updated_at': '?'}).sql}\n                 where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed'\n                \"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 304,
+      "owner": "apply_deferral",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='pending', available_at=?,\n                locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing')",
+      "interpolations": {},
+      "parameter_ast": "(until, _stamp(instant), task_id)",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'pending'\", 'available_at': '?', 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing')\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 356,
+      "owner": "resume_deferral",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set available_at=?,updated_at=? where record_type='reply_tasks' and id=? and status='pending'",
+      "interpolations": {},
+      "parameter_ast": "(row['original_available_at'], _stamp(instant), task_id)",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'available_at': '?', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='pending'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 473,
+      "owner": "apply_native_chat_readback",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? where record_type='reply_tasks' and id=? and status='failed' and error='external_action_uncertain' and execution_generation=?",
+      "interpolations": {},
+      "parameter_ast": "(queried_at, task_id, task['execution_generation'])",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'done'\", 'error': \"''\", 'available_at': \"''\", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 346,
+      "owner": "apply_native_chat_readback",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? where record_type='reply_tasks' and id=? and status='failed' and error='external_action_uncertain' and execution_generation=?",
+      "interpolations": {},
+      "parameter_ast": "(queried_at, task_id, task['execution_generation'])",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'done'\", 'error': \"''\", 'available_at': \"''\", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 138,
+      "owner": "apply_delivery_reverification",
+      "operation": "SELECT",
+      "source_sql_template": "select * from tasks where record_type='reply_tasks' and legacy_key=?",
+      "interpolations": {},
+      "parameter_ast": "(str(run['reply_task_id']),)"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 147,
+      "owner": "apply_delivery_reverification",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set status='failed',error=?,updated_at=? where id=?",
+      "interpolations": {},
+      "parameter_ast": "(error_code, proof['queried_at'], task['id'])",
+      "kind": "reply_tasks",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': \"'failed'\", 'error': '?', 'updated_at': '?'}).sql} where id=?\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "line": 85,
+      "owner": "migrate_legacy_meeting_projections",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set error=?, updated_at=current_timestamp where id=__F0__ and record_type='meeting_alignment_jobs'",
+      "interpolations": {
+        "__F0__": "task_id_expression('meeting_alignment_jobs', '?')"
+      },
+      "parameter_ast": "updates",
+      "kind": "meeting_alignment_jobs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'error': '?', 'updated_at': 'current_timestamp'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs'\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 127,
+      "owner": "compact_terminal_work_summary_inputs",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set payload_json='{}', source_created_at=?, body_sha256=?, body_bytes=?, body_compacted=1 where record_type='work_summary_inputs' and id=__F0__ and status in ('done', 'skipped') and body_compacted=0",
+      "interpolations": {
+        "__F0__": "task_id_expression('work_summary_inputs', '?')"
+      },
+      "parameter_ast": "(source_created_at, digest, body_bytes, row['id'])",
+      "kind": "work_summary_inputs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': \"'{}'\", 'source_created_at': '?', 'body_sha256': '?', 'body_bytes': '?', 'body_compacted': '1'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('done', 'skipped') and {task20_column('work_summary_inputs', 'body_compacted')}=0\"\"\"",
+      "mutation": true
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "line": 80,
+      "owner": "migrate_work_summary_payloads",
+      "operation": "UPDATE",
+      "source_sql_template": "update tasks set payload_json=? where record_type='work_summary_inputs' and id=__F0__ and payload_json=?",
+      "interpolations": {
+        "__F0__": "task_id_expression('work_summary_inputs', '?')"
+      },
+      "parameter_ast": "(encoded, row_id, current)",
+      "kind": "work_summary_inputs",
+      "candidate_sql_expression": "f\"\"\"update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'payload_json')}=?\"\"\"",
+      "mutation": true
+    }
+  ],
+  "native_updates": 19,
+  "extra_dynamic_update": {
+    "file": "app/storage_maintenance.py",
+    "owner": "compact_native_duplicates",
+    "source_loop": {
+      "tasks": {
+        "error_detail": ""
+      }
+    },
+    "candidate_loop": {
+      "workbench_turns": {
+        "error_detail": ""
+      }
+    },
+    "reason": "Only workbench_turns owns source error_detail; typed generated value excludes irrelevant native NULL rows"
+  },
+  "source_projection_consumers": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 75,
+      "owner": "ReviewedCandidateStoreMixin._check_historical_runtime_refusal",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 56,
+      "owner": "ReviewedCandidateStoreMixin._candidate_context",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 90,
+      "owner": "ReviewedCandidateStoreMixin._adopt_review_candidate_in_connection",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 147,
+      "owner": "ReviewedCandidateStoreMixin.persist_review_candidate",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 220,
+      "owner": "ReviewedCandidateStoreMixin.current_reviewed_candidate",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 288,
+      "owner": "ReviewedCandidateStoreMixin.wake_selected_candidate_execution",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 491,
+      "owner": "ReviewedCandidateStoreMixin.record_candidate_external_action",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 572,
+      "owner": "ReviewedCandidateStoreMixin.list_human_decision_evidence",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 585,
+      "owner": "ReviewedCandidateStoreMixin.list_human_decision_evidence",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 600,
+      "owner": "ReviewedCandidateStoreMixin.list_human_decision_evidence",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 295,
+      "owner": "ReviewedCandidateStoreMixin.wake_selected_candidate_execution",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 680,
+      "owner": "MeetingQueueAdapter.metrics",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 894,
+      "owner": "OkrReviewQueueAdapter.metrics",
+      "alias": "OKR_REQUEST_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1077,
+      "owner": "WorkSummaryQueueAdapter.metrics",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 540,
+      "owner": "ReplyQueueAdapter.claim",
+      "alias": "REPLY_TASK_CURRENT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 798,
+      "owner": "MeetingQueueAdapter.claim",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1170,
+      "owner": "WorkSummaryQueueAdapter.claim",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 444,
+      "owner": "ReplyQueueAdapter.metrics",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 636,
+      "owner": "MeetingQueueAdapter.metrics",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 640,
+      "owner": "MeetingQueueAdapter.metrics",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 653,
+      "owner": "MeetingQueueAdapter.metrics",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 664,
+      "owner": "MeetingQueueAdapter.metrics",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 863,
+      "owner": "OkrReviewQueueAdapter.metrics",
+      "alias": "OKR_REQUEST_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 873,
+      "owner": "OkrReviewQueueAdapter.metrics",
+      "alias": "OKR_REQUEST_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 881,
+      "owner": "OkrReviewQueueAdapter.metrics",
+      "alias": "OKR_REQUEST_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 937,
+      "owner": "OkrReviewQueueAdapter.claim.fetch_page",
+      "alias": "OKR_REQUEST_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1038,
+      "owner": "WorkSummaryQueueAdapter.metrics",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1041,
+      "owner": "WorkSummaryQueueAdapter.metrics",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1053,
+      "owner": "WorkSummaryQueueAdapter.metrics",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1062,
+      "owner": "WorkSummaryQueueAdapter.metrics",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1123,
+      "owner": "WorkSummaryQueueAdapter.claim.fetch_page",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 404,
+      "owner": "ReplyQueueAdapter.metrics",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 408,
+      "owner": "ReplyQueueAdapter.metrics",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 420,
+      "owner": "ReplyQueueAdapter.metrics",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 429,
+      "owner": "ReplyQueueAdapter.metrics",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 493,
+      "owner": "ReplyQueueAdapter.claim.fetch_page",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 747,
+      "owner": "MeetingQueueAdapter.claim.fetch_page",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "line": 54,
+      "owner": "close_superseded_scheduled_reply_tasks",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 135,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 169,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 180,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 185,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 197,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 205,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 210,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 216,
+      "owner": "_snapshot",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 48,
+      "owner": "collect_native_chat_readback",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 204,
+      "owner": "apply_native_chat_readback",
+      "alias": "REPLY_TASK_SQL"
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "line": 56,
+      "owner": "migrate_legacy_meeting_projections",
+      "alias": "MEETING_JOB_SQL"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 87,
+      "owner": "_reply_input_storage_counts",
+      "alias": "REPLY_TASK_CURRENT_SQL"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 94,
+      "owner": "_reply_input_storage_counts",
+      "alias": "REPLY_TASK_INPUT_SQL"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 121,
+      "owner": "compact_terminal_work_summary_inputs",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 64,
+      "owner": "compact_settled_reply_inputs",
+      "alias": "REPLY_TASK_CURRENT_SQL"
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "line": 57,
+      "owner": "migrate_work_summary_payloads",
+      "alias": "WORK_SUMMARY_INPUT_SQL"
+    }
+  ],
+  "edits": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 290,
+      "owner": "ReviewedCandidateStoreMixin.wake_selected_candidate_execution",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 521,
+      "owner": "ReplyQueueAdapter.claim",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 562,
+      "owner": "ReplyQueueAdapter.release",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 589,
+      "owner": "ReplyQueueAdapter.handle_handler_error",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 779,
+      "owner": "MeetingQueueAdapter.claim",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 820,
+      "owner": "MeetingQueueAdapter.release",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 965,
+      "owner": "OkrReviewQueueAdapter.claim",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1001,
+      "owner": "OkrReviewQueueAdapter.release",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1152,
+      "owner": "WorkSummaryQueueAdapter.claim",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1192,
+      "owner": "WorkSummaryQueueAdapter.release",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "line": 123,
+      "owner": "close_superseded_scheduled_reply_tasks",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 304,
+      "owner": "apply_deferral",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 356,
+      "owner": "resume_deferral",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 473,
+      "owner": "apply_native_chat_readback",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 346,
+      "owner": "apply_native_chat_readback",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 147,
+      "owner": "apply_delivery_reverification",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "line": 85,
+      "owner": "migrate_legacy_meeting_projections",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 127,
+      "owner": "compact_terminal_work_summary_inputs",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "line": 80,
+      "owner": "migrate_work_summary_payloads",
+      "delta": "native UPDATE SQL expression only; parameter/cursor untouched"
+    }
+  ],
+  "verification": {
+    "python_executable": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python",
+    "python_version": "3.13.12 (main, Mar 25 2026, 02:48:22) [Clang 22.1.1 ]",
+    "compile_all_eight": true,
+    "ruff": "All checks passed!",
+    "copied_import_modules": [
+      "app.reviewed_candidate_store",
+      "app.dispatcher.adapters",
+      "app.scheduled_task_recovery",
+      "app.reply_task_deferral",
+      "app.dingtalk_delivery_repair",
+      "app.error_code_migration",
+      "app.storage_maintenance",
+      "app.work_summary_payload"
+    ],
+    "copied_import_no_constructors": true,
+    "apply_reverse_exact_bytes": true,
+    "apply_commands": [
+      [
+        "git",
+        "apply",
+        "--check",
+        "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch"
+      ],
+      [
+        "git",
+        "apply",
+        "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch"
+      ],
+      [
+        "git",
+        "apply",
+        "--reverse",
+        "--check",
+        "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch"
+      ],
+      [
+        "git",
+        "apply",
+        "--reverse",
+        "/Users/derek/.codex/worktrees/database-redesign-provider-state/ceo-agent-service/docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch"
+      ]
+    ],
+    "function_signatures_exact": 156,
+    "unchanged_function_bodies": 131,
+    "changed_function_bodies": 25,
+    "all_other_ast_after_named_sql_registration_dynamic_loop_local_import_deltas_exact": true,
+    "transaction_context_connection_pragma_ast": {
+      "app/reviewed_candidate_store.py": {
+        "contexts": 23,
+        "commit_rollback_close_connect_calls": 0,
+        "transaction_pragma_sql_calls": 0,
+        "exact": true
+      },
+      "app/dispatcher/adapters.py": {
+        "contexts": 47,
+        "commit_rollback_close_connect_calls": 0,
+        "transaction_pragma_sql_calls": 0,
+        "exact": true
+      },
+      "app/scheduled_task_recovery.py": {
+        "contexts": 1,
+        "commit_rollback_close_connect_calls": 0,
+        "transaction_pragma_sql_calls": 0,
+        "exact": true
+      },
+      "app/reply_task_deferral.py": {
+        "contexts": 4,
+        "commit_rollback_close_connect_calls": 9,
+        "transaction_pragma_sql_calls": 4,
+        "exact": true
+      },
+      "app/dingtalk_delivery_repair.py": {
+        "contexts": 3,
+        "commit_rollback_close_connect_calls": 0,
+        "transaction_pragma_sql_calls": 0,
+        "exact": true
+      },
+      "app/error_code_migration.py": {
+        "contexts": 1,
+        "commit_rollback_close_connect_calls": 0,
+        "transaction_pragma_sql_calls": 0,
+        "exact": true
+      },
+      "app/storage_maintenance.py": {
+        "contexts": 4,
+        "commit_rollback_close_connect_calls": 8,
+        "transaction_pragma_sql_calls": 9,
+        "exact": true
+      },
+      "app/work_summary_payload.py": {
+        "contexts": 1,
+        "commit_rollback_close_connect_calls": 4,
+        "transaction_pragma_sql_calls": 3,
+        "exact": true
+      }
+    },
+    "cursor_call_and_other_ast": {
+      "app/reviewed_candidate_store.py": {
+        "native_cursor_calls": 62,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/dispatcher/adapters.py": {
+        "native_cursor_calls": 80,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/scheduled_task_recovery.py": {
+        "native_cursor_calls": 2,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/reply_task_deferral.py": {
+        "native_cursor_calls": 31,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/dingtalk_delivery_repair.py": {
+        "native_cursor_calls": 23,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/error_code_migration.py": {
+        "native_cursor_calls": 2,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/storage_maintenance.py": {
+        "native_cursor_calls": 23,
+        "other_ast_exact_after_named_deltas": true
+      },
+      "app/work_summary_payload.py": {
+        "native_cursor_calls": 5,
+        "other_ast_exact_after_named_deltas": true
+      }
+    },
+    "original_sql_parameters_exact_except_two_explicit_kind_tuples": [
+      {
+        "file": "app/storage_maintenance.py",
+        "owner": "compact_native_duplicates",
+        "line": 159,
+        "source": "(empty, empty)",
+        "candidate": "(empty, kind, empty)"
+      },
+      {
+        "file": "app/storage_maintenance.py",
+        "owner": "compact_native_duplicates",
+        "line": 155,
+        "source": "(empty, empty)",
+        "candidate": "(empty, kind, empty)"
+      }
+    ],
+    "pure_set_helper_calls": 20,
+    "all_helper_bound_parameters_empty": true,
+    "rendered_sql_placeholder_counts_exact": 19,
+    "no_sqlite_connection_or_method_execution": true,
+    "copied_import_sqlite_connect_forbidden": true,
+    "owned_temp_removed": true,
+    "blank_context_format_apply_reverse_exact_hash_recheck": true
+  },
+  "pure_rendered_native_updates": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 290,
+      "owner": "ReviewedCandidateStoreMixin.wake_selected_candidate_execution",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(current_timestamp))) where record_type='reply_tasks' and id=? and \"reply_tasks__execution_generation\"=? and \"reply_tasks__status\"='needs_human'",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 521,
+      "owner": "ReplyQueueAdapter.claim",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.attempts',json(ceo_native_json(\"reply_tasks__attempts\"+1)),'$.claimed_input_version',json(ceo_native_json(\"reply_tasks__input_version\")),'$.locked_at',json(ceo_native_json(?)),'$.available_at',json(ceo_native_json('')),'$.updated_at',json(ceo_native_json(?))),\"claimed_input_id\"=current_input_id where record_type='reply_tasks' and id=? and \"reply_tasks__status\" in ('pending','processing') and tasks.\"reply_tasks__channel\" in ('dingtalk','wechat')",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 562,
+      "owner": "ReplyQueueAdapter.release",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.attempts',json(ceo_native_json(max(\"reply_tasks__attempts\"-1,0))),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?))) where record_type='reply_tasks' and id=? and \"reply_tasks__status\"='processing'",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 589,
+      "owner": "ReplyQueueAdapter.handle_handler_error",
+      "kind": "reply_tasks",
+      "sql": "\n                update tasks\n                set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json(?)),'$.locked_at',json(ceo_native_json(null)),'$.available_at',json(ceo_native_json(?)),'$.error',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?)))\n                where record_type='reply_tasks' and id=? and \"reply_tasks__status\"='processing'\n                ",
+      "source_placeholder_count": 5,
+      "candidate_placeholder_count": 5,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 779,
+      "owner": "MeetingQueueAdapter.claim",
+      "kind": "meeting_alignment_jobs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.attempts',json(ceo_native_json(\"meeting_alignment_jobs__attempts\"+1)),'$.locked_at',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?))) where id=(select id from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?) and record_type='meeting_alignment_jobs' and \"meeting_alignment_jobs__status\" in ('waiting','pending','retry','processing')",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 820,
+      "owner": "MeetingQueueAdapter.release",
+      "kind": "meeting_alignment_jobs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('retry')),'$.attempts',json(ceo_native_json(max(\"meeting_alignment_jobs__attempts\"-1,0))),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?))) where id=(select id from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?) and record_type='meeting_alignment_jobs' and \"meeting_alignment_jobs__status\"='processing'",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 965,
+      "owner": "OkrReviewQueueAdapter.claim",
+      "kind": "okr_review_requests",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.error',json(ceo_native_json('')),'$.updated_at',json(ceo_native_json(?))) where record_type='okr_review_requests' and cast(legacy_key as integer)=? and \"okr_review_requests__status\" in ('pending','processing')",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1001,
+      "owner": "OkrReviewQueueAdapter.release",
+      "kind": "okr_review_requests",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.updated_at',json(ceo_native_json(?))) where record_type='okr_review_requests' and cast(legacy_key as integer)=? and \"okr_review_requests__status\"='processing'",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1152,
+      "owner": "WorkSummaryQueueAdapter.claim",
+      "kind": "work_summary_inputs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.attempts',json(ceo_native_json(\"work_summary_inputs__attempts\"+1)),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.updated_at',json(ceo_native_json(?))) where record_type='work_summary_inputs' and id=(select id from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?) and \"work_summary_inputs__status\" in ('pending','processing')",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 1192,
+      "owner": "WorkSummaryQueueAdapter.release",
+      "kind": "work_summary_inputs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.attempts',json(ceo_native_json(max(\"work_summary_inputs__attempts\"-1,0))),'$.updated_at',json(ceo_native_json(?))) where record_type='work_summary_inputs' and id=(select id from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?) and \"work_summary_inputs__status\"='processing'",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "line": 123,
+      "owner": "close_superseded_scheduled_reply_tasks",
+      "kind": "reply_tasks",
+      "sql": "\n                update tasks\n                   set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('done')),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.recovery_code',json(ceo_native_json('superseded_by_service_command')),'$.updated_at',json(ceo_native_json(?)))\n                 where record_type='reply_tasks' and id=? and \"reply_tasks__status\"='failed'\n                ",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 304,
+      "owner": "apply_deferral",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.available_at',json(ceo_native_json(?)),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?))) where record_type='reply_tasks' and id=? and \"reply_tasks__status\" in ('pending','processing')",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 356,
+      "owner": "resume_deferral",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.available_at',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?))) where record_type='reply_tasks' and id=? and \"reply_tasks__status\"='pending'",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 473,
+      "owner": "apply_native_chat_readback",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('done')),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?))) where record_type='reply_tasks' and id=? and \"reply_tasks__status\"='failed' and \"reply_tasks__error\"='external_action_uncertain' and \"reply_tasks__execution_generation\"=?",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 346,
+      "owner": "apply_native_chat_readback",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('done')),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?))) where record_type='reply_tasks' and id=? and \"reply_tasks__status\"='failed' and \"reply_tasks__error\"='external_action_uncertain' and \"reply_tasks__execution_generation\"=?",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 147,
+      "owner": "apply_delivery_reverification",
+      "kind": "reply_tasks",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('failed')),'$.error',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?))) where id=?",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "line": 85,
+      "owner": "migrate_legacy_meeting_projections",
+      "kind": "meeting_alignment_jobs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.error',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(current_timestamp))) where id=(select id from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?) and record_type='meeting_alignment_jobs'",
+      "source_placeholder_count": 2,
+      "candidate_placeholder_count": 2,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 127,
+      "owner": "compact_terminal_work_summary_inputs",
+      "kind": "work_summary_inputs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.payload_json',json(ceo_native_json('{}')),'$.source_created_at',json(ceo_native_json(?)),'$.body_sha256',json(ceo_native_json(?)),'$.body_bytes',json(ceo_native_json(?)),'$.body_compacted',json(ceo_native_json(1))) where record_type='work_summary_inputs' and id=(select id from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?) and \"work_summary_inputs__status\" in ('done', 'skipped') and \"work_summary_inputs__body_compacted\"=0",
+      "source_placeholder_count": 4,
+      "candidate_placeholder_count": 4,
+      "original_parameters_exact": true
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "line": 80,
+      "owner": "migrate_work_summary_payloads",
+      "kind": "work_summary_inputs",
+      "sql": "update tasks set payload_json=json_set(tasks.payload_json,'$.payload_json',json(ceo_native_json(?))) where record_type='work_summary_inputs' and id=(select id from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?) and \"work_summary_inputs__payload_json\"=?",
+      "source_placeholder_count": 3,
+      "candidate_placeholder_count": 3,
+      "original_parameters_exact": true
+    }
+  ],
+  "pure_set_parts": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "owner": "ReviewedCandidateStoreMixin.wake_selected_candidate_execution",
+      "line": 294,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'pending'\", 'available_at': \"''\", 'locked_at': 'null', 'updated_at': 'current_timestamp'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(current_timestamp)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "ReplyQueueAdapter.claim",
+      "line": 530,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'processing'\", 'attempts': f\"{task20_column('reply_tasks', 'attempts')}+1\", 'claimed_input_version': f\"{task20_column('reply_tasks', 'input_version')}\", 'locked_at': '?', 'available_at': \"''\", 'updated_at': '?'}, structural_sql={'claimed_input_id': 'current_input_id'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.attempts',json(ceo_native_json(\"reply_tasks__attempts\"+1)),'$.claimed_input_version',json(ceo_native_json(\"reply_tasks__input_version\")),'$.locked_at',json(ceo_native_json(?)),'$.available_at',json(ceo_native_json('')),'$.updated_at',json(ceo_native_json(?))),\"claimed_input_id\"=current_input_id",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "ReplyQueueAdapter.release",
+      "line": 568,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'pending'\", 'attempts': f\"max({task20_column('reply_tasks', 'attempts')}-1,0)\", 'locked_at': 'null', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.attempts',json(ceo_native_json(max(\"reply_tasks__attempts\"-1,0))),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "ReplyQueueAdapter.handle_handler_error",
+      "line": 596,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json(?)),'$.locked_at',json(ceo_native_json(null)),'$.available_at',json(ceo_native_json(?)),'$.error',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "MeetingQueueAdapter.claim",
+      "line": 783,
+      "expression": "task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': \"'processing'\", 'attempts': f\"{task20_column('meeting_alignment_jobs', 'attempts')}+1\", 'locked_at': '?', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.attempts',json(ceo_native_json(\"meeting_alignment_jobs__attempts\"+1)),'$.locked_at',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "MeetingQueueAdapter.release",
+      "line": 821,
+      "expression": "task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': \"'retry'\", 'attempts': f\"max({task20_column('meeting_alignment_jobs', 'attempts')}-1,0)\", 'locked_at': 'null', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('retry')),'$.attempts',json(ceo_native_json(max(\"meeting_alignment_jobs__attempts\"-1,0))),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "OkrReviewQueueAdapter.claim",
+      "line": 963,
+      "expression": "task8_set_parts('okr_review_requests', {}, update_sql={'status': \"'processing'\", 'error': \"''\", 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.error',json(ceo_native_json('')),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "OkrReviewQueueAdapter.release",
+      "line": 997,
+      "expression": "task8_set_parts('okr_review_requests', {}, update_sql={'status': \"'pending'\", 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "WorkSummaryQueueAdapter.claim",
+      "line": 1146,
+      "expression": "task8_set_parts('work_summary_inputs', {}, update_sql={'status': \"'processing'\", 'attempts': f\"{task20_column('work_summary_inputs', 'attempts')}+1\", 'error': \"''\", 'available_at': \"''\", 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('processing')),'$.attempts',json(ceo_native_json(\"work_summary_inputs__attempts\"+1)),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "owner": "WorkSummaryQueueAdapter.release",
+      "line": 1184,
+      "expression": "task8_set_parts('work_summary_inputs', {}, update_sql={'status': \"'pending'\", 'attempts': f\"max({task20_column('work_summary_inputs', 'attempts')}-1,0)\", 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.attempts',json(ceo_native_json(max(\"work_summary_inputs__attempts\"-1,0))),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "owner": "close_superseded_scheduled_reply_tasks",
+      "line": 130,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'done'\", 'error': \"''\", 'available_at': \"''\", 'locked_at': 'null', 'recovery_code': \"'superseded_by_service_command'\", 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('done')),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.recovery_code',json(ceo_native_json('superseded_by_service_command')),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "owner": "apply_deferral",
+      "line": 309,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'pending'\", 'available_at': '?', 'locked_at': 'null', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('pending')),'$.available_at',json(ceo_native_json(?)),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "owner": "resume_deferral",
+      "line": 360,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'available_at': '?', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.available_at',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "owner": "apply_native_chat_readback",
+      "line": 474,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'done'\", 'error': \"''\", 'available_at': \"''\", 'locked_at': 'null', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('done')),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "owner": "apply_native_chat_readback",
+      "line": 349,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'done'\", 'error': \"''\", 'available_at': \"''\", 'locked_at': 'null', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('done')),'$.error',json(ceo_native_json('')),'$.available_at',json(ceo_native_json('')),'$.locked_at',json(ceo_native_json(null)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "owner": "apply_delivery_reverification",
+      "line": 151,
+      "expression": "task8_set_parts('reply_tasks', {}, update_sql={'status': \"'failed'\", 'error': '?', 'updated_at': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.status',json(ceo_native_json('failed')),'$.error',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "owner": "migrate_legacy_meeting_projections",
+      "line": 91,
+      "expression": "task8_set_parts('meeting_alignment_jobs', {}, update_sql={'error': '?', 'updated_at': 'current_timestamp'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.error',json(ceo_native_json(?)),'$.updated_at',json(ceo_native_json(current_timestamp)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "owner": "compact_terminal_work_summary_inputs",
+      "line": 136,
+      "expression": "task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': \"'{}'\", 'source_created_at': '?', 'body_sha256': '?', 'body_bytes': '?', 'body_compacted': '1'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.payload_json',json(ceo_native_json('{}')),'$.source_created_at',json(ceo_native_json(?)),'$.body_sha256',json(ceo_native_json(?)),'$.body_bytes',json(ceo_native_json(?)),'$.body_compacted',json(ceo_native_json(1)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "owner": "compact_native_duplicates",
+      "line": 167,
+      "expression": "task8_set_parts(kind, {}, update_sql={column: '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.error_detail',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "owner": "migrate_work_summary_payloads",
+      "line": 87,
+      "expression": "task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': '?'})",
+      "sql": "payload_json=json_set(tasks.payload_json,'$.payload_json',json(ceo_native_json(?)))",
+      "bound_parameters": []
+    }
+  ],
+  "channel_alias_calls": [
+    {
+      "owner": "ReplyQueueAdapter.claim",
+      "line": 525,
+      "expression": "self._channel_clause('tasks')"
+    },
+    {
+      "owner": "ReplyQueueAdapter.metrics",
+      "line": 449,
+      "expression": "self._channel_clause('source')"
+    },
+    {
+      "owner": "ReplyQueueAdapter.metrics",
+      "line": 405,
+      "expression": "self._channel_clause()"
+    },
+    {
+      "owner": "ReplyQueueAdapter.metrics",
+      "line": 411,
+      "expression": "self._channel_clause()"
+    },
+    {
+      "owner": "ReplyQueueAdapter.metrics",
+      "line": 423,
+      "expression": "self._channel_clause()"
+    },
+    {
+      "owner": "ReplyQueueAdapter.metrics",
+      "line": 432,
+      "expression": "self._channel_clause()"
+    },
+    {
+      "owner": "ReplyQueueAdapter.claim.fetch_page",
+      "line": 495,
+      "expression": "self._channel_clause()"
+    }
+  ],
+  "channel_returned_clauses": [
+    {
+      "method": "ReplyQueueAdapter._channel_clause",
+      "alias": "task",
+      "source": "task.channel in ('dingtalk','wechat')",
+      "candidate": "task.channel in ('dingtalk','wechat')"
+    },
+    {
+      "method": "ReplyQueueAdapter._channel_clause",
+      "alias": "source",
+      "source": "source.channel in ('dingtalk','wechat')",
+      "candidate": "source.channel in ('dingtalk','wechat')"
+    },
+    {
+      "method": "ReplyQueueAdapter._channel_clause",
+      "alias": "tasks",
+      "source": "tasks.channel in ('dingtalk','wechat')",
+      "candidate": "tasks.\"reply_tasks__channel\" in ('dingtalk','wechat')"
+    },
+    {
+      "method": "ReplyQueueAdapter._channel_clause",
+      "alias": "unobserved_alias",
+      "source": "unobserved_alias.channel in ('dingtalk','wechat')",
+      "candidate": "unobserved_alias.channel in ('dingtalk','wechat')"
+    },
+    {
+      "method": "ScheduledExecutionQueueAdapter._channel_clause",
+      "alias": "task",
+      "source": "task.channel='scheduled'",
+      "candidate": "task.channel='scheduled'"
+    },
+    {
+      "method": "ScheduledExecutionQueueAdapter._channel_clause",
+      "alias": "source",
+      "source": "source.channel='scheduled'",
+      "candidate": "source.channel='scheduled'"
+    },
+    {
+      "method": "ScheduledExecutionQueueAdapter._channel_clause",
+      "alias": "tasks",
+      "source": "tasks.channel='scheduled'",
+      "candidate": "tasks.\"reply_tasks__channel\"='scheduled'"
+    },
+    {
+      "method": "ScheduledExecutionQueueAdapter._channel_clause",
+      "alias": "unobserved_alias",
+      "source": "unobserved_alias.channel='scheduled'",
+      "candidate": "unobserved_alias.channel='scheduled'"
+    }
+  ],
+  "connection_codec_hooks": [
+    {
+      "file": "app/reply_task_deferral.py",
+      "owner": "_connect",
+      "line": 96
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "owner": "compact_settled_reply_inputs",
+      "line": 67
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "owner": "compact_terminal_work_summary_inputs",
+      "line": 124
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "owner": "compact_native_duplicates",
+      "line": 157
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "owner": "migrate_work_summary_payloads",
+      "line": 57
+    }
+  ],
+  "canonical_dependencies": {
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86"
+  },
+  "prerequisite_store_patch_sha256": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+  "physical_delivery_row_fields": {
+    "source_file": "app/dingtalk_delivery_repair.py",
+    "owner": "apply_delivery_reverification",
+    "raw_tasks_selection_line": 138,
+    "all_consumed_fields": [
+      "id",
+      "execution_generation",
+      "status",
+      "error"
+    ],
+    "retained_physical_fields": [
+      "tasks.id",
+      "tasks.legacy_key"
+    ],
+    "candidate_adds_source_aliases": [
+      "execution_generation",
+      "status",
+      "error"
+    ],
+    "query_predicate_exact": "record_type='reply_tasks' and legacy_key=?"
+  },
+  "summary_payload_contract": {
+    "kind": "work_summary_inputs",
+    "business_leaf": "payload_json",
+    "generated_field": "work_summary_inputs__payload_json",
+    "outer_container": "tasks.payload_json",
+    "SET": "task8_set_parts leaf assignment",
+    "CAS": "typed generated business leaf equality",
+    "source_parameter_ast_exact": true
+  },
+  "unselected": true,
+  "not_executed": [
+    "public methods",
+    "constructors",
+    "SQLite/real database",
+    "migration",
+    "provider",
+    "native CLI",
+    "network",
+    "main",
+    "push",
+    "deploy"
+  ],
+  "all_direct_native_tasks_sql_site_count": 23,
+  "dynamic_tasks_sql_sites": [
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 155,
+      "owner": "compact_native_duplicates",
+      "operation": "SELECT",
+      "source_sql_expression": "f\"select coalesce(sum(max(length(cast({column} as blob))-length(cast(? as blob)),0)),0) from {table} where {column}<>?\"",
+      "parameters": "(empty, empty)",
+      "candidate_parameters": "(empty, kind, empty)",
+      "source_table_key": "tasks",
+      "source_field_key": "error_detail",
+      "target_kind_key": "workbench_turns"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 159,
+      "owner": "compact_native_duplicates",
+      "operation": "UPDATE",
+      "source_sql_expression": "f\"update {table} set {column}=? where {column}<>?\"",
+      "parameters": "(empty, empty)",
+      "candidate_parameters": "(empty, kind, empty)",
+      "source_table_key": "tasks",
+      "source_field_key": "error_detail",
+      "target_kind_key": "workbench_turns"
+    }
+  ],
+  "projection_imports": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "line": 3,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "REPLY_TASK_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 5,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "MEETING_JOB_SQL",
+        "OKR_REQUEST_SQL",
+        "REPLY_TASK_SQL",
+        "WORK_SUMMARY_INPUT_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "line": 7,
+      "source_module": "app.store",
+      "source_aliases": [
+        "REPLY_TASK_CURRENT_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "line": 3,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "REPLY_TASK_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "line": 9,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "REPLY_TASK_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 45,
+      "source_module": "app.store",
+      "source_aliases": [
+        "REPLY_TASK_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "line": 165,
+      "source_module": "app.store",
+      "source_aliases": [
+        "REPLY_TASK_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "line": 14,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "MEETING_JOB_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 4,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "REPLY_TASK_INPUT_SQL",
+        "WORK_SUMMARY_INPUT_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "line": 12,
+      "source_module": "app.store",
+      "source_aliases": [
+        "REPLY_TASK_CURRENT_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "line": 4,
+      "source_module": "app.task_storage",
+      "source_aliases": [
+        "WORK_SUMMARY_INPUT_SQL"
+      ],
+      "candidate": "local task20_projection aliases; REPLY_TASK_CURRENT_SQL stays Store-owned dependent projection"
+    }
+  ],
+  "candidate_projection_aliases": [
+    {
+      "file": "app/reviewed_candidate_store.py",
+      "name": "REPLY_TASK_SQL",
+      "kind": "reply_tasks"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "name": "MEETING_JOB_SQL",
+      "kind": "meeting_alignment_jobs"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "name": "OKR_REQUEST_SQL",
+      "kind": "okr_review_requests"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "name": "REPLY_TASK_SQL",
+      "kind": "reply_tasks"
+    },
+    {
+      "file": "app/dispatcher/adapters.py",
+      "name": "WORK_SUMMARY_INPUT_SQL",
+      "kind": "work_summary_inputs"
+    },
+    {
+      "file": "app/scheduled_task_recovery.py",
+      "name": "REPLY_TASK_SQL",
+      "kind": "reply_tasks"
+    },
+    {
+      "file": "app/reply_task_deferral.py",
+      "name": "REPLY_TASK_SQL",
+      "kind": "reply_tasks"
+    },
+    {
+      "file": "app/dingtalk_delivery_repair.py",
+      "name": "REPLY_TASK_SQL",
+      "kind": "reply_tasks"
+    },
+    {
+      "file": "app/error_code_migration.py",
+      "name": "MEETING_JOB_SQL",
+      "kind": "meeting_alignment_jobs"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "name": "REPLY_TASK_INPUT_SQL",
+      "kind": "reply_task_inputs"
+    },
+    {
+      "file": "app/storage_maintenance.py",
+      "name": "WORK_SUMMARY_INPUT_SQL",
+      "kind": "work_summary_inputs"
+    },
+    {
+      "file": "app/work_summary_payload.py",
+      "name": "WORK_SUMMARY_INPUT_SQL",
+      "kind": "work_summary_inputs"
+    }
+  ],
+  "source_error_detail_scope_evidence": {
+    "source_file": "app/task_storage.py",
+    "source_lines": [
+      519,
+      524,
+      531,
+      548,
+      553,
+      559
+    ],
+    "declarations": "WORKBENCH_TASK_COLUMNS owns error_detail only for workbench_turns; WORKBENCH_TASK_FIELDS NULL checks reject error_detail for every other native kind",
+    "candidate_file": "app/task20_definitions.py",
+    "candidate_line": 149,
+    "candidate_owner_kind": "workbench_turns",
+    "effect": "Same nonempty source values, same byte reduction/count rowcount semantics; explicit kind predicate excludes source NULL rows"
+  },
+  "remaining_integration_obligations": [
+    "app/store.py existing-eight proposal supplies typed REPLY_TASK_CURRENT_SQL and typed Store compaction methods; unchanged import depends on exact prior patch",
+    "Store/Email/Workbench shared _connect codec registration and final constructors/manifest/schema ordering remain root-owned",
+    "reply_task_deferral _snapshot still reads retained business_object_tasks; remaining twelve-kind external reader closure is outside this published-eight mutation proposal",
+    "storage_maintenance _clear_workbench_event_bodies still reads/writes existing runs source fields; Runs conversion is a separate release dependency",
+    "real public-method source/target differential, error priority/CAS/rollback proof and actual/fresh constructor/copy/inverse/predecessor/reforward/native/UI/final11 evidence not executed"
+  ],
+  "totals": {
+    "native_literal_updates": 19,
+    "native_dynamic_updates": 1,
+    "direct_native_reads": 2,
+    "dynamic_native_reads": 1,
+    "direct_native_sql_sites": 23,
+    "local_projection_aliases": 12,
+    "source_projection_name_uses": 54,
+    "codec_hooks": 5,
+    "native_RETURNING_sites": 0,
+    "native_INSERT_DELETE_sites": 0
+  }
+}

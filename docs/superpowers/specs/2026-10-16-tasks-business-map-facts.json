@@ -1,0 +1,41 @@
+{
+  "captured_at_utc": "2026-10-16T16:26:24.572802+00:00",
+  "source": "production read-only consistent SQLite transaction; aggregate only; no business keys, messages or bodies exported",
+  "published_predecessor": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+  "source_table_ddl_sha256": "94f9bc29490d49e752b320334442a2a115d4a4403184c77af5673139b7a5e8e1",
+  "aggregate_queries": {
+    "maps": "select count(*) from business_object_tasks",
+    "nullable_keys": "select count(*) from business_object_tasks where business_object_key is null",
+    "multi_key_parent_count": "select count(*) from (select reply_task_id from business_object_tasks group by reply_task_id having count(*)>1)",
+    "key_differs_from_parent": "select count(*) from business_object_tasks m join tasks t on t.id=m.reply_task_id where m.business_object_key is not t.business_object_key",
+    "timestamps_differ": "select count(*) from business_object_tasks m join tasks t on t.id=m.reply_task_id where m.created_at is not t.created_at or m.updated_at is not t.updated_at",
+    "historical_shared_business_key_groups": "select count(*) from (select business_object_key from tasks where record_type='reply_tasks' and business_object_key<>'' group by business_object_key having count(*)>1)"
+  },
+  "results": {
+    "maps": 7376,
+    "nullable_keys": 0,
+    "multi_key_parent_count": 3,
+    "key_differs_from_parent": 13,
+    "timestamps_differ": 7376,
+    "historical_shared_business_key_groups": 68
+  },
+  "code_evidence": [
+    {
+      "path": "app/store.py",
+      "owner": "_ensure_business_reply_task",
+      "behavior": "current mapping lookup/reuse and OA provisional-key promotion in caller transaction"
+    },
+    {
+      "path": "app/store.py",
+      "owner": "replace_pending_single_chat_reply_task_trigger",
+      "behavior": "merges pending tasks and repoints all business-key mappings to surviving reply task; multiple key aliases per parent are supported current behavior"
+    },
+    {
+      "path": "app/store.py",
+      "owner": "get_reply_task_for_business_object",
+      "behavior": "lookup by current mapping then join physical reply task"
+    }
+  ],
+  "migration_implication": "Cannot collapse current mapping into one business_object_key on each reply Task, cannot copy parent timestamps as mapping timestamps, and cannot impose uniqueness across all historical reply-task keys. Retain independent mapping facts and exact parent FK within the approved Tasks physical table; no extra mapping table or new business fact.",
+  "boundary": "Read-only source aggregate verification; no target schema/caller change, provider/native invocation, production mutation or deploy."
+}

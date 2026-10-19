@@ -1681,6 +1681,38 @@ def test_owner_reply_metadata_binds_short_acceptance_to_unique_task(service):
     assert service.store.get_business_task(task.task_id).commitment_status is CommitmentStatus.ACCEPTED
 
 
+def test_acceptance_metadata_requires_prepared_fact_but_not_old_original(service, monkeypatch):
+    from app.business_source_reader import PreparedSources, RequestSourceReader, UnavailableSource
+
+    task = record_assignment(service)
+    command = ApplyAcceptance(
+        task_id=task.task_id,
+        signal=acceptance_signal(dedupe_key="reply:prepared-acceptance"),
+        acceptance_is_explicit=True,
+        acceptance_polarity=AcceptancePolarity.ACCEPTED,
+        acceptance_excerpt="我接受提交报价。",
+        referenced_signal_id=task.signal_id,
+    )
+    with service.store.business_task_transaction() as db:
+        with pytest.raises(ValueError, match="prepared"):
+            service.apply_acceptance(command, _db=db)
+
+    unavailable = RequestSourceReader()
+    monkeypatch.setattr(service.store, "business_source_reader", lambda: unavailable)
+    prepared = PreparedSources.load(service.store, [task.signal_id])
+    assert isinstance(prepared.reading_for(prepared.facts[task.signal_id]), UnavailableSource)
+    prepared.facts[task.signal_id] = replace(
+        prepared.facts[task.signal_id], context_json='{"changed":true}'
+    )
+    with service.store.business_task_transaction() as db:
+        with pytest.raises(ValueError, match="changed"):
+            service.apply_acceptance(command, _db=db, prepared_sources=prepared)
+
+    result = service.apply_acceptance(command)
+    assert result.task_id == task.task_id
+    assert service.store.get_business_task(task.task_id).commitment_status is CommitmentStatus.ACCEPTED
+
+
 @pytest.mark.parametrize("selected_task_index", (0, 1))
 def test_short_owner_reply_to_shared_document_cannot_select_arbitrary_task(
     service, selected_task_index

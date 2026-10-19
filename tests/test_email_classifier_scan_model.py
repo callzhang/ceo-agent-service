@@ -1,3 +1,4 @@
+from tests.support.email_listing_oracle import StoredEmailListingOracle
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.action_storage import email_action_projection
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -1216,7 +1218,7 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
     assert result.fetched_count == result.persisted_count == 2
     assert result.pending_feedback_count == 0
     assert result.processed_count == 2
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED, limit=10, offset=0
     )
     assert total == 2
@@ -1309,7 +1311,7 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
         )
 
     assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
-    first = store.list_classifications(
+    first = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED,
         limit=10,
         offset=0,
@@ -1381,7 +1383,7 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
     config = EmailScanConfig.cold_start(config_version="idempotence-v1")
 
     first = scan_readonly_batch(source, classifier, store, config, limit=2)
-    pending, pending_total = store.list_classifications(
+    pending, pending_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK, limit=10, offset=0
     )
     assert first.pending_feedback_count == 2
@@ -1399,10 +1401,10 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
         message["uid"] = index
     second = scan_readonly_batch(source, classifier, store, config, limit=2)
 
-    processed, processed_total = store.list_classifications(
+    processed, processed_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED, limit=10, offset=0
     )
-    pending_after, pending_after_total = store.list_classifications(
+    pending_after, pending_after_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK, limit=10, offset=0
     )
     assert second.persisted_count == 2
@@ -1414,7 +1416,7 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
         pending_after[0]["stable_message_identity"]
         != processed[0]["stable_message_identity"]
     )
-    assert len(store.list_training_examples()) == 1
+    assert store.count_unincluded_training_examples() == 1
 
 
 def test_classification_failure_does_not_persist_message_or_advance_cursor(
@@ -1569,7 +1571,7 @@ def test_high_confidence_is_pending_when_category_lacks_validation_samples(
 
     assert result.processed_count == 0
     assert result.pending_feedback_count == 1
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=10,
         offset=0,
@@ -1605,7 +1607,7 @@ def test_high_confidence_is_pending_when_category_is_disabled(tmp_path: Path):
 
     assert result.processed_count == 0
     assert result.pending_feedback_count == 1
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=10,
         offset=0,
@@ -1637,7 +1639,7 @@ def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
 
     assert result.processed_count == 1
     assert result.pending_feedback_count == 0
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED,
         limit=10,
         offset=0,
@@ -1708,7 +1710,7 @@ def test_model_action_plan_contains_only_independently_eligible_actions(
     )
 
     assert result.processed_count == 1
-    classifications, total = store.list_classifications(
+    classifications, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED,
         limit=10,
         offset=0,
@@ -1736,7 +1738,7 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
     )
 
     scan_readonly_batch(source, classifier, store, config)
-    first_rows, _ = store.list_classifications(
+    first_rows, _ = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED,
         limit=10,
         offset=0,
@@ -1749,7 +1751,7 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
     source.messages[0]["uidValidity"] = 84
     source.messages[0]["uid"] = 2
     scan_readonly_batch(source, classifier, store, config)
-    second_rows, _ = store.list_classifications(
+    second_rows, _ = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED,
         limit=10,
         offset=0,
@@ -1765,14 +1767,12 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
     assert first_plan["action_plan_id"] == second_plan["action_plan_id"]
     with sqlite3.connect(tmp_path / "email.sqlite3") as db:
         plan_history = db.execute(
-            """
-            select action_plan_id, action_plan_version
-            from email_action_plans
-            order by action_plan_version
-            """
+            "select action_plan_id, action_plan_version "
+            f"from ({email_action_projection('email_action_plans')}) "
+            "order by action_plan_version"
         ).fetchall()
         current_action_plan_id = db.execute(
-            "select current_action_plan_id from email_classifications"
+            "select class_current_action_plan_id from emails where classification_id is not null"
         ).fetchone()[0]
     assert plan_history == [(first_plan["action_plan_id"], 1)]
     assert current_action_plan_id == first_plan["action_plan_id"]

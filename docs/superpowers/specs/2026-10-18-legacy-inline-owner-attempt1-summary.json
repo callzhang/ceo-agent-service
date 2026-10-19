@@ -1,0 +1,63 @@
+{
+  "status": "partial_first_cold_pass_then_witness_harness_failure",
+  "failure_receipt": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-current-copy-failure.json",
+  "failure_sha256": "1f099d83a6853e596c5c31548d9ac96735a5deff941a11e95c9cd4f38f651919",
+  "session": 74923,
+  "exit_code": 1,
+  "first_cold_11_seconds": 549.99,
+  "source_tables": 116,
+  "target_tables": 11,
+  "failed_operation": "assign_import_task in witness without caller writer transaction",
+  "error_type": "ProgrammingError",
+  "error_stage": "FIRST_COLD_11_PASS",
+  "source_or_production_opened_for_write": false,
+  "managed_temporary_root_removed": true,
+  "immutable_code_snapshot_removed": true,
+  "source_allocation": {
+    "page_count": 123173,
+    "freelist_pages": 38,
+    "page_size": 4096,
+    "allocated_page_bytes": 504516608,
+    "active_page_bytes": 504360960,
+    "dbstat_object_bytes": 504360960
+  },
+  "first_target_allocation": {
+    "page_count": 137953,
+    "freelist_pages": 2427,
+    "page_size": 4096,
+    "allocated_page_bytes": 565055488,
+    "active_page_bytes": 555114496,
+    "dbstat_object_bytes": 555114496
+  },
+  "harness_repair": "Extract actual witness for in-memory test and use existing business_task_transaction. RED reproduced actual ProgrammingError; GREEN26 controls; same source reviewer pending.",
+  "rerun_prerequisites": [
+    "preserve this failure",
+    "combine exact independently accepted R3 callers and A1 reader/native changes into current375-file runtime freeze",
+    "review combined pins",
+    "new attempt2 receipt paths and reviewed launcher/program hashes",
+    "same activation review before execution"
+  ],
+  "capacity_accepted": false,
+  "full_actual_copy_accepted": false,
+  "actions_serialized_totals": {
+    "rows": 98605,
+    "payload_utf8_bytes": 141635904,
+    "quoted_key_utf8_bytes": 28984885,
+    "colon_comma_bytes": 3395919,
+    "null_key_elision_serialized_potential_bytes": 1456280,
+    "text_quotes_and_escapes_bytes": 5794397,
+    "blob_wrapper_count": 0,
+    "real_wrapper_count": 16138
+  },
+  "tasks_serialized_totals": {
+    "rows": 36224,
+    "payload_utf8_bytes": 53715736,
+    "quoted_key_utf8_bytes": 7408034,
+    "colon_comma_bytes": 953424,
+    "null_key_elision_serialized_potential_bytes": 92395,
+    "text_quotes_and_escapes_bytes": 2200534,
+    "blob_wrapper_count": 1,
+    "real_wrapper_count": 826
+  },
+  "capacity_implication": "SQL NULL key elision serialized potential is only 1548675 bytes across Actions/Tasks; not page savings and insufficient to explain/recover active growth50753536 bytes. Keys+punctuation measured separately; no representation/index change selected."
+}

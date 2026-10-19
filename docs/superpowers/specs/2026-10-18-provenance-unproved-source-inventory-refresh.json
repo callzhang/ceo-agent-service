@@ -1,0 +1,177 @@
+{
+  "observed_at": "2026-10-18T04:32:11.330588+00:00",
+  "source_access": "URI mode=ro/query_only, one read transaction",
+  "unproved_versions": 20,
+  "unproved_utf8_bytes": 489023,
+  "rows": [
+    {
+      "source_document_id": 12,
+      "identity_key": "c8ba0a4073ec1bc8a27a4604e7b85d55b2fe19d2a7b6af11c96073ca3676d13d",
+      "utf8_bytes": 9527,
+      "signal_references": 2,
+      "source_types": "ai_minutes"
+    },
+    {
+      "source_document_id": 30,
+      "identity_key": "5092ff3885f7ceaa848c19244586e86a1b1bf8dfb2bd0465d956e6cb85807992",
+      "utf8_bytes": 337,
+      "signal_references": 1,
+      "source_types": "service_data_repair"
+    },
+    {
+      "source_document_id": 31,
+      "identity_key": "7b3ac054fb3d62bdb797e73bf305b57fda46eb56b461d2e4f23a676438573a89",
+      "utf8_bytes": 14368,
+      "signal_references": 1,
+      "source_types": "ai_minutes"
+    },
+    {
+      "source_document_id": 46,
+      "identity_key": "a456274262f677c9551c3ae0976ee6bf80acc0277b6c8808a01773014cc2f8e0",
+      "utf8_bytes": 45424,
+      "signal_references": 3,
+      "source_types": "ai_minutes"
+    },
+    {
+      "source_document_id": 51,
+      "identity_key": "f740c7b899d8deded45aeb334bbf87c63bb9e6bdfa82b3ca6f116654e48d31b5",
+      "utf8_bytes": 45424,
+      "signal_references": 4,
+      "source_types": "ai_minutes"
+    },
+    {
+      "source_document_id": 66,
+      "identity_key": "009f5f58727d60f2a124c959331d9961bbc5bc4766e5a583c609618a6dce353e",
+      "utf8_bytes": 63562,
+      "signal_references": 15,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 68,
+      "identity_key": "16183155997359c121b7bebeaa9b2fd1103b2bdea4e1e0849a11edd1c86590ab",
+      "utf8_bytes": 63562,
+      "signal_references": 19,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 90,
+      "identity_key": "48aea94ea19339d59bba43d6d20bdb61b2c94cce5cf6b03db35fc4c1b8c9524d",
+      "utf8_bytes": 18642,
+      "signal_references": 10,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 94,
+      "identity_key": "4888788b6ccaf7152db90990f08fee4125f5a320b93518a411085cc7103214b7",
+      "utf8_bytes": 17801,
+      "signal_references": 17,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 95,
+      "identity_key": "db73aa024a14c9550868769dd83bb4f678b8d976f017cf7ec5cd263a73253fee",
+      "utf8_bytes": 18640,
+      "signal_references": 9,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 96,
+      "identity_key": "9ee88b3f2cd11f4d5416363c9a2ce727515fe1485a0c889164929a881fcd9815",
+      "utf8_bytes": 23817,
+      "signal_references": 17,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 97,
+      "identity_key": "410b1551daaaea889596b14e3091a4fcfa64ea1d1f0c999560354ad68102db4b",
+      "utf8_bytes": 16113,
+      "signal_references": 21,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 99,
+      "identity_key": "4611a444ffd2478198579e46bf79c5ee89afa0e2f52e90cfbc59974be52245cc",
+      "utf8_bytes": 18646,
+      "signal_references": 9,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 100,
+      "identity_key": "bb15bbf2c64a3f9a023ee95a5555a6d4c4e0a2bb678ecd98f3a3ff3e36a6cf8d",
+      "utf8_bytes": 17809,
+      "signal_references": 11,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 101,
+      "identity_key": "9d85922a76f813435f4b256f2b1892bbde5af829c8a22fcb521772061789866e",
+      "utf8_bytes": 23821,
+      "signal_references": 13,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 114,
+      "identity_key": "b20fb006462dadb06a99c31bade794538f7a6d4bd8602c5346ba94bbb912ce9a",
+      "utf8_bytes": 18642,
+      "signal_references": 10,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 115,
+      "identity_key": "a2f7cd4205563d48465ce340b219621809f758f54a514aa5fe9ce73853a7eb93",
+      "utf8_bytes": 17801,
+      "signal_references": 18,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 118,
+      "identity_key": "b42e2bc6741f37a1b866253c99e50e382ef505770cfbb5c919b1d407b7c7fe2d",
+      "utf8_bytes": 18640,
+      "signal_references": 1,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 119,
+      "identity_key": "44af58ce5d0dcd49e9139703d13ed3ee418d3e538ff4ede886d94e9f58be35da",
+      "utf8_bytes": 18640,
+      "signal_references": 1,
+      "source_types": "management_weekly_report"
+    },
+    {
+      "source_document_id": 120,
+      "identity_key": "64c686473a32489b5baa5c26513aed964eb82b7980d5ac47477bda8e8f2cad55",
+      "utf8_bytes": 17807,
+      "signal_references": 6,
+      "source_types": "management_weekly_report"
+    }
+  ],
+  "groups": {
+    "ai_minutes": {
+      "versions": 4,
+      "utf8_bytes": 114743,
+      "signal_references": 10
+    },
+    "service_data_repair": {
+      "versions": 1,
+      "utf8_bytes": 337,
+      "signal_references": 1
+    },
+    "management_weekly_report": {
+      "versions": 15,
+      "utf8_bytes": 373943,
+      "signal_references": 177
+    }
+  },
+  "repair_event_relationships": [
+    [
+      31,
+      "owner_changed",
+      115
+    ]
+  ],
+  "availability_promoted": false,
+  "body_retirement_authorized": false,
+  "raw_bodies_in_receipt": false,
+  "classification_open_question": "Document30 is an internally recorded owner-change repair explanation linked to Task31/Signal115, potentially an adopted business result rather than a provider document original. Field disposition requires source review; no new result field or archive selected.",
+  "anti_circularity": "Reading a stored body for classification in this Codex session does not make that newly copied tool output an independent original-source proof."
+}

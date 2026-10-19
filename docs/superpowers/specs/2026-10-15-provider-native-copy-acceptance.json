@@ -1,0 +1,642 @@
+{
+  "status": "passed",
+  "scope": "Provider candidate native lifecycle on newly owned copies of frozen source; native Consumer/Audit with in-memory delivery only",
+  "started_at_utc": "2026-10-15T19:13:47.623141+00:00",
+  "executed_candidate_commit": "c0afd58479e873d23371a650e1df3f1294f4356a",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "executed_module_sha256": {
+    "scripts/validate_native_copy_lifecycle.py": "dbff93078bf66c56a71a50c0aa8985663bd717fae17e6bfc26147f8767d7dd04",
+    "app/provider_state_definitions.py": "ad77ed82e1f88e093976afa82bc7cd3f3ddecb270a2295a4b8c18d88a5a8561a",
+    "app/provider_state_storage.py": "ae9042e2a303fc374df942f57e3666a4c95157cd2405884e0736b04cf963e061",
+    "app/provider_state_schema_release.py": "7422971f430892d6e89ce7d7d24dc97f17954f3352d62bbc97704eee9a7873e5",
+    "app/store_schema_release.py": "60079684637e007a72c879e690f3acf23f34e156635fe6cc80bb1d392f6b8c45",
+    "app/store.py": "394cc4a52631029f7ac0d33a37c4654f8374b47784c5cf37e945666f9cac7ea8",
+    "app/email_store.py": "723e2a847e68d0f67074376cb80c8e6787795b3a0dc2d75bec508c317d8bedef"
+  },
+  "cases": {
+    "approve": {
+      "process_returncode": 0,
+      "result": {
+        "case": "approve",
+        "interrupted": false,
+        "source": {
+          "source": "frozen published7dad production backup; no new live capture",
+          "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+          "source_capture_utc": "2026-10-15T15:35:24.512765+00:00",
+          "production_mutations": 0
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13,
+          "retired_business_parents": 4,
+          "retired_provider_tables": 2
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 5088103500837460,
+        "task_id_allocator_reservation": 5088103500837459,
+        "conversation_id": "native-copy-acceptance:65329dad-ec28-4ea6-a1ab-8796bbf7d562",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "45dce38f37ecaf7baf316212b16dd053cda4ce71f289d601021b7d9a8fc28164"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "3456bf16b7ec2ba2af4f4fa07dd46d5caf6207ece0a93edb9e4b0ed4cdb1a22e"
+          }
+        ],
+        "provider_calls": 1,
+        "verification_calls": 1,
+        "runs": [
+          {
+            "id": 362317,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a140fe-9144-74e0-8475-57cb072e1f71",
+            "start": 0,
+            "end": 40,
+            "native_exists": true,
+            "tool_events": 6,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362318,
+                "status": "completed",
+                "session_id": "01a140fe-9144-74e0-8475-57cb072e1f71",
+                "start": 0,
+                "end": 40
+              }
+            ]
+          },
+          {
+            "id": 362319,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 362317,
+            "session_id": "01a140fe-f0bb-7011-9c68-dae0eb6ec30b",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362320,
+                "status": "completed",
+                "session_id": "01a140fe-f0bb-7011-9c68-dae0eb6ec30b",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          }
+        ],
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 2,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 99,
+        "passed": true
+      },
+      "temporary_root_removed": true
+    },
+    "revision": {
+      "process_returncode": 0,
+      "result": {
+        "case": "revision",
+        "interrupted": false,
+        "source": {
+          "source": "frozen published7dad production backup; no new live capture",
+          "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+          "source_capture_utc": "2026-10-15T15:35:24.512765+00:00",
+          "production_mutations": 0
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13,
+          "retired_business_parents": 4,
+          "retired_provider_tables": 2
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 4834965324675881,
+        "task_id_allocator_reservation": 4834965324675880,
+        "conversation_id": "native-copy-acceptance:450ee1cb-5a0b-4abe-bfb8-ae9ddc0976de",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "e3a1af5dffc24b9628be748628083ca013af67e4a2c883b697ab95724e94aee8"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "860553de9069094eb966ef4aff91e0f2034ddb91634378af9cdb194a44685f68"
+          },
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "b10363340c8a14ce6eb2220578cbf9f4703ca82e00a3b5a95f03636975566364"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "85b79afa52738e6cf51a06d77ec379a87c3f4b6604893bef7fc9ae1578bcbd05"
+          }
+        ],
+        "provider_calls": 1,
+        "verification_calls": 1,
+        "runs": [
+          {
+            "id": 362317,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a14103-2bc2-7911-85d8-3ad61d56a90e",
+            "start": 0,
+            "end": 36,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362318,
+                "status": "completed",
+                "session_id": "01a14103-2bc2-7911-85d8-3ad61d56a90e",
+                "start": 0,
+                "end": 36
+              }
+            ]
+          },
+          {
+            "id": 362319,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 362317,
+            "session_id": "01a14103-732b-7fc1-b69d-48fcefccd87e",
+            "start": 0,
+            "end": 31,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362320,
+                "status": "completed",
+                "session_id": "01a14103-732b-7fc1-b69d-48fcefccd87e",
+                "start": 0,
+                "end": 31
+              }
+            ]
+          },
+          {
+            "id": 362321,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 1,
+            "parent_id": 362319,
+            "session_id": "01a14103-2bc2-7911-85d8-3ad61d56a90e",
+            "start": 0,
+            "end": 62,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362322,
+                "status": "completed",
+                "session_id": "01a14103-2bc2-7911-85d8-3ad61d56a90e",
+                "start": 36,
+                "end": 62
+              }
+            ]
+          },
+          {
+            "id": 362323,
+            "role": "audit",
+            "status": "completed",
+            "revision": 1,
+            "parent_id": 362321,
+            "session_id": "01a14104-0108-7db2-90a7-ee1a6c96309a",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362324,
+                "status": "completed",
+                "session_id": "01a14104-0108-7db2-90a7-ee1a6c96309a",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          }
+        ],
+        "reviews": [
+          {
+            "id": 795,
+            "decision": "return",
+            "proposal_revision": 0,
+            "candidate_digest": "8632f2ae23f317459d9409a4e8e6d6b92d933c10f5e2e0beb490633429a10322"
+          },
+          {
+            "id": 796,
+            "decision": "approve",
+            "proposal_revision": 1,
+            "candidate_digest": "f85f7d873cda7e965d5ac8135fc2c3d163c9c1d9b34d00809dcb48bd68aa4e38"
+          }
+        ],
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 4,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 99,
+        "passed": true
+      },
+      "temporary_root_removed": true
+    },
+    "no_action": {
+      "process_returncode": 0,
+      "result": {
+        "case": "no_action",
+        "interrupted": false,
+        "source": {
+          "source": "frozen published7dad production backup; no new live capture",
+          "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+          "source_capture_utc": "2026-10-15T15:35:24.512765+00:00",
+          "production_mutations": 0
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13,
+          "retired_business_parents": 4,
+          "retired_provider_tables": 2
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 6419717163715789,
+        "task_id_allocator_reservation": 6419717163715788,
+        "conversation_id": "native-copy-acceptance:e43cd713-6574-4ab4-9a89-b51fd46807bc",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "6470863ea43a5efe9b04b6421d6debeafc85cc608e47b166efc85009dc76f5b4"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "279c081ed6dc4ef619089886099d764ad5594c8d3bb737cd5f39599c2374437a"
+          }
+        ],
+        "provider_calls": 0,
+        "verification_calls": 0,
+        "runs": [
+          {
+            "id": 362317,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a14107-b29a-7320-b678-ecae1f10e804",
+            "start": 0,
+            "end": 31,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362318,
+                "status": "completed",
+                "session_id": "01a14107-b29a-7320-b678-ecae1f10e804",
+                "start": 0,
+                "end": 31
+              }
+            ]
+          },
+          {
+            "id": 362319,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 362317,
+            "session_id": "01a14108-0072-77a0-8fc0-4b49565e5099",
+            "start": 0,
+            "end": 24,
+            "native_exists": true,
+            "tool_events": 3,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362320,
+                "status": "completed",
+                "session_id": "01a14108-0072-77a0-8fc0-4b49565e5099",
+                "start": 0,
+                "end": 24
+              }
+            ]
+          }
+        ],
+        "receipts": 0,
+        "sent_replies": 0,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 2,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 99,
+        "passed": true
+      },
+      "temporary_root_removed": true
+    },
+    "technical_retry": {
+      "process_returncode": 0,
+      "result": {
+        "case": "technical_retry",
+        "interrupted": false,
+        "source": {
+          "source": "frozen published7dad production backup; no new live capture",
+          "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+          "source_capture_utc": "2026-10-15T15:35:24.512765+00:00",
+          "production_mutations": 0
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13,
+          "retired_business_parents": 4,
+          "retired_provider_tables": 2
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 6713215464299826,
+        "task_id_allocator_reservation": 6713215464299825,
+        "conversation_id": "native-copy-acceptance:c9a19ab9-b845-4569-800c-c7b599575c69",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 2,
+            "timed_out": false,
+            "prompt_sha256": "740c20dd9cecf57a5b612f0fe0cd91cc659e71e39191892b51b942638c1f5bb8",
+            "stderr": "error: unexpected argument '--copy-acceptance-invalid-start' found\n\n  tip: to pass '--copy-acceptance-invalid-start' as a value, use '-- --copy-acceptance-invalid-start'\n\nUsage: codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'."
+          },
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "b49f745c962d50dea3994fe6f995193f148694b5ed1ea8ee4b6f93a9c65a960c"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "4c80c8f27ccef3dd1c656ee83dfa2b824197f9be0a7bf41f622a873887e5e716"
+          }
+        ],
+        "provider_calls": 1,
+        "verification_calls": 1,
+        "runs": [
+          {
+            "id": 362317,
+            "role": "consumer",
+            "status": "failed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "",
+            "start": 0,
+            "end": 2,
+            "native_exists": false,
+            "tool_events": 0,
+            "error": "{\"authorization_required\":false,\"code\":\"codex_process_failed\",\"detail\":\"error: unexpected argument '--copy-acceptance-invalid-start' found | tip: to pass '--copy-acceptance-invalid-start' as a value, use '-- --copy-acceptance-invalid-start' | Usage: 相关内容 exec [OPTIONS] [PROMPT] | 相关内容 exec [OPTIONS] <COMMAND> [ARGS] | For more information, try '--help'. | 相关内容_process_failed\",\"retryable\":true,\"session_continuable\":true,\"source\":\"codex\",\"source_code\":\"codex_process_failed\",\"stage\":\"execution\"}",
+            "attempts": [
+              {
+                "id": 362318,
+                "status": "failed",
+                "session_id": "",
+                "start": 0,
+                "end": 0
+              }
+            ]
+          },
+          {
+            "id": 362319,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a1410b-9961-7fc2-af63-3be6d62492d7",
+            "start": 0,
+            "end": 36,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362320,
+                "status": "completed",
+                "session_id": "01a1410b-9961-7fc2-af63-3be6d62492d7",
+                "start": 0,
+                "end": 36
+              }
+            ]
+          },
+          {
+            "id": 362321,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 362319,
+            "session_id": "01a1410b-fc29-7d81-ac81-11cf5036284b",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362322,
+                "status": "completed",
+                "session_id": "01a1410b-fc29-7d81-ac81-11cf5036284b",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          }
+        ],
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 3,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 99,
+        "passed": true
+      },
+      "temporary_root_removed": true
+    },
+    "settlement_recovery": {
+      "process_returncode": 0,
+      "result": {
+        "case": "settlement_recovery",
+        "interrupted": true,
+        "source": {
+          "source": "frozen published7dad production backup; no new live capture",
+          "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+          "source_capture_utc": "2026-10-15T15:35:24.512765+00:00",
+          "production_mutations": 0
+        },
+        "published_pair": {
+          "store": "2026-10-14.1",
+          "email": 52,
+          "action_types": 29,
+          "retired_email_tables": 13,
+          "retired_business_parents": 4,
+          "retired_provider_tables": 2
+        },
+        "native_baseline_phase": "post_email_publication",
+        "task_id": 5918120148913220,
+        "task_id_allocator_reservation": 5918120148913219,
+        "conversation_id": "native-copy-acceptance:eeb690d2-5aa8-484a-9b83-af50d812c875",
+        "status": "done",
+        "completed": true,
+        "native_invocations": [
+          {
+            "role": "consumer",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "7b6f6ae38843883080de692ebbe2d57876d78ab37b30e40c45f80a2023a3c622"
+          },
+          {
+            "role": "audit",
+            "returncode": 0,
+            "timed_out": false,
+            "prompt_sha256": "81cfbb611aa1aa795de75d1e1b936a9975116576224b1290d08f2a88f9e2f0b2"
+          }
+        ],
+        "provider_calls": 1,
+        "verification_calls": 1,
+        "runs": [
+          {
+            "id": 362317,
+            "role": "consumer",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": null,
+            "session_id": "01a1410f-cb02-7ce3-aa03-29e48ac1f811",
+            "start": 0,
+            "end": 36,
+            "native_exists": true,
+            "tool_events": 5,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362318,
+                "status": "completed",
+                "session_id": "01a1410f-cb02-7ce3-aa03-29e48ac1f811",
+                "start": 0,
+                "end": 36
+              }
+            ]
+          },
+          {
+            "id": 362319,
+            "role": "audit",
+            "status": "completed",
+            "revision": 0,
+            "parent_id": 362317,
+            "session_id": "01a14110-0592-7861-837d-2c909e714ac8",
+            "start": 0,
+            "end": 29,
+            "native_exists": true,
+            "tool_events": 4,
+            "error": "",
+            "attempts": [
+              {
+                "id": 362320,
+                "status": "completed",
+                "session_id": "01a14110-0592-7861-837d-2c909e714ac8",
+                "start": 0,
+                "end": 29
+              }
+            ]
+          }
+        ],
+        "receipts": 1,
+        "sent_replies": 1,
+        "business_attempts": 1,
+        "reopen_no_new_invocation": 2,
+        "email_direct": {
+          "context_messages": 1,
+          "prior_context_receipts": 0,
+          "direct_attempts": 1,
+          "direct_status": "done",
+          "provider_result_persisted": true,
+          "history_locator_valid": true
+        },
+        "original_tables_unchanged": 99,
+        "passed": true
+      },
+      "temporary_root_removed": true
+    }
+  },
+  "real_outbound_sends": 0,
+  "native_trajectory_copies": 0,
+  "finished_at_utc": "2026-10-15T19:36:08.491091+00:00",
+  "source_sha256_after": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "limits": "Five native reply lifecycle branches on frozen-source copies. Other task types use prior separate evidence; no live provider delivery or production publication."
+}

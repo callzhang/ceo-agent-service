@@ -24,7 +24,7 @@ def test_current_bootstrap_removes_only_approved_sources_and_caches(tmp_path):
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-13.5"
+            == "2026-10-14.1"
         )
         tables = {
             r[0]
@@ -331,88 +331,6 @@ def test_metadata_upsert_changes_only_title_tokens_and_preserves_metadata(tmp_pa
         ] == [(before[0],)]
 
 
-def test_native_compaction_uses_current_typed_events_and_title_cache(tmp_path):
-    from app.run_storage import insert_run
-    from app.storage_maintenance import compact_native_duplicates
-    from app.task_storage import insert_task
-
-    path = tmp_path / "current.db"
-    store = AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        parent = insert_task(
-            db,
-            "workbench_tasks",
-            dict(legacy_key="parent", title="task", runtime_kind="codex"),
-        ).lastrowid
-        turn = insert_task(
-            db,
-            "workbench_turns",
-            dict(
-                legacy_key="turn",
-                parent_id=parent,
-                client_request_id="request",
-                task_sequence=1,
-                user_text="keep input",
-                status="completed",
-                error_detail="old diagnostic",
-                execution_run_id="native-session",
-            ),
-        ).lastrowid
-        native_event = insert_run(
-            db,
-            "workbench_events",
-            dict(
-                task_id=turn,
-                sequence=0,
-                event_type="text_delta",
-                payload_json='{"native_ordinal":3,"text":"old body"}',
-            ),
-        ).lastrowid
-        unknown_event = insert_run(
-            db,
-            "workbench_events",
-            dict(
-                task_id=turn,
-                sequence=-1,
-                event_type="unknown",
-                payload_json=b"\x00\xff",
-            ),
-        ).lastrowid
-    store.upsert_codex_session_search_index(
-        session_id="native-session",
-        source_type="workbench",
-        source_id="turn",
-        title="searchneedle",
-    )
-    result = compact_native_duplicates(path)
-    assert result["payload_fields_cleared"] == 2
-    with sqlite3.connect(path) as db:
-        assert db.execute(
-            "select legacy_key,parent_id,user_text,status,error_detail,execution_run_id from tasks where id=?",
-            (turn,),
-        ).fetchone() == (
-            "turn",
-            parent,
-            "keep input",
-            "completed",
-            "",
-            "native-session",
-        )
-        assert db.execute(
-            "select task_id,sequence,event_type,payload_json from runs where id=?",
-            (native_event,),
-        ).fetchone() == (turn, 0, "text_delta", '{"native_ordinal":3}')
-        assert db.execute(
-            "select task_id,sequence,event_type,payload_json from runs where id=?",
-            (unknown_event,),
-        ).fetchone() == (turn, -1, "unknown", b"\x00\xff")
-        assert db.execute(
-            "select session_id,source_type,source_id,title from codex_session_search_index"
-        ).fetchone() == ("native-session", "workbench", "turn", "searchneedle")
-        assert db.execute(
-            "select rowid from codex_session_search_fts where codex_session_search_fts match 'searchneedle'"
-        ).fetchall() == [(1,)]
-    assert compact_native_duplicates(path)["payload_fields_cleared"] == 0
 
 
 @pytest.mark.parametrize("table", ["tasks", "runs"])

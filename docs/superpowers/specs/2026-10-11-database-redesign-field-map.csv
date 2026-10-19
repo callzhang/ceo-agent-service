@@ -176,10 +176,10 @@ business_projects,crm_customer_lookup_status,TEXT,1,0,business,business.payload.
 business_projects,crm_customer_candidates_json,TEXT,1,0,business,business.payload.crm_customer_candidates_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 business_projects,crm_customer_label,TEXT,1,0,business,business.payload.crm_customer_label,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 business_projects,crm_customer_evidence_json,TEXT,1,0,business,business.payload.crm_customer_evidence_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-business_source_documents,id,INTEGER,0,1,provenance,provenance.id + legacy_key,只迁准确来源身份和版本校验；共享来源才单独建行。不得归档原文。
-business_source_documents,identity_key,TEXT,1,0,provenance,provenance.identity_key（内联 provenance；共享版本可换 provenance_id FK）,现有来源信息直接保存在需要溯源的记录。仅被多记录共享/独立版本维护的来源使用 provenance FK；不新增正文。
+business_source_documents,id,INTEGER,0,1,取消,退休原正文容器的id,最终 provenance 没有 legacy_key／created_at；共享来源使用新来源身份，Signal 自己的公开 ID 与 created_at 保留。旧容器别名和时钟只在明确 schema 逆迁元数据中恢复。
+business_source_documents,identity_key,TEXT,1,0,actions/provenance,actions[business_task_signals] 内联 identity_key；真实共享时引用 provenance.identity_key,按完整来源版本和原文字节确认身份；只有真实共享来源独立存储并由 provenance_id 外键引用。无原文和旧文档容器别名。
 business_source_documents,body,TEXT,1,0,provenance,取消可准确链接溯源的原文副本,先用 signal/source_ref/版本或 native 行范围核实原文准确定位；provenance 不存文档正文。引用未核实不冒充迁移成功。
-business_source_documents,created_at,TEXT,1,0,provenance,provenance.created_at,只迁准确来源身份和版本校验；共享来源才单独建行。不得归档原文。
+business_source_documents,created_at,TEXT,1,0,取消,退休原正文容器的created_at,最终 provenance 没有 legacy_key／created_at；共享来源使用新来源身份，Signal 自己的公开 ID 与 created_at 保留。旧容器别名和时钟只在明确 schema 逆迁元数据中恢复。
 business_task_anchor_links,id,INTEGER,0,1,actions,actions.id + legacy_key,直接重映射关联目标 ID；不经通用 relations。确有多对多的关系为 actions 独立类型行，保留现有唯一性/角色约束。
 business_task_anchor_links,task_id,INTEGER,1,0,actions,actions.task_id（直接 FK/既有关系字段）,直接重映射关联目标 ID；不经通用 relations。确有多对多的关系为 actions 独立类型行，保留现有唯一性/角色约束。
 business_task_anchor_links,anchor_id,INTEGER,1,0,actions,actions.anchor_id（直接 FK/既有关系字段）,直接重映射关联目标 ID；不经通用 relations。确有多对多的关系为 actions 独立类型行，保留现有唯一性/角色约束。
@@ -272,7 +272,7 @@ business_task_signals,conversation_id,TEXT,1,0,actions,actions.signal_fact.conve
 business_task_signals,conversation_title,TEXT,1,0,actions,actions.signal_fact.conversation_title,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
 business_task_signals,author_user_id,TEXT,1,0,actions,actions.signal_fact.author_user_id,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
 business_task_signals,author_name,TEXT,1,0,actions,actions.signal_fact.author_name,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
-business_task_signals,source_document_id,INTEGER,1,0,actions,actions.source_document_id（内联 provenance；共享版本可换 provenance_id FK）,现有来源信息直接保存在需要溯源的记录。仅被多记录共享/独立版本维护的来源使用 provenance FK；不新增正文。
+business_task_signals,source_document_id,INTEGER,1,0,actions,取消旧 source_document_id；来源独有时内联，真实共享时为 actions.ba_task_signals_provenance_id FK,最终不保留 business_source_documents 容器；保留 Signal 原公开身份及事实，来源版本由完整定位和校验信息证明。
 business_task_signals,context_json,TEXT,1,0,actions,采用的业务事实→actions；可溯源原文/上下文副本取消,字段内容逐项区分业务结果与原文复制；作者/角色/已采用日期保留，原话正文通过准确来源读取。
 business_task_signals,dedupe_key,TEXT,1,0,actions,actions.signal_fact.dedupe_key,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
 business_task_signals,created_at,TEXT,1,0,actions,actions.signal_fact.created_at,已采用的来源信号事实/作者元信息；原文不复制。来源身份内联，确需共享版本才直接引用 provenance。
@@ -392,13 +392,13 @@ conversations,conversation_id,TEXT,0,1,state,state.payload.conversation_id,保�
 conversations,title,TEXT,1,0,state,state.title,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
 conversations,single_chat,INTEGER,1,0,state,state.payload.single_chat,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 conversations,codex_session_id,TEXT,0,0,state,state.payload.codex_session_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,in_handoff,INTEGER,1,0,state,state.payload.in_handoff,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,handoff_message_id,TEXT,0,0,state,state.payload.handoff_message_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,handoff_message_create_time,TEXT,0,0,state,state.payload.handoff_message_create_time,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-conversations,manual_clear_message_id,TEXT,0,0,state,state.payload.manual_clear_message_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+conversations,in_handoff,INTEGER,1,0,state,取消,当前无读取方且冻结523行均为INTEGER 0；迁移前逐行复核默认值和类型；逆迁移按原DDL恢复默认0。
+conversations,handoff_message_id,TEXT,0,0,state,取消,当前无读取方且冻结523行均为NULL；迁移前拒绝任何非NULL值；逆迁移按原DDL恢复NULL。
+conversations,handoff_message_create_time,TEXT,0,0,state,取消,当前无读取方且冻结523行均为NULL；迁移前拒绝任何非NULL值；逆迁移按原DDL恢复NULL。
+conversations,manual_clear_message_id,TEXT,0,0,state,取消,当前无读取方且冻结523行均为NULL；迁移前拒绝任何非NULL值；逆迁移按原DDL恢复NULL。
 conversations,codex_session_contract_hash,TEXT,1,0,state,state.payload.codex_session_contract_hash,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-corpus_sources,source_key,TEXT,0,1,state,state.payload.source_key,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-corpus_sources,last_collected_at,TEXT,0,0,state,state.payload.last_collected_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+corpus_sources,source_key,TEXT,0,1,state,取消,无运行读写方且冻结表为空；迁移前拒绝任何行；逆迁移按原DDL重建空表。
+corpus_sources,last_collected_at,TEXT,0,0,state,取消,无运行读写方且冻结表为空；迁移前拒绝任何行；逆迁移按原DDL重建空表。
 daily_scan_state,scanner_name,TEXT,0,1,state,state.payload.scanner_name,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 daily_scan_state,last_success_at,TEXT,1,0,state,state.payload.last_success_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 daily_scan_state,cursor_json,TEXT,1,0,state,state.payload.cursor_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
@@ -515,37 +515,37 @@ email_category_folder_bindings,provider_folder_id,TEXT,1,0,configs,configs.paylo
 email_category_folder_bindings,provider_folder_name,TEXT,1,0,configs,configs.payload.provider_folder_name,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_category_folder_bindings,binding_status,TEXT,1,0,configs,configs.payload.binding_status,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_category_folder_bindings,last_verified_at,TEXT,1,0,configs,configs.payload.last_verified_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,id,INTEGER,0,1,emails,emails.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。
-email_classifications,account_id,TEXT,1,0,emails,emails.payload.account_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,folder,TEXT,1,0,emails,emails.payload.folder,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,uidvalidity,INTEGER,1,0,emails,emails.payload.uidvalidity,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,uid,INTEGER,1,0,emails,emails.payload.uid,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,rfc_message_id,TEXT,0,0,emails,emails.payload.rfc_message_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,thread_id,TEXT,0,0,emails,emails.payload.thread_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,stable_message_identity,TEXT,1,0,emails,emails.payload.stable_message_identity,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,sender,TEXT,1,0,emails,emails.payload.sender,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,subject,TEXT,1,0,emails,emails.payload.subject,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,preview,TEXT,1,0,emails,emails.payload.preview,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,model_text,TEXT,1,0,emails,emails.payload.model_text,不是 provenance。仅按当前模型真实运行/训练依赖单列评估；能准确重取即用来源，不得作为长期历史输入副本。
-email_classifications,received_at,TEXT,1,0,emails,emails.payload.received_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,category,TEXT,0,0,emails,emails.payload.category,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,predicted_category,TEXT,0,0,emails,emails.payload.predicted_category,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,confirmed_category,TEXT,0,0,emails,emails.payload.confirmed_category,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,confidence,REAL,1,0,emails,emails.payload.confidence,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,margin,REAL,1,0,emails,emails.payload.margin,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,probabilities_json,TEXT,1,0,emails,emails.payload.probabilities_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,model_id,TEXT,1,0,emails,emails.payload.model_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,config_version,TEXT,1,0,emails,emails.payload.config_version,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,status,TEXT,1,0,emails,emails.status,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
-email_classifications,classification_source,TEXT,1,0,emails,emails.payload.classification_source,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,agent_result_json,TEXT,1,0,emails,emails.payload.agent_result_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+email_classifications,id,INTEGER,0,1,emails,emails.classification_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,account_id,TEXT,1,0,emails,emails.account_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,folder,TEXT,1,0,emails,emails.class_folder,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,uidvalidity,INTEGER,1,0,emails,emails.uidvalidity,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,uid,INTEGER,1,0,emails,emails.uid,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,rfc_message_id,TEXT,0,0,emails,emails.class_rfc_message_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,thread_id,TEXT,0,0,emails,emails.class_thread_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,stable_message_identity,TEXT,1,0,emails,emails.stable_message_identity,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,sender,TEXT,1,0,emails,emails.class_sender,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,subject,TEXT,1,0,emails,emails.class_subject,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,preview,TEXT,1,0,emails,emails.class_preview,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,model_text,TEXT,1,0,emails,emails.class_model_text；可证明的终态输入改用 emails.message_source_reference_json（model_input）,活动或尚未证明的输入保留原值；仅完整原文校验一致后退休，保留准确原生／provider 定位、SHA-256 和字节数。正文与模型输入独立证明，不增加列。
+email_classifications,received_at,TEXT,1,0,emails,emails.class_received_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,category,TEXT,0,0,emails,emails.class_category,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,predicted_category,TEXT,0,0,emails,emails.class_predicted_category,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,confirmed_category,TEXT,0,0,emails,emails.class_confirmed_category,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,confidence,REAL,1,0,emails,emails.class_confidence,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,margin,REAL,1,0,emails,emails.class_margin,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,probabilities_json,TEXT,1,0,emails,emails.class_probabilities_json,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,model_id,TEXT,1,0,emails,emails.class_model_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,config_version,TEXT,1,0,emails,emails.class_config_version,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,status,TEXT,1,0,emails,emails.class_status,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,classification_source,TEXT,1,0,emails,emails.class_classification_source,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,agent_result_json,TEXT,1,0,emails,emails.class_agent_result_json,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
 email_classifications,action_plan_json,TEXT,1,0,emails,取消,从 current_action_plan_id 重建，取消复制
-email_classifications,current_action_plan_id,TEXT,0,0,emails,emails.payload.current_action_plan_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,included_in_model_id,TEXT,0,0,emails,emails.payload.included_in_model_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,legacy_processed_without_plan,INTEGER,1,0,emails,emails.payload.legacy_processed_without_plan,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,confirmed_at,TEXT,1,0,emails,emails.payload.confirmed_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_classifications,created_at,TEXT,1,0,emails,emails.created_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
-email_classifications,updated_at,TEXT,1,0,emails,emails.updated_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
+email_classifications,current_action_plan_id,TEXT,0,0,emails,emails.class_current_action_plan_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,included_in_model_id,TEXT,0,0,emails,emails.class_included_in_model_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,legacy_processed_without_plan,INTEGER,1,0,emails,emails.class_legacy_processed_without_plan,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,confirmed_at,TEXT,1,0,emails,emails.class_confirmed_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,created_at,TEXT,1,0,emails,emails.class_created_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_classifications,updated_at,TEXT,1,0,emails,emails.class_updated_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
 email_classifier_runtime_samples,id,INTEGER,0,1,runs,runs.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。
 email_classifier_runtime_samples,model_id,TEXT,1,0,runs,runs.payload.model_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_classifier_runtime_samples,outcome,TEXT,1,0,runs,runs.payload.outcome,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
@@ -607,25 +607,25 @@ email_historical_traversals,model_id,TEXT,1,3,state,state.payload.model_id,保�
 email_historical_traversals,uidvalidity,INTEGER,0,0,state,state.payload.uidvalidity,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_historical_traversals,last_seen_uid,INTEGER,1,0,state,state.payload.last_seen_uid,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_historical_traversals,updated_at,TEXT,1,0,state,state.updated_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
-email_messages,id,INTEGER,0,1,emails,emails.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。
-email_messages,account_id,TEXT,1,0,emails,emails.payload.account_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,stable_message_identity,TEXT,1,0,emails,emails.payload.stable_message_identity,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,folder,TEXT,1,0,emails,emails.payload.folder,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,uidvalidity,INTEGER,1,0,emails,emails.payload.uidvalidity,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,uid,INTEGER,1,0,emails,emails.payload.uid,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,rfc_message_id,TEXT,1,0,emails,emails.payload.rfc_message_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,thread_identity,TEXT,1,0,emails,emails.payload.thread_identity,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,sender,TEXT,1,0,emails,emails.payload.sender,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,recipients_json,TEXT,1,0,emails,emails.payload.recipients_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,subject,TEXT,1,0,emails,emails.payload.subject,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,normalized_text,TEXT,1,0,emails,仅活动处理临时输入；完成后不长期保存,撤回已完成邮件正文缓存 30 天方案；长期只保留来源定位，现搜索/详情改按源读取。
-email_messages,preview,TEXT,1,0,emails,emails.payload.preview,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,attachment_metadata_json,TEXT,1,0,emails,emails.payload.attachment_metadata_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,received_at,TEXT,1,0,emails,emails.payload.received_at,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,created_at,TEXT,1,0,emails,emails.created_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
-email_messages,updated_at,TEXT,1,0,emails,emails.updated_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
-email_messages,in_reply_to,TEXT,1,0,emails,emails.payload.in_reply_to,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-email_messages,references_json,TEXT,1,0,emails,emails.payload.references_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+email_messages,id,INTEGER,0,1,emails,emails.message_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,account_id,TEXT,1,0,emails,emails.account_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,stable_message_identity,TEXT,1,0,emails,emails.stable_message_identity,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,folder,TEXT,1,0,emails,emails.message_folder,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,uidvalidity,INTEGER,1,0,emails,emails.uidvalidity,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,uid,INTEGER,1,0,emails,emails.uid,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,rfc_message_id,TEXT,1,0,emails,emails.message_rfc_message_id,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,thread_identity,TEXT,1,0,emails,emails.message_thread_identity,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,sender,TEXT,1,0,emails,emails.message_sender,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,recipients_json,TEXT,1,0,emails,emails.message_recipients_json,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,subject,TEXT,1,0,emails,emails.message_subject,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,normalized_text,TEXT,1,0,emails,emails.message_normalized_text；可证明的终态输入改用 emails.message_source_reference_json（根正文引用）,活动或尚未证明的输入保留原值；仅完整原文校验一致后退休，保留准确原生／provider 定位、SHA-256 和字节数。正文与模型输入独立证明，不增加列。
+email_messages,preview,TEXT,1,0,emails,emails.message_preview,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,attachment_metadata_json,TEXT,1,0,emails,emails.message_attachment_metadata_json,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,received_at,TEXT,1,0,emails,emails.message_received_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,created_at,TEXT,1,0,emails,emails.message_created_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,updated_at,TEXT,1,0,emails,emails.message_updated_at,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,in_reply_to,TEXT,1,0,emails,emails.message_in_reply_to,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
+email_messages,references_json,TEXT,1,0,emails,emails.message_references_json,最终 canonical Email 实际列；公共 classification/message 身份分别保留，已有共享定位字段单份存储。
 email_model_mode_transitions,request_id,TEXT,1,1,configs,configs.payload.request_id,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_model_mode_transitions,actor,TEXT,1,0,configs,configs.payload.actor,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 email_model_mode_transitions,from_mode,TEXT,1,0,configs,configs.payload.from_mode,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
@@ -1220,7 +1220,7 @@ runtime_skill_configs,created_at,TEXT,1,0,configs,configs.created_at,已有公�
 runtime_skill_load_receipts,id,INTEGER,0,1,actions,actions.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。
 runtime_skill_load_receipts,config_id,INTEGER,1,0,actions,actions.config_id（直接 FK/既有关系字段）,直接重映射关联目标 ID；不经通用 relations。确有多对多的关系为 actions 独立类型行，保留现有唯一性/角色约束。
 runtime_skill_load_receipts,pid,INTEGER,1,0,actions,actions.payload.pid,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
-runtime_skill_load_receipts,loaded_json,TEXT,1,0,actions,actions.payload.loaded_json,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
+runtime_skill_load_receipts,loaded_json,TEXT,1,0,actions,由 actions.config_id 关联既有 configs 的 enabled bindings 与 managed revision sha256 派生源格式返回；不存储重复正文,成功回执在同一数据库快照中按原 Python json.dumps 整数键 sort_keys=True 原默认参数重建精确 TEXT 字节；失败回执返回字面量 {}。未来复制须逐行比对源字节且遇不匹配即停止；不新增 configs 正文字段。
 runtime_skill_load_receipts,error,TEXT,1,0,actions,actions.payload.error,保留原字段含义和类型；typed payload 字段须显式 schema 校验。
 runtime_skill_load_receipts,created_at,TEXT,1,0,actions,actions.created_at,已有公用列直接映射；状态枚举按 record_type 保留，不能统一改写。
 scheduled_task_config_versions,id,INTEGER,0,1,configs,configs.id + legacy_key,目标整数 ID；迁移映射保存原主键和历史 URL 可定位性，避免跨表 ID 冲突。

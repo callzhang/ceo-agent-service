@@ -1,0 +1,39 @@
+{
+  "status": "unselected proposal; cumulative copied-source review pending root",
+  "base": "c30532f8d plus Store caller proposal SHA 1b0a146175be282682783778072ef2ab95bcc30d5ab7a2c3c9cadfc7d527addf and revised Email caller proposal SHA 2f6d29d21f91997b0aeb77a77c3ebe4e71438049c30e680ac17c5da08275e68e",
+  "integration_patch_sha256": "bcc16aab1c332b53c363b5a265cc7f2c2174d129ce51ff1d5d7d27703a2b41dc",
+  "files": [
+    "app/configs_schema_release.py",
+    "app/runs11_current_schema.py",
+    "app/task20_current_schema.py",
+    "app/store.py",
+    "app/email_current_schema.py",
+    "app/email_store.py",
+    "app/action_email_schema_release.py",
+    "tests/test_task20_current_schema.py"
+  ],
+  "isolated_checks": {
+    "ordered_apply_check": "pass",
+    "reverse_check": "pass",
+    "compileall": "pass",
+    "ruff": "pass",
+    "focused_current_and_task20": "111 passed in 7.72s",
+    "constructor_orders": "six permutations; after all three constructors, 51 ordinary tables, fresh FK check empty, reopen succeeds",
+    "known_repair_helper": "current Runs11 scratch schema type introspection; ordered apply/reverse, compile, Ruff and repair regression pass"
+  },
+  "known_limitations": [
+    "No full frozen-source forward/inverse proof by this agent.",
+    "Existing paired source fixture fails before Runs11 conversion because it lacks the historical confirmation source declaration.",
+    "Existing Email current fixture queries retired native service_state; its assertion requires current State projection adaptation.",
+    "Store and Email migrated helper tests that directly build the prior 54-table target require current51 fixture adaptation after cumulative selection.",
+    "No source factories, actual app/tests, production DB, provider, native CLI, main, push or deploy changed."
+  ],
+  "current_regression_canonicals": {
+    "store_tests_sha256": "73c7ecbcfa4d774c019e0f97a1b6dc05f2077a16544d7d51ec38a7e35a671568",
+    "email_tests_sha256": "a8edd0c9e740731ce5dc49e92220644bc58bd4a25f80975933859490cb381afa",
+    "source_test_bodies": "5 Store and 5 Email AST-exact",
+    "cumulative_isolated_tests": "121 passed in 12.80s after current helper correction",
+    "ruff": "pass"
+  },
+  "owned_temp_cleanup": "verified removed /tmp/runs11-current-proposal.9bMwF7"
+}

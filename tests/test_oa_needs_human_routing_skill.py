@@ -15,4 +15,3 @@ def test_current_case_facts_do_not_use_needs_human_requested_input():
     assert "Audit 的建议也不能替代对问题归属和补正对象的核实" in text
     assert "或一个明确的 `requested_input`" not in text
     assert "这样付是否可以" not in text
-

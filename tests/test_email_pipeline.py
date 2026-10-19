@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sqlite3
+from app.configs_definitions import config_projection
+from app.configs_storage import update_config
 from threading import Barrier, Event, Thread
 
 import pytest
@@ -27,7 +29,14 @@ from app.email_pipeline import (
     apply_human_confirmation,
     decide_classification,
 )
-from app.email_store import EmailClassificationConflict, EmailStore
+from app.email_store import (
+    EMAIL_ATTEMPT_SQL,
+    EMAIL_DIRECT_ACTION_SQL,
+    EMAIL_FEEDBACK_SQL,
+    EMAIL_PLAN_SQL,
+    EmailClassificationConflict,
+    EmailStore,
+)
 
 
 NOW = datetime(2026, 8, 30, 16, 0, tzinfo=timezone.utc)
@@ -386,7 +395,7 @@ def test_model_action_plan_freezes_authorized_and_ineligible_action_evidence(
     )
     with sqlite3.connect(store.path) as db:
         encoded_snapshot = db.execute(
-            "select authorization_snapshot_json from email_action_plans"
+            f"select authorization_snapshot_json from ({EMAIL_PLAN_SQL})"
         ).fetchone()[0]
     assert encoded_snapshot is not None
     assert (
@@ -457,13 +466,13 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     assert authorization["authorization_source"] == "user_confirmation"
     assert authorization["source_model_id"] == MODEL_ID
     assert authorization["config_version"] == "junk-v3"
-    assert store.list_training_examples()[0]["label"] == "junk"
+    assert store.owner_labelled_examples()[0][0]["category"] == "junk"
     with sqlite3.connect(store.path) as db:
         table_names = {
             row[0]
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 0
     assert "reply_tasks" not in table_names
     assert "agent_tasks" not in table_names
 
@@ -474,7 +483,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
     store = EmailStore(tmp_path / "email.sqlite3")
     processed = _persist_decision(store, _decision())
     with sqlite3.connect(store.path) as db:
-        old_action = db.execute("select action_id from email_actions").fetchone()[0]
+        old_action = db.execute(f"select action_id from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0]
     store.append_action_attempt(
         action_id=old_action,
         attempt_number=1,
@@ -513,18 +522,18 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
     assert corrected["action_plan"]["action_plan_version"] == 2
     assert corrected["action_plan"]["model_id"] == MODEL_ID
     assert corrected["action_plan"]["config_version"] == "personal-v4"
-    assert store.list_training_examples()[0]["label"] == "personal"
+    assert store.owner_labelled_examples()[0][0]["category"] == "personal"
 
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
         plans = db.execute(
-            "select * from email_action_plans order by action_plan_version"
+            f"select * from ({EMAIL_PLAN_SQL}) order by action_plan_version"
         ).fetchall()
         actions = db.execute(
-            "select * from email_actions order by created_at, action_id"
+            f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by created_at, action_id"
         ).fetchall()
         attempts = db.execute(
-            "select * from email_action_attempts order by id"
+            f"select * from ({EMAIL_ATTEMPT_SQL}) order by id"
         ).fetchall()
 
     assert [
@@ -591,37 +600,30 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
 
     correction_begin_attempted = Event()
 
-    class SignalingConnection(sqlite3.Connection):
-        def execute(self, sql, parameters=(), /):
-            if " ".join(sql.lower().split()) == "begin immediate":
-                correction_begin_attempted.set()
-            return super().execute(sql, parameters)
-
     class SignalingStore(EmailStore):
-        def _open_connection(self):
-            db = sqlite3.connect(
-                self.path,
-                timeout=30,
-                factory=SignalingConnection,
-            )
-            db.execute("pragma busy_timeout = 30000")
-            db.execute("pragma foreign_keys = on")
-            db.row_factory = sqlite3.Row
+        def _open_connection(self, **kwargs):
+            db = super()._open_connection(**kwargs)
+
+            def observe(statement):
+                if " ".join(statement.lower().split()) == "begin immediate":
+                    correction_begin_attempted.set()
+
+            db.set_trace_callback(observe)
             return db
 
     correction_store = SignalingStore(database)
     correction_begin_attempted.clear()
     writer = sqlite3.connect(database, timeout=30)
     writer.execute("begin immediate")
-    writer.execute(
-        """
-        update email_category_configs
-        set actions_json='["move"]',
-            action_parameters_json='{"move":{"target_folder":"Important"}}',
-            config_version='personal-v2'
-        where category_key='personal'
-        """
-    )
+    rowid = writer.execute(
+        f"select rowid from ({config_projection('email_category_configs', include_rowid=True)}) "
+        "where category_key='personal'"
+    ).fetchone()[0]
+    assert update_config(writer, "email_category_configs", rowid, {
+        "actions_json": '["move"]',
+        "action_parameters_json": '{"move":{"target_folder":"Important"}}',
+        "config_version": "personal-v2",
+    }) == 1
     results = []
     failures = []
 
@@ -661,16 +663,16 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     }
     with sqlite3.connect(database) as db:
         committed_config_version = db.execute(
-            "select config_version from email_category_configs "
+            f"select config_version from ({config_projection('email_category_configs')}) "
             "where category_key='personal'"
         ).fetchone()[0]
         current_plan_and_action = db.execute(
-            """
+            f"""
             select p.config_version, a.config_version
-            from email_classifications c
-            join email_action_plans p on p.action_plan_id=c.current_action_plan_id
-            join email_actions a on a.action_plan_id=p.action_plan_id
-            where c.id=? and a.action_type='move'
+            from emails c
+            join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=c.class_current_action_plan_id
+            join ({EMAIL_DIRECT_ACTION_SQL}) a on a.action_plan_id=p.action_plan_id
+            where c.classification_id=? and a.action_type='move'
             """,
             (processed["id"],),
         ).fetchone()
@@ -711,11 +713,11 @@ def test_exact_feedback_replay_returns_original_result_without_new_history(
     assert replay.confirmed == first.confirmed
     with sqlite3.connect(store.path) as db:
         assert (
-            db.execute("select count(*) from email_feedback_requests").fetchone()[0]
+            db.execute(f"select count(*) from ({EMAIL_FEEDBACK_SQL})").fetchone()[0]
             == 1
         )
-        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
-        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 0
 
 
 def test_feedback_replay_after_later_correction_returns_original_result(
@@ -876,7 +878,7 @@ def test_concurrent_different_requests_from_same_plan_pointer_allow_one_correcti
     assert len(conflicts) == 1
     with sqlite3.connect(store.path) as db:
         assert (
-            db.execute("select count(*) from email_feedback_requests").fetchone()[0]
+            db.execute(f"select count(*) from ({EMAIL_FEEDBACK_SQL})").fetchone()[0]
             == 2
         )
-        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 2
+        assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 2

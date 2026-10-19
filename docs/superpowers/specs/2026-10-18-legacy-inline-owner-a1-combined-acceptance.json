@@ -1,0 +1,15 @@
+{
+  "status": "local_frozen_caller_accepted",
+  "freeze": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-a1-combined-freeze.json",
+  "freeze_sha256": "dcd4beac50f93be25a7c69da4962c5b203149eadd583428ae1dafb34ea5dc4e1",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-a1-combined-spec-review.json",
+    "sha256": "11f6f0137956c0b5c1b635b640eb9570ab009e439bd71979eb1b2378fa25c130"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-a1-combined-quality-review.json",
+    "sha256": "efbb84742761a27c0b212320f0911afa73acb8c1e88662b908385d7c3a3b6c56"
+  },
+  "accepted_scope": "R3 caller snapshot unchanged plus independently accepted A1 unselected native reader/typed native errors, exact375runtime membership.",
+  "evidence_boundary": "Allows disposable actual11 retry with separately reviewed harness; no actualcopy/capacity/provider/bodyretirement/release claim."
+}

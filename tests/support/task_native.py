@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.run_storage import insert_run
-from app.task_storage import TASK_AGENT_RUN_SQL
+from app.store import TASK_AGENT_RUN_SQL
 from app.native_standalone import latest_task_ref
 from app import native_trajectory
 from app.store import AutoReplyStore

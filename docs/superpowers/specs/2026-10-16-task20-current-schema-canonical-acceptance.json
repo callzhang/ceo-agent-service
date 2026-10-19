@@ -1,0 +1,37 @@
+{
+  "recorded_utc": "2026-10-16T20:32:00.909675+00:00",
+  "status": "canonical_unselected_current_schema_helpers_spec_quality_pass",
+  "artifacts": {
+    "2026-10-16-task20-current-schema-candidate.py": "48d5bd3817e0189eec0aa7744da94592286e307a7fdff3a51adab6e6b078e462",
+    "2026-10-16-task20-current-schema-regression.py": "9e7cb013559aaed264d3cd6df3eebbcfadb85c591f29b1d0b55999e6cc3d134d",
+    "2026-10-16-task20-current-schema-installed-regression-candidate.py": "6e7cba7a807114b12b16013a2db9845c867aeb227c47c9520ac2acdf1c95280b",
+    "2026-10-16-task20-current-schema-preflight.py": "5d6cb9401e958fa91611eaed4b9741439aa9ba5463017336c4db35800384756b"
+  },
+  "root": {
+    "cases": 103,
+    "seconds": 2.03
+  },
+  "fresh_spec": {
+    "cases": 103,
+    "seconds": 1.97,
+    "additional_physical_guard_declarations_byte_equal": 8
+  },
+  "fresh_quality": {
+    "cases": 103,
+    "seconds": 3.72,
+    "findings": [],
+    "valid_fk_triple_fk_on": true,
+    "each_invalid_endpoint_rejected": true,
+    "old_installer_semantic_control_killed": true,
+    "physical_insert_update_null_behavior_preserved": true,
+    "populated_child_index_repair_preserves_rowid_and_data": true,
+    "malformed_present_trigger_rejected_in_repair_mode": true
+  },
+  "scope": "Complete canonical only; no app source/caller/constructor/release selection. Historical factories remain unchanged. No provider/nativeCLI/production.",
+  "unproved": [
+    "Exact mechanical install and applied reviews",
+    "Complete constructor/caller/publication/coordinator cutover",
+    "Startup legacy-backfill disposition application",
+    "Cold actual-copy/genuine predecessor/reforward/CLI/UI/final11/production"
+  ]
+}

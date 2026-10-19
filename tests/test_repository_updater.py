@@ -435,12 +435,14 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         from app.run_storage import insert_run
-        from app.task_storage import insert_task
+        from app.task8_storage import task8_insert_parts, register_task8_functions
 
-        cursor = insert_task(db, "meeting_alignment_jobs", {
+        register_task8_functions(db)
+        parts = task8_insert_parts("meeting_alignment_jobs", {
             "legacy_key": 42, "meeting_id": "meeting", "status": status,
             "locked_at": locked_at,
         })
+        cursor = db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
         if status == "processing":
             insert_run(db, "meeting_alignment_runs", {
                 "task_id": cursor.lastrowid, "status": "running",
@@ -455,12 +457,14 @@ def test_quiet_does_not_count_unclaimed_historical_meeting_processing(tmp_path):
     path = tmp_path / "historical-meeting.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        from app.task_storage import insert_task
+        from app.task8_storage import task8_insert_parts, register_task8_functions
 
-        insert_task(db, "meeting_alignment_jobs", {
+        register_task8_functions(db)
+        parts = task8_insert_parts("meeting_alignment_jobs", {
             "legacy_key": 42, "meeting_id": "historical", "status": "processing",
             "locked_at": "2026-01-01 00:00:00",
         })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
     assert in_flight_work(path) == 0
 
 
@@ -476,10 +480,12 @@ def test_quiet_counts_live_dispatcher_claim_before_runtime_exists(tmp_path, leas
     path = tmp_path / "claim-quiet.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute(
-            "insert into dispatcher_claim_leases(adapter_name,source_id,lease_expires_at,terminal_at) "
-            "values ('meeting','42',?,?)", (lease, terminal),
-        )
+        from app.state_storage import insert_state
+        db.execute("begin")
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": "meeting", "source_id": "42",
+            "lease_expires_at": lease, "terminal_at": terminal,
+        })
     assert in_flight_work(path) == expected
 
 

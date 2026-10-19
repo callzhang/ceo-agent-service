@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-16",
+  "scope": "Accepted unselected State point statement defaults and generic unpublished native binding prerequisites",
+  "point": {
+    "commit": "77566a8b",
+    "module_sha256": "ebbedf3dd2a7b7b69094adac32b558f90343327137917612ee58e1ff34e59b12",
+    "test_sha256": "e80b7d5fa2ca5a601b3e285dde3f6486eecf301e711cfe423b35f6c8285e74a2",
+    "root_red": 156,
+    "root_guard_pass": 2,
+    "root_green": 637,
+    "root_seconds": 12.51,
+    "author_tests": 637,
+    "author_seconds": 13.02,
+    "spec_tests": 637,
+    "spec_seconds": 13.11,
+    "initial_quality": {
+      "real_delayed_witnesses": 18,
+      "delay_seconds": 1.12,
+      "native_clocks_equal": 6,
+      "candidate_clocks_equal": 6,
+      "previous_control_clock_mismatch": 6,
+      "other_tests": 196,
+      "other_seconds": 2.59,
+      "status": "P2 scalar binding regression identified"
+    },
+    "quality_rereview": {
+      "status": "PASS",
+      "paired_cases": 16,
+      "proof": "Original float/bytes subclass values, negative generation constraints and noncontiguous buffer failures now match native actual/fresh across INSERT/point ORREPLACE; prior transaction and caller work preserved. No State SQL change; 18 earlier real-delay witnesses remain applicable."
+    }
+  },
+  "native_binding": {
+    "commit": "8998e7af",
+    "module_sha256": "3710ce46766226e5e315e5b2922533e3e63e225290d776a85bdc50737937accc",
+    "test_sha256": "8f2f1ffa52bede8d93c8ad4a89931d45ca0018176b359357b7f82fbb19cb0e29",
+    "root_red": 76,
+    "root_baseline_pass": 63,
+    "root_green": 793,
+    "root_seconds": 28.74,
+    "author_tests": 793,
+    "author_seconds": 24.95,
+    "spec": {
+      "status": "PASS",
+      "tests": 793,
+      "seconds": 26.35
+    },
+    "quality": {
+      "status": "PASS",
+      "independent_binding_inputs": 543,
+      "sqlite_affinities": 5,
+      "accepted": 536,
+      "matching_exception_classes": 7,
+      "independent_state_field_cases": 3740,
+      "state_successes": 2834,
+      "state_matching_failures": 906,
+      "cross_family_and_published_reply_tests": 637,
+      "seconds": 19.8,
+      "proof": "Underlying float/str/buffer values, hostile conversions, typed/multidimensional/readonly/0-D/array/ctypes memoryviews; no SQL or clock evaluation introduced."
+    },
+    "published_encoder_and_reply_payload_source_bytes_unchanged": true,
+    "preexisting_supported_type_boundary": "Raw array.array/ctypes objects remain unsupported in both encoder revisions; their supported memoryview wrappers match SQLite."
+  },
+  "source_capture_or_state_ddl_changed": false,
+  "current_state_callers_selected": false,
+  "current_constructor_or_release_selected": false,
+  "production_changed": false,
+  "mixed23_quality_rereview": "PASS separately:84boundedcases plus4realmethods/actualfreshclockcases; mixedreadiness receipt."
+}

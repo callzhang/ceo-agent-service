@@ -1,5 +1,115 @@
 # Current Runtime Mechanism
 
+## 数据库结构与迁移合同
+
+本 checkout 的 Store `2026-10-14.1`／Email52 构造器与配对发布已选用最终结构：
+`tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
+`provider_state`、`schedules`、`state` 十张核心表，以及已有的
+`email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
+历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
+本候选尚未部署；副本、真实 CLI、容量及发布的证据范围统一见
+[最终验收清单](database-redesign-final-acceptance.md)，不由历史分期记录推断生产生效。
+
+Tasks 合并二十种已有任务。七个结构列可写；`payload_json` 是按
+`TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 排列的严格 JSONB 值数组。
+`_kind` 是唯一存储的类型，`record_type` 是只读生成名称；原公开字段、过滤、
+唯一性和类型约束由生成列及既有索引提供。当前／claimed 输入指针和真实物理父子
+关系保留；公开 ID、源 ROWID、独立分配水位、SQLite REAL/BLOB、负零及业务字段
+内的 JSON 文本不改变。历史 `task_storage` 是迁移来源 oracle，不是运行时兼容层。
+
+Actions 合并六十一种已有方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执。
+同样只存 `_kind` 和声明的 JSONB 值槽位，公开类型／字段通过生成列读取。
+公开 ID 与物理 Action ID 保持区别，各源 AUTO 水位和普通隐藏 ROWID 语义保留。
+Reply、Email、Sync、delivery、Errors、Feedback、Business evidence、Email history
+及 Skill receipt 调用方均使用这一结构；原事务、CAS、claim/lease、约束顺序和
+幂等回执合同保留。Errors 的 ID/时间读取和 Attention 的未解决项使用其既有局部索引。
+Email Attention 先在 Tasks 的现有类型／状态索引上筛选 failed 的公开 ROWID，再读取这些任务的内容；不通过通用完整投影扫描成功任务的输入。
+
+
+最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
+
+Runs 包含原八类执行及搜索会话元数据、分类运行样本、设置事件，共十一种既有类型。
+公开源 ID、物理运行 ID、attempt 关联和水位保留。持久标题 FTS／shadow 表退休，
+搜索仍读取 CLI 原生 trajectory 并使用既有请求内／内存索引；逆迁重建旧声明和由
+恢复元数据派生的标题索引。分类运行样本的全局保留上限仍为 2,048。
+旧的 native 副本／持久 FTS 清理函数及其隐式 CLI 动作退休；这些正文和索引在 schema 发布时已退休。`python -m app.storage_maintenance` 必须选择现有的 `--work-summary-inputs`、`--settled-reply-inputs` 或 `--done-email-classification-inputs` 之一；三个输入清理实现不变，物理 VACUUM 由维护调用者在静默窗口单独协调。
+
+Business 保留已有 Project、Task、Anchor、context revision、修复候选、Work Cluster、
+TODO evidence、Work Project、Work Todo 及候选业务对象。Work Project 的
+`memory_context_json` 退休，无替代缓存。WorkTodo 的正式 Task 关联直接存
+`business.import_task_id`；独立 LegacyLinks 表和旧 Action guard 退休。
+真实字段、公共 ID、父子 FK、普通子行 ROWID 和分配水位由当前 typed DAO 保持。
+Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
+不替代已确认关联，也不写外部 CRM。
+
+原 `business_source_documents` 正文表及数字容器 ID 退休。Signal DAO 仅持久化
+来源身份、精确版本、hash／字节数及 locator；一个 owner 直接内联，第二个 owner
+在原 savepoint 中把同一精确来源提升到共享 provenance，保留 Signal ID 和事实。
+推广失败时整个 savepoint 回滚。证据引语、来源关系和已采用业务事实仍保持原义。
+TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
+定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
+单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用
+`json_string_literal_utf8`。不扩大 prompt，不写 trajectory 副本，不把 DB 正文写回 CLI。
+只有实际原生查无后才读取准确上游；当前生成链也用于迁移历史清单之后的新来源版本。
+不能证明的新增版本拒绝迁移。仅已授权的二十份历史来源允许原文不可用，保留来源、
+校验信息、采用事实及回执；不将这一授权扩大到其他原文。
+
+AI Minutes locator 显式选择 sentence_v1 或历史 paragraph_v1 excerpt 格式，保持原有
+前六／后四窗口；没有 excerpts 的 locator 不带该字段。格式／hash 不匹配不换解码器。
+Worker、语义服务和 Web 在域写事务之外使用同一准确来源读取机制；Console 的已有
+业务来源可从链接事件事实取得，不建立原文缓存。
+
+Emails 把原 classification 与 message 存成一行，公开 ID 仍各自独立；账号、稳定
+身份、UIDVALIDITY／UID 共享，分类与原邮件各自的 raw folder、thread、时间等字段
+保留，message-only 行合法。当前计划和条件移位事务保持。
+单次完整原文引用内联在 `message_source_reference_json`：原生／provider 定位、实际
+序列化形式、完整 hash 和字节数。显式退休及正常完成回调只有在 processed、没有
+未完成分类／回复／邮箱动作／dispatch 输入依赖且完整来源相等时清空原文，CAS 再核对
+原文、状态、时钟和当前计划；未知来源保留原文。模型输入另有生命周期，尚未整体退休。
+分类、最后一个确定邮箱动作及完成的审查／退订任务在结果和回执提交后尝试本行退休；
+共享 LOW-priority reader 复用唯一账号 connector，动作执行的 lease 已释放才读取。
+历史同步和恢复路径使用同一回调，不新增周期历史扫描。
+Console 与执行上下文从准确来源读取完整消息并验证引用版本；body-only 原生字段
+不能冒充 To／Cc，角色标头取真实邮件来源。模型输入、全文搜索及历史批量退休仍按
+主验收清单列明差项，未把局部来源成功当作全量完成。
+Derek于2026-10-19批准每封邮件保留最多1000个Unicode字符的纯文本预览。复用既有字段：classified行只填class_preview并清空message_preview，message-only行只填message_preview；不增加表、字段或完整原文缓存。扫描写入、显式配对迁移（在原文退休前）及两种正文退休入口使用相同预览规则；已退休原文不重建，仅保留既有预览的有界值。完整正文和模型输入的hash／来源、非终态执行与恢复输入不变。
+Console默认列表及搜索只读取本地发件人、主题和预览，使用Unicode casefold连续子串，保留原过滤／total／顺序／分页；列表返回preview，不将片段作为message_text。界面标明范围，普通输入默认预览搜索，显式“全文检索”发送search_scope=full并显示加载状态；不新增后台job、轮询或进度百分比。详情及显式全文查询仍从准确来源读取完整消息，来源失败明确报错。
+Console 全文成员判定按固定50条候选分批、批内按账号读取原始来源，独立于页面limit；这与native exact IMAP的50条上限一致，避免小页面退化成逐封来源会话。匹配仍为Unicode casefold连续子串，准确total／顺序／offset／limit及来源变化检查不变；原文只在请求内使用。会话数下降不等于全库来源延迟验收通过。
+
+两类 Email history 已并入 Actions，保留原二十四字段、公开 TEXT key、可空 key 的
+隐藏 ROWID 和原六个 API 的去重／processing-only 更新合同。Provider_state 存账号
+范围内的 observation 与 folder generation 两种当前事实，保留十二个源字段和复合
+身份；generation 观察时间覆盖逻辑不变，不把每封邮件的事实当作账号配置删除。
+
+Configs 存十五种已有配置，Schedules 保留真实十七字段；两种 Skill receipt 的
+loaded_json 从已有 binding／revision 重建，不再存第二份正文。配置转换保留六条
+AUTO 水位、signed ROWID、循环 FK 和 native SQLITE_FULL 的事务回滚语义。
+Runs 中 scheduled_task_id 和 snapshot_id 只改向真实 Schedules／Configs 公共别名，
+其他运行字段、物理 ID、索引／trigger 和水位保留。旧 account blockers、非规范／BLOB
+load body、late binding 和外部依赖按明确源声明预检，不能由未证明的重建冒充成功。
+State 合并十五种保留状态；延期／恢复回执使用既有 service_state 名字空间，
+保留 request_id 幂等、原资格、十九字段和当前回执。已取消 Workbench confirmation
+不再有表／API／UI，原生 CLI approval 不变；迁移按已批准的空来源合同检查和恢复声明。
+
+配对迁移捕获精确 actual/fresh 源声明及必要水位，在调用方拥有的 FK-off 事务内转换；
+保留既有 source-profile、外部 FK/view/trigger 和 TEMP shadow 检查。大型重建使用
+事务内 SQLite TEMP staging 和 SQL 值／类型核对，不归档 Python 行快照。
+Email canonical 阶段还精确识别已发布原生空库的 `fresh_published` 声明组合：
+classification 使用既有 actual 声明，message 使用既有 fresh 声明。该组合由真实
+旧构造器及原 Actions 转换读回确认，按完整声明 hash 识别；不做 SQL 格式归一化，
+未知组合仍拒绝。逆迁保存并恢复本次实际捕获的完整声明。
+Tasks 在 State 之后转换，Config FK 翻译先于 Runs 扩展；inverse 按依赖逆序从当前
+事实重建。原来源表只在转换事务中暂存，最终 schema predicate 不允许旧容器残留。
+
+Child 在事务内目标校验之后、COMMIT 之前 flush 全套十个逆迁元数据组件；Parent
+仅接受完整集合，子进程异常／超时仍保留完整逆迁信息并传播原始失败，截断传输不作为
+部分成功。既有 child deadline 为九百秒，包含转换、校验、正常冷启动和一次明确的
+终态会议输入压缩／最新 selected baseline 准备；不增加运行时格式回退或自动重试。
+元数据不包含原文。Schema inverse 在写 lease 之前准备 Email 原文，已有 verified
+backup 只贡献 hash／字节匹配的原文字节，新增／更新版本从自己的精确来源取得；
+进入 inverse 再验证当前引用，保留迁移后新增邮件、业务结果和回执，不还原旧业务行。
+明确没有原文和必要恢复来源时，旧 schema 重建失败而非伪造正文。
+
 History 页面在事件图表和执行记录之前展示 Attention 面板；它复用独立 Attention 页面及 `/api/console/attention` 的读取、刷新、总数与详情行为，不改变 History 的记录查询或任务状态。
 
 The main launchd job declares `ProcessType=Interactive` because the local HTTP
@@ -169,27 +279,25 @@ recovery and technical retries reconstruct it from the adopted review without
 native trajectory reads. Feedback budgets, candidate binding, terminal states
 and external execution remain unchanged.
 
-The Store18 candidate's maintenance reader supports exact previous/current
-delivery schemas through the existing publication selector. Its quality,
-deferral and scheduled recovery readers use finite sent/observer projections.
-The storage source changes preserve original blockers, exclusions, labels and
-recovery behavior; they do not add a new policy or replay path. Paired release
-routing, integrated constructor copy/current-fact rollback and native substitute
-CLI acceptance have passed. CI/live acceptance remain pending and production
-continues to use Store17.
+Published Store19 (`2026-10-13.5`) at5691f6c7 uses the sixteen-type
+action layout. Readonly observation on2026-10-14 found Email51,121 physical
+noninternal tables and no physical reply_attempts or memory_write_events.
+Their existing public IDs, allocation waters, results and receipts use finite
+projections. Store18 delivery consolidation and its inverse proof remain
+historical evidence; the current E actual layout retains no Memory FK.
+Existing blockers, exclusions, labels, delivery verification and recovery
+behavior are unchanged.
 
-The isolated Store18 candidate (`2026-10-13.4`) bootstraps the finite delivery
-action layout and accepts only exact published Store17 as its migration source.
-It does not recreate retired sent/observer tables during auxiliary repair.
-Four cold/fresh bootstrap checks cover both captured source declarations, raw
-sent TEXT and deleted-ID watermark progress. Store sent writes and direct
-Store/Audit sent readers now address finite actions while retaining public IDs,
-original sent facts, observer identities, feedback filters and transaction
-boundaries. Recall timestamps are read after the ordinary writer lock is
-acquired, matching the source UPDATE. Integrated paired release acceptance is
-still pending. Validated nonempty sent external-key lookups use the finite sent
-index for a key seek; production remains Store17.
-The published Store17 contract below continues to describe the live service.
+E passed complete CI and merged inPR82. This task's first normal deploy made
+no changes after the idle timeout; a separate deployment later succeeded.
+The second normal invocation observed production already at5691f6c7. Exact
+receipts and readonly schema checks are in
+`evals/database_redesign/phase5e_publication_status.v1.json`. Quick_check is ok,
+and the one original runs/task FK violation remains unchanged. Live
+UI/performance acceptance is still incomplete: Status eventually rendered
+PID34642 with degraded recovery health, while Status/Attention/History request
+timeouts require further diagnosis. The isolated Store14.1/Email52 candidate
+and its follow-up/Todo-sync conversion do not complete the final10+1 goal.
 
 OA return uses its own effect verification, not the approval/rejection node
 completion predicate. The exact pending-node ownership check still precedes a
@@ -451,7 +559,9 @@ partial terminal-time index supports that order. Completion finds the 10,000th
 row's `(terminal_at, rowid)` boundary and deletes only older terminal rows in the
 same transaction. It no longer sorts the whole table or materializes a 10,000-ID
 membership list while holding the writer lock. Existing-schema initialization
-adds the index without rewriting lease facts.
+adds the index without rewriting lease facts. Guarded State updates seek the
+existing numeric source-rowid unique index using the identity already selected
+under the writer lock; canonical identity checks, CAS and retention remain unchanged.
 
 The meeting delivery batch poll reads the exact ready, unlocked and due
 eligibility before requesting SQLite's shared writer lock. An ineligible poll
@@ -486,6 +596,18 @@ source for execution and evidence readback. Missing or changed material is
 rejected without changing the input. Frozen multi-version cases advance only
 after the preceding turn completes and compare-and-swap its prior source hash;
 this is a database-copy evaluation operation, not a production semantic import.
+The CLI selects its existing `--code-root` before importing application modules;
+run each comparison revision's matching script in a separate process so the
+reported revision describes the imported code. Readback uses the current typed
+Task/Run, Business, Action and provenance projections. Domain comparisons include Business relations held in shared
+Actions and their provenance, excluding run bookkeeping; source versions use
+the existing source identity key. Each case retains its supplied originals only
+in one transient PreparedSources instance through seeding, each turn and final
+readback. The verified WorkItem summary can supply only its exact matching
+source binding, hash and byte count. External originals use the request reader;
+missing material remains unverifiable. No source body or trajectory copy is
+persisted. Input updates retain the prior exact source, status, body fingerprint
+and payload CAS predicates through current typed Tasks SET parts.
 
 Reply consumption reads the current generation's persisted orchestration terminal
 result before parsing its trigger input. A completed generation can therefore
@@ -701,8 +823,8 @@ Audit web startup does not prewarm the History list or its 24-hour, 7-day and
 queries on demand when requested, so every service restart does not launch
 multi-minute reads against the same SQLite database used by workers.
 
-The required `idx_errors_unresolved` partial index contains only incidents whose
-`coalesce(resolved_at, '')` is empty. Attention retains the same recovery,
+The current `idx_actions_errors_unresolved` partial index contains only typed
+Errors whose `coalesce(error_resolved_at, '')` is empty. Attention retains the same recovery,
 supersession, ordering and current-state predicates, but does not scan resolved
 incident payloads. Resolving an incident removes its index entry without deleting
 history; a new unresolved incident is visible immediately. Installation follows
@@ -886,6 +1008,8 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
+Workbench 的同步执行线程在一个 turn 内复用一条 SQLite 连接，减少大 schema 的重复装载；每次 Store 操作仍独立提交或回滚，turn 结束时关闭连接。心跳和 runtime 回调线程各自打开连接；只读快照仍使用独立的只读连接，不跨线程共享连接。
+
 
 主页面事件订阅回归先用 React `act` 完成时间线及其副作用，再等待真实 EventSource
 订阅建立后注入事件；页面文字出现不代表订阅已经建立。合并刷新和切换任务取消刷新
@@ -1133,8 +1257,32 @@ Task 需要来源明确的、可独立完成的交付物或行动，或由已证
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
 dedupe_key、上下文、Task 证据角色与历史仍独立。同 ref 的 memory/session 引文不冒充 observed 原文。
-旧库在既有重建事务逐行读回身份、正文、计数和外键后删除旧正文物理列，失败回滚。
-公开 BusinessTaskSignal.evidence_text 仍由 JOIN 返回原文；Task/event/run JSON 不重写。
+目标物理迁移仍需在配对事务中核对来源身份、正文、计数和引用，按已授权的例外版本处置原文；本运行时单元不执行该迁移。
+这个段落是原共享正文存储方案。当前未发布 B/C/D 运行时的四个 Store Signal 读取叶节点返回
+不含正文的事实与完整来源绑定；旧 `business_source_documents.body` 在此阶段仍是唯一选定的
+权威正文，读取叶节点只短暂用它计算身份键、SHA-256 和 UTF-8 字节数。独立的请求读取器
+在写事务外按精确身份键解析正文，同版扇出一次；没有 provider 失败后旧表兜底。
+Task Agent、ProjectContext、建议、检索与来源包共用请求内的按 Signal ID 区分的事实和
+按身份键共享的正文。决策预检在写事务外准备历史引用；写事务内重新核对不可变绑定和
+相关既有证据关系，只用已准备的正文验证引文。当前 WorkItem/Signal 的已提供正文可直接
+注册，无历史来源 IO。上下文检索和其后决策预检是两次独立读取请求，各自只读取同版一次。
+仅需历史元数据的接受和身份比较也在写事务内核对预检事实与完整绑定；旧原文不可用不阻止
+这类判断。主业务提交后，Attention 投影在其自己的写事务内再次核对已准备的既有卡片、
+成员及 Project 原证明，然后在同一事务中写卡片；本次主业务新建的 Task 链接不作旧关系重放。
+API 使用有类型的来源视图：可用时正文非空且无错误，不可用时正文 null 且有原因；
+已保存引文、业务事实与来源链接保留。2026-10-18 已授权永久移除 20 个例外版本的原文，
+保留事实/来源/回执；物理删除尚未执行，也不属于这个运行时单元。
+原生来源定位器只在调用方提供的真实 runtime/session 和完成的本轮行号范围内，
+查找现有提示词中的完整来源 JSON 字符串；输出行/内容路径、字符区间和校验值，交给精确读取器。
+部分引文或本轮范围外的匹配不能替代原文，不写 trajectory 或正文副本。当前定位原语尚未接入
+Signal 持久化，新写入路径的完整集成仍属最终迁移验收差项。
+开发中的无正文 Signal DAO 已使用最终 `_kind` 与固定 JSONB 槽位。首次使用在 Signal 内联来源；第二个使用者才将同一来源提升到 provenance，通过置空来源槽位并设置外键完成，不移动数组槽位，也不改变业务事实和公开 ID。第二次插入失败时，现有调用方事务内的 savepoint 回滚整个提升，其他证据引用保持。该组件不保存原文；Store 尚未选择最终来源结构，历史正文未退休、生产未发布。
+
+AI Minutes 的来源定位包含 transcript_excerpts 时，必须同时记录真实生成格式
+`transcript_excerpt_format`：当前生产者为 sentence_v1，已核实历史整段格式为 paragraph_v1。
+两者沿用相同的前六段、后四段窗口，仅行序列化不同；读取严格选择指定格式，缺失或未知格式
+在访问 provider 前返回无效定位，hash 不匹配也不尝试另一种格式。没有转录片段的定位不保存
+格式字段。这是本地精确读取能力，不表示已选择最终物理表或删除历史正文。
 当前业务 schema 是 `2026-10-04.4`，不等于生产已迁移。
 
 Task 保留真实独立交付物和行动的身份。来源明确行动记 origin=source；缺真实负责人/授权等时
@@ -1183,7 +1331,7 @@ TaskAgentDecision 必须明确返回三项无默认列表：
 仍需非空 update_summary。当前 parser 不接受 TaskDecision 中的旧 project_proposal、
 project_link_proposal、attention_proposal。历史运行只保存原生执行引用，原始决定按该次准确范围读取；
 原生来源缺失或旧格式无法解析时，过程详情明确不可用，不从数据库副本恢复或重新执行。
-已应用的业务投影回执仍由服务保存。
+已应用的业务投影回执仍由服务保存。 `scripts/inspect_task_attention.py` 以只读 URI 打开数据库，通过当前 Store 的 Task／Run 公共投影读取输入状态、公开身份和投影回执；原生决定读取在查询连接关闭后进行，不依赖已退休的平铺字段或保存正文。
 Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
@@ -1247,10 +1395,7 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 成员清空不自动 resolve。recompute_for_tasks 保留且仅更新既有卡片成员、时间和成员事件，不重新
 判断风险、不创建卡片、不修改 category/current_state 或 active/resolved。人类 TODO 完成后直接
 调用这个成员更新，不再调用旧 Agent 卡片适配或要求虚假 receipt。
-Schema .4 的一次性迁移仅把旧 active 卡片所属 Project 已确认有效 Task 关联中的原始 Signal
-建成 Project evidence，排除 memory/session provenance，不改历史对象或引用，不重新激活 retired
-Project；原有关系即使 anchor 后来退休也仅作历史证明保留。独立 marker 与证据插入同事务提交；
-已有证据保留，多角色 Signal 去重，失败整体回滚，后续初始化/读取不继续补写。
+当前配对迁移逐值保留源库已有 Project evidence，包括原身份、SQLite 类型和关系；不再运行历史 Schema .4 从 Attention／Task 关系推导 Project evidence 的一次性函数。该函数已无运行时调用者并随旧物理表退休。新证据仍由显式 Signal 与已核验原文建立，不在初始化或读取时推导、补写或重新激活历史项目。
 只读 inspector 输出当前 Project 决定、真实回执映射及由这些实际身份查得的最新 context/revision；
 历史缺字段仍缺失，不补为 not_needed，不推测 ID，不改源库或历史 run。
 多来源回归已经通过；v2 native 对照、W39 副本迁移/回放和生产迁移尚未全部完成。评测读回独立判断的提案，
@@ -1262,10 +1407,10 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。�
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
 Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
-source_documents 提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
+source_documents 以完整来源绑定身份键提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 同一轮 Task semantic context 中完全相同的 `visible_ranges` 与 `decoded_excerpts` 只序列化一次，其余文档用 `duplicate_of_document_id` 指向首份投影；文档身份、元数据、信号和引用保持独立，展开后与原始 source bundle 完全一致。若压缩后的完整 bundle 不更短，则保留原始表示。
 当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
-引文，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
+引文；原文可用时，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。原文不可用时明确状态、定位元数据与已保存引文，未知字符数为 null。
 source_metrics 是正文字符观测，不是总 prompt token 保证；检索排名不证明身份、分工或业务重大性。
 
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
@@ -1528,6 +1673,14 @@ PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测�
 
 Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
 公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
+
+当前未发布开发候选已启用三个 Feedback→Actions 存储类型。Store 的反馈事件、
+处理转换和迭代决策子项读写使用类型化 Actions 投影/辅助函数；QualityGate 也读取同一
+投影。新建 Store 在现有发布事务内短暂建立精确的空原声明并立即迁入 Actions，重开与修复
+不创建原表。配对迁移在 Errors 之后执行 Feedback，逆向先从当前 Actions 事实恢复三个
+原表，再逆向恢复 Errors；正逆都沿用调用方 FK-off 事务。转换保留原字段、SQLite 值类型、
+事件/decision item 隐藏 ROWID、transition 独立自增水位、三条 Tasks 外键和不可变子项
+约束。当前开发候选是 28 张普通表；生产发布和最终十张核心表加 Email ledger 尚未完成。
 
 ### Email task 的运行边界
 
@@ -1951,7 +2104,7 @@ DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adap
 已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区和启用状态，已删除的不动）。
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带
-文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。SQLite 对较大的输入 JSON 保存带版本标记的无损压缩 BLOB，Task Agent、语义导入、项目修复和 Attention JSON 投影在读取边界解码；副本回放按实际原始 TEXT/BLOB 做 CAS、按既有 codec 写入，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
+文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。较大输入的逻辑 JSON 字段使用带版本标记的无损压缩 BLOB，最终 Tasks 向量保留其 SQLite 值类型；Task Agent、语义导入、项目修复和 Attention 投影在读取边界解码。副本回放以当前投影返回的精确 TEXT/BLOB 值做 CAS、通过当前 Tasks 写入器沿用既有 codec，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
 新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
 （Derek 2026-09-23）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
@@ -2124,7 +2277,7 @@ Task Agent 会把负责人证据再结构化为 `owner_kind`（`individual` / `t
 
 **回填已入库的候选**（已处理过的会议不会被再读到，所以必须回填）：`python -m app.cli backfill-minutes-owners`（`app/minutes_owner_backfill.py`）。
 
-- 找出“有无负责人的开放候选 Task，且发现来源是 AI 听记”的会议，重读行动项、逐字稿和会议摘要，用同样方式组装 Work Item，以新的来源引用再入队一次，由 Task Agent 用普通更新路径补负责人。
+- 先从 Signal 事实只选符合条件的会议 UUID 与候选 Task ID，再按该 UUID 读取当前会议记录，核对响应记录的 UUID；缺失或不符时跳过该会议。只用该真实当前记录重读行动项、逐字稿和会议摘要，组装新的 Work Item，以新的来源引用再入队一次，由 Task Agent 用普通更新路径补负责人；旧库已存正文不能代替当前会议记录。
 - 默认只预演；`--apply` 才入队；`--limit N` 取最近的 N 场。
 - 转录窗口和摘要至少要有一个能读到才入队；两个都读不到才跳过该会议，`decisions` 里写明原因。
 - 来源引用里的摘要覆盖行动项、转录摘录、会议摘要和 `BACKFILL_REVISION`，所以重复运行不会重复入队；改了提示词、引文格式或校验规则后递增这个版本号，才会让上一轮没补上的会议再读一次（2026-09-28 起是 4）。
@@ -2397,9 +2550,9 @@ trigger key. Status filters and counts use that projected state; stored Attempt
 and execution records are unchanged. A current candidate execution with an
 unresolved uncertain receipt remains `uncertain`, even if the task closed;
 independently resolved Attempts retain their resolution projection.
-The later-terminal Attempt predicate uses a materialized maximum public ID per
-channel/message key inside the status expression; key-only pagination does not
-evaluate that expression. Each chart uses one read snapshot and reads a failed
+The later-terminal Attempt predicate uses a grouped maximum public ID per
+channel, conversation and trigger through the status projection; key-only
+pagination does not evaluate that lookup. Each chart uses one read snapshot and reads a failed
 message's current task and WeChat delivery once within that request. Chart
 counts, lifecycle labels, recovered meeting handling and time buckets remain
 unchanged. Performance evidence is in `docs/console-query-performance.md`.
@@ -2407,12 +2560,13 @@ Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
 
 The failed History filter first selects source rows that can still project to
-failed under the existing recovery and terminal-state rules. Reply-attempt
-candidates include current-generation task and delivery state, while standalone
-attempts retain the legacy fallback. The total and page order are computed from
-compact source keys; display projections and attempt details are loaded only
-for the requested page. This keeps the failed view responsive without
-replaying work or changing its status semantics.
+failed under the existing status projection. Reply Attempt candidate keys use
+the same current-generation task, OA, delivery and uncertainty status as the
+unfiltered History list, while other source branches retain their selection.
+The total and page order come from compact source keys; the selected Reply
+Attempt IDs are hydrated through that same projection, with display fields
+loaded only for the requested page. History reads do not replay work or change
+stored status.
 
 DingTalk meeting group searches explicitly request 100 candidates per page,
 the provider's supported maximum, while retaining the complete-source check.
@@ -2556,7 +2710,7 @@ ownership, and external delivery guards are unchanged.
 
 Meeting delivery batches release still-ready claims on both normal completion
 and exceptional exit. Each acquisition persists a fresh token in the separate
-`meeting_alignment_delivery_claims` table, in the same transaction as the job
+`meeting_alignment_delivery_claims` Action kind, in the same transaction as the job
 lock. The token is returned only with the claimed job, not stored in the job
 row. Release compares job ID, original lock timestamp and nonempty token, so
 even a same-second successor cannot be unlocked by a stale batch. The job row
@@ -2867,11 +3021,11 @@ Consumer 捕获的历史来源文本可能合并多条消息；校验器按反�
 
 过程详情独立说明原生最终结果和工具过程的可用性；Friday 最终 Artifact 可读不表示工具过程也可读。可读的 Claude 记录没有受支持查看器时不提供错误的 Codex 链接。历史列表保留已采用的会议最终消息和目标，业务历史列表只读取服务采用的消息、标题与状态；原生搜索和单次运行过程详情在数据库快照关闭后按需读取。质量报告的信息性原生证据覆盖数量仅在当前内存报告/页面中展示，不写入小时状态文件，也不改变质量状态与违规规则。
 
-Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite 事件行只保存服务回放 ID、顺序和最小原生定位。工具开始与完成通过原生完成顺序定位，并按原生 item ID 配对输入与结果；只有完成记录时直接读取该条原生记录。历史文字以原生完成消息聚合回放。任务结束或进入等待确认后，在事务提交后释放正文缓存；失败与停止运行也按准确范围读取已有原生信息。最终文字不保存副本，详情按需读取 Codex/Claude 原生记录或 Friday Artifact；远端 Artifact 的读取在 SQLite 事务外进行。原生记录缺失时明确显示过程不可用，保留实际任务状态和服务附件记录。运行提供者的原始错误正文也不另存；服务保留失败状态、错误码和服务生成的公共原因，历史错误正文清除后由错误码生成展示原因。
+Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite 事件行只保存服务回放 ID、顺序和最小原生定位。工具开始与完成通过原生完成顺序定位，并按原生 item ID 配对输入与结果；只有完成记录时直接读取该条原生记录。历史文字以原生完成消息聚合回放。任务结束后，在事务提交后释放正文缓存；失败与停止运行也按准确范围读取已有原生信息。最终文字不保存副本，详情按需读取 Codex/Claude 原生记录或 Friday Artifact；远端 Artifact 的读取在 SQLite 事务外进行。原生记录缺失时明确显示过程不可用，保留实际任务状态和服务附件记录。运行提供者的原始错误正文也不另存；服务保留失败状态、错误码和服务生成的公共原因，历史错误正文清除后由错误码生成展示原因。
 
 定时配置正文存于 `scheduled_task_config_versions`，触发记录以 `snapshot_id` 引用不可变版本。数据库迁移保留运行 ID、状态和已排队输入。
 
-模型目录在无训练进程活动时清理，保留当前模型、上一个可运行版本和最新待评估候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。
+模型目录在无训练进程活动时清理，保留当前 online 模型、实际 active／previous manifest 引用的可运行制品和跨模型系列最新一份待评估候选；历史 mode transition 仅保留切换事实及回执，不因曾被选用而保留旧权重。没有 active／previous manifest 时只保留当前模型和最新候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。
 
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
@@ -2895,7 +3049,7 @@ Task 验收读回在 SQLite 快照内取得准确的原生引用，关闭快照�
 原生决定缺失或全部候选无效时明确验收失败；业务投影仍以既有 SQLite
 应用回执核对。本修复不授权生产语义导入，也不代替真实业务样本验收。
 
-已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。`email_classifications.model_text` 仍是训练／人工标注使用的准确特征文本，与邮件原文不同，本阶段保留。
+已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。该历史分期保留了与邮件原文不同的模型特征文本。最终结构中的 `emails.class_model_text` 仅在活动或原文尚未证明时保留；终态且完整字节已由原生／provider 证明后，改用已有 `message_source_reference_json.model_input` 引用。人工相似案例仍读取准确特征，具体生命周期以下文最终合同为准。
 
 Email schema 47 为分类表增加非唯一定位索引，前缀为 account_id／folder／uidvalidity，后续保留 status／updated_at desc／uid。稳定 UID 集合查询从覆盖索引读取，不再为文件夹和 UIDVALIDITY 过滤回读整张宽表；provider 元数据查询仍读取准确分类行，不使用缓存或重建内容。已有分类、计划、动作、游标和授权数据不改写，重复 UID 的既有状态／更新时间次序继续覆盖回归。v46→v47 在原升级事务中安装索引并记录版本，验证失败时索引与版本一并回滚；当前版本缺少索引视为结构损坏，不在读取中自修复。生产迁移须先验证备份、隔离对照与正式 quiet 门禁；旧运行时仍拒绝未来版本，回退须使用迁移前验证备份。此项修复针对已证实的定位读取放大，不代表全局锁等待、连接关闭延迟或主机内存压力已消除。
 
@@ -2910,6 +3064,13 @@ Email schema 47→48 在现有初始化事务内删除
 或要求该索引，重复启动不重建它；folder 索引仍为 required schema。
 点查使用原主键，文件夹查询使用原 folder 索引。删除索引释放数据库内部页，
 不代表 SQLite 文件已经缩小；实际文件回收是独立的维护步骤。
+本段是已发布 47→48 的历史行为。未发布的 Store20/Email52 候选将
+两张 provider 表合并为 `provider_state`，以两个身份 partial unique 索引
+和一个 observation-folder partial 索引服务当前查询。
+未发布的 31 表候选中，四个 observation 来源字段 `provider_folder_name`、
+`category_key`、`important` 和 `important_signals_json` 为原生可写列，
+folder generation 对应列均为 NULL；不再生成 `payload_json`。现有三条 partial
+索引、观察扫描的 set-based 更新、调用方事务和按当前事实逆迁仍适用。
 
 ## Schema publication and failed-start rollback
 
@@ -3121,7 +3282,7 @@ Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类�
 idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
 work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
 增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
-现有物理任务ID；meeting_memory_write_events仍保存物理父FK，对外还原公共ID，
+现有物理任务ID；Actions 中的 meeting_memory_write_events 类型仍保存物理父FK，对外还原公共ID，
 已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
@@ -3205,7 +3366,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
+第五期C曾通过PR77／46bfdbe0正常发布，阶段验收时的Store17／Email51及126物理表读回通过；这是历史发布回执，后续已发布Store18。实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current
@@ -3232,6 +3393,42 @@ retry an invalid `null` response through the recent-message fallback; valid but
 unrecognized object envelopes retain the existing fallback behavior. Read-only
 message commands make only the configured bounded retry for JSON `null`; if it
 persists, the typed failure remains visible to normal recovery and Attention.
+
+### Email actions: isolated storage declaration
+
+`app/action_storage.py` can explicitly build a twenty-nine-type `actions`
+declaration when `include_email=True` is paired with the current reply variant.
+The default factories still build their prior declarations. The Email addition
+defines the 13 original families, their source-field projections and their
+own native constraints/indexes/triggers. It does not route live Email reads or
+writes through `actions`; no Store/Email initializer selects this option.
+Finite source-shaped Email mutation helpers now preserve nine signed source
+ROWID locators, two independent AUTOINCREMENT sequences and two composite keys.
+The writer lock precedes source default evaluation and locator/payload reads;
+successful calls return the source identity. Separate pure forward and
+current-fact inverse functions reconstruct all thirteen source families inside
+a caller-owned foreign-key-off transaction, translating the thirteen external
+blockers and preserving the original locators and allocator waters. They are
+explicit source-shaped migration functions selected by the paired release.
+Their historical scaffold declarations remain migration inputs; current runtime
+uses the final compact Actions layout. Production deployment is still pending. Preflight
+replays MAIN and TEMP schema bindings in a separate SQLite connection and
+probes rename and DROP effects before touching the caller's tables. A TEMP
+trigger or view that would change or disappear is refused; unrelated TEMP
+objects remain untouched.
+Generated Email columns are scoped to their exact source family membership;
+same-named payload members on an older action never appear as Email fields.
+An Email-only CHECK keeps the older task/run/action physical reference slots
+NULL, including the fresh variant's memory attempt reference; native Email
+source-key foreign keys remain the only Email parent relationships.
+
+The selected paired follow-up/Todo-sync migration requires the caller's
+existing foreign-key-off transaction. It recaptures the reviewed source before
+writing, copies ten action families and retargets the retained legacy-link FK.
+Its inverse reads current typed rows and current sequence waters before
+restoring the literal actual or fresh source tables, indexes and original
+legacy-link FK. The paired release updates Store and Email markers in the same
+transaction; neither conversion performs provider calls.
 
 Recorded DingTalk delivery recovery (2026-10-14): startup reconciliation, explicit failed-task completion and protection against failed-run projection all honor the receipt verification state. A recorded receipt with verification.state=ambiguous or failed does not prove delivery and cannot restore done. Positive sent receipts and previously recorded legacy readback receipts keep their existing completion behavior.
 
@@ -3291,6 +3488,156 @@ tool, Skill, prompt rule, retry or session policy changes.
 Existing current-Project citation validation reports both the expected immutable WorkItem source_ref and the received reference when they differ. The existing repair path receives those known values. Validation conditions, result contract, repair budget, routing and permissions remain unchanged; no additional prompt rule is added. Verification is documented in docs/native-input-evidence-release-validation.md.
 
 
+## Paired Store/Email schema release
+
+The selected Business candidate component adds a default-false
+`include_candidates` declaration option for attention items, project
+candidates, and WeChat Memory candidates. Its writer preserves the three
+independent native public-ID allocators and caller-owned transactions. Paired
+forward conversion moves their current facts into typed Business records and
+rewrites five existing child FK endpoints across four retained children;
+inverse restores actual or fresh source declarations from current facts,
+including new writes, child rows, and public allocator waters. The existing
+coordinator and the prior current Store entrypoints used the 25-table selection. Historical
+source factories retain their nine-kind Business default; current constructors
+explicitly select all twelve kinds. Attention and project candidate projections
+expose source public IDs and source-shaped fields, and WeChat review/write
+transitions preserve their conditional updates in the original transactions.
+Actual-copy and release acceptance remain separate from development selection.
+On inverse, the candidate component transfers its three `business:` public
+allocator waters to the corresponding native tables and removes only those
+three aliases before the base Business inverse verifies the source. Old-kind
+aliases and the consumed private Business water follow their existing rules.
+The inverse restores the original private Business allocator when no later
+Business insertion advanced it; after later inserts it retains the consumed
+private high water, including an insert later deleted. New-candidate-only
+writes can therefore leave harmless private Business ID padding, while their
+native public-ID waters remain exact.
+Forward and inverse preflights use SQLite identifier case rules for reserved
+MAIN/TEMP names and the existing SQLite schema dependency probe for external
+views and triggers. They reject unsupported dependencies before DDL and keep
+the exact Actions legacy-link counterpart trigger through both directions.
+
+The then-selected Store/Email constructor used 15 ordinary tables:
+the ten remaining Business Action families are exact source-shaped Actions
+projections and finite writers. Fresh creation converted their transient source
+tables in the same publication transaction; reopen recognized the typed graph
+and did not retain those ten source tables. The paired release captured only
+declarations, dependency facts, and allocator waters, converts these families
+after Business candidates and before the two markers, and reverses this layer
+before candidate and Feedback inverses. Signals still join the retained
+BusinessSourceDocuments body; native LegacyLinks stays a native table with a
+typed Signal FK. Signal, date, anchor-link and Attention-event public IDs use
+four independent source allocator aliases, while six composite families retain
+hidden source ROWIDs; the physical Actions ID is private. Date copying remains
+one INSERT SELECT with the original eight-field duplicate test, created_at,
+and all-row statement atomicity. Attention membership replacement preserves
+unchanged membership rows and timestamps. Historical native source factories
+and exact lower-stage current predicates keep their previous roles; the new
+current role explicitly checks the Actions and Business Action declarations.
+This is a local selected-code path pending independent review and actual-copy
+proof, not production behavior.
+
+The selected candidate coordinator in app/action_email_schema_release.py
+prepares the exact Store19/Email51 source and publishes Store20/Email52.
+Preparation records the original Store marker and complete Email ledger,
+native declarations, required allocator-presence bits and existing FK findings
+in one read snapshot.
+It carries Email, Business, Provider, Configs/Skill/mapped-Runs8, State, Tasks20,
+retired empty Workbench confirmation declarations and Runs11 source-profile
+metadata without a business-row snapshot.
+
+Forward converts Email, Business, Provider, Configs, State and Tasks20 in the
+existing FK-off transaction, retires the empty confirmation table, then folds
+Runs11 before writing the shared Store/Email marker timestamp. Readback validates
+the complete current declarations, translated dependencies, retired names,
+markers and unchanged FK findings. Inverse recreates the empty confirmation
+schema, restores Tasks20 and State, restores mapped Runs8 from current Runs11
+facts, then restores Configs/Business/Email/Provider, the original Store timestamp
+and complete Email ledger from current facts and allocator waters. A failed
+transaction rolls back its DDL, markers and data together. The genuine cold
+initializer and constructors are selected; actual-copy, latest predecessor,
+native CLI and deployment acceptance remain separate from code selection.
+
+The following group4 development notes are historical milestones. Their WIP
+and former Store19/Email51 default statements describe those recorded steps;
+the current branch contract is the selected Store20/Email52 coordinator above.
+
+## Email13 group4B DAO WIP boundary
+
+The unpublished candidate's current plan/direct/feedback/retry/attempt DAO reads
+now use finite actions projections. All direct claim, completion, explicit retry
+release and stale-recovery transitions keep their original writer transactions
+and guard outcomes. A finite direct-action helper rechecks the original public
+action ID and supplied status/start/attempt-count predicates, then mutates the
+resolved source ROWID through the accepted writer. A failed CAS still raises or
+returns the original caller outcome, and the caller's full transaction rolls
+back. Attempt IDs come from the original independent AUTO namespace.
+
+Operation creation preserves the exact plan/type `DO NOTHING` conflict target,
+without suppressing other native constraints. The two shared C/D dependency
+reads are converted solely to allow the B call paths; C/D lifecycle writes,
+startup metadata/durable validation and constructor activation remain deferred.
+The default schema is still Store19/Email51, so this partial branch does not
+claim usable default business paths, paired publication readiness, or native/
+provider acceptance.
+
+
+## Email13 group4C unsubscribe DAO WIP boundary
+
+The partial unpublished DAO now covers all six unsubscribe families, including
+state/terminal snapshots, live lineage, observation/context reads, continuation
+and journal writes, claim release/recovery, journal repair, terminal evidence,
+exact URL backfill and cancellation. Each existing explicit writer transaction
+keeps the original predicates while resolving public source identities to the
+accepted writer locator. Multi-row mutations remain within that transaction;
+a failure rolls back earlier changes. Journal steps use their original AUTO
+allocator and effects use their original composite identity, independently of
+physical actions IDs. Source-valid SQL NULL public IDs remain a storage concern
+separate from strict application validation.
+
+Continuation UPSERT uses its original public-key conflict target and changes
+only effect digest, observation reference, controls and updated time. Creation
+time and structural source ROWID survive the update, including encoded scalar
+values. Existing broad OR IGNORE effect writes remain broad, and receipt
+promotion/backfill retain their original allowed updates. Backfill takes the
+writer lock only after URL validation, then applies its original empty-address
+condition; an intervening fill still returns false without overwrite.
+
+The C deferrals stated at group4B acceptance are now closed for current DAO SQL.
+Seven reply lifecycle methods remain group4D work; only their two required mixed
+reply-receipt reads and the previously accepted shared reply-claim guard are
+converted. Historical schema dispatch, startup validation, fresh constructors,
+real target markers and the paired coordinator remain E/F work. Store19/Email51
+is still selected by default. This branch therefore remains partial preparation,
+with no default-runtime, full Task4, native/provider or production acceptance.
+
+
+## Email13 group4D reply DAO WIP boundary
+
+Current EmailStore reply claims and receipts now use finite actions projections
+and source-shaped writers, with all seventeen claim and thirteen receipt fields
+preserved. Every original D writer already held BEGIN IMMEDIATE; the conversion
+adds no transaction or earlier authorization boundary. Locator selection keeps
+the original public identity, status, owner/generation/lease and receipt JSON-text
+predicates within that same writer transaction. Native uniqueness and typed
+parent FKs remain in force.
+
+Dispatch replay and immutable conflicts, retryable snapshot refresh, terminated
+owner recovery and uncertain no-replay behavior retain their original outcomes.
+Receipt replay can enrich a previously empty SMTP acceptance ID but cannot erase
+or replace a non-empty one. A failed claim completion rolls back receipt inserts
+and enrichment. SQL NULL public keys remain separate from the strict public
+method input rules; no source storage constraint has been tightened.
+
+Current thirteen-family DAO SQL is now converted inside EmailStore, superseding
+the historical B/C D deferrals. Default constructors, metadata/row validators,
+historical schema dispatch and real paired release activation are still pending
+E/F work. Cancellation preview depends on the deferred shape validator. External
+consumers and native/full-copy/production acceptance remain separate Task5/6
+work. This is partial unpublished preparation; dormant SMTP remains disabled and
+Store19/Email51 is still selected by default.
+
 History latest-task lookup publication666f4078 passed exact-tree full Quality
 and normal deployment on2026-10-14. Production PID31985 and healthz were read
 back; live History list/chart, type/status controls, pagination and an existing
@@ -3300,6 +3647,169 @@ unavailable historical native delivery evidence. This is scoped read acceptance,
 not proof of all task execution or provider outcomes. See
 `docs/database-redesign-history-query-validation.md` for exact evidence.
 No schema or retention change is part of this History release.
+
+The subsequent local History query candidate narrows each selected source branch
+to `source_table`, `source_id`, and `occurred_at` before the combined page sort.
+The existing type, status, and text filters still run inside each source branch;
+the selected page is hydrated through the original full projection in the same
+read snapshot. Two later/superseding reply-attempt status checks share one
+per-trigger maximum terminal public Attempt ID, preserving the same eight
+terminal statuses and strict newer-ID comparison. At that candidate stage, the
+failed-only path was unchanged; the 2026-10-16 correction above now shares the
+canonical status projection. This candidate has
+focused local tests and Task6 whole-copy acceptance. Plain, matching and
+no-match public reads completed in1.7845s,0.9163s and1.3001s respectively;
+isolated read-only UI clicks also passed. Search still evaluates its original
+text predicates; this evidence does not promise a general latency bound or
+production acceptance. See the Email-actions native-copy acceptance JSON.
+
+
+### Unselected current Email fresh seeds (Task4E1)
+
+A private fresh-seed entry point now reuses the original category insertion,
+model-promotion defaults and initial description-revision logic without running
+the historical migration chain. The original v19→20 and v33→34 migrations call
+the factored bodies at the same points, retaining their clock, UUID, legacy
+conversion, DDL and ledger behavior. The fresh entry point requires retained
+tables and leaves transactions, savepoints and rollback to its caller.
+
+No constructor or reopen path calls it. F must select it only for a newly created
+database, never as repair on reopen, Email51 migration or reads. Repeated calls
+on seeded facts allocate no new IDs or clocks; existing configured sets and
+promotion/revision facts are preserved. Tests use an explicit neutral factory
+and genuine archived2773 default fresh0→51 facts, not a current default-constructor
+proof. Metadata/durable validators and coupled default activation remain E2/F;
+Store19/Email51 selection, production and dormant SMTP behavior are unchanged.
+
+
+### Current Email29 validation, Task4E2 preparation
+
+The candidate's one current shape/durable validator now targets the finite29
+schema. Its active plan, retry, direct, feedback, claim, effect, continuation,
+journal and receipt reads use the accepted projections. Exact action manifests
+cover both existing reply variants. Original16 retained-business requirements
+plus ledger, required metadata and retained-row policy remain; optional three
+historical tables are not newly required by startup. The49-object neutral
+factory proof is separate from this original startup coverage.
+
+Shape validation selects19 retained native triggers and13 exact existing
+translated blockers. Their finite installer is caller-transactional and creates
+only missing triggers, without repair/overwrite. Blocker predicates, status
+checks and errors stay unchanged. Durable validation adds no filtering, writes,
+commits or receipt/authorization/recovery policy. The genuine-source comparison
+retains specific NULL behavior: native NULL receipt identity remains accepted
+by the row validator but refused by the public writer; NULL feedback ID remains
+a durable refusal. The original retry timestamp ValueError is also preserved.
+The existing public cancellation preview now works read-only on an explicit
+converted target and returns the original decision.
+
+F is still pending. The default Store19/Email51 bootstrap currently creates the
+old layout, while the current validator targets29; this unpublished intermediate
+state is not a runnable default release. Historical <=48 cached-plan/source
+migration code is preserved, not routed through an alternate validator. F must
+refuse unsupported older sources before mutation and switch the supported pair,
+constructors/locks, coordinator and real markers together. E1 fresh seeds remain
+unselected; external Task5 and copy/native/publication Task6 remain open.
+
+
+### Coupled Email29 bootstrap and release candidate, Task4F
+
+The unpublished candidate now selects Store `2026-10-14.1`/Email52 together with
+34-kind actions and typed configs, schedules and Skill receipts. Exact Store19
+(`2026-10-13.5`)/Email51 must pass through one paired
+coordinator release before target constructors run. Direct old-pair construction
+refuses read-only before WAL/cache/schema mutation and repeats selection under
+the existing lock; unsupported/mixed/old Email-only sources are also refused.
+The real publication child receives the prepared full metadata binding on stdin,
+atomically applies both markers/schema, and cold opens both real default classes.
+BLOB timestamps retain native values/types. Failed deployment verification uses
+the existing current-fact inverse before the old restart; unsupported inverse
+leaves the replacement stopped under existing updater behavior.
+
+Fresh Store keeps its legacy early commits but publishes canonical classification,
+34 actions, typed configs/schedules, mapped runs and its marker in one final
+transaction. A failed prefix/suffix can
+leave unversioned core and existing retry refusal; no new repair is introduced.
+A successful Store-first state is valid. Email-first invokes actual AutoReplyStore
+once before taking Email's non-reentrant path lock. Its fresh transaction creates
+current retained nonactions, ledger, original seeds, seven retained Email blockers
+and52; the six account-owned blockers are installed by configs;
+rollback returns to Store-first. No historical0→51/action_plan_json/old13 creation
+runs. Current reopen and source51 migration leave existing empty config/revision
+sets empty. Existing coherent-current Store repair behavior is retained for
+missing canonical Store-owned Skill/runtime guards, selected schedule/Skill
+indexes, run auxiliaries and action auxiliaries; altered declarations and
+Email-owned auxiliaries remain refusals. Target index definitions and constraints
+remain exact after repair; SQLite's `PRAGMA index_list.seq` enumeration order
+may differ after recreation. Email current reopen validates the exact current
+`provider_state` declaration before durable
+reads. The old Email51 provider-observation signal-column repair is retired;
+malformed marker-correct current targets are refused without repair.
+
+Local tests cover real constructors, both orders/concurrency, child fault/crash,
+current-fact inverse and the actual RepositoryUpdater lifecycle using the newly
+loaded selector. They do not establish selector reload in an already-running old
+UI/updater process. Task5A now reads current Email action History (including the
+failed candidate path), Attention, unsubscribe receipts and deployment quiet
+state through finite source-shaped projections. History identity uses the
+signed source ROWID even when the public action ID is NULL. Attention retains
+current-plan, status and retry-window predicates; the current Email runtime
+requires both Store20 and Email52, while generic publication readers accept
+Store20-first before the Email ledger is initialized. Deployment quiet checks
+read the exact Store19/Email51 native source or Store20/Email52 target.
+Historical/default fixture adaptation and the remaining Task5 selected paths
+are still open. The branch is not deployable; source-copy/native/provider/CI/
+publication gates remain open.
+
+
+### Original Email metadata refusals, Task5B0
+
+Store's missing-object repair permission excludes the32 Email-only auxiliaries
+already required by the target manifest. Their same-variant29-minus16 name
+difference is checked against canonical object type, owner and SQL, not a pair
+of special index names. Email does this read-only before its genuine Store call
+and retains EmailPersistenceCorruption; Store also requires the same metadata
+before entering its original current-known-repair path. Missing Email auxiliaries
+remain missing without schema/fact/marker/DB-byte or DELETE-journal changes.
+The shared action table/public-ID index and all prior Store repair paths retain
+their existing treatment. Normal Email→Store call count/lock order, current
+provider-state exact current validation, fresh orders and coordinator/inverse
+remain as described in the current candidate. The old provider signal-column
+repair is retired.
+No general factory, writer, source contract or Task5A consumer was changed.
+This is an unpublished regression correction, not final Task5 acceptance.
+
+Current Email29 action-family metadata belongs to the shared Store20 `actions`
+table. If its generated Email column, CHECK, collation or attempt parent FK is
+malformed, the genuine Store schema preflight raises `sqlite3.IntegrityError`
+before EmailStore's own current-schema validation, even with
+`validate_rows=False`. The Email Web route's existing exception mapping marks
+this `sqlite_integrity_error` and keeps Email unavailable. The older Email51
+separate-table metadata path used `EmailPersistenceCorruption` and
+`email_persistence_corruption`; this diagnostic difference follows the physical
+owner of the schema. Neither path repairs the malformed structure or adds a
+retry, recovery or authorization rule.
+
+The Store20/Email52 pair selector runs before the Email retained-schema
+validator. Partial malformed/future Email ledger values and a complete current
+pair with a future Email ledger are rejected as
+`sqlite3.IntegrityError("unsupported or mixed Store/Email source schema")`;
+a ledger lacking `version` raises `sqlite3.OperationalError("no such column:
+version")`. These source-selection reads do not change schema, ledger or
+Store marker facts, schema cookie or database bytes and do not open a repair
+or automatic retry path. Current retained Email business-table identifiers
+remain case-insensitive under the existing validator; their quoted forms use
+SQLite's normal double-quote, backtick and bracket syntax. Shared `actions`
+metadata and the pair markers are outside that retained Email owner scope.
+
+The Web API's direct `register_email_routes` path catches this paired
+IntegrityError and keeps Email endpoints unavailable while routes registered
+beforehand can answer. Full `create_audit_app` constructs AutoReplyStore first;
+its paired preflight rejects an unknown future Email ledger before route
+registration. The old Email51 whole-app isolation test runs in its bound
+published-source suite, while the current whole-app test asserts the refusal
+and unchanged schema, markers, cookie and bytes. No fallback, catch or retry
+was added to the runtime.
 
 
 Service context JSON blocks use compact serialization rather than indentation.
@@ -3359,6 +3869,49 @@ Consumer and Audit both persist a new Codex session selected by the existing run
 
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.
 
+
+### Native-source scalar representation and State runtime
+
+Native-source Email/Business/Configs/Skill/Sync and State storage encode finite REAL values as an exact binary significand and exponent and decode them with SQLite's built-in pow, preserving native TEXT/INTEGER affinity results. Scalar binding reads float and string subclasses through their base implementations and bytes through the buffer protocol, matching sqlite3's underlying bound value. Non-C-contiguous buffers retain native BufferError behavior. The shared encoder validates the underlying integer against SQLite's signed 64-bit range before serialization. Provider's four observation fields bind native scalar values directly with SQLite affinity, without a JSON codec. Published Reply retains its existing scalar format; frozen source fingerprints remain unchanged.
+
+Store20/Email52 uses one State table for fifteen retained native state kinds. Fresh Store-first and Email-first construction creates this declaration; current callers use the existing State projections and transaction-owned write primitives. The paired release retires sixteen native State tables, including the eligible empty corpus source table. Original unused conversation fields are retired only when their existing source eligibility check permits it. Archived native factories and historical release source contracts remain unchanged.
+
+The unpublished intermediate Store20/Email52 current path now uses
+`business.import_task_id` only on `record_type='work_todo'` to refer to the
+adopted formal Task public ID. Current constructors and strict predicates
+require this owner column and reject `business_legacy_links` and
+`trg_sync_legacy_update_public_id`; known-object repair does not recreate
+either. The source WorkTodo projection omits the owner column, preserving
+manifest and source digests across import. History-only Project/Update items
+never query the mapping. The paired FK-off transaction captures and converts
+the old link last, publishes both markers atomically, and restores the old
+link first on inverse before earlier schema families. Supported populated
+WorkTodo/Task links keep owner and target identities; link-local ID, time and
+allocator are retired. Unsupported alternatives and dependencies refuse before
+DDL. This remains an eleven-table intermediate candidate with the source
+document body still present; no production publication is implied.
+Apply checks each current source row and its supporting WorkUpdate by indexed
+public-ID lookup inside the item transaction after the one corpus fingerprint.
+Known-object repair never creates the retired Legacy table or index; their
+native declarations exist only during fresh transient source construction.
+Import manifests use version 3 and reject older versions before item decoding;
+the old Project match registry key and zero count are absent from current
+serialized plan and apply output.
+
+State INSERT, point UPDATE, UPSERT and bulk UPDATE keep caller-owned transactions and do not commit or roll back earlier caller work. Omitted defaults and OR REPLACE substitutions for supplied NULL/NaN on defaulted NOT NULL fields execute inside the final write statement. Nullable NULL and defaultless NOT NULL failures retain native behavior. Bulk updates preserve one-statement affected-row counts, ABORT behavior, original-row expressions and untouched encoded leaves. SQLite CURRENT_TIMESTAMP remains statement-stable.
+
+State UPSERT uses the existing source-key partial unique index in one INSERT. Original INSERT-candidate constraints run before a conflict update, including explicit NULL on a required wizard confirmer, even when an update guard is false. Matched rows keep their source identity and change only selected payload leaves. No failed SQL operation retries a different storage layout.
+
+Organization name and open DingTalk ID indexes use the original source ROWID as the final key, preserving equal-key encounter order independently of State physical IDs. Current declaration checking sorts index records by name and omits only SQLite's index enumeration seq; SQL, ordered columns, uniqueness, origin, partial predicates, foreign keys and triggers remain exact. Source declarations and physical State DDL are unchanged. Current constructors retain only the existing two dispatcher-index repairs and reject unsupported namespace collisions before changing journal mode or DDL.
+
+Current session, conversation, lock, route, wizard, scan/history cursor, reaction, health and deferral callers use State. Dispatcher ownership, generation, terminal/expiry predicates, cancellation fences and task eligibility retain their existing business rules. Empty dispatcher probes remain read-only; positive claims recheck inside the existing writer transaction.
+
+Publication readers choose the native historical source or exact current State marker explicitly. A malformed current declaration never retries native. The seven generic current publication selectors require the complete current Actions/Skill receipt declaration; Email availability and action publication retain their existing Store/Email marker-pair contract. Store-only current databases do not advertise an Email runtime.
+
+Paired forward migration captures State declarations only, converts State after Configs and writes the Store marker and Email ledger with the same existing timestamp in the original atomic transaction. Target verification reads the current State marker. Inverse restores State first from current facts, then preserves the existing Configs/Business/Email/Provider inverse sequence and original native marker/ledger restoration. It does not restore State rows from an earlier snapshot.
+
+Upgrade progress selects the committed schema at DAO construction and immediately before native DAO progress writes. One read-only snapshot observes the retained Email ledger first: positive native versions through source51 select native service_state and target52 selects State; malformed or unsupported future ledger versions remain visible errors. Without a ledger version, Store-only State requires its exact current Store marker; missing paths and empty databases remain source without creating files or tables. Explicit getters/setters keep their original transactions and bounded lock/busy retry and do not reselect after SQL failure. Generic protocol stores are unchanged. Progress after a child commit or inverse follows the actual committed role, including a commit that becomes durable before an exception is reported.
+
 OA Reply Attempt History rows and their status filters use the owning task's
 current-generation projection, matching Attempt detail. If no run resolves, the
 current task is resolved by channel, conversation and trigger message identity.
@@ -3368,6 +3921,9 @@ failure or block status. Historical action stays in the action field. An
 unresolved current System Execution remains `uncertain` even when the task was
 later closed; History reads never rewrite the Attempt or execution receipt.
 Other History types retain their own status projections.
+The failed-only Reply Attempt key selection and page hydration both use this
+same canonical projection, so OA legacy labels, pending tasks and unresolved
+uncertainty are counted and displayed consistently.
 
 听记管理页认证失效（2026-10-15）：组织选择或登录校验抛出 MinutesBrowserSessionExpired 时，服务使用 macOS open 在本人普通 Google Chrome 中打开听记 history 登录页。原命令仍保留失败，不把打开页面当成认证成功；后台浏览器照常关闭。本人完成登录后的既有 cookie 同步与正式重试流程不变。听记管理浏览器使用 Chrome 原生 `--restore-last-session` 恢复每日副本中的 session cookies，避免 Chrome 默认启动删除仍有效的后台 access cookie；首次使用新 profile 时先启动并关闭一次空白 Chrome，随后重新注入副本再正式启动，因为 Chrome 对新 profile 忽略该参数。启动后关闭恢复的旧标签，退出前把仍打开的页面导航到 about:blank，避免后续启动累积标签或重载旧听记 URL。该设置仅用于听记管理 profile，不改变 cookie 到期时间、权限申请规则或退订浏览器。
 
@@ -3389,6 +3945,296 @@ same envelope validator; it returns diagnostic strings only and cannot be adopte
 as a candidate. Malformed relationship syntax supplies no inferred relationship
 errors. Supporting membership violations are reported together. Full candidate
 validation, the native output schema, and the one-correction budget are unchanged.
+
+Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current State Memory and generic publication readers select the complete current declaration.
+
+
+Final database candidate, local development only (2026-10-18): blank Store/Email
+construction now installs the final ten core tables plus the existing Email
+migration ledger directly. Cold opens validate the final integer-kind/JSONB
+Actions declaration and body-free provenance; known missing auxiliary repairs
+use the same final declaration. Historical source factories remain explicit
+migration/inverse code. The normal constructors passed on the complete physical
+control copy. The complete source-to-final paired publication and current-data
+inverse/reforward subsequently passed on an isolated copy. This candidate has
+not been deployed; remaining scope is tracked in the single final checklist.
+
+Current Signal creation and reads retain exact source identity, locator, hash
+and byte count without an original-body table. Semantic replay/import,
+Project context, Attention and minutes owner backfill use the current provenance
+projection rather than the historical source-document projection. Worker and
+web detail readers receive the existing configured DWS reader per request;
+originals are read on demand and are not cached in the database. Retained
+Console business facts can provide their exact original event text. Missing
+originals remain unavailable. The authorized twenty historical originals may
+be retired only within the final migration scope; this local change does not
+remove production data. Current acceptance and remaining release gaps are in
+`docs/database-redesign-final-acceptance.md`.
+
+
+The final candidate's paired release now prepares exact source-version locators
+from the verified metadata inventory and the bounded twenty-version retirement
+authorization, then converts final Actions/provenance after inline legacy ownership
+and before the atomic marker commit. The complete inverse metadata, including the
+final Action conversion, is flushed before COMMIT and received on failure/timeout.
+The inverse uses current facts; exact originals come from the explicitly supplied
+existing deployment backup or the native/provider/retained Console reader. It never
+restores old business rows from that backup. RepositoryUpdater passes its already
+verified backup path into the database publication callback; backup policy and
+service lifecycle are unchanged. Config row transfer writes its explicit historical
+migration-stage receipt representation before the final conversion; current runtime
+writers use only the final representation. Current publication readers select the
+exact final Actions/provenance declaration; historical marker branches are unchanged.
+Full original-source paired copy/current-data inverse/reforward and the five real
+CLI cases have passed on final-structure copies with fake outbound. Production
+release and remaining Email lifecycle remain open; see the single final acceptance
+checklist. Operator deferral receipts use the existing service_state namespace
+in State, retaining the original 19 fields and integer receipt IDs. Apply/resume
+no longer creates a physical receipt table. Explicit schema inverse restores
+the old tool table from current receipts, including post-migration writes. Existing
+operator eligibility, backup and transaction behavior is unchanged.
+
+
+The final candidate's Email readonly adapter exposes fetch_message for exact
+account/folder/UIDVALIDITY/UID and stable identity. It reads complete selected
+MIME text parts with BODY.PEEK, skips attachment payloads, validates each FETCH
+record's UID and rechecks generation. Existing bounded scanning is unchanged.
+Task context uses EmailSourceReader and current canonical message metadata,
+including message-only records, instead of classification coordinates or a
+neighboring UID batch. Provider-state has current folder facts but no UID.
+When an available observation names a different folder, locate_message searches
+that explicit folder and verifies one unique exact Message-ID header before
+fetching. Missing/ambiguous identities are unavailable; metadata is rechecked
+after reading and no body or new locator is persisted. Without a current observed
+moved folder, changed source generations remain unavailable.
+This does not retire completed Email bodies: list/detail/search/training and
+historical thread integration still need final acceptance. Component tests used
+fake IMAP. A later bounded readonly provider probe verified one original; two
+old coordinates remain unavailable in their recorded folder. This is not proof
+of general live original availability.
+
+
+The candidate training-source catalog reads selected label/identity metadata,
+using the same selection predicate as the real training-record reader. It no
+longer constructs normalized inputs just to count labels. The canonical normalization function and promotion contract remain unchanged;
+current selected input sources are described below. The offline labeler's
+classified-identity set uses the existing complete identity query directly.
+The registered Console JSON classification list, detail and unsubscribe-list
+routes use the source-backed reader. Existing sender/subject/visible-body literal
+search semantics, totals, ordering and pagination remain intact. Search reads
+page-sized batches grouped by account; only the active batch and result page
+retain original views. The no-body-copy search product choice is pending; do
+not interpret HTTP/fake-provider checks as live provider latency, historical
+original availability, production deployment or physical body retirement.
+
+
+EmailSourceReader may resolve unavailable old coordinates by an exact unique
+Message-ID search in an already-observed available same folder; a changed folder
+uses the same exact lookup. It does not guess an unobserved placement or persist
+new coordinates/body. Folder-only training selection no longer loads unselected
+Agent/user input. The test-double-only legacy model_text conversion is removed;
+actual selected training sources use the canonical current Store contract.
+
+
+EmailSourceReader.read_many reads a finite batch for one account through one
+existing readonly source lease. It reads locator/folder metadata before provider
+I/O and rechecks the whole batch after closing the lease, returning no partial
+batch on failure or location change. The single-message reader uses the same
+path. There is no persistent body cache, new schema field, connection pool, or
+source-locator write. The Console JSON reader uses this batch API through
+read_views and the existing readonly connector registry, constructed once per
+route registration. Source credentials use the Web effective environment
+(including its explicit env path); worker defaults continue to use os.environ.
+A missing original, provider failure or changed source snapshot returns an
+explicit email_original_unavailable response, never a stored-body fallback.
+Provider latency and full mailbox source availability remain unverified.
+
+The reply Memory queue status uses the same current Action variant selector as
+Store's reply-Memory reader. It retains memory_write_events/last_error and does
+not substitute task_memory_write_events or an old full intermediate declaration.
+Malformed shared Email/State declarations are rejected before Store/Email
+startup under the current paired schema contract; isolated Email initialization
+failures still leave its routes unavailable while other valid routes operate.
+
+
+Current selected Agent/user training inputs are resolved by
+EmailSelectedTrainingReader from the latest exact external selected baseline
+when account, stable identity, source, category, important, thread, current input
+schema and existing message/classification update clocks match the frozen row.
+The file identity/digest/schema is verified by the existing snapshot reader.
+Records without such a binding use bounded account source reads and the same
+provider_model_input_fields/canonical_model_input as online inference. No DB
+body/model_text reader is a fallback, and malformed or unavailable files are not
+hidden by trying other sources. Labels and latest-reference metadata are checked
+after I/O. Preview and manual selected training use this reader; their blocking
+work runs through FastAPI's native thread pool, not its event loop. Audit shares
+one source reader between Console and learning; the worker reuses its existing
+registry source factory. Training source unavailability is explicit (HTTP 502).
+Frozen inputs retain their exact bytes. Newly read source inputs can include Cc
+and unsubscribe features that the former DB reconstruction omitted; this is the
+existing online input contract, not proof that every new input matches the old
+DB reconstruction. No activation or promotion policy changed.
+A final-copy rehearsal refreshed the current selected external dataset and
+proved all 3,766 labels and normalized inputs equal, with zero source calls and
+no Email row/schema change. The real paired initializer now integrates that refresh; the latest full-copy
+roundtrip proof is described below. Owner-labelled examples and the remaining original/model-input lifecycle
+still prevent wholesale retirement. Historical thread context uses accurate
+sources; unused classic/inclusion entrypoints have been removed. Source
+availability and completed-input retirement remain separate acceptance items.
+
+
+The real paired initializer now prepares the current selected external baseline
+after the schema transaction and both normal cold constructors. A complete,
+validated current baseline is reused without reading DB input text. Otherwise
+migration captures the existing exact selected-input serialization once and
+publishes it through the existing snapshot API, with no model/trigger/provider
+call. It never hides a corrupt baseline or prunes files. Existing idle training
+cleanup continues to own latest-per-type retention and active pins. The inverse
+is emitted before schema COMMIT, so a later preparation failure still gives the
+parent the complete current-data inverse. Full-copy forward, post-forward dataset
+publication, inverse and real-child reforward preserved all snapshot metadata,
+the new external payload and all 3,766 current inputs; reforward reused the new
+baseline. This is copied-data evidence, not production deployment.
+
+
+The final candidate execution EmailContextSource reads the complete related
+thread through one EmailSourceReader account batch, retaining durable relation
+order and prior receipts. Every trigger/history text and attachment list comes
+from the exact external original; it no longer returns the database body when
+source lookup or connectivity fails. SourceReader still checks current locator
+metadata after IO and releases the source lease on failure. This is local
+execution-context integration; Store relation discovery and scan production are
+metadata/transient-source based, and missing-task recovery uses the exact source
+reader as described below. Full Email input retirement remains incomplete and
+production remains unpublished.
+
+
+Final candidate Email enqueue routes retain task/action only; their unused
+prebuilt execution context is removed. Scan production uses the current
+transient original without reading historical stored bodies or leasing the
+same account connector recursively. The consumer loads the complete accurate
+thread at execution. Store thread discovery selects only actual metadata
+columns and keeps the original relation closure/order. Runtime get_classification
+also returns metadata/plan/recipients only; Console original text comes from
+its explicit source reader. Missing model-action repair reads via the exact LOW
+source reader, never a neighboring-UID scan or body-cache reconstruction.
+Unavailable originals report the existing conflict and retain the missing-task
+candidate; a later available source can repair it idempotently. Completed-task
+receipt recovery remains unchanged. The existing continuation validation runs
+when execution context is loaded. This candidate remains unpublished; final
+Email cache retirement and source coverage are still open.
+
+
+The candidate explicit unsubscribe cancellation writer now uses the existing
+Task8 payload SET and public reply-task identity. It had still referenced
+retired physical status/error columns and a physical-id filter. The change
+preserves the same locked immediate transaction, cancellation decision,
+idempotency and absence of a provider unsubscribe receipt; it adds no new
+policy. Focused cancellation and tampered-input regressions pass on the final
+schema. No production deployment has occurred.
+
+
+The final candidate retires the unused pre-frozen training entrypoints
+(train_and_promote, its registry/path wrappers, assess_feedback_readiness and
+retrain_if_due), plus their Store input-list/inclusion-promotion APIs. No app
+caller remains after the training source integration. Actual frozen classic and
+embedding candidate training, registry primitives, staged publication/activation
+and owner-labelled similar-case retrieval remain. The learning status endpoint
+uses count_unincluded_training_examples with the same eligibility predicate,
+returning a number without materializing training text or digest records. This
+changes no schema or promotion algorithm and deletes no stored inputs. The
+latest exact selected-training serializer remains migration-only. Original
+Email listing implementations are now test-only; input/cache lifecycle still
+requires completion.
+
+
+Email list search preserves newer locally typed text when its own debounced
+query update reaches the URL. External query navigation and browser back/forward
+continue to synchronize the input from the URL.
+
+The final candidate no longer exposes Store.list_classifications,
+Store.list_unsubscribe_classifications or the stored-body SQL search helper.
+HTTP list/detail/search already use EmailClassificationReader and exact external
+sources. The unchanged old SQL is retained only in the tests/support listing
+Oracle to compare source-backed visible text/search totals/order/paging and
+business filters; application code never imports it. Runtime metadata queries,
+recipient facts and action membership remain. No original/input row or schema
+is removed by this code retirement.
+
+Stable-identity classification lookup now selects the returned classification metadata directly from canonical emails, excluding model input and message body. Current ActionPlan hydration and corruption checks are unchanged; this read-path change does not retire stored originals.
+
+Native source coordinates support directly injected prompt text only when both locator and reader explicitly select `plain_utf8`; ordinary business source reads continue to require `json_string_literal_utf8`. Both modes verify the selected CLI-owned line hash, string leaf, exact character slice, original UTF-8 byte length and digest. A direct-text field reference proves that field, independently of whether a historical full-turn end watermark remains available. No native text is copied to SQLite or another transcript.
+
+Meeting jobs in sent/skipped compact scheduled consumer prompt and Skill originals after the terminal write when exact sources are readable. Native coordinates from an actual meeting attempt are checked first; only then may the existing scheduled-run snapshot and exact managed revisions/Operation Skill files prove a complete byte match using the existing materialization renderer. Short discovery configuration and source identity remain; an unproved or changed version retains its original input. File access and text decoding failures also retain the original input; database failures remain explicit errors. The original source JSON and terminal status are compared during the update. Replayable and active jobs retain their inputs. The paired initializer runs one explicit historical terminal batch after Store cold open; no periodic history sweep or delivery/receipt decision is added. Candidate and production acceptance is recorded in database-redesign-final-acceptance.md.
+
+
+The final candidate stores a single-use complete Email original reference inline
+in emails.message_source_reference_json (full UTF-8 hash/length, exact native or
+provider location and serialization form). The explicit Store compactor first
+checks actual native task attempts, then verifies the accurate provider original.
+Only processed rows without unfinished classification/reply/action/dispatch
+input dependencies can retire their original bytes; missing/changed sources keep
+the bytes. The update compares the original, state, source clocks and current
+plan, preserving model features, business results and receipts. Native original references remain authoritative byte proofs; Console views and
+structured execution context obtain real provider headers for recipient roles
+and validate the complete referenced version. A body-only native field never
+stands in for To/Cc metadata.
+No original cache or transcript copy is created. Completion callbacks invoke the
+shared exact input compactor. Body and model input proofs are independent optional
+components of the existing message_source_reference_json: the body proof uses the
+root fields, while model_input holds the exact native coordinates or the actual
+classifier feature serializer and provider locator, full SHA-256 and byte length.
+A body match alone cannot prove model features, which include headers. Unproved
+inputs retain their bytes. Retiring identical model bytes preserves current model
+inclusion in the same transaction; an actual later model input update removes
+only its old model proof, and an actual body update preserves an independent model
+proof. No-op input updates keep their proof. Owner-labelled similar examples read
+exact retired features from their native/provider source outside SQLite, retaining
+the existing ranking and snippets; missing or changed sources remain explicit.
+Owner example stamps digest the existing identity, sender, subject, confirmed
+category, update clock and complete model-input hash from one row snapshot.
+A same-second relabel invalidates the existing in-memory index and is detected
+across source reads; retiring the same input bytes preserves the stamp. This
+uses no new database fields, stored index, input cache or provider reads for
+stamp comparison.
+Finite multi-message reads use native UID-set FETCH grouped by mailbox and
+UIDVALIDITY, with at most 50 identities per group. Metadata records bind each
+complete literal to its own UID, including UID suffixes after the literal;
+literal bytes are never parsed as metadata. The existing complete selected
+text/HTML decoder and attachment exclusion remain shared with scalar reads.
+Each group checks UIDVALIDITY before and after; each message checks its stable
+identity and optional Message-ID. SourceReader retains the existing exact-folder
+relocation and post-read location checks. Missing, ambiguous or changed originals
+remain explicit errors; there is no partial Console response or persisted cache.
+Native-only proof lookup is also available separately so an explicit historical
+audit can check actual native records before grouping necessary provider reads.
+The schema inverse prepares both exact input components before opening its write
+lease and restores original bytes with current business facts and inclusion.
+Historical input retirement and final release acceptance remain incomplete.
+This candidate is not deployed.
+
+Historical retirement can explicitly publish already verified input references
+with `python -m scripts.retire_verified_email_inputs --source <audited-copy>
+--target <current-db>`; `--apply` performs the writes and the default is a
+read-only preview. Both databases use the final pair. Each target identity and
+its existing completion predicate are read again inside a short write transaction;
+only complete matching input bytes are retired. Existing references and current
+labels, inclusion, results, receipts and allocator waters remain. The tool reads
+reference metadata from the copy and does not fetch original sources or copy
+business facts. Original-source verification precedes this explicit operation;
+it is not a runtime sweep or a replacement for source verification.
+
+Email schema inverse prepares exact original bytes before its schema write lease.
+An explicitly supplied existing backup contributes only matching original bytes;
+newer/new messages require their own exact native/provider source. The current
+reference is verified again before restoring the predecessor declaration. Current
+business rows, generated results, public IDs and receipts are not rewound.
+For source versions created after the historical migration proof snapshot, the
+paired migration can derive exact native coordinates from source work-summary
+input, its Task Agent run and its task runtime attempt. Complete byte validation
+is mandatory; an unproved new version rejects migration. The explicit twenty
+historical original retirements remain the only authorized unavailable versions.
+
 The same-session result correction now submits the bounded validation errors and
 brief preservation instructions, rather than replaying a generic catalogue of
 Project, Task, Attention and source rules. A runtime-path rejection receives its
@@ -3399,3 +4245,7 @@ the exact field; the transition and evidence requirements are unchanged. The
 initial Work Tracking Skill, strict result validation, native schema, routes and
 correction budget are unchanged. Fixed-case evidence and limits are in
 `docs/task-result-repair-prompt-validation.md`.
+
+小时 Quality 的既有 Actions 声明校验使用最终 compact Tasks／Actions 发布对应的 FINAL_ACTION_OPTIONS；Memory 队列仍从现有 typed projection 读取，额外未知 Actions index 等不匹配声明继续报错。ASR 恢复、操作员跳过、终态 OA 和 needs-human 当前投影使用既有 typed DAO 写入，并保留上游原事务、状态条件和回执语义。
+
+History 按明确 source_tables 构建查询时，仅在包含 email_actions 或未限制来源时检查 Email publication；非邮件分页与失败列表不读取被排除的 Email／State manifest。邮件分支仍执行原有准确 schema 检查，分页、total、状态和回执投影不变。

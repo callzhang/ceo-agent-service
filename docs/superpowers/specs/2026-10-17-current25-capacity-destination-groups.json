@@ -1,0 +1,378 @@
+{
+  "source_receipt_sha256": "5c5a0e30f2a8dde986e08a7aa5f98a8c1de4d6801740f6bdd4e200f2c15ec09e",
+  "scope": "same-copy dbstat accounting by existing destination, not a row-value migration proof",
+  "grouping": {
+    "source_allocation": {
+      "groups": {
+        "actions": {
+          "table": 156397568,
+          "index": 22306816
+        },
+        "runs": {
+          "table": 80257024,
+          "index": 51437568
+        },
+        "tasks": {
+          "table": 50339840,
+          "index": 7929856
+        },
+        "email_classifications": {
+          "table": 37310464,
+          "index": 3399680
+        },
+        "email_messages": {
+          "table": 34729984,
+          "index": 1609728
+        },
+        "provider_state": {
+          "table": 13352960,
+          "index": 11685888
+        },
+        "business_source_documents": {
+          "table": 7340032,
+          "index": 24576
+        },
+        "business": {
+          "table": 9682944,
+          "index": 405504
+        },
+        "configs": {
+          "table": 6504448,
+          "index": 647168
+        },
+        "state": {
+          "table": 3305472,
+          "index": 1544192
+        },
+        "business_task_signals": {
+          "table": 684032,
+          "index": 430080
+        },
+        "SQLite internal": {
+          "internal": 421888,
+          "table": 4096
+        },
+        "business_attention_events": {
+          "table": 90112,
+          "index": 4096
+        },
+        "email_historical_classification_history": {
+          "table": 65536,
+          "index": 20480
+        },
+        "business_task_evidence": {
+          "table": 49152,
+          "index": 65536
+        },
+        "retired empty or derived": {
+          "table": 53248,
+          "index": 53248
+        },
+        "business_task_anchor_links": {
+          "table": 20480,
+          "index": 8192
+        },
+        "schedules": {
+          "table": 16384,
+          "index": 8192
+        },
+        "email_historical_operations": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_work_cluster_tasks": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_task_relations": {
+          "index": 12288,
+          "table": 4096
+        },
+        "business_project_evidence": {
+          "index": 4096,
+          "table": 4096
+        },
+        "business_legacy_links": {
+          "index": 16384,
+          "table": 4096
+        },
+        "business_attention_tasks": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_attention_proposal_tasks": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_task_date_evidence": {
+          "index": 4096,
+          "table": 4096
+        },
+        "email_schema_migrations": {
+          "table": 4096
+        }
+      },
+      "source_table_destination": {
+        "actions": "actions",
+        "runs": "runs",
+        "tasks": "tasks",
+        "email_classifications": "email_classifications",
+        "email_messages": "email_messages",
+        "email_action_plans": "actions",
+        "email_provider_observations": "provider_state",
+        "work_updates": "actions",
+        "follow_up_drafts": "actions",
+        "email_actions": "actions",
+        "errors": "actions",
+        "business_source_documents": "business_source_documents",
+        "work_projects": "business",
+        "managed_skill_revisions": "configs",
+        "runtime_skill_load_receipts": "actions",
+        "email_action_attempts": "actions",
+        "email_agent_classification_tasks": "tasks",
+        "work_todo_dingtalk_links": "actions",
+        "work_todos": "business",
+        "email_unsubscribe_receipts": "actions",
+        "business_task_events": "actions",
+        "email_unsubscribe_claims": "actions",
+        "business_object_tasks": "tasks",
+        "dispatcher_claim_leases": "state",
+        "okr_review_items": "tasks",
+        "daily_scan_state": "state",
+        "seen_messages": "state",
+        "email_historical_candidates": "tasks",
+        "business_task_signals": "business_task_signals",
+        "email_unsubscribe_effects": "actions",
+        "conversation_runtime_sessions": "state",
+        "business_tasks": "business",
+        "sqlite_schema": "SQLite internal",
+        "email_feedback_requests": "actions",
+        "scheduled_task_config_versions": "configs",
+        "managed_skill_export_receipts": "actions",
+        "email_classifier_runtime_samples": "runs",
+        "follow_up_send_attempts": "actions",
+        "email_unsubscribe_steps": "actions",
+        "oa_notification_events": "tasks",
+        "email_training_snapshots": "configs",
+        "runtime_skill_bindings": "configs",
+        "wechat_deliveries": "actions",
+        "codex_session_search_index": "runs",
+        "meeting_memory_write_events": "actions",
+        "feedback_events": "actions",
+        "business_attention_events": "business_attention_events",
+        "task_todo_sync_outbox": "actions",
+        "conversations": "state",
+        "service_state": "state",
+        "task_memory_write_events": "actions",
+        "email_historical_classification_history": "email_historical_classification_history",
+        "business_task_evidence": "business_task_evidence",
+        "business_attention_items": "business",
+        "business_project_context_revisions": "business",
+        "todo_evidence_candidates": "business",
+        "org_user_profiles": "state",
+        "codex_session_search_fts_data": "retired empty or derived",
+        "runtime_skill_configs": "configs",
+        "email_category_description_revisions": "configs",
+        "business_task_anchor_links": "business_task_anchor_links",
+        "scheduled_tasks": "schedules",
+        "runtime_feedback_iteration_capabilities": "configs",
+        "business_anchors": "business",
+        "setup_wizard_events": "runs",
+        "feedback_processing_items": "tasks",
+        "email_category_configs": "configs",
+        "codex_session_search_fts_docsize": "retired empty or derived",
+        "business_projects": "business",
+        "workbench_confirmations": "retired empty or derived",
+        "workbench_attachments": "tasks",
+        "workbench_artifacts": "tasks",
+        "wechat_reply_scopes": "configs",
+        "wechat_read_state": "state",
+        "wechat_memory_import_jobs": "tasks",
+        "wechat_memory_candidates": "business",
+        "sqlite_sequence": "SQLite internal",
+        "setup_wizard_steps": "state",
+        "service_bugfix_candidates": "business",
+        "scheduled_task_skill_refs": "configs",
+        "runtime_route_pauses": "state",
+        "org_cache_metadata": "state",
+        "managed_skills": "configs",
+        "feedback_processing_rounds": "tasks",
+        "feedback_processing_batches": "tasks",
+        "feedback_iteration_decision_items": "actions",
+        "email_unsubscribe_continuations": "actions",
+        "email_unsubscribe_cancellations": "actions",
+        "email_training_snapshot_observations": "retired empty or derived",
+        "email_scan_cursors": "state",
+        "email_reply_receipts": "actions",
+        "email_reply_dispatch_claims": "actions",
+        "email_provider_folder_observation_generations": "provider_state",
+        "email_historical_traversals": "state",
+        "email_historical_operations": "email_historical_operations",
+        "email_direct_retry_requests": "actions",
+        "email_category_folder_bindings": "configs",
+        "email_accounts": "configs",
+        "corpus_sources": "state",
+        "codex_session_locks": "state",
+        "channel_login_reservations": "state",
+        "business_work_cluster_tasks": "business_work_cluster_tasks",
+        "business_task_todo_sync_outbox": "actions",
+        "business_task_relations": "business_task_relations",
+        "business_task_follow_ups": "actions",
+        "business_task_follow_up_send_attempts": "actions",
+        "business_project_evidence": "business_project_evidence",
+        "business_legacy_links": "business_legacy_links",
+        "business_attention_tasks": "business_attention_tasks",
+        "business_attention_proposal_tasks": "business_attention_proposal_tasks",
+        "meeting_alignment_delivery_claims": "actions",
+        "feedback_processing_transitions": "actions",
+        "feedback_iteration_decisions": "tasks",
+        "business_task_dingtalk_links": "actions",
+        "business_task_date_evidence": "business_task_date_evidence",
+        "business_project_candidates": "business",
+        "email_schema_migrations": "email_schema_migrations",
+        "email_model_promotion_configs": "configs",
+        "email_model_mode_transitions": "configs",
+        "codex_session_search_fts_idx": "retired empty or derived",
+        "codex_session_search_fts_config": "retired empty or derived",
+        "business_work_clusters": "business"
+      }
+    },
+    "first_target_allocation": {
+      "groups": {
+        "actions": {
+          "table": 176377856,
+          "index": 32120832
+        },
+        "runs": {
+          "table": 83714048,
+          "index": 51757056
+        },
+        "tasks": {
+          "table": 61149184,
+          "index": 10878976
+        },
+        "email_classifications": {
+          "table": 37310464,
+          "index": 3399680
+        },
+        "email_messages": {
+          "table": 34729984,
+          "index": 1609728
+        },
+        "provider_state": {
+          "table": 14360576,
+          "index": 12783616
+        },
+        "business": {
+          "table": 10469376,
+          "index": 1290240
+        },
+        "configs": {
+          "table": 7348224,
+          "index": 1388544
+        },
+        "business_source_documents": {
+          "table": 7340032,
+          "index": 24576
+        },
+        "state": {
+          "table": 6561792,
+          "index": 2707456
+        },
+        "SQLite internal": {
+          "internal": 1994752,
+          "table": 4096
+        },
+        "business_task_signals": {
+          "table": 684032,
+          "index": 430080
+        },
+        "business_attention_events": {
+          "table": 90112,
+          "index": 4096
+        },
+        "email_historical_classification_history": {
+          "table": 65536,
+          "index": 20480
+        },
+        "business_task_evidence": {
+          "table": 49152,
+          "index": 69632
+        },
+        "business_task_anchor_links": {
+          "table": 20480,
+          "index": 8192
+        },
+        "schedules": {
+          "table": 16384,
+          "index": 8192
+        },
+        "email_historical_operations": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_work_cluster_tasks": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_task_relations": {
+          "index": 12288,
+          "table": 4096
+        },
+        "business_project_evidence": {
+          "index": 4096,
+          "table": 4096
+        },
+        "business_legacy_links": {
+          "index": 16384,
+          "table": 4096
+        },
+        "business_attention_tasks": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_attention_proposal_tasks": {
+          "index": 8192,
+          "table": 4096
+        },
+        "business_task_date_evidence": {
+          "index": 4096,
+          "table": 4096
+        },
+        "email_schema_migrations": {
+          "table": 4096
+        }
+      },
+      "source_table_destination": {
+        "actions": "actions",
+        "runs": "runs",
+        "tasks": "tasks",
+        "email_classifications": "email_classifications",
+        "email_messages": "email_messages",
+        "provider_state": "provider_state",
+        "business": "business",
+        "configs": "configs",
+        "business_source_documents": "business_source_documents",
+        "state": "state",
+        "sqlite_schema": "SQLite internal",
+        "business_task_signals": "business_task_signals",
+        "business_attention_events": "business_attention_events",
+        "email_historical_classification_history": "email_historical_classification_history",
+        "business_task_evidence": "business_task_evidence",
+        "business_task_anchor_links": "business_task_anchor_links",
+        "schedules": "schedules",
+        "sqlite_sequence": "SQLite internal",
+        "email_historical_operations": "email_historical_operations",
+        "business_work_cluster_tasks": "business_work_cluster_tasks",
+        "business_task_relations": "business_task_relations",
+        "business_project_evidence": "business_project_evidence",
+        "business_legacy_links": "business_legacy_links",
+        "business_attention_tasks": "business_attention_tasks",
+        "business_attention_proposal_tasks": "business_attention_proposal_tasks",
+        "business_task_date_evidence": "business_task_date_evidence",
+        "email_schema_migrations": "email_schema_migrations"
+      }
+    }
+  },
+  "limits": "Per-table whole allocation includes retired fields and page/header overhead; causal codec/index savings require separate controlled changes. No fresh production measurement or mutation."
+}

@@ -13,6 +13,16 @@ from app.web_api.email import register_email_routes
 
 
 @pytest.fixture(autouse=True)
+def explicit_selected_input_fixture(monkeypatch):
+    def factory(store, **kwargs):
+        return SimpleNamespace(
+            list_selected_training_records=lambda *, sources: store.list_selected_training_records()
+        )
+    monkeypatch.setattr("app.email_selected_training_reader.build_selected_training_reader", factory)
+    monkeypatch.setattr("app.email_classifier_learning.build_selected_training_reader", factory)
+
+
+@pytest.fixture(autouse=True)
 def configured_embedding_training(monkeypatch):
     monkeypatch.setenv(
         "CEO_EMAIL_EMBEDDING_URL", "https://embedding.example/v1/embeddings"
@@ -125,6 +135,10 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
             ],
         },
     )
+    monkeypatch.setattr(store, "list_selected_training_labels", lambda: [
+        {key: value for key, value in row.items() if key != "normalized_model_input"}
+        for row in store.list_selected_training_records()
+    ])
     learning = client.get("/api/console/email/learning").json()["learning"]
     rows = learning["training_sources"]
     assert {row["source"] for row in rows} == {
@@ -191,6 +205,10 @@ def test_training_preview_marks_selected_sources_as_frozen_on_submission(
         ],
     )
 
+    monkeypatch.setattr(store, "list_selected_training_labels", lambda: [
+        {key: value for key, value in row.items() if key != "normalized_model_input"}
+        for row in store.list_selected_training_records()
+    ])
     response = client.post(
         "/api/console/email/training/preview",
         json={
@@ -325,13 +343,10 @@ def test_training_selection_rejects_unknown_values_and_malformed_json(
     tmp_path, monkeypatch
 ):
     client, store, _registry = client_for(tmp_path)
-    monkeypatch.setattr(
-        store,
-        "list_training_examples",
-        lambda **_: [
-            {"message_id": "user-1", "label": "work", "sample_digest": "d" * 64},
-        ],
-    )
+    def unexpected_source_read():
+        pytest.fail("invalid selection must be rejected before reading selected inputs")
+
+    monkeypatch.setattr(store, "list_selected_training_source_metadata", unexpected_source_read)
     unknown = client.post(
         "/api/console/email/training",
         json={
@@ -446,7 +461,14 @@ def test_category_api_requires_nonblank_current_version(tmp_path, token):
 
 def test_list_includes_current_provider_important_state(tmp_path, monkeypatch):
     client, store, registry = client_for(tmp_path)
-    monkeypatch.setattr(store, "list_classifications", lambda **_: ([{"id": 42}], 1))
+    monkeypatch.setattr(store, "classification_source_candidates", lambda **_: ([{
+        "id": 42, "account_id": "a", "stable_message_identity": "message-42",
+        "sender": "sender", "subject": "subject",
+    }], 1))
+    monkeypatch.setattr("app.email_source_reader.EmailSourceReader.read_views", lambda self, account, identities: {
+        identity: {"message_text": "fixture original", "cc": "", "recipients": []}
+        for identity in identities
+    })
     monkeypatch.setattr(
         store,
         "get_provider_classification_states",
@@ -495,7 +517,13 @@ def ready_client(tmp_path, monkeypatch):
 
     client, store, registry = client_for(tmp_path)
     with store._connect() as db:
-        db.execute("update email_category_configs set enabled=(category_key='legal')")
+        db.execute("begin immediate")
+        from app.configs_definitions import config_projection
+        from app.configs_storage import update_config
+        for rowid, category in db.execute(
+            f"select rowid,category_key from ({config_projection('email_category_configs', include_rowid=True)})"
+        ).fetchall():
+            update_config(db, "email_category_configs", rowid, {"enabled": int(category == "legal")})
     current = _valid_model_detail_evidence()
     current["compatibility"]["description_version"] = _active_description_set_version(
         store

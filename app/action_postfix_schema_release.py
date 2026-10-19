@@ -1,4 +1,5 @@
 """Paired Store16 -> Store17 publication of the three postfix action types."""
+from app.state_publication_sources import publication_store_version
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from app.action_postfix_storage import (
     capture_action_postfix_schema,
     restore_action_postfix_schema,
 )
+from app.final_action_schema import final_action_schema_is_current
 from app.action_storage import (
     ACTION_PROJECTIONS,
     POSTFIX_ACTION_TYPES,
@@ -28,8 +30,7 @@ VERSION_KEY = "store_schema_version"
 
 def publication_postfix_sources(db):
     """The exact previous/target declarations used only in the deploy window."""
-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
-    version = marker[0] if marker else None
+    version = publication_store_version(db, current_version="2026-10-14.1")
     if version == SOURCE_ACTION_POSTFIX_VERSION:
         capture_action_postfix_schema(db)
         return {kind: f"select {','.join(SOURCE_COLUMNS[kind])} from {kind}" for kind in POSTFIX_ACTION_TYPES}
@@ -38,6 +39,8 @@ def publication_postfix_sources(db):
     if version == "2026-10-13.4" and action_schema_is_current(db, include_delivery=True):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
+    if version == "2026-10-14.1" and final_action_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
     raise ValueError("unknown or mixed postfix publication source schema")
 

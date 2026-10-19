@@ -1,8 +1,7 @@
 """Status Attempt reads should stay bounded as completed history grows."""
 
-import json
-
 from app import audit_web
+from app.action_storage import insert_action, reply_action_projection, _reply_variant_for
 from app.store import AutoReplyStore
 
 
@@ -18,28 +17,20 @@ def _seed_attempt_history(store: AutoReplyStore, *, failed: int, sent: int) -> N
         send_status="failed",
     )
     with store._connect() as db:
-        payload = json.loads(db.execute(
-            "select payload_json from actions "
-            "where record_type='reply_attempts' and legacy_key=?",
-            (str(first_id),),
-        ).fetchone()[0])
-        rows = []
+        payload = dict(db.execute(
+            "select * from (" + reply_action_projection("reply_attempts", _reply_variant_for(db)) + ") where id=?",
+            (first_id,),
+        ).fetchone())
+        db.execute("begin immediate")
         for index in range(1, failed + sent):
             is_failed = index < failed
-            current = {
+            insert_action(db, "reply_attempts", {
                 **payload,
+                "id": first_id + index,
                 "conversation_id": f"failure-{index}" if is_failed else f"sent-{index}",
                 "trigger_message_id": f"trigger-{index}",
                 "send_status": "failed" if is_failed else "sent",
-            }
-            rows.append((
-                "reply_attempts", str(first_id + index), json.dumps(current),
-            ))
-        db.executemany(
-            "insert into actions(record_type, legacy_key, payload_json) "
-            "values (?, ?, ?)",
-            rows,
-        )
+            })
 
 
 def test_unresolved_attempt_sql_work_is_bounded_by_history_size(tmp_path):
@@ -77,28 +68,18 @@ def test_unresolved_attempt_keeps_latest_id_across_channels(tmp_path):
         send_status="failed",
     )
     with store._connect() as db:
-        payload = json.loads(db.execute(
-            "select payload_json from actions "
-            "where record_type='reply_attempts' and legacy_key=?",
-            (str(first_id),),
-        ).fetchone()[0])
-        db.executemany(
-            "insert into actions(record_type, legacy_key, payload_json) "
-            "values (?, ?, ?)",
-            [
-                (
-                    "reply_attempts", str(first_id + 1),
-                    json.dumps({**payload, "channel": "wechat", "send_status": "sent"}),
-                ),
-                (
-                    "reply_attempts", str(first_id + 2),
-                    json.dumps({
-                        **payload, "conversation_id": "visible",
-                        "trigger_message_id": "visible-trigger",
-                    }),
-                ),
-            ],
-        )
+        payload = dict(db.execute(
+            "select * from (" + reply_action_projection("reply_attempts", _reply_variant_for(db)) + ") where id=?",
+            (first_id,),
+        ).fetchone())
+        db.execute("begin immediate")
+        insert_action(db, "reply_attempts", {
+            **payload, "id": first_id + 1, "channel": "wechat", "send_status": "sent",
+        })
+        insert_action(db, "reply_attempts", {
+            **payload, "id": first_id + 2, "conversation_id": "visible",
+            "trigger_message_id": "visible-trigger",
+        })
 
     rows = store.list_current_unresolved_problem_attempt_summaries(limit=None)
     assert [int(row["id"]) for row in rows] == [first_id + 2]

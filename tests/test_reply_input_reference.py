@@ -1,9 +1,10 @@
+import json
 import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore
-from app.task_storage import REPLY_TASK_INPUT_SQL
+from app.store import AutoReplyStore, REPLY_TASK_INPUT_SQL
+from app.task20_definitions import TASK20_COLUMNS
 
 
 def values(text="first"):
@@ -27,11 +28,17 @@ def test_parent_has_real_input_foreign_keys_and_no_payload_cache(tmp_path):
         assert ("current_input_id", "tasks", "id") in keys
         assert ("claimed_input_id", "tasks", "id") in keys
         parent = db.execute(
-            "select current_input_id,trigger_text,trigger_message_json,input_compacted,input_provenance_json "
-            "from tasks where record_type='reply_tasks' and id=?", (task,)
+            "select current_input_id,json(payload_json) "
+            "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task,)
         ).fetchone()
         assert parent[0] is not None
-        assert parent[1:] == (None, None, None, None)
+        parent_fields = {column[0] for column in TASK20_COLUMNS["reply_tasks"]}
+        assert parent_fields.isdisjoint({
+            "trigger_text", "trigger_message_json", "input_compacted", "input_provenance_json",
+        })
+        cached_values = json.loads(parent[1])
+        assert values()["trigger_text"] not in cached_values
+        assert values()["trigger_message_json"] not in cached_values
 
 
 def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
@@ -50,7 +57,7 @@ def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
     assert execution.trigger_message_id == "message"
     with sqlite3.connect(store.path) as db:
         current, original = db.execute(
-            "select current_input_id, claimed_input_id from tasks where record_type='reply_tasks' and id=?",
+            "select current_input_id, claimed_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         ).fetchone()
         assert current != original

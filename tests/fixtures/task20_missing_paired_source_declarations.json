@@ -1,0 +1,485 @@
+{
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "objects": [
+    [
+      "table",
+      "tasks",
+      "CREATE TABLE tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs','meeting_alignment_jobs','okr_review_requests','weekly_okr_analysis_jobs','workbench_tasks','workbench_turns')), legacy_key text,channel text,conversation_id text,conversation_title text,single_chat integer,trigger_message_id text,trigger_create_time text,trigger_sender text,available_at text,force_new_decision integer,oa_url text,manual_rerun_attempt_id integer,status text,attempts integer,locked_at text,error text,created_at text,updated_at text,execution_generation text,manual_rerun_revision_key text,recovery_code text,business_object_key text,input_version integer,claimed_input_version integer,current_input_id integer,claimed_input_id integer,parent_id integer,trigger_text text,trigger_message_json text,input_revision_key text,input_provenance_json text,input_compacted integer,source_type text,source_ref text,payload_json text,source_created_at text,body_sha256 text,body_bytes integer,body_compacted integer,meeting_id text,title text,source_json text,participants_json text,ended_at text,eligible_at text,decision_json text,target_kind text,target_id text,target_title text,mentions_json text,final_message text,send_result_json text,calendar_summary_status text,calendar_summary_result_json text,trigger_sender_user_id text,period_label text,period_start text,period_end text,okr_source_json text,codex_session_id text,week_end text,manager_user_id text,source_digest text,lease_owner text,lease_expires_at text,finished_at text,runtime_kind text,provider_session_ref text,archived_at text,client_request_id text,task_sequence integer,user_text text,stop_requested integer,error_code text,error_detail text,resume_context text,execution_run_id text,runtime_quiesced_run_id text,started_at text,completed_at text,foreign key(parent_id) references tasks(id),foreign key(current_input_id) references tasks(id),foreign key(claimed_input_id) references tasks(id),check(record_type<>'reply_tasks' or legacy_key is null or legacy_key=cast(id as text)),check(record_type<>'reply_tasks' or (channel is not null and conversation_id is not null and conversation_title is not null and single_chat is not null and trigger_message_id is not null and trigger_create_time is not null and trigger_sender is not null and available_at is not null and force_new_decision is not null and oa_url is not null and manual_rerun_attempt_id is not null and status is not null and attempts is not null and error is not null and created_at is not null and updated_at is not null and execution_generation is not null and manual_rerun_revision_key is not null and recovery_code is not null and business_object_key is not null and input_version is not null and claimed_input_version is not null)),check(record_type<>'reply_task_inputs' or (parent_id is not null and channel is not null and conversation_id is not null and conversation_title is not null and single_chat is not null and trigger_message_id is not null and trigger_create_time is not null and trigger_sender is not null and trigger_text is not null and trigger_message_json is not null and oa_url is not null and business_object_key is not null and input_revision_key is not null and created_at is not null and input_provenance_json is not null and input_compacted is not null)),check(record_type<>'work_summary_inputs' or (source_type is not null and source_ref is not null and payload_json is not null and status is not null and attempts is not null and error is not null and created_at is not null and updated_at is not null and available_at is not null and source_created_at is not null and body_sha256 is not null and body_bytes is not null and body_compacted is not null)),check(record_type<>'meeting_alignment_jobs' or (meeting_id is not null and title is not null and source_json is not null and participants_json is not null and ended_at is not null and eligible_at is not null and status is not null and attempts is not null and available_at is not null and error is not null and decision_json is not null and target_kind is not null and target_id is not null and target_title is not null and mentions_json is not null and final_message is not null and send_result_json is not null and created_at is not null and updated_at is not null and calendar_summary_status is not null and calendar_summary_result_json is not null)),check(record_type<>'okr_review_requests' or (conversation_id is not null and conversation_title is not null and trigger_message_id is not null and trigger_sender is not null and trigger_sender_user_id is not null and trigger_text is not null and period_label is not null and period_start is not null and period_end is not null and okr_source_json is not null and status is not null and error is not null and codex_session_id is not null and created_at is not null and updated_at is not null)),check(record_type<>'weekly_okr_analysis_jobs' or (week_end is not null and manager_user_id is not null and source_digest is not null and status is not null and lease_owner is not null and lease_expires_at is not null and error is not null and created_at is not null and finished_at is not null and updated_at is not null)),check(record_type<>'reply_tasks' or (parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'reply_task_inputs' or (available_at is null and force_new_decision is null and manual_rerun_attempt_id is null and status is null and attempts is null and locked_at is null and error is null and updated_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'work_summary_inputs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'meeting_alignment_jobs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'okr_review_requests' or (channel is null and single_chat is null and trigger_create_time is null and available_at is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and attempts is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and week_end is null and manager_user_id is null and source_digest is null and lease_owner is null and lease_expires_at is null and finished_at is null)),check(record_type<>'weekly_okr_analysis_jobs' or (channel is null and conversation_id is null and conversation_title is null and single_chat is null and trigger_message_id is null and trigger_create_time is null and trigger_sender is null and available_at is null and force_new_decision is null and oa_url is null and manual_rerun_attempt_id is null and attempts is null and locked_at is null and execution_generation is null and manual_rerun_revision_key is null and recovery_code is null and business_object_key is null and input_version is null and claimed_input_version is null and current_input_id is null and claimed_input_id is null and parent_id is null and trigger_text is null and trigger_message_json is null and input_revision_key is null and input_provenance_json is null and input_compacted is null and source_type is null and source_ref is null and payload_json is null and source_created_at is null and body_sha256 is null and body_bytes is null and body_compacted is null and meeting_id is null and title is null and source_json is null and participants_json is null and ended_at is null and eligible_at is null and decision_json is null and target_kind is null and target_id is null and target_title is null and mentions_json is null and final_message is null and send_result_json is null and calendar_summary_status is null and calendar_summary_result_json is null and trigger_sender_user_id is null and period_label is null and period_start is null and period_end is null and okr_source_json is null and codex_session_id is null)),check(record_type<>'weekly_okr_analysis_jobs' or status in ('running','completed','failed')),check(record_type<>'workbench_tasks' or (archived_at is not null and created_at is not null and provider_session_ref is not null and runtime_kind is not null and title is not null and updated_at is not null)),check(record_type<>'workbench_turns' or (client_request_id is not null and completed_at is not null and created_at is not null and error_code is not null and error_detail is not null and execution_run_id is not null and lease_expires_at is not null and lease_owner is not null and parent_id is not null and resume_context is not null and runtime_quiesced_run_id is not null and started_at is not null and status is not null and stop_requested is not null and task_sequence is not null and updated_at is not null and user_text is not null)),check(record_type<>'workbench_tasks' or (attempts is null and available_at is null and body_bytes is null and body_compacted is null and body_sha256 is null and business_object_key is null and calendar_summary_result_json is null and calendar_summary_status is null and channel is null and claimed_input_id is null and claimed_input_version is null and client_request_id is null and codex_session_id is null and completed_at is null and conversation_id is null and conversation_title is null and current_input_id is null and decision_json is null and eligible_at is null and ended_at is null and error is null and error_code is null and error_detail is null and execution_generation is null and execution_run_id is null and final_message is null and finished_at is null and force_new_decision is null and input_compacted is null and input_provenance_json is null and input_revision_key is null and input_version is null and lease_expires_at is null and lease_owner is null and locked_at is null and manager_user_id is null and manual_rerun_attempt_id is null and manual_rerun_revision_key is null and meeting_id is null and mentions_json is null and oa_url is null and okr_source_json is null and parent_id is null and participants_json is null and payload_json is null and period_end is null and period_label is null and period_start is null and recovery_code is null and resume_context is null and runtime_quiesced_run_id is null and send_result_json is null and single_chat is null and source_created_at is null and source_digest is null and source_json is null and source_ref is null and source_type is null and started_at is null and status is null and stop_requested is null and target_id is null and target_kind is null and target_title is null and task_sequence is null and trigger_create_time is null and trigger_message_id is null and trigger_message_json is null and trigger_sender is null and trigger_sender_user_id is null and trigger_text is null and user_text is null and week_end is null)),check(record_type<>'workbench_turns' or (archived_at is null and attempts is null and available_at is null and body_bytes is null and body_compacted is null and body_sha256 is null and business_object_key is null and calendar_summary_result_json is null and calendar_summary_status is null and channel is null and claimed_input_id is null and claimed_input_version is null and codex_session_id is null and conversation_id is null and conversation_title is null and current_input_id is null and decision_json is null and eligible_at is null and ended_at is null and error is null and execution_generation is null and final_message is null and finished_at is null and force_new_decision is null and input_compacted is null and input_provenance_json is null and input_revision_key is null and input_version is null and locked_at is null and manager_user_id is null and manual_rerun_attempt_id is null and manual_rerun_revision_key is null and meeting_id is null and mentions_json is null and oa_url is null and okr_source_json is null and participants_json is null and payload_json is null and period_end is null and period_label is null and period_start is null and provider_session_ref is null and recovery_code is null and runtime_kind is null and send_result_json is null and single_chat is null and source_created_at is null and source_digest is null and source_json is null and source_ref is null and source_type is null and target_id is null and target_kind is null and target_title is null and title is null and trigger_create_time is null and trigger_message_id is null and trigger_message_json is null and trigger_sender is null and trigger_sender_user_id is null and trigger_text is null and week_end is null)),check(record_type in ('workbench_tasks','workbench_turns') or (runtime_kind is null and provider_session_ref is null and archived_at is null and client_request_id is null and task_sequence is null and user_text is null and stop_requested is null and error_code is null and error_detail is null and resume_context is null and execution_run_id is null and runtime_quiesced_run_id is null and started_at is null and completed_at is null)),check(record_type<>'workbench_turns' or (task_sequence>0 and stop_requested in (0,1) and status in ('queued','running','waiting_confirmation','completed','stopped','failed'))))"
+    ],
+    [
+      "index",
+      "idx_meeting_alignment_jobs_claim",
+      "CREATE INDEX idx_meeting_alignment_jobs_claim on tasks(status,available_at,eligible_at,cast(legacy_key as integer)) where record_type='meeting_alignment_jobs'"
+    ],
+    [
+      "index",
+      "idx_meeting_alignment_jobs_identity",
+      "CREATE UNIQUE INDEX idx_meeting_alignment_jobs_identity on tasks(meeting_id) where record_type='meeting_alignment_jobs'"
+    ],
+    [
+      "index",
+      "idx_okr_review_requests_identity",
+      "CREATE UNIQUE INDEX idx_okr_review_requests_identity on tasks(conversation_id,trigger_message_id) where record_type='okr_review_requests'"
+    ],
+    [
+      "index",
+      "idx_okr_review_requests_status",
+      "CREATE INDEX idx_okr_review_requests_status on tasks(status,cast(legacy_key as integer)) where record_type='okr_review_requests'"
+    ],
+    [
+      "index",
+      "idx_reply_task_inputs_identity",
+      "CREATE UNIQUE INDEX idx_reply_task_inputs_identity on tasks(channel,conversation_id,trigger_message_id,input_revision_key) where record_type='reply_task_inputs'"
+    ],
+    [
+      "index",
+      "idx_reply_task_inputs_task",
+      "CREATE INDEX idx_reply_task_inputs_task on tasks(parent_id,cast(legacy_key as integer)) where record_type='reply_task_inputs'"
+    ],
+    [
+      "index",
+      "idx_reply_tasks_business_object_key",
+      "CREATE INDEX idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'"
+    ],
+    [
+      "index",
+      "idx_reply_tasks_channel_status_id",
+      "CREATE INDEX idx_reply_tasks_channel_status_id on tasks(channel,status,cast(legacy_key as integer)) where record_type='reply_tasks'"
+    ],
+    [
+      "index",
+      "idx_reply_tasks_identity",
+      "CREATE UNIQUE INDEX idx_reply_tasks_identity on tasks(channel,conversation_id,trigger_message_id) where record_type='reply_tasks'"
+    ],
+    [
+      "index",
+      "idx_reply_tasks_status",
+      "CREATE INDEX idx_reply_tasks_status on tasks(status,cast(legacy_key as integer)) where record_type='reply_tasks'"
+    ],
+    [
+      "index",
+      "idx_tasks_public_id",
+      "CREATE UNIQUE INDEX idx_tasks_public_id on tasks(cast(legacy_key as integer),record_type) where record_type not in ('workbench_tasks','workbench_turns')"
+    ],
+    [
+      "index",
+      "idx_tasks_text_public_id",
+      "CREATE UNIQUE INDEX idx_tasks_text_public_id on tasks(legacy_key,record_type) where record_type in ('workbench_tasks','workbench_turns')"
+    ],
+    [
+      "index",
+      "idx_weekly_okr_analysis_jobs_identity",
+      "CREATE UNIQUE INDEX idx_weekly_okr_analysis_jobs_identity on tasks(week_end,manager_user_id,source_digest) where record_type='weekly_okr_analysis_jobs'"
+    ],
+    [
+      "index",
+      "idx_work_summary_inputs_identity",
+      "CREATE UNIQUE INDEX idx_work_summary_inputs_identity on tasks(source_type,source_ref) where record_type='work_summary_inputs'"
+    ],
+    [
+      "index",
+      "idx_work_summary_inputs_status",
+      "CREATE INDEX idx_work_summary_inputs_status on tasks(status,cast(legacy_key as integer)) where record_type='work_summary_inputs'"
+    ],
+    [
+      "index",
+      "idx_work_summary_inputs_updated",
+      "CREATE INDEX idx_work_summary_inputs_updated on tasks(updated_at desc,cast(legacy_key as integer) desc) where record_type='work_summary_inputs'"
+    ],
+    [
+      "index",
+      "idx_workbench_one_active_turn",
+      "CREATE UNIQUE INDEX idx_workbench_one_active_turn on tasks(parent_id) where record_type='workbench_turns' and status in ('queued','running','waiting_confirmation')"
+    ],
+    [
+      "index",
+      "idx_workbench_tasks_updated_id",
+      "CREATE INDEX idx_workbench_tasks_updated_id on tasks(updated_at,legacy_key) where record_type='workbench_tasks'"
+    ],
+    [
+      "index",
+      "idx_workbench_turns_client_request",
+      "CREATE UNIQUE INDEX idx_workbench_turns_client_request on tasks(client_request_id) where record_type='workbench_turns'"
+    ],
+    [
+      "index",
+      "idx_workbench_turns_queue",
+      "CREATE INDEX idx_workbench_turns_queue on tasks(status,created_at,legacy_key) where record_type='workbench_turns'"
+    ],
+    [
+      "index",
+      "idx_workbench_turns_recovery",
+      "CREATE INDEX idx_workbench_turns_recovery on tasks(status,lease_expires_at) where record_type='workbench_turns'"
+    ],
+    [
+      "index",
+      "idx_workbench_turns_task_created_id",
+      "CREATE INDEX idx_workbench_turns_task_created_id on tasks(parent_id,created_at,legacy_key) where record_type='workbench_turns'"
+    ],
+    [
+      "index",
+      "idx_workbench_turns_task_sequence",
+      "CREATE UNIQUE INDEX idx_workbench_turns_task_sequence on tasks(parent_id,task_sequence desc) where record_type='workbench_turns'"
+    ],
+    [
+      "trigger",
+      "trg_tasks_claimed_input_id_insert",
+      "CREATE TRIGGER trg_tasks_claimed_input_id_insert before insert on tasks when new.claimed_input_id is not null and exists(select 1 from tasks where id=new.claimed_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_claimed_input_id_update",
+      "CREATE TRIGGER trg_tasks_claimed_input_id_update before update of claimed_input_id on tasks when new.claimed_input_id is not null and exists(select 1 from tasks where id=new.claimed_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_current_input_id_insert",
+      "CREATE TRIGGER trg_tasks_current_input_id_insert before insert on tasks when new.current_input_id is not null and exists(select 1 from tasks where id=new.current_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_current_input_id_update",
+      "CREATE TRIGGER trg_tasks_current_input_id_update before update of current_input_id on tasks when new.current_input_id is not null and exists(select 1 from tasks where id=new.current_input_id and record_type<>'reply_task_inputs') begin select raise(abort,'task parent type mismatch'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_parent_id_insert",
+      "CREATE TRIGGER trg_tasks_parent_id_insert before insert on tasks when new.parent_id is not null and exists(select 1 from tasks where id=new.parent_id and record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end) begin select raise(abort,'task parent type mismatch'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_parent_id_update",
+      "CREATE TRIGGER trg_tasks_parent_id_update before update of parent_id on tasks when new.parent_id is not null and exists(select 1 from tasks where id=new.parent_id and record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end) begin select raise(abort,'task parent type mismatch'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_public_key",
+      "CREATE TRIGGER trg_tasks_public_key after insert on tasks when new.legacy_key is null and new.record_type not in ('workbench_tasks','workbench_turns') begin update tasks set legacy_key=cast(new.id as text) where id=new.id; end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_record_type_immutable",
+      "CREATE TRIGGER trg_tasks_record_type_immutable before update of record_type on tasks when new.record_type<>old.record_type begin select raise(abort,'task record type is immutable'); end"
+    ],
+    [
+      "table",
+      "business_object_tasks",
+      "CREATE TABLE business_object_tasks (\n                    business_object_key text primary key,\n                    reply_task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    foreign key(reply_task_id) references tasks(id)\n                )"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_business_object_tasks_1",
+      null
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_business_object_tasks_reply_task_id_insert",
+      "CREATE TRIGGER trg_tasks_child_business_object_tasks_reply_task_id_insert before insert on \"business_object_tasks\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_business_object_tasks_reply_task_id_update",
+      "CREATE TRIGGER trg_tasks_child_business_object_tasks_reply_task_id_update before update of \"reply_task_id\" on \"business_object_tasks\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+    ],
+    [
+      "table",
+      "feedback_iteration_decisions",
+      "CREATE TABLE feedback_iteration_decisions (\n                    id integer primary key autoincrement,\n                    batch_id text not null,\n                    workbench_task_id text not null,\n                    workbench_turn_id text not null,\n                    decision_json text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(batch_id) references feedback_processing_batches(batch_id)\n                )"
+    ],
+    [
+      "index",
+      "idx_feedback_iteration_decisions_batch",
+      "CREATE INDEX idx_feedback_iteration_decisions_batch\n                    on feedback_iteration_decisions(batch_id, id)"
+    ],
+    [
+      "trigger",
+      "trg_feedback_iteration_decisions_immutable_delete",
+      "CREATE TRIGGER trg_feedback_iteration_decisions_immutable_delete\nbefore delete on feedback_iteration_decisions\nbegin\n    select raise(abort, 'feedback iteration decisions are append-only');\nend"
+    ],
+    [
+      "trigger",
+      "trg_feedback_iteration_decisions_immutable_update",
+      "CREATE TRIGGER trg_feedback_iteration_decisions_immutable_update\nbefore update on feedback_iteration_decisions\nbegin\n    select raise(abort, 'feedback iteration decisions are append-only');\nend"
+    ],
+    [
+      "table",
+      "feedback_processing_batches",
+      "CREATE TABLE feedback_processing_batches (\n                    batch_id text primary key,\n                    status text not null default 'pending'\n                        check (status in ('pending', 'processing', 'resolved')),\n                    requested_count integer not null default 0,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    resolved_at text not null default ''\n                )"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_feedback_processing_batches_1",
+      null
+    ],
+    [
+      "table",
+      "feedback_processing_items",
+      "CREATE TABLE feedback_processing_items (\n                    feedback_key text primary key,\n                    batch_id text not null default '',\n                    status text not null default 'pending'\n                        check (status in ('pending', 'processing', 'resolved')),\n                    workbench_task_id text not null default '',\n                    workbench_turn_id text not null default '',\n                    attempt_id integer not null default 0,\n                    agent_run_id integer not null default 0,\n                    commit_sha text not null default '',\n                    test_evidence_json text not null default '{}',\n                    restart_evidence_json text not null default '{}',\n                    health_evidence_json text not null default '{}',\n                    note text not null default '',\n                    resolved_at text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                , current_round_id integer not null default 0)"
+    ],
+    [
+      "index",
+      "idx_feedback_processing_items_batch",
+      "CREATE INDEX idx_feedback_processing_items_batch\n                    on feedback_processing_items(batch_id)"
+    ],
+    [
+      "index",
+      "idx_feedback_processing_items_status",
+      "CREATE INDEX idx_feedback_processing_items_status\n                    on feedback_processing_items(status)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_feedback_processing_items_1",
+      null
+    ],
+    [
+      "table",
+      "feedback_processing_rounds",
+      "CREATE TABLE feedback_processing_rounds (\n                    id integer primary key autoincrement,\n                    feedback_key text not null,\n                    round_number integer not null\n                        check (\n                            typeof(round_number) = 'integer'\n                            and round_number > 0\n                        ),\n                    batch_id text not null default '',\n                    status text not null\n                        check (status in ('processing', 'resolved')),\n                    workbench_task_id text not null default '',\n                    workbench_turn_id text not null default '',\n                    attempt_id integer not null default 0,\n                    agent_run_id integer not null default 0,\n                    commit_sha text not null default '',\n                    test_evidence_json text not null default '{}',\n                    restart_evidence_json text not null default '{}',\n                    health_evidence_json text not null default '{}',\n                    backlog_evidence_json text not null default '{}',\n                    receipt_version integer not null default 1\n                        check (receipt_version in (1, 2)),\n                    note text not null default '',\n                    started_at text not null default '',\n                    resolved_at text not null default '',\n                    reopened_at text not null default '',\n                    reopen_reason text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp, scope_receipt_json text not null default '{}',\n                    unique (feedback_key, round_number),\n                    unique (feedback_key, batch_id)\n                )"
+    ],
+    [
+      "index",
+      "idx_feedback_processing_rounds_batch",
+      "CREATE INDEX idx_feedback_processing_rounds_batch\n                    on feedback_processing_rounds(batch_id)"
+    ],
+    [
+      "index",
+      "idx_feedback_processing_rounds_feedback",
+      "CREATE INDEX idx_feedback_processing_rounds_feedback\n                    on feedback_processing_rounds(feedback_key, round_number desc)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_feedback_processing_rounds_1",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_feedback_processing_rounds_2",
+      null
+    ],
+    [
+      "trigger",
+      "trg_feedback_processing_round_integer_v2_insert",
+      "CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert\nbefore insert on feedback_processing_rounds\nwhen typeof(new.round_number) <> 'integer' or new.round_number <= 0\nbegin\n    select raise(\n        abort,\n        'feedback_processing_round_number_must_be_positive'\n    );\nend"
+    ],
+    [
+      "trigger",
+      "trg_feedback_processing_round_integer_v2_update",
+      "CREATE TRIGGER trg_feedback_processing_round_integer_v2_update\nbefore update of round_number on feedback_processing_rounds\nwhen typeof(new.round_number) <> 'integer' or new.round_number <= 0\nbegin\n    select raise(\n        abort,\n        'feedback_processing_round_number_must_be_positive'\n    );\nend"
+    ],
+    [
+      "table",
+      "oa_notification_events",
+      "CREATE TABLE oa_notification_events (\n                id integer primary key autoincrement,\n                event_kind text not null check(\n                    event_kind in ('system_notification', 'chat_reminder')\n                ),\n                requires_reply integer not null default 0,\n                process_instance_id text not null default '',\n                task_id text not null default '',\n                channel text not null default 'dingtalk',\n                conversation_id text not null,\n                conversation_title text not null default '',\n                trigger_message_id text not null,\n                trigger_create_time text not null default '',\n                trigger_sender text not null default '',\n                trigger_text text not null default '',\n                trigger_message_json text not null default '{}',\n                oa_url text not null default '',\n                status text not null default 'pending' check(\n                    status in ('pending', 'adopted', 'sending', 'sent', 'failed', 'ignored')\n                ),\n                claimed_attempt_id integer not null default 0,\n                result_attempt_id integer not null default 0,\n                last_error text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp,\n                sent_at text not null default '',\n                unique(channel, conversation_id, trigger_message_id)\n            )"
+    ],
+    [
+      "index",
+      "idx_oa_notification_events_case_status",
+      "CREATE INDEX idx_oa_notification_events_case_status\n                on oa_notification_events(\n                    process_instance_id, task_id, requires_reply, status, id\n                )"
+    ],
+    [
+      "index",
+      "idx_oa_notification_events_claim",
+      "CREATE INDEX idx_oa_notification_events_claim\n                on oa_notification_events(status, claimed_attempt_id, id)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_oa_notification_events_1",
+      null
+    ],
+    [
+      "table",
+      "okr_review_items",
+      "CREATE TABLE okr_review_items (\n                    id integer primary key autoincrement,\n                    request_id integer not null,\n                    objective_title text not null,\n                    objective_weight real not null default 0,\n                    kr_title text not null,\n                    kr_weight real not null default 0,\n                    item_json text not null default '{}',\n                    created_at text not null default current_timestamp\n                )"
+    ],
+    [
+      "table",
+      "wechat_memory_import_jobs",
+      "CREATE TABLE wechat_memory_import_jobs (\n                    id integer primary key autoincrement,\n                    import_run_id text not null,\n                    account_id text not null,\n                    status text not null default 'running'\n                        check(status in ('running', 'completed', 'failed')),\n                    error text not null default '',\n                    created_at text not null default current_timestamp,\n                    finished_at text not null default '',\n                    updated_at text not null default current_timestamp\n                )"
+    ],
+    [
+      "index",
+      "idx_wechat_memory_import_jobs_status",
+      "CREATE INDEX idx_wechat_memory_import_jobs_status\n                    on wechat_memory_import_jobs(status, id)"
+    ],
+    [
+      "table",
+      "workbench_artifacts",
+      "CREATE TABLE workbench_artifacts (\n                    id text primary key,\n                    turn_id integer not null,\n                    label text not null,\n                    path text not null,\n                    media_type text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(turn_id) references tasks(id)\n                )"
+    ],
+    [
+      "index",
+      "idx_workbench_artifacts_created_id_turn",
+      "CREATE INDEX idx_workbench_artifacts_created_id_turn on workbench_artifacts(created_at, id, turn_id)"
+    ],
+    [
+      "index",
+      "idx_workbench_artifacts_turn_created_id",
+      "CREATE INDEX idx_workbench_artifacts_turn_created_id on workbench_artifacts(turn_id, created_at, id)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_workbench_artifacts_1",
+      null
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_workbench_artifacts_turn_id_insert",
+      "CREATE TRIGGER trg_tasks_child_workbench_artifacts_turn_id_insert before insert on \"workbench_artifacts\" when new.\"turn_id\" is not null and exists(select 1 from tasks where id=new.\"turn_id\" and record_type<>'workbench_turns') begin select raise(abort,'task parent must be a workbench turn'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_workbench_artifacts_turn_id_update",
+      "CREATE TRIGGER trg_tasks_child_workbench_artifacts_turn_id_update before update of \"turn_id\" on \"workbench_artifacts\" when new.\"turn_id\" is not null and exists(select 1 from tasks where id=new.\"turn_id\" and record_type<>'workbench_turns') begin select raise(abort,'task parent must be a workbench turn'); end"
+    ],
+    [
+      "table",
+      "workbench_attachments",
+      "CREATE TABLE workbench_attachments (\n                    id text primary key,\n                    task_id integer not null,\n                    client_request_id text not null,\n                    filename text not null,\n                    media_type text not null,\n                    size_bytes integer not null check(size_bytes >= 0),\n                    content_sha256 text not null,\n                    storage_path text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references tasks(id)\n                )"
+    ],
+    [
+      "index",
+      "idx_workbench_attachments_task_created_id",
+      "CREATE INDEX idx_workbench_attachments_task_created_id on workbench_attachments(task_id, created_at, id)"
+    ],
+    [
+      "index",
+      "idx_workbench_attachments_task_request",
+      "CREATE UNIQUE INDEX idx_workbench_attachments_task_request on workbench_attachments(task_id, client_request_id)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_workbench_attachments_1",
+      null
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_workbench_attachments_task_id_insert",
+      "CREATE TRIGGER trg_tasks_child_workbench_attachments_task_id_insert before insert on \"workbench_attachments\" when new.\"task_id\" is not null and exists(select 1 from tasks where id=new.\"task_id\" and record_type<>'workbench_tasks') begin select raise(abort,'task parent must be a workbench task'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_workbench_attachments_task_id_update",
+      "CREATE TRIGGER trg_tasks_child_workbench_attachments_task_id_update before update of \"task_id\" on \"workbench_attachments\" when new.\"task_id\" is not null and exists(select 1 from tasks where id=new.\"task_id\" and record_type<>'workbench_tasks') begin select raise(abort,'task parent must be a workbench task'); end"
+    ],
+    [
+      "table",
+      "feedback_iteration_decision_items",
+      "CREATE TABLE feedback_iteration_decision_items (\n                    decision_id integer not null,\n                    feedback_key text not null,\n                    round_id integer not null,\n                    primary key(decision_id, feedback_key),\n                    foreign key(decision_id) references feedback_iteration_decisions(id),\n                    foreign key(feedback_key) references feedback_processing_items(feedback_key),\n                    foreign key(round_id) references feedback_processing_rounds(id)\n                )"
+    ],
+    [
+      "index",
+      "idx_feedback_iteration_decision_items_feedback_round",
+      "CREATE INDEX idx_feedback_iteration_decision_items_feedback_round\n                    on feedback_iteration_decision_items(feedback_key, round_id, decision_id)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_feedback_iteration_decision_items_1",
+      null
+    ],
+    [
+      "trigger",
+      "trg_feedback_iteration_decision_items_immutable_delete",
+      "CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_delete\nbefore delete on feedback_iteration_decision_items\nbegin\n    select raise(abort, 'feedback iteration decision items are append-only');\nend"
+    ],
+    [
+      "trigger",
+      "trg_feedback_iteration_decision_items_immutable_update",
+      "CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_update\nbefore update on feedback_iteration_decision_items\nbegin\n    select raise(abort, 'feedback iteration decision items are append-only');\nend"
+    ],
+    [
+      "table",
+      "workbench_confirmations",
+      "CREATE TABLE workbench_confirmations (\n                    id text primary key,\n                    turn_id integer not null,\n                    action_kind text not null,\n                    target text not null,\n                    summary text not null,\n                    risk text not null,\n                    canonical_capability text not null default '',\n                    canonical_operation text not null default '',\n                    canonical_targets_json text not null default '[]',\n                    canonical_operation_digest text not null default '',\n                    canonical_arguments_digest text not null default '',\n                    arguments_json text not null,\n                    status text not null check(status in (\n                        'pending', 'confirmed', 'cancelled', 'executed', 'failed'\n                    )),\n                    result_json text not null default '',\n                    created_at text not null default current_timestamp,\n                    decided_at text not null default '',\n                    execution_owner text not null default '',\n                    execution_lease_expires_at text not null default '',\n                    execution_started_at text not null default '',\n                    authorization_consumed_at text not null default '',\n                    proposer_run_id text not null default '',\n                    proposer_owner text not null default '',\n                    proposer_lease_expires_at text not null default '',\n                    proposer_quiesced_at text not null default '',\n                    decision_requested text not null default ''\n                        check(decision_requested in ('', 'confirm', 'cancel')),\n                    decision_requested_at text not null default '',\n                    foreign key(turn_id) references tasks(id)\n                )"
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_created_id_turn",
+      "CREATE INDEX idx_workbench_confirmations_created_id_turn on workbench_confirmations(created_at, id, turn_id)"
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_legacy_execution_lease_recovery",
+      "CREATE INDEX idx_workbench_confirmations_legacy_execution_lease_recovery\n                on workbench_confirmations(id)\n                where status='confirmed' and result_json=''\n                  and execution_owner<>'' and execution_lease_expires_at=''\n                "
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_legacy_execution_owner_recovery",
+      "CREATE INDEX idx_workbench_confirmations_legacy_execution_owner_recovery\n                on workbench_confirmations(id)\n                where status='confirmed' and result_json=''\n                  and execution_owner=''\n                "
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_legacy_proposer_recovery",
+      "CREATE INDEX idx_workbench_confirmations_legacy_proposer_recovery\n                on workbench_confirmations(id)\n                where status='pending' and proposer_run_id=''\n                "
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_proposer_recovery",
+      "CREATE INDEX idx_workbench_confirmations_proposer_recovery\n                on workbench_confirmations(proposer_lease_expires_at, id)\n                where status='pending' and proposer_run_id<>''\n                  and proposer_quiesced_at=''\n                "
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_ready_intents",
+      "CREATE INDEX idx_workbench_confirmations_ready_intents\n                on workbench_confirmations(decision_requested_at, id)\n                where status='pending' and decision_requested<>''\n                  and proposer_run_id<>'' and proposer_quiesced_at<>''\n                "
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_recovery",
+      "CREATE INDEX idx_workbench_confirmations_recovery\n                on workbench_confirmations(execution_lease_expires_at, id)\n                where status='confirmed' and result_json=''\n                  and execution_owner<>'' and execution_lease_expires_at<>''\n                "
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_turn_created_id",
+      "CREATE INDEX idx_workbench_confirmations_turn_created_id on workbench_confirmations(turn_id, created_at, id)"
+    ],
+    [
+      "index",
+      "idx_workbench_confirmations_turn_status",
+      "CREATE INDEX idx_workbench_confirmations_turn_status on workbench_confirmations(turn_id, status, result_json, created_at, id)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_workbench_confirmations_1",
+      null
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_workbench_confirmations_turn_id_insert",
+      "CREATE TRIGGER trg_tasks_child_workbench_confirmations_turn_id_insert before insert on \"workbench_confirmations\" when new.\"turn_id\" is not null and exists(select 1 from tasks where id=new.\"turn_id\" and record_type<>'workbench_turns') begin select raise(abort,'task parent must be a workbench turn'); end"
+    ],
+    [
+      "trigger",
+      "trg_tasks_child_workbench_confirmations_turn_id_update",
+      "CREATE TRIGGER trg_tasks_child_workbench_confirmations_turn_id_update before update of \"turn_id\" on \"workbench_confirmations\" when new.\"turn_id\" is not null and exists(select 1 from tasks where id=new.\"turn_id\" and record_type<>'workbench_turns') begin select raise(abort,'task parent must be a workbench turn'); end"
+    ],
+    [
+      "table",
+      "codex_session_search_index",
+      "CREATE TABLE codex_session_search_index (\n    id integer primary key autoincrement,\n    session_id text not null unique,\n    source_type text not null default '',\n    source_id text not null default '',\n    title text not null default '',\n    created_at text not null default current_timestamp,\n    updated_at text not null default current_timestamp\n)"
+    ],
+    [
+      "index",
+      "idx_codex_session_search_source",
+      "CREATE INDEX idx_codex_session_search_source on codex_session_search_index(source_type,source_id)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_codex_session_search_index_1",
+      null
+    ],
+    [
+      "table",
+      "setup_wizard_events",
+      "CREATE TABLE setup_wizard_events (\n                    id integer primary key autoincrement,\n                    step_id text not null,\n                    action_id text not null,\n                    status text not null,\n                    summary text not null default '',\n                    evidence_json text not null default '{}',\n                    stdout_excerpt text not null default '',\n                    stderr_excerpt text not null default '',\n                    started_at text not null default current_timestamp,\n                    finished_at text not null default current_timestamp\n                )"
+    ],
+    [
+      "index",
+      "idx_setup_wizard_events_step",
+      "CREATE INDEX idx_setup_wizard_events_step\n                    on setup_wizard_events(step_id, id)"
+    ],
+    [
+      "table",
+      "codex_session_search_fts",
+      "CREATE VIRTUAL TABLE codex_session_search_fts using fts5(\n    title, content='codex_session_search_index', content_rowid='id')"
+    ]
+  ]
+}

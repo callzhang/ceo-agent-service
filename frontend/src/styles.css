@@ -1402,7 +1402,6 @@ h1, h2, h3, p { margin-top: 0; }
 .task-state { color: var(--ink-soft); font-size: 0.72rem; }
 .task-activity { color: var(--ink-soft); font-size: 0.7rem; }
 .task-state-running, .task-state-queued { color: var(--accent); }
-.task-state-waiting_confirmation { color: var(--warning); }
 .task-state-failed { color: var(--danger); }
 
 .task-actions { display: flex; padding-right: 6px; opacity: 0; transition: opacity 120ms ease; }
@@ -1502,16 +1501,6 @@ h1, h2, h3, p { margin-top: 0; }
 .execution-failed summary > svg:first-child { color: var(--danger); }
 .execution-aborted summary > svg:first-child { color: var(--ink-soft); }
 
-.confirmation-card { padding: 15px; border: 1px solid #e1c67f; border-radius: 12px; background: #fffaf0; }
-.confirmation-title { display: flex; align-items: center; gap: 8px; color: #7b5210; }
-.confirmation-card dl { margin: 12px 0; }
-.confirmation-card dl div { display: grid; grid-template-columns: 56px 1fr; gap: 8px; padding: 5px 0; }
-.confirmation-card dt { color: var(--ink-soft); font-size: 0.75rem; }
-.confirmation-card dd { margin: 0; font-size: 0.82rem; overflow-wrap: anywhere; }
-.confirmation-card small { color: var(--ink-soft); }
-.confirmation-wait { margin: 9px 0; color: var(--warning); font-size: 0.78rem; }
-.confirmation-actions { display: flex; gap: 8px; }
-.confirmation-actions button { min-width: 96px; padding: 6px 12px; }
 
 .artifact-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .artifact-list a { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px 12px; color: var(--ink); text-decoration: none; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }

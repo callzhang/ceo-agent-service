@@ -8,6 +8,8 @@ from pydantic import ValidationError
 
 from app.agent_runtime_router import CodexCommandFactory, RoutedCodexExecutionError
 from app.store import AutoReplyStore
+from app.business_candidate_storage import update_business_candidate
+from app.task12_storage import task12_projection
 from app.wechat.memory import (
     CodexMemoryExtractionRunner,
     CodexMemoryWriteBackend,
@@ -737,8 +739,8 @@ def test_review_actions_refuse_candidate_while_write_claimed(store):
     with pytest.raises(ValueError, match="stale"):
         store.resolve_wechat_memory_candidate_write_unknown(
             cid, reviewer="Derek", confirm=True)
-    with store._connect() as db:
-        db.execute("update wechat_memory_candidates set updated_at='2000-01-01' where id=?", (cid,))
+    with store._immediate_write_transaction() as db:
+        update_business_candidate(db, "wechat_memory_candidate", cid, {"updated_at": "2000-01-01"})
     store.resolve_wechat_memory_candidate_write_unknown(
         cid, reviewer="Derek", confirm=True)
     assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
@@ -755,8 +757,8 @@ def test_resolve_writing_rejects_reduced_stale_threshold(store):
 def test_finish_write_race_never_creates_revoked_written(store):
     cid = _seed_candidate(store, status="approved")
     assert store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
-    with store._connect() as db:
-        db.execute("update wechat_memory_candidates set status='revoked' where id=?", (cid,))
+    with store._immediate_write_transaction() as db:
+        update_business_candidate(db, "wechat_memory_candidate", cid, {"status": "revoked"})
     store.finish_wechat_memory_candidate_write(cid, status="written", memory_id="episode-1")
     row = store.get_wechat_memory_candidate(cid)
     assert row["status"] == "revoked"
@@ -848,7 +850,7 @@ def test_codex_extraction_creates_parent_before_routed_invocation(
             job_id = int(kwargs["workload_key"].rsplit(":", 1)[1])
             with store._connect() as db:
                 job = db.execute(
-                    "select status from wechat_memory_import_jobs where id=?",
+                    f"select status from ({task12_projection('wechat_memory_import_jobs')}) where id=?",
                     (job_id,),
                 ).fetchone()
             assert job["status"] == "running"
@@ -877,7 +879,7 @@ def test_codex_extraction_creates_parent_before_routed_invocation(
     command = built_factory_command(calls[0]["command_factory"], tmp_path)
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     with store._connect() as db:
-        job = db.execute("select status from wechat_memory_import_jobs").fetchone()
+        job = db.execute(f"select status from ({task12_projection('wechat_memory_import_jobs')})").fetchone()
     assert job["status"] == "completed"
 
 
@@ -959,7 +961,7 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     with matcher.store._connect() as db:
         jobs = db.execute(
-            "select status from wechat_memory_import_jobs order by id"
+            f"select status from ({task12_projection('wechat_memory_import_jobs')}) order by id"
         ).fetchall()
     assert [job["status"] for job in jobs] == ["completed", "completed"]
 

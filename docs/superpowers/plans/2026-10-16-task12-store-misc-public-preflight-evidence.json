@@ -1,0 +1,1013 @@
+{
+  "harness_sha256": "eaab979cb2fb92b05475dde1c63b6807fc755f16cbf25578b9f360ece9da6d0e",
+  "limitations": [
+    "Empty fresh Tasks replacement only; no nonempty migration, preserved captured IDs, current-fact inverse, predecessor/reforward, production cold selection or final table-count proof.",
+    "Real needs-human reconcile and supersession SQL execute with no eligible approved review or failed task; no nonempty mutation proof for those two policy branches.",
+    "No external business-map readers, provider delivery, native Agent CLI or whole-release acceptance is covered."
+  ],
+  "scope": "author fresh API semantic characterization; original full constructor and cloned empty target only",
+  "clock": {
+    "default": "2040-01-01 00:00:00",
+    "reply_first": "2040-01-01 00:00:01",
+    "reply_second": "2040-01-01 00:00:02",
+    "reply_merge_and_later": "2040-01-01 00:00:03"
+  },
+  "uuid": "Store module uuid4 deterministic UUID integer stream 1..9999",
+  "patches": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4"
+  },
+  "source_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+  "target_candidate_sha256": "705c8f0e73ff9df17cb5f8118da96e99f0b520f9b0c4b6895e67b05a94cdd849",
+  "constructor_boundary": "target _ensure_initialized fixture bypass after explicit empty preparation; ContextVar, _open_connection, _connect and constructor otherwise original",
+  "normalization": [
+    "Declared SQL current_timestamp and _utc_store_time(None) clock.",
+    "New published8 IDs mapped bijectively by kind and first-observed issuance after exact public call position; raw witnesses retained. Existing captured IDs are not tested by this empty fixture.",
+    "Four-family independent public IDs/hidden ROWIDs are exact. Only pointers to newly-issued published8 IDs (mapping.reply_task_id and item.request_id) use the declared endpoint maps; all other field values/classes/status/CAS/rowcount remain exact.",
+    "Absent native AUTO sequence and explicit target zero have effective initial water zero; published8 physical waters retained separately and are not compared numerically."
+  ],
+  "no_provider_native_cli_network": true,
+  "source_file_sha256": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/task12_storage.py": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
+  },
+  "bootstrap": {
+    "constructor": "original AutoReplyStore full fresh normal constructor",
+    "empty_counts": {
+      "tasks": 0,
+      "business_object_tasks": 0,
+      "oa_notification_events": 0,
+      "okr_review_items": 0,
+      "wechat_memory_import_jobs": 0
+    },
+    "source_fields": {
+      "business_object_tasks": [
+        "business_object_key",
+        "reply_task_id",
+        "created_at",
+        "updated_at"
+      ],
+      "oa_notification_events": [
+        "id",
+        "event_kind",
+        "requires_reply",
+        "process_instance_id",
+        "task_id",
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "trigger_text",
+        "trigger_message_json",
+        "oa_url",
+        "status",
+        "claimed_attempt_id",
+        "result_attempt_id",
+        "last_error",
+        "created_at",
+        "updated_at",
+        "sent_at"
+      ],
+      "okr_review_items": [
+        "id",
+        "request_id",
+        "objective_title",
+        "objective_weight",
+        "kr_title",
+        "kr_weight",
+        "item_json",
+        "created_at"
+      ],
+      "wechat_memory_import_jobs": [
+        "id",
+        "import_run_id",
+        "account_id",
+        "status",
+        "error",
+        "created_at",
+        "finished_at",
+        "updated_at"
+      ]
+    },
+    "tables": [
+      "actions",
+      "business",
+      "business_attention_events",
+      "business_attention_items",
+      "business_attention_proposal_tasks",
+      "business_attention_tasks",
+      "business_legacy_links",
+      "business_object_tasks",
+      "business_project_candidates",
+      "business_project_evidence",
+      "business_source_documents",
+      "business_task_anchor_links",
+      "business_task_date_evidence",
+      "business_task_dingtalk_links",
+      "business_task_events",
+      "business_task_evidence",
+      "business_task_follow_up_send_attempts",
+      "business_task_follow_ups",
+      "business_task_relations",
+      "business_task_signals",
+      "business_task_todo_sync_outbox",
+      "business_work_cluster_tasks",
+      "business_work_clusters",
+      "codex_session_search_fts",
+      "codex_session_search_fts_config",
+      "codex_session_search_fts_data",
+      "codex_session_search_fts_docsize",
+      "codex_session_search_fts_idx",
+      "codex_session_search_index",
+      "configs",
+      "email_classifications",
+      "errors",
+      "feedback_events",
+      "feedback_iteration_decision_items",
+      "feedback_iteration_decisions",
+      "feedback_processing_batches",
+      "feedback_processing_items",
+      "feedback_processing_rounds",
+      "feedback_processing_transitions",
+      "follow_up_drafts",
+      "follow_up_send_attempts",
+      "meeting_alignment_delivery_claims",
+      "meeting_memory_write_events",
+      "oa_notification_events",
+      "okr_review_items",
+      "runs",
+      "schedules",
+      "service_bugfix_candidates",
+      "setup_wizard_events",
+      "sqlite_sequence",
+      "state",
+      "task_memory_write_events",
+      "task_todo_sync_outbox",
+      "tasks",
+      "todo_evidence_candidates",
+      "wechat_deliveries",
+      "wechat_memory_candidates",
+      "wechat_memory_import_jobs",
+      "work_projects",
+      "work_todo_dingtalk_links",
+      "work_todos",
+      "work_updates",
+      "workbench_artifacts",
+      "workbench_attachments",
+      "workbench_confirmations"
+    ],
+    "tasks_ddl_sha256": "ee4330cb187a80d4699db16e56b61e47f992165ed44a840f4ecbe8059888374c",
+    "fk_findings": []
+  },
+  "preparation": {
+    "empty_tasks_replaced": true,
+    "dropped_only_empty_families": [
+      "business_object_tasks",
+      "oa_notification_events",
+      "okr_review_items",
+      "wechat_memory_import_jobs"
+    ],
+    "all_other_table_ddl_exact": true,
+    "published_sequence_initialized": 0,
+    "constructor_selection": "not tested: fixture _ensure_initialized bypass only after preparation"
+  },
+  "negative_control": {
+    "mutation": "only WeChat runtime-parent native WHERE uses physical tasks.id instead of projected source public ID",
+    "source": {
+      "job_public_id": 1,
+      "job_physical_id": null,
+      "runnable": true,
+      "public_outcome": {
+        "return": true
+      },
+      "transactions": []
+    },
+    "mutant": {
+      "job_public_id": 1,
+      "job_physical_id": 2,
+      "runnable": false,
+      "public_outcome": {
+        "return": false
+      },
+      "transactions": []
+    },
+    "caught": true
+  },
+  "published8_issuance_witnesses": {
+    "source": [
+      {
+        "checkpoint": 24,
+        "kind": "reply_tasks",
+        "id": 1,
+        "token": "reply_tasks:1"
+      },
+      {
+        "checkpoint": 24,
+        "kind": "reply_task_inputs",
+        "id": 2,
+        "token": "reply_task_inputs:1"
+      },
+      {
+        "checkpoint": 26,
+        "kind": "reply_tasks",
+        "id": 3,
+        "token": "reply_tasks:2"
+      },
+      {
+        "checkpoint": 26,
+        "kind": "reply_task_inputs",
+        "id": 4,
+        "token": "reply_task_inputs:2"
+      },
+      {
+        "checkpoint": 28,
+        "kind": "reply_task_inputs",
+        "id": 5,
+        "token": "reply_task_inputs:3"
+      },
+      {
+        "checkpoint": 36,
+        "kind": "reply_tasks",
+        "id": 6,
+        "token": "reply_tasks:3"
+      },
+      {
+        "checkpoint": 36,
+        "kind": "reply_task_inputs",
+        "id": 7,
+        "token": "reply_task_inputs:4"
+      },
+      {
+        "checkpoint": 37,
+        "kind": "reply_task_inputs",
+        "id": 8,
+        "token": "reply_task_inputs:5"
+      },
+      {
+        "checkpoint": 40,
+        "kind": "reply_task_inputs",
+        "id": 9,
+        "token": "reply_task_inputs:6"
+      },
+      {
+        "checkpoint": 41,
+        "kind": "okr_review_requests",
+        "id": 10,
+        "token": "okr_review_requests:1"
+      }
+    ],
+    "target": [
+      {
+        "checkpoint": 24,
+        "kind": "reply_tasks",
+        "id": 6,
+        "token": "reply_tasks:1"
+      },
+      {
+        "checkpoint": 24,
+        "kind": "reply_task_inputs",
+        "id": 8,
+        "token": "reply_task_inputs:1"
+      },
+      {
+        "checkpoint": 26,
+        "kind": "reply_tasks",
+        "id": 9,
+        "token": "reply_tasks:2"
+      },
+      {
+        "checkpoint": 26,
+        "kind": "reply_task_inputs",
+        "id": 11,
+        "token": "reply_task_inputs:2"
+      },
+      {
+        "checkpoint": 28,
+        "kind": "reply_task_inputs",
+        "id": 12,
+        "token": "reply_task_inputs:3"
+      },
+      {
+        "checkpoint": 36,
+        "kind": "reply_tasks",
+        "id": 14,
+        "token": "reply_tasks:3"
+      },
+      {
+        "checkpoint": 36,
+        "kind": "reply_task_inputs",
+        "id": 16,
+        "token": "reply_task_inputs:4"
+      },
+      {
+        "checkpoint": 37,
+        "kind": "reply_task_inputs",
+        "id": 18,
+        "token": "reply_task_inputs:5"
+      },
+      {
+        "checkpoint": 40,
+        "kind": "reply_task_inputs",
+        "id": 19,
+        "token": "reply_task_inputs:6"
+      },
+      {
+        "checkpoint": 41,
+        "kind": "okr_review_requests",
+        "id": 20,
+        "token": "okr_review_requests:1"
+      }
+    ]
+  },
+  "actual_scoped_owner_entry_counts": {
+    "record_oa_notification_event": 6,
+    "list_pending_oa_reminder_targets": 4,
+    "adopt_oa_notification_events": 3,
+    "claim_oa_reminder_target": 5,
+    "mark_oa_reminder_sent": 2,
+    "mark_oa_reminder_failed": 3,
+    "_ensure_business_reply_task": 6,
+    "get_reply_task_for_business_object": 7,
+    "replace_pending_single_chat_reply_task_trigger": 2,
+    "record_okr_review_item": 3,
+    "begin_wechat_memory_import_job": 3,
+    "_runtime_operation_parent_exists": 4,
+    "finish_wechat_memory_import_job": 6,
+    "reconcile_valid_needs_human_projections": 1,
+    "skip_failed_reply_tasks_superseded_by_terminal_business_object": 1,
+    "list_current_unresolved_problem_attempts": 1,
+    "list_current_unresolved_problem_attempt_summaries": 1,
+    "count_current_unresolved_problem_attempts": 1,
+    "_operation_logs_base_query": 1
+  },
+  "checkpoint_count": 71,
+  "unique_labels": [
+    "oa_bad_kind",
+    "oa_enqueue",
+    "oa_dedup",
+    "oa_system_ignored",
+    "oa_other_node",
+    "oa_other_process",
+    "oa_initial_list",
+    "oa_blank_adopt",
+    "oa_adopt",
+    "oa_exact_targets",
+    "oa_claim_missing",
+    "oa_claim_ignored",
+    "oa_claim",
+    "oa_claim_again",
+    "oa_wrong_sent_attempt",
+    "oa_wrong_fail_attempt",
+    "oa_failed",
+    "oa_failed_targets",
+    "oa_reclaim",
+    "oa_sent",
+    "oa_late_failure",
+    "oa_sent_not_pending",
+    "oa_adopt_other_node",
+    "reply_first",
+    "reply_same_identity",
+    "reply_second",
+    "reply_current_first_alias",
+    "reply_merge",
+    "reply_first_alias_repointed",
+    "reply_merged_inputs",
+    "reply_pending_queue",
+    "reply_second_alias_preserved",
+    "reply_new_trigger_alias",
+    "reply_merge_missing",
+    "reply_no_mapping",
+    "reply_provisional",
+    "reply_provisional_adopted",
+    "reply_old_provisional_gone",
+    "reply_node_mapping",
+    "reply_provisional_prefix_finds_node",
+    "okr_request",
+    "okr_request_replay",
+    "okr_claim_request",
+    "okr_request_failed",
+    "okr_failed_request_replace",
+    "okr_replacement_read",
+    "okr_item",
+    "okr_repeated_item",
+    "okr_public_request_no_fk",
+    "okr_request_done",
+    "okr_request_done_read",
+    "wechat_blank_run",
+    "wechat_begin",
+    "wechat_duplicate_not_deduped",
+    "wechat_running_parent",
+    "wechat_runtime_claim",
+    "wechat_bad_terminal",
+    "wechat_complete",
+    "wechat_completed_parent",
+    "wechat_terminal_replay",
+    "wechat_terminal_conflict",
+    "wechat_missing_job",
+    "wechat_second_failed",
+    "wechat_failed_parent",
+    "mapping_reconcile_no_eligible_review",
+    "mapping_supersession_no_failed_task",
+    "attention_seed_public",
+    "attention_full",
+    "attention_summaries",
+    "attention_count",
+    "history_reply_attempts"
+  ],
+  "public_methods": [
+    "adopt_oa_notification_events",
+    "begin_wechat_memory_import_job",
+    "claim_oa_reminder_target",
+    "claim_okr_review_requests",
+    "claim_runtime_operation_attempt",
+    "count_current_unresolved_problem_attempts",
+    "create_okr_review_request",
+    "ensure_reply_task",
+    "finish_wechat_memory_import_job",
+    "get_okr_review_request",
+    "get_reply_task_for_business_object",
+    "list_current_unresolved_problem_attempt_summaries",
+    "list_current_unresolved_problem_attempts",
+    "list_operation_logs",
+    "list_pending_oa_reminder_targets",
+    "list_reply_task_inputs",
+    "list_reply_tasks",
+    "mark_oa_reminder_failed",
+    "mark_oa_reminder_sent",
+    "mark_okr_review_request_done",
+    "mark_okr_review_request_failed",
+    "reconcile_valid_needs_human_projections",
+    "record_oa_notification_event",
+    "record_okr_review_item",
+    "record_reply_attempt",
+    "replace_pending_single_chat_reply_task_trigger",
+    "runtime_operation_parent_is_runnable",
+    "skip_failed_reply_tasks_superseded_by_terminal_business_object"
+  ],
+  "equal_checkpoints": 71,
+  "differences": [],
+  "expected_error_count": 5,
+  "source_expected_assertions_passed": true,
+  "target_expected_assertions_passed": true,
+  "transaction_histogram": {
+    "": 26,
+    "BEGIN IMMEDIATE,COMMIT": 34,
+    "BEGIN,COMMIT": 9,
+    "BEGIN IMMEDIATE,ROLLBACK": 2
+  },
+  "record_sha256": {
+    "source": "b06f4900d6a6a12684d48729b110b85c42db20cd85a28cdec6feb28a1040e865",
+    "target": "b06f4900d6a6a12684d48729b110b85c42db20cd85a28cdec6feb28a1040e865"
+  },
+  "identity_maps": {
+    "source": {
+      "reply_tasks": {
+        "1": "reply_tasks:1",
+        "3": "reply_tasks:2",
+        "6": "reply_tasks:3"
+      },
+      "reply_task_inputs": {
+        "2": "reply_task_inputs:1",
+        "4": "reply_task_inputs:2",
+        "5": "reply_task_inputs:3",
+        "7": "reply_task_inputs:4",
+        "8": "reply_task_inputs:5",
+        "9": "reply_task_inputs:6"
+      },
+      "okr_review_requests": {
+        "10": "okr_review_requests:1"
+      }
+    },
+    "target": {
+      "reply_tasks": {
+        "6": "reply_tasks:1",
+        "9": "reply_tasks:2",
+        "14": "reply_tasks:3"
+      },
+      "reply_task_inputs": {
+        "8": "reply_task_inputs:1",
+        "11": "reply_task_inputs:2",
+        "12": "reply_task_inputs:3",
+        "16": "reply_task_inputs:4",
+        "18": "reply_task_inputs:5",
+        "19": "reply_task_inputs:6"
+      },
+      "okr_review_requests": {
+        "20": "okr_review_requests:1"
+      }
+    }
+  },
+  "raw_final_identity_witnesses": {
+    "source": {
+      "checkpoint": 71,
+      "physical_tasks": [
+        [
+          2,
+          "reply_task_inputs",
+          "2",
+          3,
+          null,
+          null
+        ],
+        [
+          3,
+          "reply_tasks",
+          "3",
+          null,
+          5,
+          null
+        ],
+        [
+          4,
+          "reply_task_inputs",
+          "4",
+          3,
+          null,
+          null
+        ],
+        [
+          5,
+          "reply_task_inputs",
+          "5",
+          3,
+          null,
+          null
+        ],
+        [
+          6,
+          "reply_tasks",
+          "6",
+          null,
+          9,
+          null
+        ],
+        [
+          7,
+          "reply_task_inputs",
+          "7",
+          6,
+          null,
+          null
+        ],
+        [
+          8,
+          "reply_task_inputs",
+          "8",
+          6,
+          null,
+          null
+        ],
+        [
+          9,
+          "reply_task_inputs",
+          "9",
+          6,
+          null,
+          null
+        ],
+        [
+          10,
+          "okr_review_requests",
+          "10",
+          null,
+          null,
+          null
+        ]
+      ],
+      "published_water": 12
+    },
+    "target": {
+      "checkpoint": 71,
+      "physical_tasks": [
+        [
+          1,
+          "oa_notification_events",
+          "1",
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          "oa_notification_events",
+          "3",
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          "oa_notification_events",
+          "4",
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "oa_notification_events",
+          "5",
+          null,
+          null,
+          null
+        ],
+        [
+          7,
+          "business_object_tasks",
+          "1",
+          9,
+          null,
+          null
+        ],
+        [
+          8,
+          "reply_task_inputs",
+          "8",
+          9,
+          null,
+          null
+        ],
+        [
+          9,
+          "reply_tasks",
+          "9",
+          null,
+          12,
+          null
+        ],
+        [
+          10,
+          "business_object_tasks",
+          "2",
+          9,
+          null,
+          null
+        ],
+        [
+          11,
+          "reply_task_inputs",
+          "11",
+          9,
+          null,
+          null
+        ],
+        [
+          12,
+          "reply_task_inputs",
+          "12",
+          9,
+          null,
+          null
+        ],
+        [
+          13,
+          "business_object_tasks",
+          "3",
+          9,
+          null,
+          null
+        ],
+        [
+          14,
+          "reply_tasks",
+          "14",
+          null,
+          19,
+          null
+        ],
+        [
+          16,
+          "reply_task_inputs",
+          "16",
+          14,
+          null,
+          null
+        ],
+        [
+          17,
+          "business_object_tasks",
+          "4",
+          14,
+          null,
+          null
+        ],
+        [
+          18,
+          "reply_task_inputs",
+          "18",
+          14,
+          null,
+          null
+        ],
+        [
+          19,
+          "reply_task_inputs",
+          "19",
+          14,
+          null,
+          null
+        ],
+        [
+          20,
+          "okr_review_requests",
+          "20",
+          null,
+          null,
+          null
+        ],
+        [
+          23,
+          "okr_review_items",
+          "1",
+          null,
+          null,
+          null
+        ],
+        [
+          24,
+          "okr_review_items",
+          "2",
+          null,
+          null,
+          null
+        ],
+        [
+          25,
+          "okr_review_items",
+          "3",
+          null,
+          null,
+          null
+        ],
+        [
+          26,
+          "wechat_memory_import_jobs",
+          "1",
+          null,
+          null,
+          null
+        ],
+        [
+          27,
+          "wechat_memory_import_jobs",
+          "2",
+          null,
+          null,
+          null
+        ]
+      ],
+      "published_water": 22
+    }
+  },
+  "decisive_outcomes": {
+    "oa_dedup": {
+      "return": 1
+    },
+    "oa_failed_targets": {
+      "return": [
+        {
+          "id": 1,
+          "event_kind": "chat_reminder",
+          "requires_reply": 1,
+          "process_instance_id": "oa-process",
+          "task_id": "node-one",
+          "channel": "dingtalk",
+          "conversation_id": "oa-chat",
+          "conversation_title": "OA synthetic",
+          "trigger_message_id": "oa-1",
+          "trigger_create_time": "100",
+          "trigger_sender": "owner",
+          "trigger_text": "adopted reminder",
+          "trigger_message_json": "{\"text\":\"OA-body\",\"nested\":{\"x\":1}}",
+          "oa_url": "https://example.invalid/oa",
+          "status": "adopted",
+          "claimed_attempt_id": 0,
+          "result_attempt_id": 0,
+          "last_error": "synthetic failure",
+          "created_at": "2040-01-01 00:00:00",
+          "updated_at": "2040-01-01 00:00:00",
+          "sent_at": ""
+        }
+      ]
+    },
+    "reply_first_alias_repointed": {
+      "return": {
+        "id": "reply_tasks:2",
+        "channel": "dingtalk",
+        "conversation_id": "merge",
+        "conversation_title": "Synthetic reply",
+        "single_chat": true,
+        "trigger_message_id": "c",
+        "trigger_create_time": "300",
+        "trigger_sender": "sender-c",
+        "trigger_text": "merged adopted text",
+        "trigger_message_json": "{\"text\":\"merged-body\"}",
+        "available_at": "",
+        "force_new_decision": false,
+        "oa_url": "",
+        "manual_rerun_attempt_id": 0,
+        "manual_rerun_revision_key": "",
+        "execution_generation": "00000000000000000000000000000001",
+        "recovery_code": "",
+        "business_object_key": "alias:second",
+        "input_version": 3,
+        "claimed_input_version": 0,
+        "current_input_id": "reply_task_inputs:3",
+        "claimed_input_id": null,
+        "input_provenance_json": "{}",
+        "input_compacted": false,
+        "status": "pending",
+        "attempts": 0,
+        "locked_at": null,
+        "error": "",
+        "created_at": "2040-01-01 00:00:02",
+        "updated_at": "2040-01-01 00:00:03"
+      }
+    },
+    "reply_node_mapping": {
+      "return": {
+        "id": "reply_tasks:3",
+        "channel": "dingtalk",
+        "conversation_id": "oa-reply",
+        "conversation_title": "Synthetic reply",
+        "single_chat": false,
+        "trigger_message_id": "identified",
+        "trigger_create_time": "100",
+        "trigger_sender": "sender",
+        "trigger_text": "identified",
+        "trigger_message_json": "{\"text\": \"identified\"}",
+        "available_at": "",
+        "force_new_decision": false,
+        "oa_url": "",
+        "manual_rerun_attempt_id": 0,
+        "manual_rerun_revision_key": "",
+        "execution_generation": "initial",
+        "recovery_code": "",
+        "business_object_key": "oa:process-reply:node",
+        "input_version": 2,
+        "claimed_input_version": 0,
+        "current_input_id": "reply_task_inputs:5",
+        "claimed_input_id": null,
+        "input_provenance_json": "{}",
+        "input_compacted": false,
+        "status": "pending",
+        "attempts": 0,
+        "locked_at": null,
+        "error": "",
+        "created_at": "2040-01-01 00:00:03",
+        "updated_at": "2040-01-01 00:00:03"
+      }
+    },
+    "okr_replacement_read": {
+      "return": {
+        "id": "okr_review_requests:1",
+        "conversation_id": "okr-chat",
+        "conversation_title": "OKR synthetic",
+        "trigger_message_id": "okr-trigger",
+        "trigger_sender": "owner",
+        "trigger_sender_user_id": "owner-id",
+        "trigger_text": "review request",
+        "period_label": "Q4",
+        "period_start": "2040-10-01",
+        "period_end": "2040-12-31",
+        "okr_source_json": "{\"objectives\":[\"replacement\"]}",
+        "status": "pending",
+        "error": "",
+        "codex_session_id": "",
+        "created_at": "2040-01-01 00:00:03",
+        "updated_at": "2040-01-01 00:00:03"
+      }
+    },
+    "wechat_running_parent": {
+      "return": true
+    },
+    "wechat_completed_parent": {
+      "return": false
+    },
+    "attention_count": {
+      "return": 1
+    },
+    "history_reply_attempts": {
+      "return": [
+        {
+          "id": "reply:1",
+          "source_table": "reply_attempts",
+          "source_id": 1,
+          "occurred_at": "2040-01-01 00:00:03",
+          "category": "Reply",
+          "action": "reply",
+          "status": "failed",
+          "history_type": "dingtalk",
+          "source_actor": "owner",
+          "context": "Synthetic failure",
+          "summary": "source failure body",
+          "detail": "",
+          "conversation_id": "standalone-failure",
+          "message_id": "attention-trigger",
+          "project_id": 0,
+          "todo_id": 0,
+          "follow_up_id": 0
+        }
+      ]
+    }
+  },
+  "final_scoped_row_counts": {
+    "reply_tasks": 2,
+    "reply_task_inputs": 6,
+    "okr_review_requests": 1,
+    "business_object_tasks": 4,
+    "oa_notification_events": 4,
+    "okr_review_items": 3,
+    "wechat_memory_import_jobs": 2
+  },
+  "final_mapping_rows": [
+    {
+      "rowid": 1,
+      "business_object_key": "alias:first",
+      "reply_task_id": "reply_tasks:2",
+      "created_at": "2040-01-01 00:00:01",
+      "updated_at": "2040-01-01 00:00:01"
+    },
+    {
+      "rowid": 2,
+      "business_object_key": "alias:second",
+      "reply_task_id": "reply_tasks:2",
+      "created_at": "2040-01-01 00:00:02",
+      "updated_at": "2040-01-01 00:00:02"
+    },
+    {
+      "rowid": 3,
+      "business_object_key": "message:dingtalk:merge:c",
+      "reply_task_id": "reply_tasks:2",
+      "created_at": "2040-01-01 00:00:03",
+      "updated_at": "2040-01-01 00:00:03"
+    },
+    {
+      "rowid": 4,
+      "business_object_key": "oa:process-reply:node",
+      "reply_task_id": "reply_tasks:3",
+      "created_at": "2040-01-01 00:00:03",
+      "updated_at": "2040-01-01 00:00:03"
+    }
+  ],
+  "final_okr_item_sqlite_types": [
+    [
+      "integer",
+      "integer",
+      "integer",
+      "text",
+      "real",
+      "text",
+      "real",
+      "text",
+      "text"
+    ],
+    [
+      "integer",
+      "integer",
+      "integer",
+      "text",
+      "real",
+      "text",
+      "real",
+      "text",
+      "text"
+    ],
+    [
+      "integer",
+      "integer",
+      "integer",
+      "text",
+      "real",
+      "text",
+      "real",
+      "text",
+      "text"
+    ]
+  ],
+  "fixed_coverage_assertions": {
+    "checkpoints_each": 71,
+    "public_methods_each": 28,
+    "actual_scoped_owners_each": 19,
+    "source_field_count": 41,
+    "no_equal_errors_as_success": true,
+    "exact_expected_final_family_counts": true,
+    "issuance_call_position_kind_token_equal": true
+  },
+  "final_family_field_sha256": {
+    "business_object_tasks": "6ff056afc291d2fdc281818dc10359b55d13a05260852f25a66614a9ebf96fd5",
+    "oa_notification_events": "457429c44ca9eee52d3522ba3dfa28ac7522b0d96d44d029586101007b257104",
+    "okr_review_items": "0e65a33da118c8766eab0ce4456057f9db0502b5d94cdb5c8bde36b1e6c6d033",
+    "wechat_memory_import_jobs": "c36751af517886a4434ba70bba26f11f8fb68c06bb7be9f4bb57c7321d84f4ee"
+  },
+  "final_fk_findings": {
+    "source": [],
+    "target": []
+  },
+  "owned_temp_removed": true
+}

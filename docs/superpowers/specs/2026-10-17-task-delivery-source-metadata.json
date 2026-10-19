@@ -1,0 +1,2575 @@
+{
+  "observed_at": "2026-10-17T10:24:43.171794+00:00",
+  "worktree_head": "8eae51e05af4a47032622680aaec2b689a6e13f8",
+  "source_database": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+  "source_access": "SQLite URI mode=ro; query_only=on; one read transaction; metadata and counts only",
+  "families": [
+    "meeting_alignment_delivery_claims",
+    "meeting_memory_write_events",
+    "task_memory_write_events",
+    "wechat_deliveries"
+  ],
+  "actual": {
+    "meeting_alignment_delivery_claims": {
+      "objects": [
+        [
+          "table",
+          "meeting_alignment_delivery_claims",
+          "meeting_alignment_delivery_claims",
+          "CREATE TABLE meeting_alignment_delivery_claims (\n                    job_id integer primary key,\n                    claim_token text not null,\n                    foreign key(job_id) references tasks(id) on delete cascade\n                )"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_alignment_delivery_claims_job_id_insert",
+          "meeting_alignment_delivery_claims",
+          "CREATE TRIGGER trg_tasks_child_meeting_alignment_delivery_claims_job_id_insert before insert on \"meeting_alignment_delivery_claims\" when new.\"job_id\" is not null and exists(select 1 from tasks where id=new.\"job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_alignment_delivery_claims_job_id_update",
+          "meeting_alignment_delivery_claims",
+          "CREATE TRIGGER trg_tasks_child_meeting_alignment_delivery_claims_job_id_update before update of \"job_id\" on \"meeting_alignment_delivery_claims\" when new.\"job_id\" is not null and exists(select 1 from tasks where id=new.\"job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "job_id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "claim_token",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "job_id",
+          "id",
+          "NO ACTION",
+          "CASCADE",
+          "NONE"
+        ]
+      ],
+      "indexes": []
+    },
+    "meeting_memory_write_events": {
+      "objects": [
+        [
+          "index",
+          "idx_meeting_memory_write_events_due",
+          "meeting_memory_write_events",
+          "CREATE INDEX idx_meeting_memory_write_events_due\n                    on meeting_memory_write_events(status, available_at, id)"
+        ],
+        [
+          "index",
+          "idx_meeting_memory_write_events_lease",
+          "meeting_memory_write_events",
+          "CREATE INDEX idx_meeting_memory_write_events_lease on meeting_memory_write_events(status, lease_expires_at, id)"
+        ],
+        [
+          "index",
+          "sqlite_autoindex_meeting_memory_write_events_1",
+          "meeting_memory_write_events",
+          null
+        ],
+        [
+          "table",
+          "meeting_memory_write_events",
+          "meeting_memory_write_events",
+          "CREATE TABLE meeting_memory_write_events (\n                    id integer primary key autoincrement,\n                    meeting_job_id integer not null unique,\n                    payload_json text not null,\n                    status text not null default 'pending',\n                    attempts integer not null default 0,\n                    available_at text not null default '',\n                    error text not null default '',\n                    memory_id text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp, execution_generation text not null default '', lease_owner text not null default '', lease_expires_at text not null default '', started_at text not null default '',\n                    foreign key(meeting_job_id) references tasks(id)\n                )"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_memory_write_events_meeting_job_id_insert",
+          "meeting_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_meeting_memory_write_events_meeting_job_id_insert before insert on \"meeting_memory_write_events\" when new.\"meeting_job_id\" is not null and exists(select 1 from tasks where id=new.\"meeting_job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_memory_write_events_meeting_job_id_update",
+          "meeting_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_meeting_memory_write_events_meeting_job_id_update before update of \"meeting_job_id\" on \"meeting_memory_write_events\" when new.\"meeting_job_id\" is not null and exists(select 1 from tasks where id=new.\"meeting_job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "meeting_job_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "payload_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "status",
+          "TEXT",
+          1,
+          "'pending'",
+          0,
+          0
+        ],
+        [
+          4,
+          "attempts",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          5,
+          "available_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          6,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          7,
+          "memory_id",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          8,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          9,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          10,
+          "execution_generation",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          11,
+          "lease_owner",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "lease_expires_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "started_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "meeting_job_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "indexes": [
+        {
+          "list": [
+            0,
+            "idx_meeting_memory_write_events_lease",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              3,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              12,
+              "lease_expires_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            1,
+            "idx_meeting_memory_write_events_due",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              3,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              5,
+              "available_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            2,
+            "sqlite_autoindex_meeting_memory_write_events_1",
+            1,
+            "u",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "meeting_job_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    "task_memory_write_events": {
+      "objects": [
+        [
+          "index",
+          "idx_task_memory_write_events_due",
+          "task_memory_write_events",
+          "CREATE INDEX idx_task_memory_write_events_due\n    on task_memory_write_events(status, available_at, id)"
+        ],
+        [
+          "index",
+          "idx_task_memory_write_events_lease",
+          "task_memory_write_events",
+          "CREATE INDEX idx_task_memory_write_events_lease\n    on task_memory_write_events(status, lease_expires_at, id)"
+        ],
+        [
+          "index",
+          "sqlite_autoindex_task_memory_write_events_1",
+          "task_memory_write_events",
+          null
+        ],
+        [
+          "table",
+          "task_memory_write_events",
+          "task_memory_write_events",
+          "CREATE TABLE task_memory_write_events (\n    id integer primary key autoincrement,\n    reply_task_id integer not null,\n    execution_generation text not null,\n    consumer_run_id integer,\n    memories_json text not null default '[]',\n    written_memory_ids_json text not null default '[]',\n    status text not null default 'pending',\n    attempts integer not null default 0,\n    available_at text not null default '',\n    error text not null default '',\n    skip_reason text not null default '',\n    lease_owner text not null default '',\n    lease_expires_at text not null default '',\n    started_at text not null default '',\n    created_at text not null default current_timestamp,\n    updated_at text not null default current_timestamp,\n    unique(reply_task_id, execution_generation),\n    foreign key(reply_task_id) references tasks(id)\n)"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_task_memory_write_events_reply_task_id_insert",
+          "task_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_task_memory_write_events_reply_task_id_insert before insert on \"task_memory_write_events\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_task_memory_write_events_reply_task_id_update",
+          "task_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_task_memory_write_events_reply_task_id_update before update of \"reply_task_id\" on \"task_memory_write_events\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "reply_task_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "execution_generation",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "consumer_run_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "memories_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0,
+          0
+        ],
+        [
+          5,
+          "written_memory_ids_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0,
+          0
+        ],
+        [
+          6,
+          "status",
+          "TEXT",
+          1,
+          "'pending'",
+          0,
+          0
+        ],
+        [
+          7,
+          "attempts",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          8,
+          "available_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          9,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "skip_reason",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          11,
+          "lease_owner",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "lease_expires_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "started_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          14,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          15,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "reply_task_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "indexes": [
+        {
+          "list": [
+            0,
+            "idx_task_memory_write_events_lease",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              6,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              12,
+              "lease_expires_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            1,
+            "idx_task_memory_write_events_due",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              6,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              8,
+              "available_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            2,
+            "sqlite_autoindex_task_memory_write_events_1",
+            1,
+            "u",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "reply_task_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              2,
+              "execution_generation",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    "wechat_deliveries": {
+      "objects": [
+        [
+          "index",
+          "idx_wechat_deliveries_status",
+          "wechat_deliveries",
+          "CREATE INDEX idx_wechat_deliveries_status on wechat_deliveries(status, id)"
+        ],
+        [
+          "index",
+          "idx_wechat_deliveries_task_generation",
+          "wechat_deliveries",
+          "CREATE INDEX idx_wechat_deliveries_task_generation on wechat_deliveries(reply_task_id, execution_generation, id)"
+        ],
+        [
+          "index",
+          "sqlite_autoindex_wechat_deliveries_1",
+          "wechat_deliveries",
+          null
+        ],
+        [
+          "table",
+          "wechat_deliveries",
+          "wechat_deliveries",
+          "CREATE TABLE \"wechat_deliveries\" (\n                        id integer primary key autoincrement,\n                        reply_task_id integer not null,\n                        account_id text not null,\n                        target_type text not null,\n                        target_id text not null,\n                        conversation_id text not null default '',\n                        reply_text text not null,\n                        execution_generation text not null default 'initial',\n                        status text not null default 'ready_to_send',\n                        action_started_at text not null default '',\n                        pre_action_failure integer not null default 0,\n                        evidence_json text not null default '{}',\n                        error text not null default '',\n                        created_at text not null default current_timestamp,\n                        updated_at text not null default current_timestamp,\n                        foreign key(reply_task_id) references tasks(id),\n                        unique(reply_task_id, execution_generation)\n                    )"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_wechat_deliveries_reply_task_id_insert",
+          "wechat_deliveries",
+          "CREATE TRIGGER trg_tasks_child_wechat_deliveries_reply_task_id_insert before insert on \"wechat_deliveries\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_wechat_deliveries_reply_task_id_update",
+          "wechat_deliveries",
+          "CREATE TRIGGER trg_tasks_child_wechat_deliveries_reply_task_id_update before update of \"reply_task_id\" on \"wechat_deliveries\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "reply_task_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "target_type",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "target_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "conversation_id",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          6,
+          "reply_text",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "execution_generation",
+          "TEXT",
+          1,
+          "'initial'",
+          0,
+          0
+        ],
+        [
+          8,
+          "status",
+          "TEXT",
+          1,
+          "'ready_to_send'",
+          0,
+          0
+        ],
+        [
+          9,
+          "action_started_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "pre_action_failure",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          11,
+          "evidence_json",
+          "TEXT",
+          1,
+          "'{}'",
+          0,
+          0
+        ],
+        [
+          12,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          14,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "reply_task_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "indexes": [
+        {
+          "list": [
+            0,
+            "idx_wechat_deliveries_task_generation",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "reply_task_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              7,
+              "execution_generation",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            1,
+            "idx_wechat_deliveries_status",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              8,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            2,
+            "sqlite_autoindex_wechat_deliveries_1",
+            1,
+            "u",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "reply_task_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              7,
+              "execution_generation",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "actual_counts": {
+    "meeting_alignment_delivery_claims": 0,
+    "meeting_memory_write_events": 595,
+    "task_memory_write_events": 611,
+    "wechat_deliveries": 133
+  },
+  "fresh": {
+    "meeting_alignment_delivery_claims": {
+      "objects": [
+        [
+          "table",
+          "meeting_alignment_delivery_claims",
+          "meeting_alignment_delivery_claims",
+          "CREATE TABLE meeting_alignment_delivery_claims (\n                    job_id integer primary key,\n                    claim_token text not null,\n                    foreign key(job_id) references tasks(id) on delete cascade\n                )"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_alignment_delivery_claims_job_id_insert",
+          "meeting_alignment_delivery_claims",
+          "CREATE TRIGGER trg_tasks_child_meeting_alignment_delivery_claims_job_id_insert before insert on \"meeting_alignment_delivery_claims\" when new.\"job_id\" is not null and exists(select 1 from tasks where id=new.\"job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_alignment_delivery_claims_job_id_update",
+          "meeting_alignment_delivery_claims",
+          "CREATE TRIGGER trg_tasks_child_meeting_alignment_delivery_claims_job_id_update before update of \"job_id\" on \"meeting_alignment_delivery_claims\" when new.\"job_id\" is not null and exists(select 1 from tasks where id=new.\"job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "job_id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "claim_token",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "job_id",
+          "id",
+          "NO ACTION",
+          "CASCADE",
+          "NONE"
+        ]
+      ],
+      "indexes": []
+    },
+    "meeting_memory_write_events": {
+      "objects": [
+        [
+          "index",
+          "idx_meeting_memory_write_events_due",
+          "meeting_memory_write_events",
+          "CREATE INDEX idx_meeting_memory_write_events_due\n                    on meeting_memory_write_events(status, available_at, id)"
+        ],
+        [
+          "index",
+          "idx_meeting_memory_write_events_lease",
+          "meeting_memory_write_events",
+          "CREATE INDEX idx_meeting_memory_write_events_lease on meeting_memory_write_events(status, lease_expires_at, id)"
+        ],
+        [
+          "index",
+          "sqlite_autoindex_meeting_memory_write_events_1",
+          "meeting_memory_write_events",
+          null
+        ],
+        [
+          "table",
+          "meeting_memory_write_events",
+          "meeting_memory_write_events",
+          "CREATE TABLE meeting_memory_write_events (\n                    id integer primary key autoincrement,\n                    meeting_job_id integer not null unique,\n                    execution_generation text not null,\n                    payload_json text not null,\n                    status text not null default 'pending',\n                    attempts integer not null default 0,\n                    available_at text not null default '',\n                    error text not null default '',\n                    memory_id text not null default '',\n                    lease_owner text not null default '',\n                    lease_expires_at text not null default '',\n                    started_at text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    foreign key(meeting_job_id) references tasks(id)\n                )"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_memory_write_events_meeting_job_id_insert",
+          "meeting_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_meeting_memory_write_events_meeting_job_id_insert before insert on \"meeting_memory_write_events\" when new.\"meeting_job_id\" is not null and exists(select 1 from tasks where id=new.\"meeting_job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_meeting_memory_write_events_meeting_job_id_update",
+          "meeting_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_meeting_memory_write_events_meeting_job_id_update before update of \"meeting_job_id\" on \"meeting_memory_write_events\" when new.\"meeting_job_id\" is not null and exists(select 1 from tasks where id=new.\"meeting_job_id\" and record_type<>'meeting_alignment_jobs') begin select raise(abort,'task parent must be a meeting job'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "meeting_job_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "execution_generation",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "payload_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "status",
+          "TEXT",
+          1,
+          "'pending'",
+          0,
+          0
+        ],
+        [
+          5,
+          "attempts",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          6,
+          "available_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          7,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          8,
+          "memory_id",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          9,
+          "lease_owner",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "lease_expires_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          11,
+          "started_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          13,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "meeting_job_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "indexes": [
+        {
+          "list": [
+            0,
+            "idx_meeting_memory_write_events_lease",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              4,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              10,
+              "lease_expires_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            1,
+            "idx_meeting_memory_write_events_due",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              4,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              6,
+              "available_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            2,
+            "sqlite_autoindex_meeting_memory_write_events_1",
+            1,
+            "u",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "meeting_job_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    "task_memory_write_events": {
+      "objects": [
+        [
+          "index",
+          "idx_task_memory_write_events_due",
+          "task_memory_write_events",
+          "CREATE INDEX idx_task_memory_write_events_due\n    on task_memory_write_events(status, available_at, id)"
+        ],
+        [
+          "index",
+          "idx_task_memory_write_events_lease",
+          "task_memory_write_events",
+          "CREATE INDEX idx_task_memory_write_events_lease\n    on task_memory_write_events(status, lease_expires_at, id)"
+        ],
+        [
+          "index",
+          "sqlite_autoindex_task_memory_write_events_1",
+          "task_memory_write_events",
+          null
+        ],
+        [
+          "table",
+          "task_memory_write_events",
+          "task_memory_write_events",
+          "CREATE TABLE task_memory_write_events (\n    id integer primary key autoincrement,\n    reply_task_id integer not null,\n    execution_generation text not null,\n    consumer_run_id integer,\n    memories_json text not null default '[]',\n    written_memory_ids_json text not null default '[]',\n    status text not null default 'pending',\n    attempts integer not null default 0,\n    available_at text not null default '',\n    error text not null default '',\n    skip_reason text not null default '',\n    lease_owner text not null default '',\n    lease_expires_at text not null default '',\n    started_at text not null default '',\n    created_at text not null default current_timestamp,\n    updated_at text not null default current_timestamp,\n    unique(reply_task_id, execution_generation),\n    foreign key(reply_task_id) references tasks(id)\n)"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_task_memory_write_events_reply_task_id_insert",
+          "task_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_task_memory_write_events_reply_task_id_insert before insert on \"task_memory_write_events\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_task_memory_write_events_reply_task_id_update",
+          "task_memory_write_events",
+          "CREATE TRIGGER trg_tasks_child_task_memory_write_events_reply_task_id_update before update of \"reply_task_id\" on \"task_memory_write_events\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "reply_task_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "execution_generation",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "consumer_run_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "memories_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0,
+          0
+        ],
+        [
+          5,
+          "written_memory_ids_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0,
+          0
+        ],
+        [
+          6,
+          "status",
+          "TEXT",
+          1,
+          "'pending'",
+          0,
+          0
+        ],
+        [
+          7,
+          "attempts",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          8,
+          "available_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          9,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "skip_reason",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          11,
+          "lease_owner",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "lease_expires_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "started_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          14,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          15,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "reply_task_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "indexes": [
+        {
+          "list": [
+            0,
+            "idx_task_memory_write_events_lease",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              6,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              12,
+              "lease_expires_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            1,
+            "idx_task_memory_write_events_due",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              6,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              8,
+              "available_at",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            2,
+            "sqlite_autoindex_task_memory_write_events_1",
+            1,
+            "u",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "reply_task_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              2,
+              "execution_generation",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    "wechat_deliveries": {
+      "objects": [
+        [
+          "index",
+          "idx_wechat_deliveries_status",
+          "wechat_deliveries",
+          "CREATE INDEX idx_wechat_deliveries_status\n                    on wechat_deliveries(status, id)"
+        ],
+        [
+          "index",
+          "idx_wechat_deliveries_task_generation",
+          "wechat_deliveries",
+          "CREATE INDEX idx_wechat_deliveries_task_generation on wechat_deliveries(reply_task_id, execution_generation, id)"
+        ],
+        [
+          "table",
+          "wechat_deliveries",
+          "wechat_deliveries",
+          "CREATE TABLE wechat_deliveries (\n                    id integer primary key autoincrement,\n                    reply_task_id integer not null,\n                    account_id text not null,\n                    target_type text not null,\n                    target_id text not null,\n                    conversation_id text not null default '',\n                    reply_text text not null,\n                    execution_generation text not null default 'initial',\n                    status text not null default 'ready_to_send',\n                    action_started_at text not null default '',\n                    pre_action_failure integer not null default 0,\n                    evidence_json text not null default '{}',\n                    error text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    foreign key(reply_task_id) references tasks(id)\n                )"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_wechat_deliveries_reply_task_id_insert",
+          "wechat_deliveries",
+          "CREATE TRIGGER trg_tasks_child_wechat_deliveries_reply_task_id_insert before insert on \"wechat_deliveries\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ],
+        [
+          "trigger",
+          "trg_tasks_child_wechat_deliveries_reply_task_id_update",
+          "wechat_deliveries",
+          "CREATE TRIGGER trg_tasks_child_wechat_deliveries_reply_task_id_update before update of \"reply_task_id\" on \"wechat_deliveries\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+        ]
+      ],
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "reply_task_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "target_type",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "target_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "conversation_id",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          6,
+          "reply_text",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "execution_generation",
+          "TEXT",
+          1,
+          "'initial'",
+          0,
+          0
+        ],
+        [
+          8,
+          "status",
+          "TEXT",
+          1,
+          "'ready_to_send'",
+          0,
+          0
+        ],
+        [
+          9,
+          "action_started_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "pre_action_failure",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          11,
+          "evidence_json",
+          "TEXT",
+          1,
+          "'{}'",
+          0,
+          0
+        ],
+        [
+          12,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          14,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "tasks",
+          "reply_task_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "indexes": [
+        {
+          "list": [
+            0,
+            "idx_wechat_deliveries_task_generation",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              1,
+              "reply_task_id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              7,
+              "execution_generation",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              3,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        },
+        {
+          "list": [
+            1,
+            "idx_wechat_deliveries_status",
+            0,
+            "c",
+            0
+          ],
+          "xinfo": [
+            [
+              0,
+              8,
+              "status",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              1,
+              0,
+              "id",
+              0,
+              "BINARY",
+              1
+            ],
+            [
+              2,
+              -1,
+              null,
+              0,
+              "BINARY",
+              0
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "candidate_ordinary_tables": [
+    "actions",
+    "business",
+    "business_attention_events",
+    "business_attention_items",
+    "business_attention_proposal_tasks",
+    "business_attention_tasks",
+    "business_legacy_links",
+    "business_project_candidates",
+    "business_project_evidence",
+    "business_source_documents",
+    "business_task_anchor_links",
+    "business_task_date_evidence",
+    "business_task_evidence",
+    "business_task_relations",
+    "business_task_signals",
+    "business_work_cluster_tasks",
+    "configs",
+    "email_classifications",
+    "email_historical_classification_history",
+    "email_historical_operations",
+    "email_messages",
+    "email_schema_migrations",
+    "errors",
+    "feedback_events",
+    "feedback_iteration_decision_items",
+    "feedback_processing_transitions",
+    "meeting_alignment_delivery_claims",
+    "meeting_memory_write_events",
+    "provider_state",
+    "runs",
+    "schedules",
+    "state",
+    "task_memory_write_events",
+    "tasks",
+    "wechat_deliveries",
+    "wechat_memory_candidates"
+  ],
+  "required_final_tables": [
+    "actions",
+    "business",
+    "configs",
+    "email_schema_migrations",
+    "emails",
+    "provenance",
+    "provider_state",
+    "runs",
+    "schedules",
+    "state",
+    "tasks"
+  ],
+  "boundary": "Source metadata evidence only; not migrated or selected task-delivery Actions schema; no source row body was captured.",
+  "source_table_types": {
+    "shadow": 4,
+    "table": 116,
+    "virtual": 1
+  },
+  "source_store_version": "2026-10-13.5",
+  "source_email_version": 51,
+  "source_checkout_head": "486aa6adca0f81151c0cf55eb0100bd93df4c184",
+  "remaining_native_destinations": {
+    "business_attention_events": [
+      "actions"
+    ],
+    "business_attention_items": [
+      "business"
+    ],
+    "business_attention_proposal_tasks": [
+      "actions"
+    ],
+    "business_attention_tasks": [
+      "actions"
+    ],
+    "business_legacy_links": [
+      "business/actions：内联已证明的旧身份"
+    ],
+    "business_project_candidates": [
+      "business"
+    ],
+    "business_project_evidence": [
+      "actions"
+    ],
+    "business_source_documents": [
+      "provenance"
+    ],
+    "business_task_anchor_links": [
+      "actions"
+    ],
+    "business_task_date_evidence": [
+      "actions"
+    ],
+    "business_task_evidence": [
+      "actions"
+    ],
+    "business_task_relations": [
+      "actions"
+    ],
+    "business_task_signals": [
+      "actions"
+    ],
+    "business_work_cluster_tasks": [
+      "actions"
+    ],
+    "email_classifications": [
+      "emails"
+    ],
+    "email_historical_classification_history": [
+      "actions"
+    ],
+    "email_historical_operations": [
+      "actions"
+    ],
+    "email_messages": [
+      "emails"
+    ],
+    "errors": [
+      "actions"
+    ],
+    "feedback_events": [
+      "actions"
+    ],
+    "feedback_iteration_decision_items": [
+      "actions"
+    ],
+    "feedback_processing_transitions": [
+      "actions"
+    ],
+    "meeting_alignment_delivery_claims": [
+      "actions"
+    ],
+    "meeting_memory_write_events": [
+      "actions"
+    ],
+    "task_memory_write_events": [
+      "actions"
+    ],
+    "wechat_deliveries": [
+      "actions"
+    ],
+    "wechat_memory_candidates": [
+      "business"
+    ]
+  },
+  "field_map_sha256": "888fcf45f6e6bcdfd533c9deec26a681b7c3c992465a4eb23b7fdcb5684ba8b5",
+  "design_sha256": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+  "caller_inventory": {
+    "method": "AST string-literal source-family references; includes schema/source factories and API labels, not only direct SQL; dynamic SQL still requires manual review",
+    "files": {
+      "app/store.py": [
+        {
+          "name": "_initialize",
+          "line": 2344,
+          "source_families": [
+            "meeting_alignment_delivery_claims",
+            "meeting_memory_write_events",
+            "task_memory_write_events",
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_compact_settled_reply_task_input",
+          "line": 7927,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_runtime_operation_parent_exists",
+          "line": 9377,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "supersede_obsolete_meeting_memory_runtime_attempts",
+          "line": 10271,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "recover_failed_native_codex_auth_tasks",
+          "line": 12815,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "rotate_reply_task_execution_generation",
+          "line": 12917,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_supersede_ready_wechat_delivery",
+          "line": 13322,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_prepare_new_wechat_delivery",
+          "line": 13349,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "finalize_wechat_reply_task",
+          "line": 13420,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "create_wechat_delivery",
+          "line": 13549,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "get_wechat_delivery_for_task",
+          "line": 13625,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "list_wechat_deliveries_by_status",
+          "line": 13650,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "ready_wechat_delivery_ids_for_messages",
+          "line": 13678,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "requeue_unperformed_wechat_deliveries",
+          "line": 13710,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "requeue_wechat_deliveries_after_accessibility_recovery",
+          "line": 13819,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "requeue_expired_wechat_delivery_for_user",
+          "line": 13871,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "requeue_readback_absent_wechat_delivery_for_user",
+          "line": 13928,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "claim_wechat_delivery",
+          "line": 13983,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "get_wechat_delivery_by_id",
+          "line": 14050,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "set_wechat_delivery_status",
+          "line": 14070,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "supersede_reconciled_wechat_delivery",
+          "line": 14128,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "skip_exhausted_stale_wechat_delivery",
+          "line": 14181,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "supersede_stale_ready_wechat_delivery",
+          "line": 14252,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_supersede_failed_wechat_deliveries_with_newer_sent",
+          "line": 14305,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "supersede_failed_wechat_deliveries_with_newer_sent",
+          "line": 14373,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "normalize_user_rejected_wechat_deliveries",
+          "line": 14387,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_sync_wechat_delivery_reply_attempt",
+          "line": 14457,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "create_meeting_memory_write_event",
+          "line": 14954,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "_enqueue_task_memory_write_in_connection",
+          "line": 14996,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "get_task_memory_write_event",
+          "line": 15060,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "record_task_memory_written_ids",
+          "line": 15067,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "_settle_task_memory_write_event",
+          "line": 15102,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "list_failed_task_memory_write_events",
+          "line": 15117,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "enqueue_sent_meeting_memory_write_events",
+          "line": 15136,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "list_due_meeting_memory_write_events",
+          "line": 15186,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "meeting_memory_health_snapshot",
+          "line": 15210,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "claim_due_meeting_memory_write_events",
+          "line": 15334,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "complete_meeting_memory_write_event",
+          "line": 15399,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "renew_meeting_memory_write_event_lease",
+          "line": 15422,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "retry_meeting_memory_write_event",
+          "line": 15449,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "fail_meeting_memory_write_event",
+          "line": 15489,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "requeue_failed_meeting_memory_write_event",
+          "line": 15512,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "reconcile_failed_meeting_memory_write_event",
+          "line": 15544,
+          "source_families": [
+            "meeting_memory_write_events"
+          ]
+        },
+        {
+          "name": "claim_ready_to_send_meeting_alignment_jobs",
+          "line": 15698,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "claim_ready_to_send_meeting_alignment_job",
+          "line": 15754,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "release_ready_to_send_meeting_alignment_claims",
+          "line": 15781,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "reset_ready_to_send_meeting_alignment_jobs",
+          "line": 15830,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "rerun_meeting_alignment_jobs",
+          "line": 15907,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "_history_items_query",
+          "line": 23404,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_operation_logs_base_query",
+          "line": 28335,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        }
+      ],
+      "app/task20_current_schema.py": [
+        {
+          "name": "install_current_task_child_guards",
+          "line": 48,
+          "source_families": [
+            "meeting_alignment_delivery_claims",
+            "meeting_memory_write_events"
+          ]
+        }
+      ],
+      "app/action_storage.py": [
+        {
+          "name": "_task_delivery_payload",
+          "line": 1277,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "task_delivery_insert_parts",
+          "line": 1291,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "task_delivery_set_parts",
+          "line": 1326,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "update_task_delivery_action",
+          "line": 1356,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        },
+        {
+          "name": "operation",
+          "line": 1360,
+          "source_families": [
+            "meeting_alignment_delivery_claims"
+          ]
+        }
+      ],
+      "app/task_memory_write.py": [],
+      "app/dispatcher/adapters.py": [
+        {
+          "name": "metrics",
+          "line": 1553,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "claim",
+          "line": 1584,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "release",
+          "line": 1619,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        },
+        {
+          "name": "renew",
+          "line": 1633,
+          "source_families": [
+            "task_memory_write_events"
+          ]
+        }
+      ],
+      "app/cli.py": [],
+      "app/task_storage.py": [
+        {
+          "name": "install_task_child_guards",
+          "line": 833,
+          "source_families": [
+            "meeting_alignment_delivery_claims",
+            "meeting_memory_write_events"
+          ]
+        }
+      ],
+      "app/meeting_memory_write.py": [],
+      "app/quality_gate.py": [
+        {
+          "name": "_check_external_delivery_queues",
+          "line": 845,
+          "source_families": [
+            "meeting_memory_write_events",
+            "wechat_deliveries"
+          ]
+        }
+      ],
+      "app/audit_web.py": [
+        {
+          "name": "_queue_status_snapshots",
+          "line": 2589,
+          "source_families": [
+            "meeting_memory_write_events",
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_reply_attempt_queue_snapshot",
+          "line": 3069,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_wechat_delivery_queue_snapshot",
+          "line": 3258,
+          "source_families": [
+            "wechat_deliveries"
+          ]
+        },
+        {
+          "name": "_queue_attention_rows",
+          "line": 3365,
+          "source_families": [
+            "meeting_memory_write_events",
+            "task_memory_write_events",
+            "wechat_deliveries"
+          ]
+        }
+      ],
+      "app/web_api/registration.py": [],
+      "app/wechat/service.py": [],
+      "app/wechat/cli.py": [],
+      "app/wechat/consumer.py": [],
+      "app/wechat/accessibility.py": [],
+      "app/wechat/audit_web.py": []
+    }
+  }
+}

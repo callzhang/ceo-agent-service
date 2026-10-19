@@ -1,0 +1,23 @@
+--- a/tests/test_workbench_store.py
++++ b/tests/test_workbench_store.py
+@@ -14,6 +14,7 @@
+ from app.task_storage import task_physical_id, task_id_expression, insert_task, WORKBENCH_TURN_SQL
+ from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
+ from app.workbench.store import WorkbenchConflictError, WorkbenchStore
++from app.task8_storage import task8_set_parts
+ 
+ 
+ def _store(tmp_path: Path) -> WorkbenchStore:
+@@ -417,9 +418,10 @@
+ def test_public_turn_excludes_private_resume_context(tmp_path: Path):
+     store, _, turn_id = _running_turn(tmp_path)
+     with store._connect() as db:
++        parts = task8_set_parts("workbench_turns", {"resume_context": "private receipt"})
+         db.execute(
+-            "update tasks set resume_context='private receipt' where record_type='workbench_turns' and legacy_key=?",
+-            (turn_id,),
++            f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
++            (*parts.parameters, turn_id),
+         )
+     public = store.get_turn(turn_id)
+     assert "resume_context" not in public.model_dump()

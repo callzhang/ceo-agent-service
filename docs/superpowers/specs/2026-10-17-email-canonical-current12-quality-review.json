@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-10-18T02:01:32.745338+00:00",
+  "status": "changes_required",
+  "freeze_sha256": "9067d11e97e22b951b9cfb7bbbd11fae155c08c1edd5724ee4e2cf0db85b396f",
+  "reviewer": "/root/email_canonical_current12_quality",
+  "focused_tests": {
+    "passed": 7,
+    "failed": 2,
+    "elapsed_seconds": 235.91,
+    "session_id": 76114
+  },
+  "findings": [
+    {
+      "path": "tests/test_email_store.py",
+      "node": "test_processed_model_rescan_preserves_business_snapshot_plan_and_actions",
+      "lines": [
+        4762,
+        4765,
+        4795,
+        4798,
+        4850,
+        4851
+      ],
+      "issue": "Current selected12 public parity regression still reads retired email_classifications/email_messages parents; assertions not reached. Translate six reads to source-shaped canonical projections, retain business assertions."
+    },
+    {
+      "path": "tests/test_email_action_external_consumers.py",
+      "node": "test_current_plan_poll_and_retry_window_on_target",
+      "lines": [
+        229,
+        266
+      ],
+      "issue": "Trace wrapper rejects current foreign_keys argument; after that repair synthetic native parent UPDATE would fail. Adapt test interface and canonical setup, retain query/claim/retirement assertions."
+    }
+  ],
+  "all_review_pins_unchanged": true,
+  "temporary_directory_removed": true,
+  "same_author_repair_dispatched": true,
+  "actual_copy_executed": false,
+  "deployed": false
+}

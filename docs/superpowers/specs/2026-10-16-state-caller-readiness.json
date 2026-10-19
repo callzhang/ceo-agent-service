@@ -1,0 +1,225 @@
+{
+  "kind": "state-caller-readiness-integer-dispatcher-and-bulk",
+  "date": "2026-10-16",
+  "native_integer_binding": {
+    "candidate": "756a6c7eab63a3797dae4c1d64eb79bcbb851787",
+    "source_scope": "Shared scalar encoder only; underlying PyLong range checked before overloaded comparisons; legal bool JSON format unchanged.",
+    "root": {
+      "red_failed": 16,
+      "red_passed": 12,
+      "green": 342,
+      "seconds": 17.25,
+      "ruff": true,
+      "owned_temp_removed": true
+    },
+    "implementation": {
+      "green": 342,
+      "seconds": 17.35,
+      "canonical_bytes_equal": true,
+      "other_module_ast_unchanged": true,
+      "owned_temp_removed": true
+    },
+    "spec": {
+      "verdict": "PASS",
+      "green": 342,
+      "seconds": 18.61,
+      "additional_native_state_probes": 14,
+      "legal_parent_encoding_unchanged": true,
+      "owned_temp_removed": true
+    },
+    "quality": {
+      "verdict": "PASS",
+      "green": 342,
+      "seconds": 18.22,
+      "parent_mutant_failed": 16,
+      "parent_mutant_passed": 12,
+      "native_binding_probes": 109,
+      "parent_legal_scalar_json_byte_comparisons": 16,
+      "existing_lease_overflow_zero_sql_probes": 12,
+      "owned_temp_removed": true
+    },
+    "source_capture_sha256": "604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff",
+    "runtime_callers_selected": false
+  },
+  "dispatcher_proposal": {
+    "candidate_commit": "b4ff0720616a0854d42cba632771eec34aedc1f9",
+    "path": "docs/superpowers/plans/2026-10-16-state-dispatcher-proposal.patch",
+    "artifact_sha256": "1b0f82c42eac437858662be46db0eca7175dfe3485e9d2d85c13ad240f101131",
+    "applied_candidate_sha256": "7b7ab7d8b5225b66d666b8d744fca14bf77c6724ab4c2b739e5c31c149ae49ad",
+    "change_from_previous": "Exactly redundant generation-only SELECT expression removed from candidate; no other candidate callable/signature change.",
+    "changed_existing_callables": 19,
+    "class_methods": 12,
+    "shared_helpers": 7,
+    "new_rowid_helper": 1,
+    "translated_native_sql_references": 39,
+    "joins": 28,
+    "spec": {
+      "verdict": "PASS_proposal_only",
+      "native_candidate_scenarios": 358,
+      "explicit_outer_rollback_checks": 252,
+      "before_write_lock_overflow_traces": 10,
+      "clock_harness": "Fixed identical SQLite clock after one initial cross-second probe; no application clock change.",
+      "all_databases_in_memory": true
+    },
+    "quality": {
+      "verdict": "PASS_proposal_only",
+      "independent_state_checkpoints": 22,
+      "partial_source_pk_and_rowid_index_plans": true,
+      "terminal_cutoff_index_no_temp_sort": true,
+      "existing_immediate_call_positions": {
+        "acquire": 8,
+        "release": 9,
+        "renew": 5,
+        "complete": 4
+      },
+      "repeated_spec_610": false,
+      "all_databases_in_memory": true
+    },
+    "mechanical_artifact": "Initial worker malformed its own uncommitted patch during line editing, caught by apply check; corrected from HEAD via owned temporary candidate and regenerated zero-context diff. Final apply roundtrip/candidate byte deletion/compile/Ruff/diff/cleanup pass.",
+    "runtime_selected": false,
+    "full_dispatcher_workflow_proven": false
+  },
+  "store_27_proposal_root_probe": {
+    "runtime_source_sha256": "03ba4a8c0136723caf94f779278849f1c569fea3e4ca6d772bca78c936f6097a",
+    "artifact_sha256": "50b6d019225761995b922c59e5406d42445fbfbfb958a9f8232b224468a152c1",
+    "exact_changed_methods": 27,
+    "matched_method_calls_per_variant": 61,
+    "variants": [
+      "actual",
+      "fresh"
+    ],
+    "elapsed_seconds": 6.058,
+    "construction": "Real current Store+Email constructors in owned synthetic databases, rebuild only native State source declarations from literal fixtures, migrate target State, compile exact27 proposed methods into test-only subclass sharing normal connection/hydration code.",
+    "final_facts": "All15 retained State family facts/storage types/source ROWIDs agree; eight exercised nonempty families and seven empty families. No non-State whole-database equivalence claimed.",
+    "clock_comparison": "Normalize only fetched_at/manual_confirmed_at/seen_at/updated_at for cross-database comparisons; storage type checked. Per-store blank-confirmer preserves prior manual time; no byte-equal cross-database clock claim.",
+    "extra_checks": [
+      "conversation NULL preserves old session and contract hash",
+      "empty session replaces",
+      "ambiguous title behavior",
+      "global seen-message duplicate behavior",
+      "setup NULL INSERT candidate fails before conflict handling",
+      "blank WeChat fields preserve prior values; nonblank older watermark replaces",
+      "org duplicate name/open ID",
+      "JSON scalar/list/object metadata"
+    ],
+    "owned_temp_removed": true,
+    "preliminary_fixture_errors": "Store-only initial fresh probe lacked two Email-owned State families; paired constructors exactly match fresh16/87. First complete probe had positional setup-wizard test invocation corrected to actual keyword-only signature; no app change.",
+    "actual_production_data": false,
+    "cold_target_constructor_reopen": false,
+    "runtime_selected": false,
+    "full_27_boundary_coverage": false
+  },
+  "bulk_update": {
+    "candidate": "b778f49f",
+    "target_storage_sha256": "cc45a425358cd43c7432100a6f062786c103e2610b084555ff424754d37c8e18",
+    "new_cases": 75,
+    "root_green": 417,
+    "root_seconds": 18.22,
+    "implementation_green": 417,
+    "implementation_seconds": 18.64,
+    "spec": {
+      "verdict": "PASS",
+      "focused_passed": 417,
+      "runs": [
+        {
+          "passed": 403,
+          "seconds": 18.45
+        },
+        {
+          "passed": 14,
+          "seconds": 0.21
+        }
+      ],
+      "additional_native_typed_fact_checkpoints": 6460,
+      "all_85_fields_and_both_variants": true,
+      "owned_temp_removed": true
+    },
+    "quality": {
+      "verdict": "PASS",
+      "focused_passed": 547,
+      "seconds": 23.78,
+      "files": [
+        "tests/test_state_bulk_update.py",
+        "tests/test_state_upsert.py",
+        "tests/test_state_schema_release.py",
+        "tests/test_state_storage.py",
+        "tests/test_state_source_contract.py",
+        "tests/test_native_scalar_codec.py"
+      ],
+      "source_contract_cases": 172,
+      "author_417_exact_rerun": false,
+      "coverage": "Different matrix: includes new75, existing storage147/upsert107/release29/scalar17 and source-contract172; replaces author matrix's native-integer28/org-index8/config-state-source6 (42 cases) with source-contract172, net130 more tests.",
+      "additional_behavioral_checkpoints": 48,
+      "trace": "Existing no-row lock UPDATE then one payload UPDATE, no SELECT/default pre-evaluation or transaction-control statements.",
+      "old_12_functions_and_dataclass_unchanged": true,
+      "source_declarations_unchanged": true,
+      "owned_temp_removed": true
+    },
+    "old_storage_functions_unchanged": 12,
+    "declarations_and_source_metadata_unchanged": true,
+    "runtime_selected": false,
+    "actual_caller_scope": "Session clears/resets, lock renewals and route rename with distinct candidate destination keys. No claim of deterministic generic competing-key-collapse survivors.",
+    "no_actual_source_database_used": true,
+    "verdict": "PASS_unselected_storage_prerequisite"
+  },
+  "constructor_closure_research": {
+    "read_only": true,
+    "new_tests_run": false,
+    "store_native_ddl_to_remove": 14,
+    "store_retained_kinds": 13,
+    "email_retained_kinds": 2,
+    "total_native_source_families": 16,
+    "existing_empty_corpus_retired": true,
+    "native_alter_blocks_to_remove": 4,
+    "legacy_session_backfill_to_remove": true,
+    "root_verified_critical_anchors": [
+      "app/store.py:1872",
+      "app/store.py:2727",
+      "app/store.py:8435",
+      "app/store.py:8638",
+      "app/email_current_schema.py:424",
+      "app/email_store.py:6964"
+    ],
+    "required": "Validated fresh Store installs State once before converted migration-helper SQL; exact current State predicate before cached/repair paths; explicit State marker; preserve non-State repair rules. Runtime Email factory excludes two old State names while archived source factories remain unchanged.",
+    "not_implemented": true,
+    "runtime_email_factory": "app/email_current_schema.py:create_current_email_runtime_schema at424 excludes only config kinds today; must also exclude email_scan_cursors/email_historical_traversals without changing archived _CURRENT_TABLE_SQL/source factories.",
+    "periodic_ui_closure": [
+      "app/quality_gate.py physical source-map and scan/scheduler/route/capacity queries",
+      "app/processing_reaction.py sync enumeration and finish deletion",
+      "app/audit_web.py email-worker-health and queue attention",
+      "app/email_store.py model_scan_progress/email_processing_progress/unsubscribe cancellation",
+      "app/rule_question_retirement.py current state marker"
+    ],
+    "current_version_reader_modules": [
+      "app/action_email_schema_release.py",
+      "app/store_schema_release.py",
+      "app/email_publication_sources.py",
+      "app/task_schema_release.py",
+      "app/scheduled_config_storage.py"
+    ]
+  },
+  "boundaries": {
+    "last_accepted_combined_ordinary_tables": 82,
+    "expected_future_state_intermediate": 67,
+    "final_requirement": "10 core tables plus migration ledger; actual final name set and FTS retirement still required",
+    "current_caller_constructor_version_and_paired_publication_closure": false,
+    "latest_combined_copy_genuine_old_code_and_native_cli_acceptance": false,
+    "main_merge": false,
+    "push": false,
+    "deploy": false,
+    "production_mutation": false,
+    "real_external_sending": false,
+    "required_final_harness": [
+      "scripts/validate_action_email_copy.py",
+      "scripts/validate_native_copy_lifecycle.py",
+      "scripts/validate_native_copy_additional.py"
+    ]
+  },
+  "pending_cleanup": {
+    "path": "/private/tmp/state-upsert-impl.694bXO",
+    "status": "pending previously asked authorization",
+    "action": "rm -rf /tmp/state-upsert-impl.694bXO",
+    "automatic_review_reason": "deletion required approval while AskForApproval was Never",
+    "retried_or_bypassed": false
+  }
+}

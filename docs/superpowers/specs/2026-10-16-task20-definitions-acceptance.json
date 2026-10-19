@@ -1,0 +1,38 @@
+{
+  "status": "accepted_unselected_tasks20_declaration_layer",
+  "implementation_commit": "388d486e2c25a615a411ef25fc526ed481ab6c32",
+  "regression_repair_commit": "30c2c4b9a7530663835794e12c096ab7cf4fb33c",
+  "application_sha256": "59938318c8dacb836b7601c6c2f63671901a0232f7f23881007ef59fcef0c2c5",
+  "regression_sha256": "dea543a9867ca35ab49c14458dbe86c5c55df2496f2462d5d564be502715a215",
+  "representation": {
+    "source_kinds": 20,
+    "source_fields": 267,
+    "stored_structural_columns": 7,
+    "generated_columns": 268,
+    "indexes": 51,
+    "triggers": 22
+  },
+  "root_preflight": "325 passed9.47s initial; repaired325 passed9.24s",
+  "applied_writer": "325 passed9.27s initial; repaired325 passed9.92s",
+  "fresh_spec": "267fieldbindings/134new affinities NN defaults/24native index identities uniqueness order direction/10native triggers+published8semantics exact;325passed9.52s; repair22passed0.72s",
+  "fresh_quality": {
+    "initial_applied": "325passed9.67s",
+    "initial_finding": "P2:3Workbench CHECK negatives andparentINSERTnegative reused client_request_id; unrelated UNIQUE failure masked deleted constraints. No implementation defect reproduced.",
+    "repair": "Successful exact inserts under rolled-back savepoints with distinct Workbench request/sequence/completed values, then change only badfield/parent. Application unchanged.",
+    "recheck": "22affectedcasespassed0.75s; all4original constraint-deletion mutants caught with DID NOT RAISE",
+    "other_independent_controls": "20unknown-key deletion mutants caught;243source-derived NOT NULL success/rejection controls; nullable/public/typedbatch and3feedback endpoints accepted"
+  },
+  "root_additional_checks": "351application Python ASTs parse; only app reference to installer is ownmodule; no runtime activation/import. Ruff/diff/hash checks pass.",
+  "cleanup": "All new owned preflight temporary code/database trees removed; no real database access during declaration tests",
+  "remaining": [
+    "source-kind allocators and FULL/ignored-conflict behavior",
+    "transactional writers including referencedbatch physical identity acrossREPLACE",
+    "source hiddenROWID selection for converted nativeROWID callers",
+    "all8+12caller conversions and coupled retained children",
+    "copied DB migration/currentwrites/inverse/truepredecessorwrites/reforward",
+    "native CLI fake-outbound/UI acceptance",
+    "remainingActions/Business/Emails/Provenance/retirements",
+    "final10core+1ledger inventory and approved publication"
+  ],
+  "production_boundary": "No source retirement/constructor/selector/currentcaller/migration/main/push/deploy change. This layer does not complete the full design."
+}

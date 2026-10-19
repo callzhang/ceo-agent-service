@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import BusinessAnchorType, BusinessRelationStatus
+from app.action_business_definitions import business_action_projection
 
 
 class ProjectCandidateActionNotApplicable(Exception):
@@ -38,15 +39,12 @@ def confirm_project_candidate(
         if candidate.status is not BusinessRelationStatus.PROPOSED:
             raise ProjectCandidateActionNotApplicable("只有待确认的项目线索可以确认")
         signal_row = db.execute(
-            """
-            select evidence.signal_id
-            from business_work_cluster_tasks as membership
-            join business_task_evidence as evidence
-              on evidence.task_id = membership.task_id
-            where membership.cluster_id=?
-            order by evidence.created_at, evidence.signal_id
-            limit 1
-            """,
+            f"select evidence.signal_id "
+            f"from ({business_action_projection('business_work_cluster_tasks')}) as membership "
+            f"join ({business_action_projection('business_task_evidence')}) as evidence "
+            "on evidence.task_id = membership.task_id "
+            "where membership.cluster_id=? "
+            "order by evidence.created_at, evidence.signal_id limit 1",
             (candidate.cluster_id,),
         ).fetchone()
         if signal_row is None:

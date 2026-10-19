@@ -44,8 +44,8 @@ def _add(store: EmailStore, classification_id: int, *, sender: str, subject: str
     if owner_labelled:
         with store._connect() as db:
             db.execute(
-                "update email_classifications set classification_source='user', "
-                "confirmed_category=?, status='processed' where id=?",
+                "update emails set class_classification_source='user', "
+                "class_confirmed_category=?, class_status='processed' where classification_id=?",
                 (category, classification_id),
             )
     return identity

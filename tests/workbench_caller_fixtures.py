@@ -2,6 +2,10 @@
 
 from contextlib import contextmanager
 import sqlite3
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 from tests.workbench_schema_fixtures import full_source_database
 from tests.test_sent_delivery_source import SOURCE as SENT_SOURCE
@@ -29,31 +33,59 @@ def advance_source16_to_store17(path):
         db.execute("update service_state set value='2026-10-13.3' where key='store_schema_version'")
 
 
-def advance_source17_to_store19(path):
-    """Publish both real delivery and reply steps before the current factory."""
-    from app.action_delivery_storage import migrate_action_delivery_schema
-    from app.action_reply_storage import migrate_action_reply_schema
+def advance_source17_to_current_store(path, published_source):
+    """Run archived Store/Email source constructors, then the paired release."""
+    with sqlite3.connect(path) as db:
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.3",)
+    old_program = """
+from pathlib import Path
+import sqlite3
+import sys
+from app.action_delivery_storage import migrate_action_delivery_schema
+from app.store import AutoReplyStore
+from app.email_store import EmailStore
+
+path = Path(sys.argv[1])
+with sqlite3.connect(path) as db:
+    db.execute('pragma foreign_keys=off')
+    db.execute('begin immediate')
+    migrate_action_delivery_schema(db)
+    db.execute("update service_state set value='2026-10-13.4' where key='store_schema_version'")
+AutoReplyStore(path)
+EmailStore(path)
+"""
+    subprocess.run(
+        [sys.executable, "-c", old_program, str(path)],
+        cwd=published_source,
+        env={**os.environ, "PYTHONPATH": str(published_source)},
+        check=True, capture_output=True, text=True,
+    )
+    with sqlite3.connect(path) as db:
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.5",)
+        assert db.execute("select count(*) from email_unsubscribe_claims").fetchone() == (0,)
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; from app.store import AutoReplyStore; from app.email_store import EmailStore; import sys; path=Path(sys.argv[1]); AutoReplyStore(path); EmailStore(path)", str(path)],
+        cwd=published_source,
+        env={**os.environ, "PYTHONPATH": str(published_source)},
+        check=True, capture_output=True, text=True,
+    )
+    from app.action_email_storage import capture_email_action_source
+    from app.store_schema_release import prepare_database_schema_release
 
     with sqlite3.connect(path) as db:
-        db.execute("pragma foreign_keys=off")
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.3",)
-        db.execute("begin immediate")
-        migrate_action_delivery_schema(db)
-        db.execute("update service_state set value='2026-10-13.4' where key='store_schema_version'")
-        # The source13 workbench fixture does not construct EmailStore's
-        # unrelated schema. Store18's published reply preflight requires its
-        # exact Email51 migration marker.
-        db.execute("create table email_schema_migrations (version integer primary key, applied_at text not null)")
-        db.execute("insert into email_schema_migrations values(51,'source fixture')")
-        db.commit()
-        db.execute("begin immediate")
-        migrate_action_reply_schema(db)
-        db.execute("update service_state set value='2026-10-13.5' where key='store_schema_version'")
+        source = capture_email_action_source(db)
+        assert (source["action_variant"], source["email_variant"]) == (
+            "actual_no_memory_fk", "actual"
+        )
+    release = prepare_database_schema_release(Path(__file__).parents[1], path)
+    assert release is not None
+    release.publish()
+    release.finalize()
 
 
 @contextmanager
-def empty_source13(path):
-    db = full_source_database(path, path.with_suffix(".unrelated-schema.sqlite3"))
+def empty_source13(path, published_source):
+    db = full_source_database(path, path.with_suffix(".unrelated-schema.sqlite3"), published_source)
     # Remove the migration torture rows before adding this caller's business fixture.
     for table in (
         "workbench_confirmations", "workbench_artifacts", "workbench_attachments",

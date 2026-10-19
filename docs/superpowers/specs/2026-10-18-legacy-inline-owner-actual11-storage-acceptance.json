@@ -1,0 +1,61 @@
+{
+  "status": "accepted_local_intermediate11_storage_rehearsal_only",
+  "receipt": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-current-copy-attempt2.json",
+  "receipt_sha256": "9e982b012917fd8f2348aa3c32b7d665e5af0417693c562ff10a4586349a91eb",
+  "freeze": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-a1-combined-freeze.json",
+  "freeze_sha256": "dcd4beac50f93be25a7c69da4962c5b203149eadd583428ae1dafb34ea5dc4e1",
+  "runtime_pins_matched_receipt": 375,
+  "session": 87209,
+  "exit_code": 0,
+  "stages": [
+    116,
+    11,
+    116,
+    11
+  ],
+  "elapsed_seconds": 1828.541,
+  "first_cold_seconds": 613.79,
+  "inverse_current_facts_seconds": 1196.9,
+  "genuine_predecessor_cold_write_seconds": 1205.01,
+  "target_tables": [
+    "actions",
+    "business",
+    "business_source_documents",
+    "configs",
+    "email_schema_migrations",
+    "emails",
+    "provider_state",
+    "runs",
+    "schedules",
+    "state",
+    "tasks"
+  ],
+  "whole_original_source_fact_type_digests_survive_inverse": true,
+  "retained_42families_current_and_predecessor_newwrites_compared": true,
+  "all_allocator_streams_compared": true,
+  "retired_fact_exceptions": {
+    "retired_field": "work_projects.memory_context_json",
+    "hidden_rowid_not_business_identity": [
+      "email_provider_observations",
+      "email_provider_folder_observation_generations",
+      "email_unsubscribe_effects",
+      "email_direct_retry_requests"
+    ],
+    "other_fields_and_types": "compared; new synthetic rows permitted"
+  },
+  "retired_legacy_container_metadata": "Independent Legacy link id/time/allocator retired; exact WorkTodo\u2192Task owner/target retained; source Legacybaseline empty/no allocator asserted.",
+  "fresh_current_constructor_processes": 2,
+  "source_opened_for_write": false,
+  "provider_or_native_role_invocations": 0,
+  "managed_copy_and_immutable_code_roots_absent_verified": true,
+  "first_cold_same_input_capacity": {
+    "source_active_bytes": 504406016,
+    "target_active_bytes": 555180032,
+    "active_growth_bytes": 50774016,
+    "active_growth_mib": 48.421875,
+    "source_allocated_bytes": 504516608,
+    "target_allocated_bytes": 565100544,
+    "capacity_accepted": false
+  },
+  "evidence_boundary": "Intermediate11 retains business_source_documents body. No final bodyfreeprovenance/schema, model/traininglifecycle, real CodexCLI/review/revision/provider/send/UI, production deployment or finaldesign acceptance."
+}

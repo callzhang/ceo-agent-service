@@ -1,0 +1,54 @@
+{
+  "evidence_type": "bounded_read_only_exact_source_probe_metadata",
+  "source_copy_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_access": "mode=ro; query_only; source bodies held only in process memory and checked against prior frozen hash/bytes; no body output or copy",
+  "candidates": [
+    {
+      "source_document_id": 8,
+      "source_types": [
+        "console"
+      ],
+      "utf8_body_bytes": 111,
+      "utf8_body_sha256": "61be614b3fc336b4d1afe8b347851dcb4ba9fdc54cc4b089cca8c149fdfe51f8"
+    },
+    {
+      "source_document_id": 30,
+      "source_types": [
+        "service_data_repair"
+      ],
+      "utf8_body_bytes": 337,
+      "utf8_body_sha256": "10f3e749ef837fe0e9c3c92b0cd9d312bd64e3a69adc0fce753bffc5ca469605"
+    }
+  ],
+  "native_session_uuid": "01a122e3-0bec-73b3-b7aa-c0be8e731a61",
+  "native_path": "/Users/derek/.codex/sessions/2026/10/09/rollout-2026-10-09T15-57-47-01a122e3-0bec-73b3-b7aa-c0be8e731a61.jsonl",
+  "method": "Walk JSON string leaves of the bounded pre-existing native prefix; compare exact complete body or standard JSON string literal representation. Native file may append; each observed prefix was separately rehashed after its search.",
+  "maximum_native_prefix_bytes": 268435456,
+  "probes": [
+    {
+      "forms": [
+        "plain",
+        "utf8_json_string_literal"
+      ],
+      "prefix_bytes": 218954784,
+      "prefix_sha256": "8ea0a45bad213b19c7ae8989d0126b2b91251ed78af2ef8b58417d8300037377",
+      "prefix_unchanged": true,
+      "lines": 84991,
+      "invalid_lines": 0,
+      "matches": []
+    },
+    {
+      "forms": [
+        "ascii_json_string_literal"
+      ],
+      "prefix_bytes": 219379588,
+      "prefix_sha256": "ced388d04775d905e79a9b50491acdfafb6f6b9715ebcddd6a7cc9a08bcaab80",
+      "prefix_unchanged": true,
+      "lines": 85178,
+      "invalid_lines": 0,
+      "matches": []
+    }
+  ],
+  "conclusion": "No exact source recovered for these two documents from these prefixes. This does not prove their originals unavailable elsewhere; original 30 verified and 158 unproved counts remain unchanged.",
+  "mutations": "None to source database, native trajectory, runtime, caller, provider or production. Only this metadata and validation/claim documentation were written."
+}

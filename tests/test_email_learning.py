@@ -16,6 +16,7 @@ from app.email_pipeline import (
 from app.email_store import EmailStore
 from app.email_classifier_runtime import StageLatencyRecorder
 from app.email_training_snapshot import TRAINING_SNAPSHOT_VERSION
+from app.configs_storage import insert_config, update_config
 
 
 def test_runtime_observability_sink_failure_never_changes_classification_path():
@@ -73,13 +74,15 @@ def test_provider_scan_advances_folder_time_without_rewriting_message_rows(tmp_p
         message_times = tuple(
             row["observed_at"]
             for row in db.execute(
-                "select observed_at from email_provider_observations "
+                "select observed_at from provider_state "
+                "where record_type='observation' "
                 "order by stable_message_identity"
             )
         )
         folder_time = db.execute(
-            "select observed_at from email_provider_folder_observation_generations "
-            "where account_id='account-1' and provider_folder_id='folder-inbox'"
+            "select observed_at from provider_state "
+            "where record_type='folder_generation' and account_id='account-1' "
+            "and provider_folder_id='folder-inbox'"
         ).fetchone()["observed_at"]
 
     assert message_times == (
@@ -162,7 +165,7 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
         indexes = {
             row[1]
             for row in db.execute(
-                "pragma index_list(email_provider_observations)"
+                    "pragma index_list(provider_state)"
             )
         }
         plan = db.execute(
@@ -170,15 +173,14 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
             explain query plan
             select state, category_key, important, provider_folder_id,
                    provider_folder_name, observed_at
-            from email_provider_observations
-            where account_id=? and stable_message_identity=?
+            from provider_state
+            where record_type='observation' and account_id=? and stable_message_identity=?
             """,
             ("account-1", "stable-1"),
         ).fetchall()
-    assert "idx_email_provider_observations_lookup" not in indexes
-    assert "sqlite_autoindex_email_provider_observations_1" in indexes
+    assert "idx_provider_state_observation_identity" in indexes
     assert any(
-        "USING INDEX sqlite_autoindex_email_provider_observations_1" in str(row[3])
+        "USING INDEX idx_provider_state_observation_identity" in str(row[3])
         for row in plan
     )
     assert not any(" over " in statement.lower() for statement in select_statements)
@@ -221,36 +223,27 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
         model_text="contract",
     )
     with store._connect() as db:
-        db.execute(
-            """
-            insert into email_training_snapshots (
-                snapshot_id, snapshot_version, description_version,
-                input_schema_version, seed, observed_at, snapshot_digest,
-                manifest_json, frozen, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-            """,
-            (
-                "snapshot-observability",
-                TRAINING_SNAPSHOT_VERSION,
-                "description-set-v1",
-                "email-model-input.v3",
-                20260905,
-                "2026-09-08T08:00:00+00:00",
-                "a" * 64,
-                json.dumps({
+        db.execute("begin immediate")
+        result = insert_config(db, "email_training_snapshots", dict(
+                snapshot_id="snapshot-observability",
+                snapshot_version=TRAINING_SNAPSHOT_VERSION,
+                description_version="description-set-v1",
+                input_schema_version="email-model-input.v3",
+                seed=20260905,
+                observed_at="2026-09-08T08:00:00+00:00",
+                snapshot_digest="a" * 64,
+                manifest_json=json.dumps({
                     "sample_count": 3,
                     "group_count": 3,
                     "category_sample_counts": {"financing": 1, "legal": 2},
                     "category_group_counts": {"financing": 1, "legal": 2},
                     "splits": {"train": {"count": 3, "categories": ["financing", "legal"], "important": [False, True]}},
                 }),
-                "2026-09-08T08:00:00+00:00",
-            ),
-        )
-        db.execute(
-            "update email_training_snapshots set frozen=1 "
-            "where snapshot_id='snapshot-observability'"
-        )
+                frozen=0,
+                created_at="2026-09-08T08:00:00+00:00",
+            ))
+        assert result.lastrowid is not None
+        assert update_config(db, "email_training_snapshots", result.lastrowid, {"frozen": 1}) == 1
 
     statements: list[str] = []
     original_open_connection = store._open_connection
@@ -293,7 +286,7 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
         if statement.lstrip().upper().startswith("SELECT")
     ]
     assert len(selects) <= 5
-    assert sum("from email_training_snapshots" in item.lower() for item in selects) == 1
+    assert sum("from configs where record_type='email_training_snapshots'" in item.lower() for item in selects) == 1
     assert provider == {
         "state": "categorized",
         "category_key": "legal",

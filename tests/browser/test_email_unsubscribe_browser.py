@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from app.action_storage import email_action_projection
 from app.agent_contracts import ProposedAction
 from app.email_browser_profile import (
     EmailBrowserProfile,
@@ -767,7 +768,8 @@ def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_re
                 records = [
                     {key: row[key] for key in row.keys() if key != "entry_url"}
                     for row in database.execute(
-                        f"select * from {table} where action_identity=?",
+                        f"select * from ({email_action_projection(table)}) "
+                        "where action_identity=?",
                         (effect.action_identity,),
                     )
                 ]

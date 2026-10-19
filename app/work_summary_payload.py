@@ -1,7 +1,9 @@
 """Versioned, lossless storage codec for work-summary input JSON."""
 
 from __future__ import annotations
-from app.task_storage import task_id_expression, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import register_task8_functions, task8_set_parts
 
 import argparse
 import json
@@ -9,6 +11,9 @@ import sqlite3
 import zlib
 from contextlib import closing
 from pathlib import Path
+
+
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 _MAGIC = b"\x00WSI1"
 _COMPRESSION_LEVEL = 6
@@ -49,6 +54,7 @@ def migrate_work_summary_payloads(
         raise ValueError("batch_size must be positive")
     counts = {"scanned": 0, "compressed": 0, "bytes_before": 0, "bytes_after": 0}
     with closing(sqlite3.connect(database, timeout=30)) as db:
+        register_task8_functions(db)
         db.execute("pragma busy_timeout=30000")
         last_id = 0
         while True:
@@ -78,7 +84,7 @@ def migrate_work_summary_payloads(
                     if stored == raw:
                         continue
                     cursor = db.execute(
-                        f"update tasks set payload_json=? where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and payload_json=?",
+                        f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'payload_json')}=?""",
                         (encoded, row_id, current),
                     )
                     if cursor.rowcount:

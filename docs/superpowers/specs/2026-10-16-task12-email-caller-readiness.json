@@ -1,0 +1,31 @@
+{
+  "recorded_utc": "2026-10-16T18:49:42.283311+00:00",
+  "status": "bounded_email_public_proof_parent_rerun_pass",
+  "author_commit": "3a2d96778",
+  "script": "docs/superpowers/plans/2026-10-16-task12-email-public-preflight.py",
+  "script_sha256": "d9c6af6107f98d28aed5f09b9bb41411e1513974051694b7ba3c61c95cc711bc",
+  "parent_rerun": {
+    "source_checkpoints": 79,
+    "target_checkpoints": 79,
+    "equal_checkpoints": 79,
+    "differences": [],
+    "fixture_aborts": [],
+    "owned_temp_removed": true
+  },
+  "public_methods": 16,
+  "scope": "12classification adapter and4historical queue methods; original full fresh source; cloned EMPTY Tasks/2queues only; target explicit __new__ fixture attrs with real connection methods, no cold constructor acceptance",
+  "semantic_controls": [
+    "Done compaction omitted only in disposable target: real complete/get retains message, detected.",
+    "Bulk retry second-row fault rolls back visible updates to both rows and matches BEGIN IMMEDIATE/ROLLBACK; successful control rowcount2.",
+    "Historical reenqueue exact five-field replacement retains source ROWID/retry state.",
+    "Historical invalid second candidate rolls back first insert and traversal state.",
+    "Missing historical candidate raises exact error after native BEGIN/COMMIT."
+  ],
+  "unproved": [
+    "actual nonempty migration/cold constructor",
+    "broader queue/quality/maintenance/runtime readers",
+    "all20caller selection/current-fact inverse/predecessor/reforward",
+    "native CLI/provider/UI/final11/production"
+  ],
+  "current_runtime_selection_changed": false
+}

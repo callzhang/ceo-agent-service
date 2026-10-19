@@ -1034,7 +1034,6 @@ def _index_meeting_codex_session(
     decision: MeetingAlignmentDecision,
     *,
     source_id: int,
-    embedding_client: Callable[[list[str]], list[list[float]]] | None,
 ) -> None:
     session_id = str(getattr(runner, "last_session_id", "") or "").strip()
     if not session_id:
@@ -1494,7 +1493,6 @@ def _analyze_meeting_job(
         source,
         decision,
         source_id=run_id,
-        embedding_client=embedding_client,
     )
     store.update_meeting_alignment_job(
         job.id,

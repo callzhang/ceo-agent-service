@@ -1,5 +1,7 @@
 """Public Workbench identities remain separate from typed storage IDs."""
 
+from tests.test_email_legacy_schema import published_source as published_source
+
 import json
 import sqlite3
 
@@ -79,7 +81,7 @@ def test_current_workload_check_uses_public_text_turn_key(tmp_path: Path):
 
 
 @pytest.mark.parametrize("source", ["current", "source13"])
-def test_incomplete_workbench_declaration_is_rejected_without_mutation(tmp_path: Path, source):
+def test_incomplete_workbench_declaration_is_rejected_without_mutation(tmp_path: Path, source, published_source):
     from app.store import _INITIALIZED_STORE_PATHS
     from tests.workbench_schema_fixtures import full_source_database
 
@@ -92,7 +94,7 @@ def test_incomplete_workbench_declaration_is_rejected_without_mutation(tmp_path:
     else:
         # Keep the malformed source13 intact: do not run the valid-source
         # fixture finalizer, which itself performs a source13 migration.
-        db = full_source_database(path, path.with_suffix(".unrelated-schema.sqlite3"))
+        db = full_source_database(path, path.with_suffix(".unrelated-schema.sqlite3"), published_source)
         with db:
             db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Retained task','codex')")
             db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)

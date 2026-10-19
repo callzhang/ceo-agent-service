@@ -5,6 +5,7 @@ from app.task_semantic_models import FormalTaskBasis, ProjectContext, SourceCita
 from app.task_semantic_rules import FormalityEvidence
 from app.task_semantic_service import PromoteCandidate, RecordTaskSuggestion, SourceSignal, TaskSemanticService
 from app.web_api.tasks import business_project_detail, business_project_list_response, business_task_detail
+from app.action_followup_sync_definitions import sync_action_projection
 import pytest
 
 
@@ -84,7 +85,7 @@ def test_project_suggestion_is_separate_from_actual_owner_and_task_counts(tmp_pa
     assert proposed.commitment_status == "none"
     assert business_task_detail(store, result.task_id).suggestion == suggestion
     with store._connect() as db:
-        assert db.execute("select count(*) from business_task_todo_sync_outbox").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({sync_action_projection('business_task_todo_sync_outbox')})").fetchone()[0] == 0
 
 
 def test_two_projects_api_never_mix_accountability(tmp_path):

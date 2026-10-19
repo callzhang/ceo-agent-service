@@ -2,6 +2,7 @@ import json
 import sqlite3
 from typing import Any
 
+from app.business_storage import update_business
 from app.store import AutoReplyStore
 from app.task_models import TodoStatus
 
@@ -18,11 +19,12 @@ def complete_business_task_from_external_todo(
         if task is None or task.status.value == "merged" or task.status.value == "done":
             return False
         source_ref = str(evidence.get("source") or "").strip()
-        link = db.execute(
-            "select * from business_task_dingtalk_links where business_task_id=? "
-            "and status in ('active','done') and dingtalk_task_id=? order by id desc limit 1",
-            (business_task_id, source_ref.removeprefix("dingtalk_todo:")),
-        ).fetchone()
+        link = store.get_business_task_dingtalk_link_for_provider_task(
+            business_task_id=business_task_id,
+            dingtalk_task_id=source_ref.removeprefix("dingtalk_todo:"),
+            statuses=("active", "done"),
+            _db=db,
+        )
         if not source_ref.startswith("dingtalk_todo:") or link is None:
             return False
         signal = store.get_business_task_signal_by_dedupe_key(
@@ -37,10 +39,11 @@ def complete_business_task_from_external_todo(
             task_id=business_task_id, signal_id=signal_id, evidence_role="completion", _db=db
         )
         before = {"status": task.status.value, "commitment_status": task.commitment_status.value}
-        db.execute(
-            "update business_tasks set status='done', commitment_status='completed', updated_at=current_timestamp where id=?",
-            (business_task_id,),
-        )
+        update_business(db, "task", business_task_id, {
+            "status": "done",
+            "commitment_status": "completed",
+            "updated_at": db.execute("select current_timestamp").fetchone()[0],
+        })
         after = {"status": "done", "commitment_status": "completed", "completion_evidence": evidence}
         store.append_business_task_event(
             task_id=business_task_id, event_type="status_changed", signal_id=signal_id,
@@ -48,11 +51,11 @@ def complete_business_task_from_external_todo(
             after_json=json.dumps(after, ensure_ascii=False),
             reason=str(evidence.get("reason") or "DingTalk Todo marked done by owner"), _db=db,
         )
-        db.execute(
-            "update business_task_follow_ups set status='completed', evidence_check_json=?, "
-            "suppressed_reason=?, updated_at=current_timestamp where business_task_id=? "
-            "and status in ('draft','approved','sent')",
-            (json.dumps(evidence, ensure_ascii=False), str(evidence.get("reason") or ""), business_task_id),
+        store.complete_business_task_follow_ups(
+            business_task_id=business_task_id,
+            evidence_check_json=json.dumps(evidence, ensure_ascii=False),
+            suppressed_reason=str(evidence.get("reason") or ""),
+            _db=db,
         )
     from app.task_attention_projection import BusinessAttentionProjection
 

@@ -1,0 +1,36 @@
+{
+  "recorded_at": "2026-10-18T02:25:03.071244+00:00",
+  "status": "checker_identity_contract_approved_not_actual_copy",
+  "reviewer": "/root/email_canonical_current12_quality",
+  "verdict": "APPROVE checker-only change for two existing composite families",
+  "composite_source_keys": {
+    "email_unsubscribe_effects": [
+      "action_identity",
+      "effect_digest"
+    ],
+    "email_direct_retry_requests": [
+      "action_id",
+      "attempt_number"
+    ]
+  },
+  "preserved_comparison": "Every declared original value/type/full pair and original row presence; all other required ROWIDs and allocator/schema/FK checks unchanged. Original rows must survive; new synthetic rows permitted.",
+  "source_definitions": "app/action_email_definitions.py EMAIL_COMPOSITE_KEYS and EMAIL_ROWID_TYPES",
+  "capture_contract": "app/action_email_storage.py capture_email_action_source.locator_modes",
+  "public_consumers": "Independent current and genuine predecessor search found composite key lookups/mutations; inserts do not consume lastrowid; no hidden ROWID consumer found.",
+  "synthetic_diagnosis_sha256": "c3863ab670bc5fb5ec7f3bf19f1ad1b171ff1faa5893c130cd74299d9471effd",
+  "controls_file": "docs/superpowers/plans/2026-10-17-database-source-fact-hash-controls.py",
+  "controls_sha256": "a3165766aa8f13ad251daf966c11aeafdbe6c44c29745e1d0665cd1bb68904e3",
+  "controls_result": {
+    "ordinary_negative_controls_rejected": 5,
+    "composite_key_value_type_deletion_controls_rejected": 8,
+    "wrong_composite_declaration_rejected": true,
+    "expected_composite_hidden_placement_changes_allowed": true,
+    "equality_cache_retirement_provider_identity_new_rows_without_rowid_pass": true
+  },
+  "all_R2_pins_match": true,
+  "runtime_changed": false,
+  "failed_actual_copy_declared_data_loss_disproved": false,
+  "fresh_full_actual_copy_required": true,
+  "actual_copy_or_capacity_accepted": false,
+  "deployed": false
+}

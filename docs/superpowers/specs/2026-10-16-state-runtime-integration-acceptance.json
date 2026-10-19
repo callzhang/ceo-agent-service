@@ -1,0 +1,69 @@
+{
+  "status": "accepted_selected_isolated_branch_only",
+  "commit": "7ef171fecc82ba76e8edadc55da0289db7c13622",
+  "parent": "06518d42488086c6cd50c1c9bd64aa1f14d530a9",
+  "changed_paths": 33,
+  "sha256": {
+    "app/action_delivery_schema_release.py": "b607c8bf145d24ccc1475a3c65c9b99490626b1e8778fc355c9dbd92689be918",
+    "app/action_email_schema_release.py": "e9ba587757d2cf271119a2a2ff877d877a716727c0cd7eba6f7dc3ccc309564d",
+    "app/action_postfix_schema_release.py": "b57aac3007c0fea0fb0eeaf918df04efce9812eeeda3272de3c9c5fb3625d553",
+    "app/action_receipt_schema_release.py": "2df4cd533beb0e886b894b14fb179de4c6f1224531a21ee2acb4c047a5753c3f",
+    "app/action_schema_release.py": "2083dab7cbcffba3ab6c15ca603128b707fccdfdd7c5c38e11cbde8236b8ab9f",
+    "app/audit_web.py": "036f4f46259485c5e341cab8171071b732377d2cee685d90f41eceb8d4dc77e7",
+    "app/deploy_maintenance.py": "8e2c8f2df846a2a6c17b7bcf3ccce07c27e2c886353fad0afa29fbef879aa755",
+    "app/dispatcher/adapters.py": "7b7ab7d8b5225b66d666b8d744fca14bf77c6724ab4c2b739e5c31c149ae49ad",
+    "app/email_current_schema.py": "06f72a6196cbb7202d8c7a757874781efa978ce6d5e9a27290581af160f5a924",
+    "app/email_publication_sources.py": "8940394a151d3b591bd7d2006e3f1f0b715b75caca2b4db579d47249d3fe6c3d",
+    "app/email_store.py": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+    "app/processing_reaction.py": "7ac2ee5057d2297d97f2fa0959729662feaffca1433f7234e975743ffc4789df",
+    "app/quality_gate.py": "c9888b13f4b4965a62793150d030cdbe3e85fe7ed8d45178ff9604eb9475da3f",
+    "app/reply_task_deferral.py": "a7ff5a4a8b9077c98a8d51fdfd2abd221e8caade9886b20e09dd93486e79a64d",
+    "app/repository_updater.py": "10ffbf355a9fe55b7c222fc832ca9fe7140a77fc9e0941aba87e19deb2d32aa3",
+    "app/rule_question_retirement.py": "e2bf5b4fd78dd40fd557480b3c6c6211f56eb6d40cebb209b582fdc58f3cac8e",
+    "app/scheduled_config_storage.py": "5148aceced60485a0950e86b81aaeae4f198fd186796d73a332e161de834543a",
+    "app/state_publication_sources.py": "ae115ec3b00feb3193b4ff9a7b4fc22485387d30373730003b896d46890f2b3b",
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/task_schema_release.py": "76f138bd66987b7f76f3e9d06bdc89a7bd261f6a88749d2b4755c81ecc2498a3",
+    "docs/architecture.md": "add5db6213e08e361f3dfead114a5c25490c9a78a1154561d3d3d6b665c2d7e7",
+    "docs/runtime-mechanism.md": "4b37fc999078313817a3264a573054c567179fa59a61f9d7c25bac4a3b24ac0d",
+    "tests/test_email_action_external_consumers.py": "04aff05d140ca7dde3b0721790e3a31a7326ccfec4331e5548e887e43fef02be",
+    "tests/test_email_action_schema_release.py": "bc52a38e7caa6f36ec6f451da59070545b3dc64d039506cd611447301f6b142e",
+    "tests/test_email_action_validation.py": "cbcdc391d1563e3a5389c8ab1b41e38ef1071564be8f97cf003452d0415e6e5b",
+    "tests/test_email_store.py": "b713783d7b12540efc3aed82b11647dc16db4c590850a07f43bd7d8f5749624c",
+    "tests/test_email_unsubscribe_direct.py": "fa4a8ab8a681d08e680a27445efdc9606828d8ea17cccb70331ed95f73394352",
+    "tests/test_quality_gate.py": "60cb8e5fadad11f3e47e933f76f089cc086afc08ca51041a092774b01cb7a110",
+    "tests/test_reply_task_deferral.py": "7f012e9acb864df4bf8020617b244921b0b9dab3298466e70b221d097961e82b",
+    "tests/test_rule_question_retirement.py": "97866d768b2da75ffb9eed04f8cbe3c6f20497d98e7e45742a585a454c87b794",
+    "tests/test_state_constructor_integration.py": "d9714f726b4a345d334d52e83027cc26b7639978c4a4b8accbb7bdaf67542b0f",
+    "tests/test_state_progress_binding.py": "397d5b8a8541e18005c137b2662f16c6b74bb8d79f2bfca938928bd57a746858",
+    "tests/test_state_publication_marker.py": "a622dd9aee9b53eb7915e78ec6694b17b4107cd7d639f630a654e440e45a8d2c"
+  },
+  "implementation": {
+    "applied_matrix": "493 passed in200.15s",
+    "compile": "350 app modules",
+    "ruff": "31 changed Python paths clean",
+    "exact_transfer": "14 accepted patches plus2 canonical regression modules; only3 authorized import cleanups"
+  },
+  "spec": {
+    "status": "PASS",
+    "exact_reconstruction": "33 paths;31 byte-identical,2 authorized import-only deviations",
+    "tests": "77 passed39.31s",
+    "compile_and_ruff": "350/31 PASS"
+  },
+  "quality": {
+    "status": "PASS",
+    "tests": "51 existing cases56.62s +4 independent integration probes3.57s",
+    "probes": [
+      "Both cached constructors after actual inverse/reforward",
+      "Both constructors after exact indexes recreated in reverse order, then existing dispatcher-index repair"
+    ],
+    "initial_probe_corrections": "3 invalid extra-probe assumptions corrected; no application defects found"
+  },
+  "known_cosmetic": "28 constructor SQL blank-line whitespace warnings carried by accepted patch",
+  "boundaries": [
+    "No main/push/production write or deployment",
+    "Actual production-copy and latest predecessor acceptance recorded separately",
+    "Native CLI fake outbound, UI and final10core+ledger remain open"
+  ],
+  "cleanup": "All implementation/SPEC/QUALITY owned temporary directories removed; previously denied unrelated cleanup remains pending and unmodified"
+}

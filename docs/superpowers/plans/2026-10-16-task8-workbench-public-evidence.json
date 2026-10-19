@@ -1,0 +1,740 @@
+{
+  "scope": "synthetic fresh original full Store+Workbench source; empty Tasks replacement only",
+  "constructor_selection": "unproved: target _ensure_initialized bypassed after explicit template preparation",
+  "patches": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task8-workbench-caller-proposal.patch": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26"
+  },
+  "source_files": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/workbench/store.py": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+    "app/workbench/native_events.py": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f"
+  },
+  "clock": "2040-01-01 00:00:00",
+  "uuid_stream": "UUID integers 1..9999; Workbench module only",
+  "water_normalization": "source absent sqlite_sequence row and target explicit zero both have effective allocation water zero; setup retained",
+  "network_provider_native_cli": "not invoked",
+  "bootstrap": {
+    "tasks": 0,
+    "sqlite_schema_table_entries": 65,
+    "tasks_ddl_sha256": "ee4330cb187a80d4699db16e56b61e47f992165ed44a840f4ecbe8059888374c",
+    "fk_findings": []
+  },
+  "copied_source_files": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/workbench/store.py": "4a3bb9287dfea1f2e13e31be5ff2a9ac536a458ac079f30ccb1519848870e18e",
+    "app/workbench/native_events.py": "627dea69c179821fc18e1e97e37c6c96615134719c0536986bc0fa6f23f6a761",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f"
+  },
+  "companion": "native_events imports task20_projection('workbench_turns'); task_id_expression retained",
+  "preparation": {
+    "empty_tasks_replaced": true,
+    "published_water": 0
+  },
+  "negative_control": {
+    "mutation": "omit only native_events companion projection substitution",
+    "source": {
+      "method": "WorkbenchStore.append_event",
+      "input": {
+        "sequence": 2,
+        "event_type": "text_delta",
+        "payload": {
+          "text": "control-live-text"
+        },
+        "owner": "control",
+        "now": "2040-01-01 00:00:00"
+      },
+      "outcome": {
+        "return": {
+          "id": 2,
+          "turn_id": "00000000-0000-0000-0000-000000000002",
+          "sequence": 2,
+          "event_type": "text_delta",
+          "payload": {
+            "text": "control-live-text"
+          },
+          "created_at": "2040-01-01 00:00:00"
+        }
+      },
+      "committed_workbench_event_count": 2,
+      "live_cache_entries": 1
+    },
+    "target_without_companion": {
+      "method": "WorkbenchStore.append_event",
+      "input": {
+        "sequence": 2,
+        "event_type": "text_delta",
+        "payload": {
+          "text": "control-live-text"
+        },
+        "owner": "control",
+        "now": "2040-01-01 00:00:00"
+      },
+      "outcome": {
+        "error": {
+          "type": "OperationalError",
+          "message": "no such column: t.client_request_id"
+        }
+      },
+      "committed_workbench_event_count": 1,
+      "live_cache_entries": 1
+    }
+  },
+  "coverage_assertions": {
+    "unique_worker_labels": true,
+    "same_method_set": true,
+    "fixed_checkpoints_per_worker": 81
+  },
+  "source_calls": 81,
+  "target_calls": 81,
+  "public_methods": [
+    "append_event",
+    "archive_task",
+    "cancel_confirmation_execution",
+    "claim_confirmation_execution",
+    "claim_next_turn",
+    "complete_turn",
+    "create_confirmation",
+    "create_task",
+    "create_turn",
+    "event_stream_snapshot",
+    "events_after",
+    "finish_confirmation_execution",
+    "get_task_summary",
+    "get_turn",
+    "list_confirmations",
+    "list_tasks",
+    "list_tasks_with_state",
+    "mark_confirmation_proposer_quiesced",
+    "recover_expired_turns",
+    "rename_task",
+    "renew_turn_lease",
+    "request_stop",
+    "resume_context_for_executor",
+    "set_provider_session",
+    "timeline_snapshot",
+    "workbench_stats"
+  ],
+  "equal_checkpoints": 81,
+  "differences": [],
+  "source_errors": {
+    "blank_title": {
+      "type": "ValueError",
+      "message": "title must be non-empty",
+      "code": null
+    },
+    "blank_runtime": {
+      "type": "ValueError",
+      "message": "runtime_kind must be non-empty",
+      "code": null
+    },
+    "request_conflict": {
+      "type": "WorkbenchConflictError",
+      "message": "client_request_id conflicts with an existing turn",
+      "code": "client_request_conflict"
+    },
+    "active_conflict": {
+      "type": "ValueError",
+      "message": "task already has an active turn",
+      "code": null
+    },
+    "archive_active": {
+      "type": "WorkbenchConflictError",
+      "message": "workbench task has an active turn",
+      "code": "task_has_active_turn"
+    },
+    "wrong_renew_owner": {
+      "type": "ValueError",
+      "message": "turn lease is stale",
+      "code": null
+    },
+    "bad_sequence": {
+      "type": "ValueError",
+      "message": "event sequence must be next",
+      "code": null
+    },
+    "archived_new_turn": {
+      "type": "WorkbenchConflictError",
+      "message": "workbench task is archived",
+      "code": "task_archived"
+    },
+    "bad_list_limit": {
+      "type": "ValueError",
+      "message": "task limit must be between 1 and 101",
+      "code": null
+    },
+    "missing_rename": {
+      "type": "ValueError",
+      "message": "workbench task does not exist",
+      "code": null
+    },
+    "expired_renew": {
+      "type": "ValueError",
+      "message": "turn lease is stale",
+      "code": null
+    },
+    "old_owner_append": {
+      "type": "ValueError",
+      "message": "turn lease requires running status",
+      "code": null
+    },
+    "confirmation_wrong_owner": {
+      "type": "ValueError",
+      "message": "confirmation execution lease is stale",
+      "code": null
+    }
+  },
+  "fixture_aborts": [],
+  "comparison_digests": {
+    "source": "29ee5b443fc9e88e830d6fadb31528eae41ece2ea23c9618e4a1a09186d2a0e0",
+    "target": "29ee5b443fc9e88e830d6fadb31528eae41ece2ea23c9618e4a1a09186d2a0e0"
+  },
+  "native_event_paths": {
+    "text_live": {
+      "terminal_cache_probe": true,
+      "agent_hydration_status_query": false
+    },
+    "events_live_cache": {
+      "terminal_cache_probe": true,
+      "agent_hydration_status_query": true
+    },
+    "events_terminal_hydration": {
+      "terminal_cache_probe": false,
+      "agent_hydration_status_query": true
+    },
+    "complete": {
+      "terminal_cache_probe": true,
+      "agent_hydration_status_query": false
+    }
+  },
+  "observations": {
+    "events_live_cache": {
+      "source": {
+        "return": [
+          {
+            "id": 1,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 1,
+            "event_type": "status_changed",
+            "payload": {
+              "status": "queued"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          },
+          {
+            "id": 2,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 2,
+            "event_type": "text_delta",
+            "payload": {
+              "native_ordinal": 1,
+              "text": "live synthetic text"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          }
+        ]
+      },
+      "target": {
+        "return": [
+          {
+            "id": 1,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 1,
+            "event_type": "status_changed",
+            "payload": {
+              "status": "queued"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          },
+          {
+            "id": 2,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 2,
+            "event_type": "text_delta",
+            "payload": {
+              "native_ordinal": 1,
+              "text": "live synthetic text"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          }
+        ]
+      }
+    },
+    "events_terminal_hydration": {
+      "source": {
+        "return": [
+          {
+            "id": 1,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 1,
+            "event_type": "status_changed",
+            "payload": {
+              "status": "queued"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          },
+          {
+            "id": 2,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 2,
+            "event_type": "text_delta",
+            "payload": {
+              "text": "原生 Agent 记录不可用。"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          },
+          {
+            "id": 3,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 3,
+            "event_type": "turn_completed",
+            "payload": {
+              "status": "completed"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          }
+        ]
+      },
+      "target": {
+        "return": [
+          {
+            "id": 1,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 1,
+            "event_type": "status_changed",
+            "payload": {
+              "status": "queued"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          },
+          {
+            "id": 2,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 2,
+            "event_type": "text_delta",
+            "payload": {
+              "text": "原生 Agent 记录不可用。"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          },
+          {
+            "id": 3,
+            "turn_id": "00000000-0000-0000-0000-000000000003",
+            "sequence": 3,
+            "event_type": "turn_completed",
+            "payload": {
+              "status": "completed"
+            },
+            "created_at": "2040-01-01 00:00:00"
+          }
+        ]
+      }
+    },
+    "running": {
+      "source": {
+        "return": {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "task_id": "00000000-0000-0000-0000-000000000002",
+          "client_request_id": "basic-request",
+          "task_sequence": 1,
+          "user_text": "同一个公共方法验证",
+          "status": "running",
+          "stop_requested": false,
+          "final_text": "",
+          "error_code": "",
+          "error_detail": "",
+          "started_at": "2040-01-01 00:00:00",
+          "completed_at": "",
+          "created_at": "2040-01-01 00:00:00",
+          "updated_at": "2040-01-01 00:00:00"
+        }
+      },
+      "target": {
+        "return": {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "task_id": "00000000-0000-0000-0000-000000000002",
+          "client_request_id": "basic-request",
+          "task_sequence": 1,
+          "user_text": "同一个公共方法验证",
+          "status": "running",
+          "stop_requested": false,
+          "final_text": "",
+          "error_code": "",
+          "error_detail": "",
+          "started_at": "2040-01-01 00:00:00",
+          "completed_at": "",
+          "created_at": "2040-01-01 00:00:00",
+          "updated_at": "2040-01-01 00:00:00"
+        }
+      }
+    },
+    "reclaim": {
+      "source": {
+        "return": {
+          "id": "00000000-0000-0000-0000-000000000006",
+          "task_id": "00000000-0000-0000-0000-000000000005",
+          "client_request_id": "recovery-request",
+          "task_sequence": 1,
+          "user_text": "recover",
+          "status": "running",
+          "stop_requested": false,
+          "final_text": "",
+          "error_code": "",
+          "error_detail": "",
+          "started_at": "2040-01-01 00:00:00",
+          "completed_at": "",
+          "created_at": "2040-01-01 00:00:00",
+          "updated_at": "2040-01-01 00:00:11"
+        }
+      },
+      "target": {
+        "return": {
+          "id": "00000000-0000-0000-0000-000000000006",
+          "task_id": "00000000-0000-0000-0000-000000000005",
+          "client_request_id": "recovery-request",
+          "task_sequence": 1,
+          "user_text": "recover",
+          "status": "running",
+          "stop_requested": false,
+          "final_text": "",
+          "error_code": "",
+          "error_detail": "",
+          "started_at": "2040-01-01 00:00:00",
+          "completed_at": "",
+          "created_at": "2040-01-01 00:00:00",
+          "updated_at": "2040-01-01 00:00:11"
+        }
+      }
+    },
+    "recover_stopped": {
+      "source": {
+        "return": 0
+      },
+      "target": {
+        "return": 0
+      }
+    },
+    "cancel_finish": {
+      "source": {
+        "return": {
+          "id": "00000000-0000-0000-0000-000000000009",
+          "turn_id": "00000000-0000-0000-0000-000000000008",
+          "action_kind": "synthetic",
+          "target": "local-only",
+          "summary": "synthetic receipt",
+          "risk": "test",
+          "canonical_capability": "",
+          "canonical_operation": "",
+          "canonical_targets_json": "[]",
+          "arguments_json": "",
+          "status": "cancelled",
+          "decision_requested": "cancel",
+          "decision_requested_at": "2040-01-01 00:00:00",
+          "result_json": "",
+          "created_at": "2040-01-01 00:00:00",
+          "decided_at": "2040-01-01 00:00:00"
+        }
+      },
+      "target": {
+        "return": {
+          "id": "00000000-0000-0000-0000-000000000009",
+          "turn_id": "00000000-0000-0000-0000-000000000008",
+          "action_kind": "synthetic",
+          "target": "local-only",
+          "summary": "synthetic receipt",
+          "risk": "test",
+          "canonical_capability": "",
+          "canonical_operation": "",
+          "canonical_targets_json": "[]",
+          "arguments_json": "",
+          "status": "cancelled",
+          "decision_requested": "cancel",
+          "decision_requested_at": "2040-01-01 00:00:00",
+          "result_json": "",
+          "created_at": "2040-01-01 00:00:00",
+          "decided_at": "2040-01-01 00:00:00"
+        }
+      }
+    },
+    "confirmation_failed": {
+      "source": {
+        "return": {
+          "id": "00000000-0000-0000-0000-00000000000c",
+          "turn_id": "00000000-0000-0000-0000-00000000000b",
+          "action_kind": "synthetic",
+          "target": "local-only",
+          "summary": "synthetic receipt",
+          "risk": "test",
+          "canonical_capability": "",
+          "canonical_operation": "",
+          "canonical_targets_json": "[]",
+          "arguments_json": "",
+          "status": "failed",
+          "decision_requested": "confirm",
+          "decision_requested_at": "2040-01-01 00:00:00",
+          "result_json": "{\"error\":\"synthetic\"}",
+          "created_at": "2040-01-01 00:00:00",
+          "decided_at": "2040-01-01 00:00:00"
+        }
+      },
+      "target": {
+        "return": {
+          "id": "00000000-0000-0000-0000-00000000000c",
+          "turn_id": "00000000-0000-0000-0000-00000000000b",
+          "action_kind": "synthetic",
+          "target": "local-only",
+          "summary": "synthetic receipt",
+          "risk": "test",
+          "canonical_capability": "",
+          "canonical_operation": "",
+          "canonical_targets_json": "[]",
+          "arguments_json": "",
+          "status": "failed",
+          "decision_requested": "confirm",
+          "decision_requested_at": "2040-01-01 00:00:00",
+          "result_json": "{\"error\":\"synthetic\"}",
+          "created_at": "2040-01-01 00:00:00",
+          "decided_at": "2040-01-01 00:00:00"
+        }
+      }
+    },
+    "timeline_page": {
+      "source": {
+        "return": [
+          {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "title": "Unicode 标题",
+            "runtime_kind": "codex",
+            "provider_session_ref": "session-synthetic",
+            "archived_at": "",
+            "created_at": "2040-01-01 00:00:00",
+            "updated_at": "2040-01-01 00:00:00"
+          },
+          [
+            {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "task_id": "00000000-0000-0000-0000-000000000002",
+              "client_request_id": "basic-request",
+              "task_sequence": 1,
+              "user_text": "同一个公共方法验证",
+              "status": "completed",
+              "stop_requested": false,
+              "final_text": "原生 Agent 记录不可用。",
+              "error_code": "",
+              "error_detail": "",
+              "started_at": "2040-01-01 00:00:00",
+              "completed_at": "2040-01-01 00:00:00",
+              "created_at": "2040-01-01 00:00:00",
+              "updated_at": "2040-01-01 00:00:00"
+            }
+          ],
+          [
+            {
+              "id": 2,
+              "turn_id": "00000000-0000-0000-0000-000000000003",
+              "sequence": 2,
+              "event_type": "text_delta",
+              "payload": {
+                "text": "原生 Agent 记录不可用。"
+              },
+              "created_at": "2040-01-01 00:00:00"
+            }
+          ],
+          [],
+          [],
+          [],
+          {
+            "has_more": false,
+            "next_cursor": null,
+            "task_state": "stopped",
+            "events_has_more": true,
+            "events_next_cursor": 2,
+            "artifacts_has_more": false,
+            "confirmations_has_more": false,
+            "confirmation_quiescence": {},
+            "attachments_has_more": false
+          }
+        ]
+      },
+      "target": {
+        "return": [
+          {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "title": "Unicode 标题",
+            "runtime_kind": "codex",
+            "provider_session_ref": "session-synthetic",
+            "archived_at": "",
+            "created_at": "2040-01-01 00:00:00",
+            "updated_at": "2040-01-01 00:00:00"
+          },
+          [
+            {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "task_id": "00000000-0000-0000-0000-000000000002",
+              "client_request_id": "basic-request",
+              "task_sequence": 1,
+              "user_text": "同一个公共方法验证",
+              "status": "completed",
+              "stop_requested": false,
+              "final_text": "原生 Agent 记录不可用。",
+              "error_code": "",
+              "error_detail": "",
+              "started_at": "2040-01-01 00:00:00",
+              "completed_at": "2040-01-01 00:00:00",
+              "created_at": "2040-01-01 00:00:00",
+              "updated_at": "2040-01-01 00:00:00"
+            }
+          ],
+          [
+            {
+              "id": 2,
+              "turn_id": "00000000-0000-0000-0000-000000000003",
+              "sequence": 2,
+              "event_type": "text_delta",
+              "payload": {
+                "text": "原生 Agent 记录不可用。"
+              },
+              "created_at": "2040-01-01 00:00:00"
+            }
+          ],
+          [],
+          [],
+          [],
+          {
+            "has_more": false,
+            "next_cursor": null,
+            "task_state": "stopped",
+            "events_has_more": true,
+            "events_next_cursor": 2,
+            "artifacts_has_more": false,
+            "confirmations_has_more": false,
+            "confirmation_quiescence": {},
+            "attachments_has_more": false
+          }
+        ]
+      }
+    }
+  },
+  "raw_final_tasks": {
+    "source": [
+      [
+        1,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-000000000002",
+        null
+      ],
+      [
+        2,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000003",
+        1
+      ],
+      [
+        3,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000004",
+        1
+      ],
+      [
+        4,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-000000000005",
+        null
+      ],
+      [
+        5,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000006",
+        4
+      ],
+      [
+        6,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-000000000007",
+        null
+      ],
+      [
+        7,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000008",
+        6
+      ],
+      [
+        8,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-00000000000a",
+        null
+      ],
+      [
+        9,
+        "workbench_turns",
+        "00000000-0000-0000-0000-00000000000b",
+        8
+      ]
+    ],
+    "target": [
+      [
+        1,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-000000000002",
+        null
+      ],
+      [
+        2,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000003",
+        1
+      ],
+      [
+        3,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000004",
+        1
+      ],
+      [
+        4,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-000000000005",
+        null
+      ],
+      [
+        5,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000006",
+        4
+      ],
+      [
+        6,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-000000000007",
+        null
+      ],
+      [
+        7,
+        "workbench_turns",
+        "00000000-0000-0000-0000-000000000008",
+        6
+      ],
+      [
+        8,
+        "workbench_tasks",
+        "00000000-0000-0000-0000-00000000000a",
+        null
+      ],
+      [
+        9,
+        "workbench_turns",
+        "00000000-0000-0000-0000-00000000000b",
+        8
+      ]
+    ]
+  },
+  "final_fk_findings": {
+    "source": [],
+    "target": []
+  },
+  "owned_temp_removed": true
+}

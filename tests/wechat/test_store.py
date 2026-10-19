@@ -1,12 +1,29 @@
-from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, delete_action, update_action
+from app.action_storage import (
+    REPLY_ATTEMPT_COMMON_SQL, delete_action, update_action,
+    task_delivery_projection, task_delivery_set_parts, insert_task_delivery_action,
+)
 from multiprocessing import get_context
 from pathlib import Path
 
 import pytest
 
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.task_storage import insert_task
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task12_storage import insert_task12, task12_projection
+from app.task20_definitions import task20_column
+from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
+
+WECHAT_SQL = task_delivery_projection("wechat_deliveries")
+
+
+def _update_delivery(db, delivery_id, values):
+    assignments, parameters = task_delivery_set_parts("wechat_deliveries", values)
+    db.execute(
+        f"update actions set {assignments} where record_type='wechat_deliveries' "
+        "and cast(legacy_key as integer)=?",
+        (*parameters, delivery_id),
+    )
 
 
 def _store(tmp_path):
@@ -51,7 +68,7 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
     with store._connect() as db:
         delivery = dict(
             db.execute(
-                "select * from wechat_deliveries where id=?",
+                f"select * from ({WECHAT_SQL}) where id=?",
                 (delivery_id,),
             ).fetchone()
         )
@@ -62,8 +79,8 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
                 select attempts.*
                 from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                 join tasks as tasks
-                  on tasks.conversation_id=attempts.conversation_id
-                 and tasks.trigger_message_id=attempts.trigger_message_id
+                  on tasks.{task20_column('reply_tasks', 'conversation_id')}=attempts.conversation_id
+                 and tasks.{task20_column('reply_tasks', 'trigger_message_id')}=attempts.trigger_message_id
                 where tasks.id=? and tasks.record_type='reply_tasks'
                   and attempts.channel='wechat'
                 order by attempts.id
@@ -86,7 +103,7 @@ def _open_current_store_for_repair_in_process(db_path, barrier, results):
                     db.execute("pragma foreign_keys").fetchone()[0],
                     db.execute("pragma foreign_key_check").fetchall(),
                     db.execute(
-                        "select client_request_id from workbench_attachments"
+                        f"select client_request_id from ({task12_projection('workbench_attachments')})"
                     ).fetchone()[0],
                 )
             )
@@ -134,6 +151,60 @@ def test_replace_disables_omitted_scopes(tmp_path):
     store.replace_wechat_reply_scopes("acct-1", [a])
     enabled = store.list_wechat_reply_scopes("acct-1", enabled_only=True)
     assert [s.target_id for s in enabled] == ["u1"]
+
+
+def test_replace_new_duplicate_scope_keeps_last_input_and_one_public_row(tmp_path):
+    store = _store(tmp_path)
+    first = WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1",
+        display_name="First", trigger_mode="every_inbound_text",
+        last_active_at="2026-07-20T10:00:00+08:00",
+    )
+    last = first.model_copy(update={
+        "display_name": "Second", "conversation_id": "second-conversation",
+        "last_active_at": "2026-07-21T10:00:00+08:00",
+    })
+
+    store.replace_wechat_reply_scopes("acct-1", [first, last])
+
+    assert store.list_wechat_reply_scopes("acct-1") == [last]
+    with store._connect() as db:
+        rows = db.execute(
+            f"select rowid from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+            "where account_id='acct-1'"
+        ).fetchall()
+    assert len(rows) == 1 and rows[0]["rowid"] > 0
+
+
+def test_replace_existing_duplicate_scope_uses_original_enabled_watermark(tmp_path):
+    store = _store(tmp_path)
+    original = WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1",
+        display_name="Original", trigger_mode="every_inbound_text",
+        last_active_at="2026-07-20T10:00:00+08:00",
+    )
+    store.replace_wechat_reply_scopes("acct-1", [original])
+    with store._connect() as db:
+        original_rowid = db.execute(
+            f"select rowid from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+            "where account_id='acct-1'"
+        ).fetchone()["rowid"]
+
+    first = original.model_copy(update={
+        "display_name": "First", "enabled": False,
+        "last_active_at": "2026-09-01T10:00:00+08:00",
+    })
+    last = original.model_copy(update={"display_name": "Second", "last_active_at": ""})
+    store.replace_wechat_reply_scopes("acct-1", [first, last])
+
+    assert store.list_wechat_reply_scopes("acct-1") == [
+        last.model_copy(update={"last_active_at": original.last_active_at})
+    ]
+    with store._connect() as db:
+        assert db.execute(
+            f"select rowid from ({config_projection('wechat_reply_scopes', include_rowid=True)}) "
+            "where account_id='acct-1'"
+        ).fetchone()["rowid"] == original_rowid
 
 
 def test_dingtalk_claim_does_not_claim_wechat_task(tmp_path):
@@ -360,7 +431,7 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
     assert delivery.reply_text == "new reply（by明哥分身）"
     with store._connect() as db:
         row = db.execute(
-            "select action_started_at from wechat_deliveries where id=?",
+            f"select action_started_at from ({WECHAT_SQL}) where id=?",
             (delivery_id,),
         ).fetchone()
     assert row["action_started_at"] != ""
@@ -559,11 +630,7 @@ def test_stale_ready_delivery_can_be_superseded_without_send(tmp_path):
     )
     delivery = store.get_wechat_delivery_by_id(delivery_id)
     with store._connect() as db:
-        db.execute(
-            "update wechat_deliveries set created_at='2026-07-30 10:00:00' "
-            "where id=?",
-            (delivery_id,),
-        )
+        _update_delivery(db, delivery_id, {"created_at": "2026-07-30 10:00:00"})
 
     store.supersede_stale_ready_wechat_delivery(
         delivery_id,
@@ -784,34 +851,22 @@ def test_exhausted_stale_wechat_delivery_rejects_ineligible_state_unchanged(
     expected_generation = generation
     with store._connect() as db:
         if invalid_state == "pre_action_failure_false":
-            db.execute(
-                "update wechat_deliveries set pre_action_failure=0 where id=?",
-                (delivery_id,),
-            )
+            _update_delivery(db, delivery_id, {"pre_action_failure": 0})
         elif invalid_state == "newer_than_cutoff":
-            db.execute(
-                "update wechat_deliveries "
-                "set action_started_at='2026-07-30 10:20:00' where id=?",
-                (delivery_id,),
-            )
+            _update_delivery(db, delivery_id, {"action_started_at": "2026-07-30 10:20:00"})
         elif invalid_state == "non_failed_status":
-            db.execute(
-                "update wechat_deliveries set status='send_unknown' where id=?",
-                (delivery_id,),
-            )
+            _update_delivery(db, delivery_id, {"status": "send_unknown"})
         elif invalid_state == "blank_action_started_at":
-            db.execute(
-                "update wechat_deliveries set action_started_at='' where id=?",
-                (delivery_id,),
-            )
+            _update_delivery(db, delivery_id, {"action_started_at": ""})
         elif invalid_state == "delivery_generation_mismatch":
             expected_generation = "different-generation"
         elif invalid_state == "task_generation_mismatch":
+            parts = task8_set_parts("reply_tasks", {"execution_generation": "new-generation"})
             changed = db.execute(
-                "update tasks set execution_generation='new-generation' "
+                f"update tasks set {parts.sql} "
                 "where record_type='reply_tasks' and id=(select reply_task_id "
-                "from wechat_deliveries where id=?)",
-                (delivery_id,),
+                f"from ({WECHAT_SQL}) where id=?)",
+                (*parts.parameters, delivery_id),
             )
             assert changed.rowcount == 1
         elif invalid_state == "missing_matching_attempt":
@@ -924,10 +979,10 @@ def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     # Simulate an explicit pre-action failure that existed before a later delivery
     # was recorded; normal creation now supersedes this case immediately.
     with store._connect() as db:
-        db.execute(
-            "update wechat_deliveries set status='failed', error='composer_input_unconfirmed', pre_action_failure=1 where id=?",
-            (old.id,),
-        )
+        _update_delivery(db, old.id, {
+            "status": "failed", "error": "composer_input_unconfirmed",
+            "pre_action_failure": 1,
+        })
     store.mark_wechat_delivery_sending(newer.id)
     store.set_wechat_delivery_status(newer.id, "sent")
 
@@ -1011,12 +1066,7 @@ def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
     )
 
     with store._connect() as db:
-        db.execute(
-            "update wechat_deliveries "
-            "set action_started_at='2026-07-30 10:05:00' "
-            "where id=?",
-            (delivery_id,),
-        )
+        _update_delivery(db, delivery_id, {"action_started_at": "2026-07-30 10:05:00"})
     store.set_wechat_delivery_status(
         delivery_id,
         "send_unknown",
@@ -1060,7 +1110,7 @@ def test_wechat_delivery_claim_records_action_start_time(tmp_path):
 
     with store._connect() as db:
         row = db.execute(
-            "select action_started_at from wechat_deliveries where id=?",
+            f"select action_started_at from ({WECHAT_SQL}) where id=?",
             (delivery_id,),
         ).fetchone()
     assert row["action_started_at"]
@@ -1154,33 +1204,32 @@ def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_pat
     )
     assert task.id == 7
     with original._connect() as db:
-        db.execute(
-            """insert into wechat_deliveries (
-                reply_task_id, account_id, target_type, target_id,
-                conversation_id, reply_text, status, action_started_at,
-                pre_action_failure
-            ) values (7, 'acct-1', 'direct', 'friend-1',
-                      'same-conversation', 'hi', 'failed',
-                      '2026-07-20T10:10:00+08:00', 1)"""
-        )
-        workbench_parent = insert_task(db, "workbench_tasks", {
+        insert_task_delivery_action(db, "wechat_deliveries", {
+            "reply_task_id": 7, "account_id": "acct-1", "target_type": "direct",
+            "target_id": "friend-1", "conversation_id": "same-conversation",
+            "reply_text": "hi", "status": "failed",
+            "action_started_at": "2026-07-20T10:10:00+08:00",
+            "pre_action_failure": 1,
+        })
+        parts = task8_insert_parts("workbench_tasks", {
             "legacy_key": "workbench-legacy", "title": "Legacy attachment", "runtime_kind": "codex",
-        }).lastrowid
-        db.execute(
-            """insert into workbench_attachments (
-                id, task_id, filename, media_type, size_bytes, storage_path,
-                client_request_id, content_sha256
-            ) values ('attachment-legacy', ?,
-                      'legacy.txt', 'text/plain', 6, ?,
-                      'attachment-legacy', '')""",
-            (workbench_parent, str(attachment_path)),
-        )
+        })
+        workbench_parent = db.execute(
+            f"insert into tasks ({parts.columns}) values ({parts.values})",
+            parts.parameters,
+        ).lastrowid
+        insert_task12(db, "workbench_attachments", {
+            "id": "attachment-legacy", "task_id": workbench_parent,
+            "filename": "legacy.txt", "media_type": "text/plain", "size_bytes": 6,
+            "storage_path": str(attachment_path), "client_request_id": "attachment-legacy",
+            "content_sha256": "",
+        })
         attachment_before = tuple(db.execute(
             "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
-            "from workbench_attachments"
+            f"from ({task12_projection('workbench_attachments')})"
         ).fetchone())
-        db.execute("drop index idx_reply_tasks_channel_status_id")
-        db.execute("drop index idx_workbench_attachments_task_request")
+        db.execute("drop index idx_task20_published_2")
+        db.execute("drop index idx_task20_native_21")
     with original._connect() as db:
         assert db.execute("pragma foreign_key_check").fetchall() == []
         parent = db.execute(
@@ -1194,18 +1243,19 @@ def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_pat
         }
         current_input_id = parent["current_input_id"]
         canonical_input = db.execute(
-            "select record_type, parent_id, trigger_text from tasks where id=?",
+            f"select record_type, parent_id, {task20_column('reply_task_inputs', 'trigger_text')} as trigger_text from tasks where id=?",
             (current_input_id,),
         ).fetchone()
         assert tuple(canonical_input) == ("reply_task_inputs", task.id, "hello")
-        assert ("tasks", "reply_task_id", "id") in {
+        assert ("tasks", "td_reply_task_id", "id") in {
             (row["table"], row["from"], row["to"])
-            for row in db.execute("pragma foreign_key_list(wechat_deliveries)")
+            for row in db.execute("pragma foreign_key_list(actions)")
         }
-        assert {"client_request_id", "content_sha256"} <= {
-            row[1] for row in db.execute("pragma table_info(workbench_attachments)")
+        assert {task20_column("workbench_attachments", field).strip('"')
+                for field in ("client_request_id", "content_sha256")} <= {
+            row[1] for row in db.execute("pragma table_xinfo(tasks)")
         }
-        assert {"idx_reply_tasks_channel_status_id", "idx_workbench_attachments_task_request"}.isdisjoint({
+        assert {"idx_task20_published_2", "idx_task20_native_21"}.isdisjoint({
             row[0] for row in db.execute("select name from sqlite_master where type='index'")
         })
     assert original._schema_is_current() is False
@@ -1259,10 +1309,10 @@ def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_pat
         assert repaired.execute("pragma foreign_key_check").fetchall() == []
         assert tuple(repaired.execute(
             "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
-            "from workbench_attachments"
+            f"from ({task12_projection('workbench_attachments')})"
         ).fetchone()) == attachment_before
         assert tuple(repaired.execute(
-            "select client_request_id, content_sha256 from workbench_attachments"
+            f"select client_request_id, content_sha256 from ({task12_projection('workbench_attachments')})"
         ).fetchone()) == ("attachment-legacy", "")
         assert repaired.execute(
             "select current_input_id from tasks where id=?", (task.id,)

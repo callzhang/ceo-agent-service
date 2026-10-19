@@ -1,0 +1,7492 @@
+{
+  "observed_at": "2026-10-17T13:33:35.008673+00:00",
+  "scope": "fresh online readonly copy; one forward migration for per-object allocation diagnosis only; no vacuum/provider/send/original write",
+  "runtime_freeze": "2026-10-17-error-actions-caller-freeze-r2.json",
+  "temporary_root": "/tmp/error-actions-allocation.gq_ob0_g",
+  "source": {
+    "page_count": 122122,
+    "freelist_count": 0,
+    "page_size": 4096,
+    "objects": [
+      {
+        "name": "actions",
+        "table": "actions",
+        "type": "table",
+        "page_bytes": 83128320,
+        "unused_bytes": 12914440,
+        "cells": 37138,
+        "pages": 20295
+      },
+      {
+        "name": "runs",
+        "table": "runs",
+        "type": "table",
+        "page_bytes": 79433728,
+        "unused_bytes": 4343654,
+        "cells": 259508,
+        "pages": 19393
+      },
+      {
+        "name": "tasks",
+        "table": "tasks",
+        "type": "table",
+        "page_bytes": 44519424,
+        "unused_bytes": 3076742,
+        "cells": 30955,
+        "pages": 10869
+      },
+      {
+        "name": "email_classifications",
+        "table": "email_classifications",
+        "type": "table",
+        "page_bytes": 37253120,
+        "unused_bytes": 11533365,
+        "cells": 17001,
+        "pages": 9095
+      },
+      {
+        "name": "email_messages",
+        "table": "email_messages",
+        "type": "table",
+        "page_bytes": 34680832,
+        "unused_bytes": 4531973,
+        "cells": 13959,
+        "pages": 8467
+      },
+      {
+        "name": "email_action_plans",
+        "table": "email_action_plans",
+        "type": "table",
+        "page_bytes": 14163968,
+        "unused_bytes": 2598052,
+        "cells": 13686,
+        "pages": 3458
+      },
+      {
+        "name": "email_provider_observations",
+        "table": "email_provider_observations",
+        "type": "table",
+        "page_bytes": 13348864,
+        "unused_bytes": 342784,
+        "cells": 75487,
+        "pages": 3259
+      },
+      {
+        "name": "work_updates",
+        "table": "work_updates",
+        "type": "table",
+        "page_bytes": 12115968,
+        "unused_bytes": 2512354,
+        "cells": 8007,
+        "pages": 2958
+      },
+      {
+        "name": "follow_up_drafts",
+        "table": "follow_up_drafts",
+        "type": "table",
+        "page_bytes": 10596352,
+        "unused_bytes": 2254264,
+        "cells": 4788,
+        "pages": 2587
+      },
+      {
+        "name": "idx_scheduled_task_runs_dispatch",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 9859072,
+        "unused_bytes": 1006587,
+        "cells": 177582,
+        "pages": 2407
+      },
+      {
+        "name": "idx_scheduled_task_runs_claim",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 9527296,
+        "unused_bytes": 854337,
+        "cells": 177582,
+        "pages": 2326
+      },
+      {
+        "name": "sqlite_autoindex_email_provider_observations_1",
+        "table": "email_provider_observations",
+        "type": "index",
+        "page_bytes": 9379840,
+        "unused_bytes": 395692,
+        "cells": 72238,
+        "pages": 2290
+      },
+      {
+        "name": "email_actions",
+        "table": "email_actions",
+        "type": "table",
+        "page_bytes": 9306112,
+        "unused_bytes": 1067649,
+        "cells": 12914,
+        "pages": 2272
+      },
+      {
+        "name": "idx_scheduled_task_runs_event",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 8155136,
+        "unused_bytes": 826494,
+        "cells": 177582,
+        "pages": 1991
+      },
+      {
+        "name": "idx_runs_public_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 8130560,
+        "unused_bytes": 680789,
+        "cells": 240174,
+        "pages": 1985
+      },
+      {
+        "name": "errors",
+        "table": "errors",
+        "type": "table",
+        "page_bytes": 7606272,
+        "unused_bytes": 556078,
+        "cells": 17174,
+        "pages": 1857
+      },
+      {
+        "name": "business_source_documents",
+        "table": "business_source_documents",
+        "type": "table",
+        "page_bytes": 7188480,
+        "unused_bytes": 120309,
+        "cells": 342,
+        "pages": 1755
+      },
+      {
+        "name": "idx_scheduled_task_runs_scheduled_instant",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 7028736,
+        "unused_bytes": 643822,
+        "cells": 177541,
+        "pages": 1716
+      },
+      {
+        "name": "work_projects",
+        "table": "work_projects",
+        "type": "table",
+        "page_bytes": 6643712,
+        "unused_bytes": 703287,
+        "cells": 1603,
+        "pages": 1622
+      },
+      {
+        "name": "managed_skill_revisions",
+        "table": "managed_skill_revisions",
+        "type": "table",
+        "page_bytes": 5791744,
+        "unused_bytes": 137213,
+        "cells": 318,
+        "pages": 1414
+      },
+      {
+        "name": "idx_scheduled_task_runs_latest",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4714496,
+        "unused_bytes": 2281362,
+        "cells": 177582,
+        "pages": 1151
+      },
+      {
+        "name": "runtime_skill_load_receipts",
+        "table": "runtime_skill_load_receipts",
+        "type": "table",
+        "page_bytes": 4681728,
+        "unused_bytes": 643585,
+        "cells": 5411,
+        "pages": 1143
+      },
+      {
+        "name": "email_action_attempts",
+        "table": "email_action_attempts",
+        "type": "table",
+        "page_bytes": 4218880,
+        "unused_bytes": 161498,
+        "cells": 13699,
+        "pages": 1030
+      },
+      {
+        "name": "idx_actions_reply_current_trigger",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 2826240,
+        "unused_bytes": 774235,
+        "cells": 15011,
+        "pages": 690
+      },
+      {
+        "name": "email_agent_classification_tasks",
+        "table": "email_agent_classification_tasks",
+        "type": "table",
+        "page_bytes": 2772992,
+        "unused_bytes": 610141,
+        "cells": 2050,
+        "pages": 677
+      },
+      {
+        "name": "idx_actions_reply_trigger_history",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 2605056,
+        "unused_bytes": 770332,
+        "cells": 15011,
+        "pages": 636
+      },
+      {
+        "name": "work_todo_dingtalk_links",
+        "table": "work_todo_dingtalk_links",
+        "type": "table",
+        "page_bytes": 2510848,
+        "unused_bytes": 906517,
+        "cells": 1484,
+        "pages": 613
+      },
+      {
+        "name": "work_todos",
+        "table": "work_todos",
+        "type": "table",
+        "page_bytes": 2420736,
+        "unused_bytes": 237546,
+        "cells": 3913,
+        "pages": 591
+      },
+      {
+        "name": "idx_email_provider_observations_folder",
+        "table": "email_provider_observations",
+        "type": "index",
+        "page_bytes": 2297856,
+        "unused_bytes": 48865,
+        "cells": 72238,
+        "pages": 561
+      },
+      {
+        "name": "email_unsubscribe_receipts",
+        "table": "email_unsubscribe_receipts",
+        "type": "table",
+        "page_bytes": 2138112,
+        "unused_bytes": 392073,
+        "cells": 1594,
+        "pages": 522
+      },
+      {
+        "name": "business_task_events",
+        "table": "business_task_events",
+        "type": "table",
+        "page_bytes": 1757184,
+        "unused_bytes": 417231,
+        "cells": 1398,
+        "pages": 429
+      },
+      {
+        "name": "idx_work_summary_inputs_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 1404928,
+        "unused_bytes": 189730,
+        "cells": 9108,
+        "pages": 343
+      },
+      {
+        "name": "sqlite_autoindex_email_action_attempts_1",
+        "table": "email_action_attempts",
+        "type": "index",
+        "page_bytes": 1310720,
+        "unused_bytes": 198468,
+        "cells": 12674,
+        "pages": 320
+      },
+      {
+        "name": "idx_email_actions_status",
+        "table": "email_actions",
+        "type": "index",
+        "page_bytes": 1302528,
+        "unused_bytes": 48963,
+        "cells": 10649,
+        "pages": 318
+      },
+      {
+        "name": "idx_email_actions_classification_plan",
+        "table": "email_actions",
+        "type": "index",
+        "page_bytes": 1269760,
+        "unused_bytes": 197556,
+        "cells": 10649,
+        "pages": 310
+      },
+      {
+        "name": "sqlite_autoindex_email_actions_2",
+        "table": "email_actions",
+        "type": "index",
+        "page_bytes": 1241088,
+        "unused_bytes": 187355,
+        "cells": 10649,
+        "pages": 303
+      },
+      {
+        "name": "sqlite_autoindex_email_classifications_1",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 1212416,
+        "unused_bytes": 148510,
+        "cells": 9204,
+        "pages": 296
+      },
+      {
+        "name": "email_unsubscribe_claims",
+        "table": "email_unsubscribe_claims",
+        "type": "table",
+        "page_bytes": 1163264,
+        "unused_bytes": 137924,
+        "cells": 1379,
+        "pages": 284
+      },
+      {
+        "name": "sqlite_autoindex_email_messages_1",
+        "table": "email_messages",
+        "type": "index",
+        "page_bytes": 1155072,
+        "unused_bytes": 148734,
+        "cells": 9204,
+        "pages": 282
+      },
+      {
+        "name": "sqlite_autoindex_email_action_plans_1",
+        "table": "email_action_plans",
+        "type": "index",
+        "page_bytes": 1114112,
+        "unused_bytes": 176058,
+        "cells": 10238,
+        "pages": 272
+      },
+      {
+        "name": "sqlite_autoindex_email_actions_1",
+        "table": "email_actions",
+        "type": "index",
+        "page_bytes": 1085440,
+        "unused_bytes": 163398,
+        "cells": 10649,
+        "pages": 265
+      },
+      {
+        "name": "business_object_tasks",
+        "table": "business_object_tasks",
+        "type": "table",
+        "page_bytes": 1085440,
+        "unused_bytes": 22260,
+        "cells": 7666,
+        "pages": 265
+      },
+      {
+        "name": "idx_agent_runs_turn_identity",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 1028096,
+        "unused_bytes": 120836,
+        "cells": 22972,
+        "pages": 251
+      },
+      {
+        "name": "idx_runtime_attempt_identity",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 983040,
+        "unused_bytes": 137819,
+        "cells": 24291,
+        "pages": 240
+      },
+      {
+        "name": "idx_reply_task_inputs_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 978944,
+        "unused_bytes": 137666,
+        "cells": 8295,
+        "pages": 239
+      },
+      {
+        "name": "idx_errors_reply_task_settlement",
+        "table": "errors",
+        "type": "index",
+        "page_bytes": 978944,
+        "unused_bytes": 82200,
+        "cells": 15447,
+        "pages": 239
+      },
+      {
+        "name": "dispatcher_claim_leases",
+        "table": "dispatcher_claim_leases",
+        "type": "table",
+        "page_bytes": 970752,
+        "unused_bytes": 39027,
+        "cells": 10291,
+        "pages": 237
+      },
+      {
+        "name": "idx_actions_reply_trigger_message",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 942080,
+        "unused_bytes": 118059,
+        "cells": 15011,
+        "pages": 230
+      },
+      {
+        "name": "okr_review_items",
+        "table": "okr_review_items",
+        "type": "table",
+        "page_bytes": 937984,
+        "unused_bytes": 226306,
+        "cells": 639,
+        "pages": 229
+      },
+      {
+        "name": "idx_actions_postfix_identity",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 933888,
+        "unused_bytes": 136893,
+        "cells": 23464,
+        "pages": 228
+      },
+      {
+        "name": "idx_agent_runs_status",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 913408,
+        "unused_bytes": 102092,
+        "cells": 22972,
+        "pages": 223
+      },
+      {
+        "name": "idx_reply_tasks_business_object_key",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 892928,
+        "unused_bytes": 134963,
+        "cells": 7575,
+        "pages": 218
+      },
+      {
+        "name": "idx_email_classifications_account_locator",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 888832,
+        "unused_bytes": 92232,
+        "cells": 9204,
+        "pages": 217
+      },
+      {
+        "name": "idx_actions_reply_status",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 880640,
+        "unused_bytes": 121929,
+        "cells": 15011,
+        "pages": 215
+      },
+      {
+        "name": "daily_scan_state",
+        "table": "daily_scan_state",
+        "type": "table",
+        "page_bytes": 876544,
+        "unused_bytes": 12853,
+        "cells": 15,
+        "pages": 214
+      },
+      {
+        "name": "sqlite_autoindex_business_object_tasks_1",
+        "table": "business_object_tasks",
+        "type": "index",
+        "page_bytes": 856064,
+        "unused_bytes": 113177,
+        "cells": 7403,
+        "pages": 209
+      },
+      {
+        "name": "idx_reply_tasks_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 835584,
+        "unused_bytes": 117884,
+        "cells": 7575,
+        "pages": 204
+      },
+      {
+        "name": "idx_tasks_public_id",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 823296,
+        "unused_bytes": 84185,
+        "cells": 25924,
+        "pages": 201
+      },
+      {
+        "name": "idx_actions_reply_created",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 786432,
+        "unused_bytes": 106413,
+        "cells": 15011,
+        "pages": 192
+      },
+      {
+        "name": "seen_messages",
+        "table": "seen_messages",
+        "type": "table",
+        "page_bytes": 708608,
+        "unused_bytes": 14534,
+        "cells": 7465,
+        "pages": 173
+      },
+      {
+        "name": "email_historical_candidates",
+        "table": "email_historical_candidates",
+        "type": "table",
+        "page_bytes": 692224,
+        "unused_bytes": 64392,
+        "cells": 1091,
+        "pages": 169
+      },
+      {
+        "name": "idx_email_classifications_account_status",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 688128,
+        "unused_bytes": 38996,
+        "cells": 9204,
+        "pages": 168
+      },
+      {
+        "name": "business_task_signals",
+        "table": "business_task_signals",
+        "type": "table",
+        "page_bytes": 675840,
+        "unused_bytes": 62198,
+        "cells": 1081,
+        "pages": 165
+      },
+      {
+        "name": "idx_actions_public_id",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 602112,
+        "unused_bytes": 76892,
+        "cells": 20519,
+        "pages": 147
+      },
+      {
+        "name": "idx_email_classifications_status",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 593920,
+        "unused_bytes": 56468,
+        "cells": 9204,
+        "pages": 145
+      },
+      {
+        "name": "email_unsubscribe_effects",
+        "table": "email_unsubscribe_effects",
+        "type": "table",
+        "page_bytes": 585728,
+        "unused_bytes": 48709,
+        "cells": 1325,
+        "pages": 143
+      },
+      {
+        "name": "idx_work_summary_inputs_updated",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 540672,
+        "unused_bytes": 255141,
+        "cells": 9108,
+        "pages": 132
+      },
+      {
+        "name": "conversation_runtime_sessions",
+        "table": "conversation_runtime_sessions",
+        "type": "table",
+        "page_bytes": 528384,
+        "unused_bytes": 25919,
+        "cells": 5443,
+        "pages": 129
+      },
+      {
+        "name": "business_tasks",
+        "table": "business_tasks",
+        "type": "table",
+        "page_bytes": 479232,
+        "unused_bytes": 46494,
+        "cells": 780,
+        "pages": 117
+      },
+      {
+        "name": "idx_actions_reply_run_recovery",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 450560,
+        "unused_bytes": 104865,
+        "cells": 15011,
+        "pages": 110
+      },
+      {
+        "name": "idx_email_messages_account_locator",
+        "table": "email_messages",
+        "type": "index",
+        "page_bytes": 446464,
+        "unused_bytes": 39298,
+        "cells": 9204,
+        "pages": 109
+      },
+      {
+        "name": "idx_actions_reply_public_order",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 430080,
+        "unused_bytes": 52369,
+        "cells": 15011,
+        "pages": 105
+      },
+      {
+        "name": "sqlite_schema",
+        "table": "sqlite_schema",
+        "type": "internal",
+        "page_bytes": 421888,
+        "unused_bytes": 76815,
+        "cells": 616,
+        "pages": 103
+      },
+      {
+        "name": "email_feedback_requests",
+        "table": "email_feedback_requests",
+        "type": "table",
+        "page_bytes": 368640,
+        "unused_bytes": 18337,
+        "cells": 1501,
+        "pages": 90
+      },
+      {
+        "name": "sqlite_autoindex_scheduled_task_config_versions_1",
+        "table": "scheduled_task_config_versions",
+        "type": "index",
+        "page_bytes": 344064,
+        "unused_bytes": 213054,
+        "cells": 110,
+        "pages": 84
+      },
+      {
+        "name": "idx_dispatcher_claim_leases_terminal",
+        "table": "dispatcher_claim_leases",
+        "type": "index",
+        "page_bytes": 323584,
+        "unused_bytes": 41674,
+        "cells": 10000,
+        "pages": 79
+      },
+      {
+        "name": "sqlite_autoindex_seen_messages_1",
+        "table": "seen_messages",
+        "type": "index",
+        "page_bytes": 311296,
+        "unused_bytes": 53760,
+        "cells": 7294,
+        "pages": 76
+      },
+      {
+        "name": "managed_skill_export_receipts",
+        "table": "managed_skill_export_receipts",
+        "type": "table",
+        "page_bytes": 307200,
+        "unused_bytes": 7686,
+        "cells": 2122,
+        "pages": 75
+      },
+      {
+        "name": "idx_dispatcher_claim_leases_expiry",
+        "table": "dispatcher_claim_leases",
+        "type": "index",
+        "page_bytes": 303104,
+        "unused_bytes": 39307,
+        "cells": 10056,
+        "pages": 74
+      },
+      {
+        "name": "email_classifier_runtime_samples",
+        "table": "email_classifier_runtime_samples",
+        "type": "table",
+        "page_bytes": 299008,
+        "unused_bytes": 17269,
+        "cells": 2119,
+        "pages": 73
+      },
+      {
+        "name": "sqlite_autoindex_dispatcher_claim_leases_1",
+        "table": "dispatcher_claim_leases",
+        "type": "index",
+        "page_bytes": 290816,
+        "unused_bytes": 38219,
+        "cells": 10056,
+        "pages": 71
+      },
+      {
+        "name": "idx_actions_sent_history",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 249856,
+        "unused_bytes": 27044,
+        "cells": 2411,
+        "pages": 61
+      },
+      {
+        "name": "follow_up_send_attempts",
+        "table": "follow_up_send_attempts",
+        "type": "table",
+        "page_bytes": 249856,
+        "unused_bytes": 69548,
+        "cells": 124,
+        "pages": 61
+      },
+      {
+        "name": "email_unsubscribe_steps",
+        "table": "email_unsubscribe_steps",
+        "type": "table",
+        "page_bytes": 245760,
+        "unused_bytes": 14913,
+        "cells": 887,
+        "pages": 60
+      },
+      {
+        "name": "sqlite_autoindex_email_unsubscribe_effects_1",
+        "table": "email_unsubscribe_effects",
+        "type": "index",
+        "page_bytes": 241664,
+        "unused_bytes": 59211,
+        "cells": 1184,
+        "pages": 59
+      },
+      {
+        "name": "sqlite_autoindex_business_task_signals_1",
+        "table": "business_task_signals",
+        "type": "index",
+        "page_bytes": 229376,
+        "unused_bytes": 26158,
+        "cells": 918,
+        "pages": 56
+      },
+      {
+        "name": "idx_reply_tasks_channel_status_id",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 217088,
+        "unused_bytes": 28242,
+        "cells": 7575,
+        "pages": 53
+      },
+      {
+        "name": "sqlite_autoindex_email_action_plans_2",
+        "table": "email_action_plans",
+        "type": "index",
+        "page_bytes": 204800,
+        "unused_bytes": 28632,
+        "cells": 10238,
+        "pages": 50
+      },
+      {
+        "name": "idx_agent_runtime_attempts_run",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 196608,
+        "unused_bytes": 27818,
+        "cells": 13772,
+        "pages": 48
+      },
+      {
+        "name": "sqlite_autoindex_conversation_runtime_sessions_1",
+        "table": "conversation_runtime_sessions",
+        "type": "index",
+        "page_bytes": 180224,
+        "unused_bytes": 10342,
+        "cells": 5316,
+        "pages": 44
+      },
+      {
+        "name": "idx_work_summary_inputs_status",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 180224,
+        "unused_bytes": 20219,
+        "cells": 9108,
+        "pages": 44
+      },
+      {
+        "name": "idx_business_task_signals_source",
+        "table": "business_task_signals",
+        "type": "index",
+        "page_bytes": 180224,
+        "unused_bytes": 22373,
+        "cells": 918,
+        "pages": 44
+      },
+      {
+        "name": "idx_task_agent_runs_input",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 176128,
+        "unused_bytes": 24637,
+        "cells": 10752,
+        "pages": 43
+      },
+      {
+        "name": "idx_email_agent_classification_tasks_status",
+        "table": "email_agent_classification_tasks",
+        "type": "index",
+        "page_bytes": 176128,
+        "unused_bytes": 36151,
+        "cells": 1377,
+        "pages": 43
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_candidates_1",
+        "table": "email_historical_candidates",
+        "type": "index",
+        "page_bytes": 172032,
+        "unused_bytes": 12448,
+        "cells": 924,
+        "pages": 42
+      },
+      {
+        "name": "oa_notification_events",
+        "table": "oa_notification_events",
+        "type": "table",
+        "page_bytes": 172032,
+        "unused_bytes": 21445,
+        "cells": 42,
+        "pages": 42
+      },
+      {
+        "name": "idx_work_updates_created",
+        "table": "work_updates",
+        "type": "index",
+        "page_bytes": 172032,
+        "unused_bytes": 7244,
+        "cells": 5468,
+        "pages": 42
+      },
+      {
+        "name": "email_training_snapshots",
+        "table": "email_training_snapshots",
+        "type": "table",
+        "page_bytes": 167936,
+        "unused_bytes": 20919,
+        "cells": 161,
+        "pages": 41
+      },
+      {
+        "name": "sqlite_autoindex_email_agent_classification_tasks_1",
+        "table": "email_agent_classification_tasks",
+        "type": "index",
+        "page_bytes": 159744,
+        "unused_bytes": 29502,
+        "cells": 1377,
+        "pages": 39
+      },
+      {
+        "name": "scheduled_task_config_versions",
+        "table": "scheduled_task_config_versions",
+        "type": "table",
+        "page_bytes": 159744,
+        "unused_bytes": 29450,
+        "cells": 147,
+        "pages": 39
+      },
+      {
+        "name": "sqlite_autoindex_email_agent_classification_tasks_2",
+        "table": "email_agent_classification_tasks",
+        "type": "index",
+        "page_bytes": 155648,
+        "unused_bytes": 26329,
+        "cells": 1377,
+        "pages": 38
+      },
+      {
+        "name": "idx_reply_tasks_status",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 147456,
+        "unused_bytes": 23324,
+        "cells": 7575,
+        "pages": 36
+      },
+      {
+        "name": "runtime_skill_bindings",
+        "table": "runtime_skill_bindings",
+        "type": "table",
+        "page_bytes": 143360,
+        "unused_bytes": 7860,
+        "cells": 3914,
+        "pages": 35
+      },
+      {
+        "name": "idx_reply_task_inputs_task",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 143360,
+        "unused_bytes": 18009,
+        "cells": 8295,
+        "pages": 35
+      },
+      {
+        "name": "sqlite_autoindex_email_feedback_requests_3",
+        "table": "email_feedback_requests",
+        "type": "index",
+        "page_bytes": 135168,
+        "unused_bytes": 5925,
+        "cells": 1413,
+        "pages": 33
+      },
+      {
+        "name": "idx_email_unsubscribe_claims_status",
+        "table": "email_unsubscribe_claims",
+        "type": "index",
+        "page_bytes": 135168,
+        "unused_bytes": 6149,
+        "cells": 1097,
+        "pages": 33
+      },
+      {
+        "name": "wechat_deliveries",
+        "table": "wechat_deliveries",
+        "type": "table",
+        "page_bytes": 131072,
+        "unused_bytes": 17032,
+        "cells": 160,
+        "pages": 32
+      },
+      {
+        "name": "idx_work_todos_follow_up",
+        "table": "work_todos",
+        "type": "index",
+        "page_bytes": 131072,
+        "unused_bytes": 7122,
+        "cells": 3327,
+        "pages": 32
+      },
+      {
+        "name": "idx_email_unsubscribe_receipts_classification_action",
+        "table": "email_unsubscribe_receipts",
+        "type": "index",
+        "page_bytes": 131072,
+        "unused_bytes": 26223,
+        "cells": 1097,
+        "pages": 32
+      },
+      {
+        "name": "idx_email_classifier_runtime_model_id",
+        "table": "email_classifier_runtime_samples",
+        "type": "index",
+        "page_bytes": 126976,
+        "unused_bytes": 11548,
+        "cells": 2048,
+        "pages": 31
+      },
+      {
+        "name": "sqlite_autoindex_email_unsubscribe_receipts_1",
+        "table": "email_unsubscribe_receipts",
+        "type": "index",
+        "page_bytes": 122880,
+        "unused_bytes": 27950,
+        "cells": 1097,
+        "pages": 30
+      },
+      {
+        "name": "sqlite_autoindex_email_unsubscribe_claims_1",
+        "table": "email_unsubscribe_claims",
+        "type": "index",
+        "page_bytes": 122880,
+        "unused_bytes": 27934,
+        "cells": 1097,
+        "pages": 30
+      },
+      {
+        "name": "idx_follow_up_drafts_owner_sent",
+        "table": "follow_up_drafts",
+        "type": "index",
+        "page_bytes": 122880,
+        "unused_bytes": 5322,
+        "cells": 2477,
+        "pages": 30
+      },
+      {
+        "name": "idx_follow_up_drafts_status",
+        "table": "follow_up_drafts",
+        "type": "index",
+        "page_bytes": 106496,
+        "unused_bytes": 5942,
+        "cells": 2477,
+        "pages": 26
+      },
+      {
+        "name": "idx_follow_up_drafts_conversation_sent",
+        "table": "follow_up_drafts",
+        "type": "index",
+        "page_bytes": 106496,
+        "unused_bytes": 5836,
+        "cells": 2477,
+        "pages": 26
+      },
+      {
+        "name": "codex_session_search_index",
+        "table": "codex_session_search_index",
+        "type": "table",
+        "page_bytes": 106496,
+        "unused_bytes": 7791,
+        "cells": 747,
+        "pages": 26
+      },
+      {
+        "name": "sqlite_autoindex_email_feedback_requests_2",
+        "table": "email_feedback_requests",
+        "type": "index",
+        "page_bytes": 102400,
+        "unused_bytes": 5055,
+        "cells": 1413,
+        "pages": 25
+      },
+      {
+        "name": "idx_follow_up_drafts_todo_schedule",
+        "table": "follow_up_drafts",
+        "type": "index",
+        "page_bytes": 98304,
+        "unused_bytes": 7373,
+        "cells": 2477,
+        "pages": 24
+      },
+      {
+        "name": "sqlite_autoindex_email_unsubscribe_steps_1",
+        "table": "email_unsubscribe_steps",
+        "type": "index",
+        "page_bytes": 94208,
+        "unused_bytes": 21480,
+        "cells": 829,
+        "pages": 23
+      },
+      {
+        "name": "meeting_memory_write_events",
+        "table": "meeting_memory_write_events",
+        "type": "table",
+        "page_bytes": 94208,
+        "unused_bytes": 7821,
+        "cells": 616,
+        "pages": 23
+      },
+      {
+        "name": "idx_meeting_alignment_runs_created",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 94208,
+        "unused_bytes": 13511,
+        "cells": 2588,
+        "pages": 23
+      },
+      {
+        "name": "idx_follow_up_drafts_project_schedule",
+        "table": "follow_up_drafts",
+        "type": "index",
+        "page_bytes": 94208,
+        "unused_bytes": 3972,
+        "cells": 2477,
+        "pages": 23
+      },
+      {
+        "name": "feedback_events",
+        "table": "feedback_events",
+        "type": "table",
+        "page_bytes": 90112,
+        "unused_bytes": 20008,
+        "cells": 68,
+        "pages": 22
+      },
+      {
+        "name": "sqlite_autoindex_email_feedback_requests_1",
+        "table": "email_feedback_requests",
+        "type": "index",
+        "page_bytes": 86016,
+        "unused_bytes": 6563,
+        "cells": 1413,
+        "pages": 21
+      },
+      {
+        "name": "idx_actions_reply_oa_history",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 86016,
+        "unused_bytes": 15501,
+        "cells": 1045,
+        "pages": 21
+      },
+      {
+        "name": "task_todo_sync_outbox",
+        "table": "task_todo_sync_outbox",
+        "type": "table",
+        "page_bytes": 81920,
+        "unused_bytes": 14790,
+        "cells": 260,
+        "pages": 20
+      },
+      {
+        "name": "idx_follow_up_drafts_history_updated",
+        "table": "follow_up_drafts",
+        "type": "index",
+        "page_bytes": 81920,
+        "unused_bytes": 7390,
+        "cells": 2477,
+        "pages": 20
+      },
+      {
+        "name": "idx_actions_global_business",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 81920,
+        "unused_bytes": 14637,
+        "cells": 437,
+        "pages": 20
+      },
+      {
+        "name": "conversations",
+        "table": "conversations",
+        "type": "table",
+        "page_bytes": 81920,
+        "unused_bytes": 12612,
+        "cells": 546,
+        "pages": 20
+      },
+      {
+        "name": "business_attention_events",
+        "table": "business_attention_events",
+        "type": "table",
+        "page_bytes": 81920,
+        "unused_bytes": 17005,
+        "cells": 30,
+        "pages": 20
+      },
+      {
+        "name": "service_state",
+        "table": "service_state",
+        "type": "table",
+        "page_bytes": 77824,
+        "unused_bytes": 23490,
+        "cells": 295,
+        "pages": 19
+      },
+      {
+        "name": "idx_work_updates_project",
+        "table": "work_updates",
+        "type": "index",
+        "page_bytes": 77824,
+        "unused_bytes": 7829,
+        "cells": 5468,
+        "pages": 19
+      },
+      {
+        "name": "task_memory_write_events",
+        "table": "task_memory_write_events",
+        "type": "table",
+        "page_bytes": 73728,
+        "unused_bytes": 7503,
+        "cells": 629,
+        "pages": 18
+      },
+      {
+        "name": "idx_actions_intent_operation",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 69632,
+        "unused_bytes": 15356,
+        "cells": 214,
+        "pages": 17
+      },
+      {
+        "name": "email_historical_classification_history",
+        "table": "email_historical_classification_history",
+        "type": "table",
+        "page_bytes": 65536,
+        "unused_bytes": 10192,
+        "cells": 197,
+        "pages": 16
+      },
+      {
+        "name": "idx_work_todos_project_status",
+        "table": "work_todos",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 7796,
+        "cells": 3327,
+        "pages": 14
+      },
+      {
+        "name": "idx_runtime_skill_load_receipts_config",
+        "table": "runtime_skill_load_receipts",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 6186,
+        "cells": 4273,
+        "pages": 14
+      },
+      {
+        "name": "idx_meeting_alignment_jobs_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 10745,
+        "cells": 757,
+        "pages": 14
+      },
+      {
+        "name": "sqlite_autoindex_runtime_skill_bindings_2",
+        "table": "runtime_skill_bindings",
+        "type": "index",
+        "page_bytes": 53248,
+        "unused_bytes": 8815,
+        "cells": 3881,
+        "pages": 13
+      },
+      {
+        "name": "sqlite_autoindex_runtime_skill_bindings_1",
+        "table": "runtime_skill_bindings",
+        "type": "index",
+        "page_bytes": 53248,
+        "unused_bytes": 8536,
+        "cells": 3881,
+        "pages": 13
+      },
+      {
+        "name": "idx_runtime_skill_bindings_config_order",
+        "table": "runtime_skill_bindings",
+        "type": "index",
+        "page_bytes": 53248,
+        "unused_bytes": 8815,
+        "cells": 3881,
+        "pages": 13
+      },
+      {
+        "name": "idx_meeting_alignment_runs_job",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 10127,
+        "cells": 2588,
+        "pages": 12
+      },
+      {
+        "name": "idx_actions_text_public_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 6824,
+        "cells": 437,
+        "pages": 12
+      },
+      {
+        "name": "business_task_evidence",
+        "table": "business_task_evidence",
+        "type": "table",
+        "page_bytes": 49152,
+        "unused_bytes": 7937,
+        "cells": 985,
+        "pages": 12
+      },
+      {
+        "name": "sqlite_autoindex_codex_session_search_index_1",
+        "table": "codex_session_search_index",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 9040,
+        "cells": 723,
+        "pages": 10
+      },
+      {
+        "name": "idx_work_projects_status_priority",
+        "table": "work_projects",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 4197,
+        "cells": 975,
+        "pages": 10
+      },
+      {
+        "name": "idx_meeting_alignment_jobs_claim",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 6727,
+        "cells": 757,
+        "pages": 10
+      },
+      {
+        "name": "idx_business_tasks_list",
+        "table": "business_tasks",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 7915,
+        "cells": 665,
+        "pages": 10
+      },
+      {
+        "name": "sqlite_autoindex_service_state_1",
+        "table": "service_state",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 13402,
+        "cells": 278,
+        "pages": 9
+      },
+      {
+        "name": "sqlite_autoindex_conversations_1",
+        "table": "conversations",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 9931,
+        "cells": 528,
+        "pages": 9
+      },
+      {
+        "name": "idx_business_tasks_relevance",
+        "table": "business_tasks",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 7561,
+        "cells": 665,
+        "pages": 9
+      },
+      {
+        "name": "idx_business_task_evidence_task",
+        "table": "business_task_evidence",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 5024,
+        "cells": 975,
+        "pages": 9
+      },
+      {
+        "name": "idx_business_task_events_task",
+        "table": "business_task_events",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 5156,
+        "cells": 971,
+        "pages": 9
+      },
+      {
+        "name": "idx_actions_sent_external_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 8524,
+        "cells": 390,
+        "pages": 9
+      },
+      {
+        "name": "idx_actions_execution_receipt_operation",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 4314,
+        "cells": 115,
+        "pages": 9
+      },
+      {
+        "name": "idx_actions_candidates_task",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 32768,
+        "unused_bytes": 8996,
+        "cells": 886,
+        "pages": 8
+      },
+      {
+        "name": "sqlite_autoindex_business_task_evidence_1",
+        "table": "business_task_evidence",
+        "type": "index",
+        "page_bytes": 28672,
+        "unused_bytes": 6142,
+        "cells": 975,
+        "pages": 7
+      },
+      {
+        "name": "idx_managed_skill_export_receipts_revision",
+        "table": "managed_skill_export_receipts",
+        "type": "index",
+        "page_bytes": 28672,
+        "unused_bytes": 4031,
+        "cells": 2049,
+        "pages": 7
+      },
+      {
+        "name": "idx_codex_session_search_source",
+        "table": "codex_session_search_index",
+        "type": "index",
+        "page_bytes": 28672,
+        "unused_bytes": 7120,
+        "cells": 723,
+        "pages": 7
+      },
+      {
+        "name": "idx_business_tasks_updated_id",
+        "table": "business_tasks",
+        "type": "index",
+        "page_bytes": 28672,
+        "unused_bytes": 4824,
+        "cells": 665,
+        "pages": 7
+      },
+      {
+        "name": "business_attention_items",
+        "table": "business_attention_items",
+        "type": "table",
+        "page_bytes": 28672,
+        "unused_bytes": 9982,
+        "cells": 16,
+        "pages": 7
+      },
+      {
+        "name": "todo_evidence_candidates",
+        "table": "todo_evidence_candidates",
+        "type": "table",
+        "page_bytes": 24576,
+        "unused_bytes": 9908,
+        "cells": 5,
+        "pages": 6
+      },
+      {
+        "name": "sqlite_autoindex_business_source_documents_1",
+        "table": "business_source_documents",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 9015,
+        "cells": 213,
+        "pages": 6
+      },
+      {
+        "name": "org_user_profiles",
+        "table": "org_user_profiles",
+        "type": "table",
+        "page_bytes": 24576,
+        "unused_bytes": 8555,
+        "cells": 80,
+        "pages": 6
+      },
+      {
+        "name": "idx_workbench_events_event_type",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6945,
+        "cells": 810,
+        "pages": 6
+      },
+      {
+        "name": "idx_work_todo_dingtalk_links_todo",
+        "table": "work_todo_dingtalk_links",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 7849,
+        "cells": 875,
+        "pages": 6
+      },
+      {
+        "name": "idx_work_todo_dingtalk_links_task_id",
+        "table": "work_todo_dingtalk_links",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 8015,
+        "cells": 871,
+        "pages": 6
+      },
+      {
+        "name": "idx_weekly_okr_analysis_jobs_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6907,
+        "cells": 169,
+        "pages": 6
+      },
+      {
+        "name": "idx_managed_skill_revisions_identity",
+        "table": "managed_skill_revisions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6322,
+        "cells": 192,
+        "pages": 6
+      },
+      {
+        "name": "idx_agent_run_state_events_run",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 8354,
+        "cells": 1157,
+        "pages": 6
+      },
+      {
+        "name": "idx_actions_intent_authorization",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 8172,
+        "cells": 214,
+        "pages": 6
+      },
+      {
+        "name": "idx_actions_external_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 5529,
+        "cells": 259,
+        "pages": 6
+      },
+      {
+        "name": "codex_session_search_fts_data",
+        "table": "codex_session_search_fts_data",
+        "type": "table",
+        "page_bytes": 24576,
+        "unused_bytes": 8618,
+        "cells": 11,
+        "pages": 6
+      },
+      {
+        "name": "business_project_context_revisions",
+        "table": "business_project_context_revisions",
+        "type": "table",
+        "page_bytes": 24576,
+        "unused_bytes": 7328,
+        "cells": 9,
+        "pages": 6
+      },
+      {
+        "name": "sqlite_autoindex_task_memory_write_events_1",
+        "table": "task_memory_write_events",
+        "type": "index",
+        "page_bytes": 20480,
+        "unused_bytes": 6378,
+        "cells": 613,
+        "pages": 5
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_classification_history_1",
+        "table": "email_historical_classification_history",
+        "type": "index",
+        "page_bytes": 20480,
+        "unused_bytes": 4022,
+        "cells": 183,
+        "pages": 5
+      },
+      {
+        "name": "idx_actions_memory_public_order",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 20480,
+        "unused_bytes": 6084,
+        "cells": 476,
+        "pages": 5
+      },
+      {
+        "name": "email_category_description_revisions",
+        "table": "email_category_description_revisions",
+        "type": "table",
+        "page_bytes": 20480,
+        "unused_bytes": 3292,
+        "cells": 24,
+        "pages": 5
+      },
+      {
+        "name": "business_task_anchor_links",
+        "table": "business_task_anchor_links",
+        "type": "table",
+        "page_bytes": 20480,
+        "unused_bytes": 6185,
+        "cells": 102,
+        "pages": 5
+      },
+      {
+        "name": "sqlite_autoindex_task_todo_sync_outbox_1",
+        "table": "task_todo_sync_outbox",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7136,
+        "cells": 242,
+        "pages": 4
+      },
+      {
+        "name": "sqlite_autoindex_email_training_snapshots_2",
+        "table": "email_training_snapshots",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7509,
+        "cells": 122,
+        "pages": 4
+      },
+      {
+        "name": "sqlite_autoindex_email_training_snapshots_1",
+        "table": "email_training_snapshots",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 8077,
+        "cells": 122,
+        "pages": 4
+      },
+      {
+        "name": "scheduled_tasks",
+        "table": "scheduled_tasks",
+        "type": "table",
+        "page_bytes": 16384,
+        "unused_bytes": 7017,
+        "cells": 17,
+        "pages": 4
+      },
+      {
+        "name": "runtime_skill_configs",
+        "table": "runtime_skill_configs",
+        "type": "table",
+        "page_bytes": 16384,
+        "unused_bytes": 4995,
+        "cells": 281,
+        "pages": 4
+      },
+      {
+        "name": "idx_workbench_events_turn_id_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4270,
+        "cells": 810,
+        "pages": 4
+      },
+      {
+        "name": "idx_workbench_events_sequence",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4962,
+        "cells": 810,
+        "pages": 4
+      },
+      {
+        "name": "idx_workbench_events_id_turn_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4270,
+        "cells": 810,
+        "pages": 4
+      },
+      {
+        "name": "idx_task_memory_write_events_lease",
+        "table": "task_memory_write_events",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4901,
+        "cells": 613,
+        "pages": 4
+      },
+      {
+        "name": "idx_task_memory_write_events_due",
+        "table": "task_memory_write_events",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4901,
+        "cells": 613,
+        "pages": 4
+      },
+      {
+        "name": "idx_meeting_memory_write_events_lease",
+        "table": "meeting_memory_write_events",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 6420,
+        "cells": 595,
+        "pages": 4
+      },
+      {
+        "name": "idx_meeting_memory_write_events_due",
+        "table": "meeting_memory_write_events",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 6420,
+        "cells": 595,
+        "pages": 4
+      },
+      {
+        "name": "idx_business_signal_document",
+        "table": "business_task_signals",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7931,
+        "cells": 918,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_reviews_candidate",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 5155,
+        "cells": 876,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_memory_unique",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 5340,
+        "cells": 476,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_memory_status",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7724,
+        "cells": 476,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_consumer_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7032,
+        "cells": 886,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_audit_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7007,
+        "cells": 876,
+        "pages": 4
+      },
+      {
+        "name": "sqlite_autoindex_meeting_memory_write_events_1",
+        "table": "meeting_memory_write_events",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 5499,
+        "cells": 595,
+        "pages": 3
+      },
+      {
+        "name": "sqlite_autoindex_business_anchors_1",
+        "table": "business_anchors",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 7271,
+        "cells": 50,
+        "pages": 3
+      },
+      {
+        "name": "setup_wizard_events",
+        "table": "setup_wizard_events",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 6167,
+        "cells": 23,
+        "pages": 3
+      },
+      {
+        "name": "runtime_feedback_iteration_capabilities",
+        "table": "runtime_feedback_iteration_capabilities",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 4531,
+        "cells": 280,
+        "pages": 3
+      },
+      {
+        "name": "idx_work_todo_dingtalk_links_active_todo",
+        "table": "work_todo_dingtalk_links",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 6899,
+        "cells": 540,
+        "pages": 3
+      },
+      {
+        "name": "idx_task_todo_sync_outbox_due",
+        "table": "task_todo_sync_outbox",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 7474,
+        "cells": 242,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_observer_identity",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 7043,
+        "cells": 390,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_memory_attempt",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 6032,
+        "cells": 476,
+        "pages": 3
+      },
+      {
+        "name": "feedback_processing_items",
+        "table": "feedback_processing_items",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 5040,
+        "cells": 49,
+        "pages": 3
+      },
+      {
+        "name": "email_category_configs",
+        "table": "email_category_configs",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 6962,
+        "cells": 12,
+        "pages": 3
+      },
+      {
+        "name": "codex_session_search_fts_docsize",
+        "table": "codex_session_search_fts_docsize",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 5836,
+        "cells": 724,
+        "pages": 3
+      },
+      {
+        "name": "business_projects",
+        "table": "business_projects",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 5839,
+        "cells": 33,
+        "pages": 3
+      },
+      {
+        "name": "business_anchors",
+        "table": "business_anchors",
+        "type": "table",
+        "page_bytes": 12288,
+        "unused_bytes": 5210,
+        "cells": 51,
+        "pages": 3
+      },
+      {
+        "name": "workbench_confirmations",
+        "table": "workbench_confirmations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "workbench_attachments",
+        "table": "workbench_attachments",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "workbench_artifacts",
+        "table": "workbench_artifacts",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "wechat_reply_scopes",
+        "table": "wechat_reply_scopes",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3008,
+        "cells": 4,
+        "pages": 1
+      },
+      {
+        "name": "wechat_read_state",
+        "table": "wechat_read_state",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3791,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "wechat_memory_import_jobs",
+        "table": "wechat_memory_import_jobs",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "wechat_memory_candidates",
+        "table": "wechat_memory_candidates",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_sequence",
+        "table": "sqlite_sequence",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2649,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_workbench_confirmations_1",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_workbench_attachments_1",
+        "table": "workbench_attachments",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_workbench_artifacts_1",
+        "table": "workbench_artifacts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_wechat_reply_scopes_1",
+        "table": "wechat_reply_scopes",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3896,
+        "cells": 4,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_wechat_read_state_1",
+        "table": "wechat_read_state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4054,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_wechat_memory_candidates_1",
+        "table": "wechat_memory_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_wechat_deliveries_1",
+        "table": "wechat_deliveries",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1126,
+        "cells": 133,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_todo_evidence_candidates_1",
+        "table": "todo_evidence_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3861,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_setup_wizard_steps_1",
+        "table": "setup_wizard_steps",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3870,
+        "cells": 12,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_service_bugfix_candidates_1",
+        "table": "service_bugfix_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3945,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_scheduled_task_skill_refs_1",
+        "table": "scheduled_task_skill_refs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3724,
+        "cells": 34,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_runtime_route_pauses_1",
+        "table": "runtime_route_pauses",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4056,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_org_user_profiles_1",
+        "table": "org_user_profiles",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2163,
+        "cells": 76,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_org_cache_metadata_1",
+        "table": "org_cache_metadata",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4031,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_oa_notification_events_1",
+        "table": "oa_notification_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1847,
+        "cells": 30,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_managed_skills_1",
+        "table": "managed_skills",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3482,
+        "cells": 21,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_follow_up_send_attempts_1",
+        "table": "follow_up_send_attempts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1282,
+        "cells": 65,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_processing_rounds_2",
+        "table": "feedback_processing_rounds",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3930,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_processing_rounds_1",
+        "table": "feedback_processing_rounds",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4019,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_processing_items_1",
+        "table": "feedback_processing_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2079,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_processing_batches_1",
+        "table": "feedback_processing_batches",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3966,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_iteration_decision_items_1",
+        "table": "feedback_iteration_decision_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_events_1",
+        "table": "feedback_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2079,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_unsubscribe_continuations_1",
+        "table": "email_unsubscribe_continuations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_unsubscribe_cancellations_1",
+        "table": "email_unsubscribe_cancellations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3992,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_training_snapshot_observations_1",
+        "table": "email_training_snapshot_observations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_scan_cursors_1",
+        "table": "email_scan_cursors",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4013,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_reply_receipts_2",
+        "table": "email_reply_receipts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_reply_receipts_1",
+        "table": "email_reply_receipts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_reply_dispatch_claims_2",
+        "table": "email_reply_dispatch_claims",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_reply_dispatch_claims_1",
+        "table": "email_reply_dispatch_claims",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_provider_folder_observation_generations_1",
+        "table": "email_provider_folder_observation_generations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2025,
+        "cells": 55,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_traversals_1",
+        "table": "email_historical_traversals",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3921,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_operations_2",
+        "table": "email_historical_operations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_operations_1",
+        "table": "email_historical_operations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_direct_retry_requests_1",
+        "table": "email_direct_retry_requests",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3990,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_category_folder_bindings_1",
+        "table": "email_category_folder_bindings",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3293,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_category_configs_1",
+        "table": "email_category_configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3905,
+        "cells": 11,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_accounts_1",
+        "table": "email_accounts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4025,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_daily_scan_state_1",
+        "table": "daily_scan_state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3876,
+        "cells": 9,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_corpus_sources_1",
+        "table": "corpus_sources",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_codex_session_locks_1",
+        "table": "codex_session_locks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_channel_login_reservations_1",
+        "table": "channel_login_reservations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_work_cluster_tasks_1",
+        "table": "business_work_cluster_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3902,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_todo_sync_outbox_1",
+        "table": "business_task_todo_sync_outbox",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_relations_1",
+        "table": "business_task_relations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_follow_ups_1",
+        "table": "business_task_follow_ups",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_follow_up_send_attempts_1",
+        "table": "business_task_follow_up_send_attempts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_anchor_links_1",
+        "table": "business_task_anchor_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3017,
+        "cells": 99,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_projects_1",
+        "table": "business_projects",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3822,
+        "cells": 32,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_project_evidence_1",
+        "table": "business_project_evidence",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3611,
+        "cells": 44,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_legacy_links_3",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_legacy_links_2",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_legacy_links_1",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_attention_tasks_1",
+        "table": "business_attention_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_attention_proposal_tasks_1",
+        "table": "business_attention_proposal_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_attention_items_1",
+        "table": "business_attention_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3891,
+        "cells": 11,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_anchors_2",
+        "table": "business_anchors",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3278,
+        "cells": 50,
+        "pages": 1
+      },
+      {
+        "name": "setup_wizard_steps",
+        "table": "setup_wizard_steps",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3034,
+        "cells": 12,
+        "pages": 1
+      },
+      {
+        "name": "service_bugfix_candidates",
+        "table": "service_bugfix_candidates",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2325,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "scheduled_task_skill_refs",
+        "table": "scheduled_task_skill_refs",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2701,
+        "cells": 34,
+        "pages": 1
+      },
+      {
+        "name": "runtime_route_pauses",
+        "table": "runtime_route_pauses",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3974,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "org_cache_metadata",
+        "table": "org_cache_metadata",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3948,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "meeting_alignment_delivery_claims",
+        "table": "meeting_alignment_delivery_claims",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "managed_skills",
+        "table": "managed_skills",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2592,
+        "cells": 21,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_turns_task_sequence",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3576,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_turns_task_created_id",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1523,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_turns_recovery",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3394,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_turns_queue",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1322,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_turns_client_request",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2378,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_tasks_updated_id",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2776,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_one_active_turn",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_turn_status",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_turn_created_id",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_recovery",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_ready_intents",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_proposer_recovery",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_legacy_proposer_recovery",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_legacy_execution_owner_recovery",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_legacy_execution_lease_recovery",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_confirmations_created_id_turn",
+        "table": "workbench_confirmations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_attachments_task_request",
+        "table": "workbench_attachments",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_attachments_task_created_id",
+        "table": "workbench_attachments",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_artifacts_turn_created_id",
+        "table": "workbench_artifacts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_workbench_artifacts_created_id_turn",
+        "table": "workbench_artifacts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_wechat_memory_import_jobs_status",
+        "table": "wechat_memory_import_jobs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_wechat_deliveries_task_generation",
+        "table": "wechat_deliveries",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 851,
+        "cells": 133,
+        "pages": 1
+      },
+      {
+        "name": "idx_wechat_deliveries_status",
+        "table": "wechat_deliveries",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1891,
+        "cells": 133,
+        "pages": 1
+      },
+      {
+        "name": "idx_todo_evidence_candidates_work_input",
+        "table": "todo_evidence_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4050,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_todo_evidence_candidates_todo",
+        "table": "todo_evidence_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4021,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_todo_evidence_candidates_status",
+        "table": "todo_evidence_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4027,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_todo_evidence_candidates_project",
+        "table": "todo_evidence_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4048,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_tasks_text_public_id",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 599,
+        "cells": 57,
+        "pages": 1
+      },
+      {
+        "name": "idx_task_agent_runs_active_input",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_setup_wizard_events_step",
+        "table": "setup_wizard_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3638,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_service_bugfix_candidates_status",
+        "table": "service_bugfix_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3974,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_scheduled_tasks_migration_key",
+        "table": "scheduled_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3590,
+        "cells": 15,
+        "pages": 1
+      },
+      {
+        "name": "idx_scheduled_tasks_enabled",
+        "table": "scheduled_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3903,
+        "cells": 15,
+        "pages": 1
+      },
+      {
+        "name": "idx_scheduled_task_skill_refs_position",
+        "table": "scheduled_task_skill_refs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3724,
+        "cells": 34,
+        "pages": 1
+      },
+      {
+        "name": "idx_scheduled_task_runs_reply_execution",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2876,
+        "cells": 72,
+        "pages": 1
+      },
+      {
+        "name": "idx_runtime_attempt_active_route",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_runtime_attempt_active_lease",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_org_user_profiles_open_dingtalk_id",
+        "table": "org_user_profiles",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 993,
+        "cells": 76,
+        "pages": 1
+      },
+      {
+        "name": "idx_org_user_profiles_name",
+        "table": "org_user_profiles",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2923,
+        "cells": 76,
+        "pages": 1
+      },
+      {
+        "name": "idx_okr_review_requests_status",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3774,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_okr_review_requests_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2556,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_oa_notification_events_claim",
+        "table": "oa_notification_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3568,
+        "cells": 30,
+        "pages": 1
+      },
+      {
+        "name": "idx_oa_notification_events_case_status",
+        "table": "oa_notification_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2608,
+        "cells": 30,
+        "pages": 1
+      },
+      {
+        "name": "idx_meeting_alignment_runs_active_job",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_managed_skill_revisions_number",
+        "table": "managed_skill_revisions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2120,
+        "cells": 192,
+        "pages": 1
+      },
+      {
+        "name": "idx_follow_up_send_attempts_reconciliation",
+        "table": "follow_up_send_attempts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2015,
+        "cells": 65,
+        "pages": 1
+      },
+      {
+        "name": "idx_follow_up_send_attempts_draft_revision",
+        "table": "follow_up_send_attempts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3260,
+        "cells": 65,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_transitions_round",
+        "table": "feedback_processing_transitions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4029,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_transitions_feedback",
+        "table": "feedback_processing_transitions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3978,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_transitions_batch_round",
+        "table": "feedback_processing_transitions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3871,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_rounds_feedback",
+        "table": "feedback_processing_rounds",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4019,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_rounds_batch",
+        "table": "feedback_processing_rounds",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3966,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_items_status",
+        "table": "feedback_processing_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3357,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_items_batch",
+        "table": "feedback_processing_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3678,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_iteration_decisions_batch",
+        "table": "feedback_iteration_decisions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_iteration_decision_items_feedback_round",
+        "table": "feedback_iteration_decision_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_events_token",
+        "table": "feedback_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1335,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_errors_unresolved",
+        "table": "errors",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3950,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "idx_email_training_observations_split",
+        "table": "email_training_snapshot_observations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_email_training_observations_provider_truth",
+        "table": "email_training_snapshot_observations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_email_reply_dispatch_claims_status",
+        "table": "email_reply_dispatch_claims",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_email_category_folder_bindings_active_provider",
+        "table": "email_category_folder_bindings",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3323,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_work_cluster_tasks_task",
+        "table": "business_work_cluster_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3902,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_todo_sync_outbox_status",
+        "table": "business_task_todo_sync_outbox",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_relations_to",
+        "table": "business_task_relations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_relations_from",
+        "table": "business_task_relations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_follow_ups_due",
+        "table": "business_task_follow_ups",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_follow_up_send_attempts_state",
+        "table": "business_task_follow_up_send_attempts",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_dingtalk_links_task",
+        "table": "business_task_dingtalk_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_dingtalk_links_one_active",
+        "table": "business_task_dingtalk_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_date_evidence_task",
+        "table": "business_task_date_evidence",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_anchor_links_task",
+        "table": "business_task_anchor_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1958,
+        "cells": 99,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_project_context_revisions_project",
+        "table": "business_project_context_revisions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4018,
+        "cells": 6,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_project_candidates_cluster",
+        "table": "business_project_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3879,
+        "cells": 10,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_legacy_links_task",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_tasks_task",
+        "table": "business_attention_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_proposal_tasks_task",
+        "table": "business_attention_proposal_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_items_list",
+        "table": "business_attention_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3551,
+        "cells": 11,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_events_item",
+        "table": "business_attention_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3480,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_selection_candidate",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_intent_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1147,
+        "cells": 214,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_execution_receipt_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2697,
+        "cells": 115,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_execution_candidate",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1470,
+        "cells": 264,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_attempt_sequence",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1226,
+        "cells": 259,
+        "pages": 1
+      },
+      {
+        "name": "feedback_processing_transitions",
+        "table": "feedback_processing_transitions",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3290,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "feedback_processing_rounds",
+        "table": "feedback_processing_rounds",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 565,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "feedback_processing_batches",
+        "table": "feedback_processing_batches",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3758,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "feedback_iteration_decisions",
+        "table": "feedback_iteration_decisions",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "feedback_iteration_decision_items",
+        "table": "feedback_iteration_decision_items",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_unsubscribe_continuations",
+        "table": "email_unsubscribe_continuations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_unsubscribe_cancellations",
+        "table": "email_unsubscribe_cancellations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3585,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "email_training_snapshot_observations",
+        "table": "email_training_snapshot_observations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_schema_migrations",
+        "table": "email_schema_migrations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2866,
+        "cells": 38,
+        "pages": 1
+      },
+      {
+        "name": "email_scan_cursors",
+        "table": "email_scan_cursors",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3945,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "email_reply_receipts",
+        "table": "email_reply_receipts",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_reply_dispatch_claims",
+        "table": "email_reply_dispatch_claims",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_provider_folder_observation_generations",
+        "table": "email_provider_folder_observation_generations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 264,
+        "cells": 55,
+        "pages": 1
+      },
+      {
+        "name": "email_model_promotion_configs",
+        "table": "email_model_promotion_configs",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3695,
+        "cells": 4,
+        "pages": 1
+      },
+      {
+        "name": "email_model_mode_transitions",
+        "table": "email_model_mode_transitions",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_historical_traversals",
+        "table": "email_historical_traversals",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3856,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "email_historical_operations",
+        "table": "email_historical_operations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_direct_retry_requests",
+        "table": "email_direct_retry_requests",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3740,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "email_category_folder_bindings",
+        "table": "email_category_folder_bindings",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2224,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "email_accounts",
+        "table": "email_accounts",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3562,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "corpus_sources",
+        "table": "corpus_sources",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "codex_session_search_fts_idx",
+        "table": "codex_session_search_fts_idx",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3985,
+        "cells": 7,
+        "pages": 1
+      },
+      {
+        "name": "codex_session_search_fts_config",
+        "table": "codex_session_search_fts_config",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4062,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "codex_session_locks",
+        "table": "codex_session_locks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "channel_login_reservations",
+        "table": "channel_login_reservations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_work_clusters",
+        "table": "business_work_clusters",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3415,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "business_work_cluster_tasks",
+        "table": "business_work_cluster_tasks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3597,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "business_task_todo_sync_outbox",
+        "table": "business_task_todo_sync_outbox",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_task_relations",
+        "table": "business_task_relations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_task_follow_ups",
+        "table": "business_task_follow_ups",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_task_follow_up_send_attempts",
+        "table": "business_task_follow_up_send_attempts",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_task_dingtalk_links",
+        "table": "business_task_dingtalk_links",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_task_date_evidence",
+        "table": "business_task_date_evidence",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_project_evidence",
+        "table": "business_project_evidence",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2774,
+        "cells": 44,
+        "pages": 1
+      },
+      {
+        "name": "business_project_candidates",
+        "table": "business_project_candidates",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2404,
+        "cells": 10,
+        "pages": 1
+      },
+      {
+        "name": "business_legacy_links",
+        "table": "business_legacy_links",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_attention_tasks",
+        "table": "business_attention_tasks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3417,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "business_attention_proposal_tasks",
+        "table": "business_attention_proposal_tasks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3417,
+        "cells": 22,
+        "pages": 1
+      }
+    ],
+    "tables": [
+      {
+        "table": "runs",
+        "page_bytes": 130408448,
+        "unused_bytes": 11121866,
+        "object_count": 24
+      },
+      {
+        "table": "actions",
+        "page_bytes": 94425088,
+        "unused_bytes": 15353357,
+        "object_count": 33
+      },
+      {
+        "table": "tasks",
+        "page_bytes": 50847744,
+        "unused_bytes": 4136458,
+        "object_count": 24
+      },
+      {
+        "table": "email_classifications",
+        "page_bytes": 40636416,
+        "unused_bytes": 11869571,
+        "object_count": 5
+      },
+      {
+        "table": "email_messages",
+        "page_bytes": 36282368,
+        "unused_bytes": 4720005,
+        "object_count": 3
+      },
+      {
+        "table": "email_provider_observations",
+        "page_bytes": 25026560,
+        "unused_bytes": 787341,
+        "object_count": 3
+      },
+      {
+        "table": "email_action_plans",
+        "page_bytes": 15482880,
+        "unused_bytes": 2802742,
+        "object_count": 3
+      },
+      {
+        "table": "email_actions",
+        "page_bytes": 14204928,
+        "unused_bytes": 1664921,
+        "object_count": 5
+      },
+      {
+        "table": "work_updates",
+        "page_bytes": 12365824,
+        "unused_bytes": 2527427,
+        "object_count": 3
+      },
+      {
+        "table": "follow_up_drafts",
+        "page_bytes": 11206656,
+        "unused_bytes": 2290099,
+        "object_count": 7
+      },
+      {
+        "table": "errors",
+        "page_bytes": 8589312,
+        "unused_bytes": 642228,
+        "object_count": 3
+      },
+      {
+        "table": "business_source_documents",
+        "page_bytes": 7213056,
+        "unused_bytes": 129324,
+        "object_count": 2
+      },
+      {
+        "table": "work_projects",
+        "page_bytes": 6684672,
+        "unused_bytes": 707484,
+        "object_count": 2
+      },
+      {
+        "table": "managed_skill_revisions",
+        "page_bytes": 5820416,
+        "unused_bytes": 145655,
+        "object_count": 3
+      },
+      {
+        "table": "email_action_attempts",
+        "page_bytes": 5529600,
+        "unused_bytes": 359966,
+        "object_count": 2
+      },
+      {
+        "table": "runtime_skill_load_receipts",
+        "page_bytes": 4739072,
+        "unused_bytes": 649771,
+        "object_count": 2
+      },
+      {
+        "table": "email_agent_classification_tasks",
+        "page_bytes": 3264512,
+        "unused_bytes": 702123,
+        "object_count": 4
+      },
+      {
+        "table": "work_todos",
+        "page_bytes": 2609152,
+        "unused_bytes": 252464,
+        "object_count": 3
+      },
+      {
+        "table": "work_todo_dingtalk_links",
+        "page_bytes": 2572288,
+        "unused_bytes": 929280,
+        "object_count": 4
+      },
+      {
+        "table": "email_unsubscribe_receipts",
+        "page_bytes": 2392064,
+        "unused_bytes": 446246,
+        "object_count": 3
+      },
+      {
+        "table": "business_object_tasks",
+        "page_bytes": 1941504,
+        "unused_bytes": 135437,
+        "object_count": 2
+      },
+      {
+        "table": "dispatcher_claim_leases",
+        "page_bytes": 1888256,
+        "unused_bytes": 158227,
+        "object_count": 4
+      },
+      {
+        "table": "business_task_events",
+        "page_bytes": 1794048,
+        "unused_bytes": 422387,
+        "object_count": 2
+      },
+      {
+        "table": "email_unsubscribe_claims",
+        "page_bytes": 1421312,
+        "unused_bytes": 172007,
+        "object_count": 3
+      },
+      {
+        "table": "business_task_signals",
+        "page_bytes": 1101824,
+        "unused_bytes": 118660,
+        "object_count": 4
+      },
+      {
+        "table": "seen_messages",
+        "page_bytes": 1019904,
+        "unused_bytes": 68294,
+        "object_count": 2
+      },
+      {
+        "table": "okr_review_items",
+        "page_bytes": 937984,
+        "unused_bytes": 226306,
+        "object_count": 1
+      },
+      {
+        "table": "daily_scan_state",
+        "page_bytes": 880640,
+        "unused_bytes": 16729,
+        "object_count": 2
+      },
+      {
+        "table": "email_historical_candidates",
+        "page_bytes": 864256,
+        "unused_bytes": 76840,
+        "object_count": 2
+      },
+      {
+        "table": "email_unsubscribe_effects",
+        "page_bytes": 827392,
+        "unused_bytes": 107920,
+        "object_count": 2
+      },
+      {
+        "table": "conversation_runtime_sessions",
+        "page_bytes": 708608,
+        "unused_bytes": 36261,
+        "object_count": 2
+      },
+      {
+        "table": "email_feedback_requests",
+        "page_bytes": 692224,
+        "unused_bytes": 35880,
+        "object_count": 4
+      },
+      {
+        "table": "business_tasks",
+        "page_bytes": 585728,
+        "unused_bytes": 66794,
+        "object_count": 4
+      },
+      {
+        "table": "scheduled_task_config_versions",
+        "page_bytes": 503808,
+        "unused_bytes": 242504,
+        "object_count": 2
+      },
+      {
+        "table": "email_classifier_runtime_samples",
+        "page_bytes": 425984,
+        "unused_bytes": 28817,
+        "object_count": 2
+      },
+      {
+        "table": "sqlite_schema",
+        "page_bytes": 421888,
+        "unused_bytes": 76815,
+        "object_count": 1
+      },
+      {
+        "table": "email_unsubscribe_steps",
+        "page_bytes": 339968,
+        "unused_bytes": 36393,
+        "object_count": 2
+      },
+      {
+        "table": "managed_skill_export_receipts",
+        "page_bytes": 335872,
+        "unused_bytes": 11717,
+        "object_count": 2
+      },
+      {
+        "table": "runtime_skill_bindings",
+        "page_bytes": 303104,
+        "unused_bytes": 34026,
+        "object_count": 4
+      },
+      {
+        "table": "follow_up_send_attempts",
+        "page_bytes": 262144,
+        "unused_bytes": 76105,
+        "object_count": 4
+      },
+      {
+        "table": "email_training_snapshots",
+        "page_bytes": 200704,
+        "unused_bytes": 36505,
+        "object_count": 3
+      },
+      {
+        "table": "oa_notification_events",
+        "page_bytes": 184320,
+        "unused_bytes": 29468,
+        "object_count": 4
+      },
+      {
+        "table": "codex_session_search_index",
+        "page_bytes": 176128,
+        "unused_bytes": 23951,
+        "object_count": 3
+      },
+      {
+        "table": "wechat_deliveries",
+        "page_bytes": 143360,
+        "unused_bytes": 20900,
+        "object_count": 4
+      },
+      {
+        "table": "meeting_memory_write_events",
+        "page_bytes": 139264,
+        "unused_bytes": 26160,
+        "object_count": 4
+      },
+      {
+        "table": "task_memory_write_events",
+        "page_bytes": 126976,
+        "unused_bytes": 23683,
+        "object_count": 4
+      },
+      {
+        "table": "conversations",
+        "page_bytes": 118784,
+        "unused_bytes": 22543,
+        "object_count": 2
+      },
+      {
+        "table": "business_task_evidence",
+        "page_bytes": 114688,
+        "unused_bytes": 19103,
+        "object_count": 3
+      },
+      {
+        "table": "service_state",
+        "page_bytes": 114688,
+        "unused_bytes": 36892,
+        "object_count": 2
+      },
+      {
+        "table": "task_todo_sync_outbox",
+        "page_bytes": 110592,
+        "unused_bytes": 29400,
+        "object_count": 3
+      },
+      {
+        "table": "feedback_events",
+        "page_bytes": 98304,
+        "unused_bytes": 23422,
+        "object_count": 3
+      },
+      {
+        "table": "business_attention_events",
+        "page_bytes": 86016,
+        "unused_bytes": 20485,
+        "object_count": 2
+      },
+      {
+        "table": "email_historical_classification_history",
+        "page_bytes": 86016,
+        "unused_bytes": 14214,
+        "object_count": 2
+      },
+      {
+        "table": "todo_evidence_candidates",
+        "page_bytes": 45056,
+        "unused_bytes": 29915,
+        "object_count": 6
+      },
+      {
+        "table": "workbench_confirmations",
+        "page_bytes": 45056,
+        "unused_bytes": 44836,
+        "object_count": 11
+      },
+      {
+        "table": "business_attention_items",
+        "page_bytes": 36864,
+        "unused_bytes": 17424,
+        "object_count": 3
+      },
+      {
+        "table": "org_user_profiles",
+        "page_bytes": 36864,
+        "unused_bytes": 14634,
+        "object_count": 4
+      },
+      {
+        "table": "business_anchors",
+        "page_bytes": 28672,
+        "unused_bytes": 15759,
+        "object_count": 3
+      },
+      {
+        "table": "business_project_context_revisions",
+        "page_bytes": 28672,
+        "unused_bytes": 11346,
+        "object_count": 2
+      },
+      {
+        "table": "business_task_anchor_links",
+        "page_bytes": 28672,
+        "unused_bytes": 11160,
+        "object_count": 3
+      },
+      {
+        "table": "codex_session_search_fts_data",
+        "page_bytes": 24576,
+        "unused_bytes": 8618,
+        "object_count": 1
+      },
+      {
+        "table": "feedback_processing_items",
+        "page_bytes": 24576,
+        "unused_bytes": 14154,
+        "object_count": 4
+      },
+      {
+        "table": "scheduled_tasks",
+        "page_bytes": 24576,
+        "unused_bytes": 14510,
+        "object_count": 3
+      },
+      {
+        "table": "business_legacy_links",
+        "page_bytes": 20480,
+        "unused_bytes": 20380,
+        "object_count": 5
+      },
+      {
+        "table": "email_category_description_revisions",
+        "page_bytes": 20480,
+        "unused_bytes": 3292,
+        "object_count": 1
+      },
+      {
+        "table": "feedback_processing_rounds",
+        "page_bytes": 20480,
+        "unused_bytes": 16499,
+        "object_count": 5
+      },
+      {
+        "table": "business_projects",
+        "page_bytes": 16384,
+        "unused_bytes": 9661,
+        "object_count": 2
+      },
+      {
+        "table": "business_task_relations",
+        "page_bytes": 16384,
+        "unused_bytes": 16304,
+        "object_count": 4
+      },
+      {
+        "table": "email_category_configs",
+        "page_bytes": 16384,
+        "unused_bytes": 10867,
+        "object_count": 2
+      },
+      {
+        "table": "email_reply_dispatch_claims",
+        "page_bytes": 16384,
+        "unused_bytes": 16304,
+        "object_count": 4
+      },
+      {
+        "table": "email_training_snapshot_observations",
+        "page_bytes": 16384,
+        "unused_bytes": 16304,
+        "object_count": 4
+      },
+      {
+        "table": "feedback_processing_transitions",
+        "page_bytes": 16384,
+        "unused_bytes": 15168,
+        "object_count": 4
+      },
+      {
+        "table": "runtime_skill_configs",
+        "page_bytes": 16384,
+        "unused_bytes": 4995,
+        "object_count": 1
+      },
+      {
+        "table": "setup_wizard_events",
+        "page_bytes": 16384,
+        "unused_bytes": 9805,
+        "object_count": 2
+      },
+      {
+        "table": "workbench_artifacts",
+        "page_bytes": 16384,
+        "unused_bytes": 16304,
+        "object_count": 4
+      },
+      {
+        "table": "workbench_attachments",
+        "page_bytes": 16384,
+        "unused_bytes": 16304,
+        "object_count": 4
+      },
+      {
+        "table": "business_attention_proposal_tasks",
+        "page_bytes": 12288,
+        "unused_bytes": 11089,
+        "object_count": 3
+      },
+      {
+        "table": "business_attention_tasks",
+        "page_bytes": 12288,
+        "unused_bytes": 11089,
+        "object_count": 3
+      },
+      {
+        "table": "business_task_dingtalk_links",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "business_task_follow_up_send_attempts",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "business_task_follow_ups",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "business_task_todo_sync_outbox",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "business_work_cluster_tasks",
+        "page_bytes": 12288,
+        "unused_bytes": 11401,
+        "object_count": 3
+      },
+      {
+        "table": "codex_session_search_fts_docsize",
+        "page_bytes": 12288,
+        "unused_bytes": 5836,
+        "object_count": 1
+      },
+      {
+        "table": "email_category_folder_bindings",
+        "page_bytes": 12288,
+        "unused_bytes": 8840,
+        "object_count": 3
+      },
+      {
+        "table": "email_historical_operations",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "email_reply_receipts",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "feedback_iteration_decision_items",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "runtime_feedback_iteration_capabilities",
+        "page_bytes": 12288,
+        "unused_bytes": 4531,
+        "object_count": 1
+      },
+      {
+        "table": "scheduled_task_skill_refs",
+        "page_bytes": 12288,
+        "unused_bytes": 10149,
+        "object_count": 3
+      },
+      {
+        "table": "service_bugfix_candidates",
+        "page_bytes": 12288,
+        "unused_bytes": 10244,
+        "object_count": 3
+      },
+      {
+        "table": "business_project_candidates",
+        "page_bytes": 8192,
+        "unused_bytes": 6283,
+        "object_count": 2
+      },
+      {
+        "table": "business_project_evidence",
+        "page_bytes": 8192,
+        "unused_bytes": 6385,
+        "object_count": 2
+      },
+      {
+        "table": "business_task_date_evidence",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "channel_login_reservations",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "codex_session_locks",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "corpus_sources",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "email_accounts",
+        "page_bytes": 8192,
+        "unused_bytes": 7587,
+        "object_count": 2
+      },
+      {
+        "table": "email_direct_retry_requests",
+        "page_bytes": 8192,
+        "unused_bytes": 7730,
+        "object_count": 2
+      },
+      {
+        "table": "email_historical_traversals",
+        "page_bytes": 8192,
+        "unused_bytes": 7777,
+        "object_count": 2
+      },
+      {
+        "table": "email_provider_folder_observation_generations",
+        "page_bytes": 8192,
+        "unused_bytes": 2289,
+        "object_count": 2
+      },
+      {
+        "table": "email_scan_cursors",
+        "page_bytes": 8192,
+        "unused_bytes": 7958,
+        "object_count": 2
+      },
+      {
+        "table": "email_unsubscribe_cancellations",
+        "page_bytes": 8192,
+        "unused_bytes": 7577,
+        "object_count": 2
+      },
+      {
+        "table": "email_unsubscribe_continuations",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "feedback_iteration_decisions",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "feedback_processing_batches",
+        "page_bytes": 8192,
+        "unused_bytes": 7724,
+        "object_count": 2
+      },
+      {
+        "table": "managed_skills",
+        "page_bytes": 8192,
+        "unused_bytes": 6074,
+        "object_count": 2
+      },
+      {
+        "table": "org_cache_metadata",
+        "page_bytes": 8192,
+        "unused_bytes": 7979,
+        "object_count": 2
+      },
+      {
+        "table": "runtime_route_pauses",
+        "page_bytes": 8192,
+        "unused_bytes": 8030,
+        "object_count": 2
+      },
+      {
+        "table": "setup_wizard_steps",
+        "page_bytes": 8192,
+        "unused_bytes": 6904,
+        "object_count": 2
+      },
+      {
+        "table": "wechat_memory_candidates",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "wechat_memory_import_jobs",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "wechat_read_state",
+        "page_bytes": 8192,
+        "unused_bytes": 7845,
+        "object_count": 2
+      },
+      {
+        "table": "wechat_reply_scopes",
+        "page_bytes": 8192,
+        "unused_bytes": 6904,
+        "object_count": 2
+      },
+      {
+        "table": "business_work_clusters",
+        "page_bytes": 4096,
+        "unused_bytes": 3415,
+        "object_count": 1
+      },
+      {
+        "table": "codex_session_search_fts_config",
+        "page_bytes": 4096,
+        "unused_bytes": 4062,
+        "object_count": 1
+      },
+      {
+        "table": "codex_session_search_fts_idx",
+        "page_bytes": 4096,
+        "unused_bytes": 3985,
+        "object_count": 1
+      },
+      {
+        "table": "email_model_mode_transitions",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "object_count": 1
+      },
+      {
+        "table": "email_model_promotion_configs",
+        "page_bytes": 4096,
+        "unused_bytes": 3695,
+        "object_count": 1
+      },
+      {
+        "table": "email_schema_migrations",
+        "page_bytes": 4096,
+        "unused_bytes": 2866,
+        "object_count": 1
+      },
+      {
+        "table": "meeting_alignment_delivery_claims",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "object_count": 1
+      },
+      {
+        "table": "sqlite_sequence",
+        "page_bytes": 4096,
+        "unused_bytes": 2649,
+        "object_count": 1
+      }
+    ]
+  },
+  "target": {
+    "page_count": 137932,
+    "freelist_count": 0,
+    "page_size": 4096,
+    "objects": [
+      {
+        "name": "actions",
+        "table": "actions",
+        "type": "table",
+        "page_bytes": 175251456,
+        "unused_bytes": 28972999,
+        "cells": 130281,
+        "pages": 42786
+      },
+      {
+        "name": "runs",
+        "table": "runs",
+        "type": "table",
+        "page_bytes": 83337216,
+        "unused_bytes": 2977632,
+        "cells": 263251,
+        "pages": 20346
+      },
+      {
+        "name": "tasks",
+        "table": "tasks",
+        "type": "table",
+        "page_bytes": 60977152,
+        "unused_bytes": 5647339,
+        "cells": 44848,
+        "pages": 14887
+      },
+      {
+        "name": "email_classifications",
+        "table": "email_classifications",
+        "type": "table",
+        "page_bytes": 37253120,
+        "unused_bytes": 11533365,
+        "cells": 17001,
+        "pages": 9095
+      },
+      {
+        "name": "email_messages",
+        "table": "email_messages",
+        "type": "table",
+        "page_bytes": 34680832,
+        "unused_bytes": 4531973,
+        "cells": 13959,
+        "pages": 8467
+      },
+      {
+        "name": "provider_state",
+        "table": "provider_state",
+        "type": "table",
+        "page_bytes": 21360640,
+        "unused_bytes": 773521,
+        "cells": 77493,
+        "pages": 5215
+      },
+      {
+        "name": "business",
+        "table": "business",
+        "type": "table",
+        "page_bytes": 10416128,
+        "unused_bytes": 1235714,
+        "cells": 6764,
+        "pages": 2543
+      },
+      {
+        "name": "idx_provider_state_observation_identity",
+        "table": "provider_state",
+        "type": "index",
+        "page_bytes": 10334208,
+        "unused_bytes": 1344468,
+        "cells": 72238,
+        "pages": 2523
+      },
+      {
+        "name": "idx_scheduled_task_runs_dispatch",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 9859072,
+        "unused_bytes": 1006587,
+        "cells": 177582,
+        "pages": 2407
+      },
+      {
+        "name": "idx_scheduled_task_runs_claim",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 9527296,
+        "unused_bytes": 854337,
+        "cells": 177582,
+        "pages": 2326
+      },
+      {
+        "name": "idx_runs_public_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 8261632,
+        "unused_bytes": 692976,
+        "cells": 242967,
+        "pages": 2017
+      },
+      {
+        "name": "idx_scheduled_task_runs_event",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 8155136,
+        "unused_bytes": 826494,
+        "cells": 177582,
+        "pages": 1991
+      },
+      {
+        "name": "business_source_documents",
+        "table": "business_source_documents",
+        "type": "table",
+        "page_bytes": 7188480,
+        "unused_bytes": 120309,
+        "cells": 342,
+        "pages": 1755
+      },
+      {
+        "name": "configs",
+        "table": "configs",
+        "type": "table",
+        "page_bytes": 7098368,
+        "unused_bytes": 223004,
+        "cells": 5404,
+        "pages": 1733
+      },
+      {
+        "name": "idx_scheduled_task_runs_scheduled_instant",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 7028736,
+        "unused_bytes": 643822,
+        "cells": 177541,
+        "pages": 1716
+      },
+      {
+        "name": "state",
+        "table": "state",
+        "type": "table",
+        "page_bytes": 6557696,
+        "unused_bytes": 213405,
+        "cells": 24955,
+        "pages": 1601
+      },
+      {
+        "name": "idx_actions_email_public_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4980736,
+        "unused_bytes": 570121,
+        "cells": 95855,
+        "pages": 1216
+      },
+      {
+        "name": "idx_scheduled_task_runs_latest",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4714496,
+        "unused_bytes": 2281362,
+        "cells": 177582,
+        "pages": 1151
+      },
+      {
+        "name": "idx_actions_postfix_identity",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 3108864,
+        "unused_bytes": 334421,
+        "cells": 95855,
+        "pages": 759
+      },
+      {
+        "name": "idx_actions_public_id",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 2899968,
+        "unused_bytes": 370084,
+        "cells": 91725,
+        "pages": 708
+      },
+      {
+        "name": "idx_actions_reply_current_trigger",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 2826240,
+        "unused_bytes": 774235,
+        "cells": 15011,
+        "pages": 690
+      },
+      {
+        "name": "idx_actions_reply_trigger_history",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 2605056,
+        "unused_bytes": 770332,
+        "cells": 15011,
+        "pages": 636
+      },
+      {
+        "name": "idx_provider_state_observation_folder",
+        "table": "provider_state",
+        "type": "index",
+        "page_bytes": 2441216,
+        "unused_bytes": 191385,
+        "cells": 72238,
+        "pages": 596
+      },
+      {
+        "name": "sqlite_schema",
+        "table": "sqlite_schema",
+        "type": "internal",
+        "page_bytes": 1896448,
+        "unused_bytes": 40592,
+        "cells": 558,
+        "pages": 463
+      },
+      {
+        "name": "idx_actions_email_email_actions_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1433600,
+        "unused_bytes": 168490,
+        "cells": 10649,
+        "pages": 350
+      },
+      {
+        "name": "idx_task20_published_6",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 1404928,
+        "unused_bytes": 189730,
+        "cells": 9108,
+        "pages": 343
+      },
+      {
+        "name": "idx_task20_batch_endpoint",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 1327104,
+        "unused_bytes": 166121,
+        "cells": 36182,
+        "pages": 324
+      },
+      {
+        "name": "idx_task20_numeric_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 1282048,
+        "unused_bytes": 185335,
+        "cells": 36125,
+        "pages": 313
+      },
+      {
+        "name": "idx_actions_email_email_action_attempts_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1257472,
+        "unused_bytes": 132730,
+        "cells": 12674,
+        "pages": 307
+      },
+      {
+        "name": "idx_actions_email_email_actions_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1253376,
+        "unused_bytes": 170491,
+        "cells": 10649,
+        "pages": 306
+      },
+      {
+        "name": "sqlite_autoindex_email_classifications_1",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 1212416,
+        "unused_bytes": 148510,
+        "cells": 9204,
+        "pages": 296
+      },
+      {
+        "name": "idx_actions_email_email_actions_2",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1212416,
+        "unused_bytes": 148074,
+        "cells": 10649,
+        "pages": 296
+      },
+      {
+        "name": "sqlite_autoindex_email_messages_1",
+        "table": "email_messages",
+        "type": "index",
+        "page_bytes": 1155072,
+        "unused_bytes": 148734,
+        "cells": 9204,
+        "pages": 282
+      },
+      {
+        "name": "idx_actions_email_email_action_plans_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1073152,
+        "unused_bytes": 134275,
+        "cells": 10238,
+        "pages": 262
+      },
+      {
+        "name": "idx_actions_errors_reply_task_settlement",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1069056,
+        "unused_bytes": 156209,
+        "cells": 15447,
+        "pages": 261
+      },
+      {
+        "name": "idx_actions_email_email_actions_3",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 1069056,
+        "unused_bytes": 136333,
+        "cells": 10649,
+        "pages": 261
+      },
+      {
+        "name": "idx_agent_runs_turn_identity",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 1028096,
+        "unused_bytes": 120836,
+        "cells": 22972,
+        "pages": 251
+      },
+      {
+        "name": "idx_runtime_attempt_identity",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 983040,
+        "unused_bytes": 137819,
+        "cells": 24291,
+        "pages": 240
+      },
+      {
+        "name": "idx_task20_published_4",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 978944,
+        "unused_bytes": 137666,
+        "cells": 8295,
+        "pages": 239
+      },
+      {
+        "name": "idx_actions_reply_trigger_message",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 942080,
+        "unused_bytes": 118059,
+        "cells": 15011,
+        "pages": 230
+      },
+      {
+        "name": "idx_agent_runs_status",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 913408,
+        "unused_bytes": 102092,
+        "cells": 22972,
+        "pages": 223
+      },
+      {
+        "name": "idx_task20_published_3",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 892928,
+        "unused_bytes": 134963,
+        "cells": 7575,
+        "pages": 218
+      },
+      {
+        "name": "idx_email_classifications_account_locator",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 888832,
+        "unused_bytes": 92232,
+        "cells": 9204,
+        "pages": 217
+      },
+      {
+        "name": "idx_task20_native_0",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 884736,
+        "unused_bytes": 134150,
+        "cells": 7403,
+        "pages": 216
+      },
+      {
+        "name": "idx_state_source_rowid",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 880640,
+        "unused_bytes": 114237,
+        "cells": 23577,
+        "pages": 215
+      },
+      {
+        "name": "idx_actions_reply_status",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 880640,
+        "unused_bytes": 121929,
+        "cells": 15011,
+        "pages": 215
+      },
+      {
+        "name": "idx_task20_published_0",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 835584,
+        "unused_bytes": 117884,
+        "cells": 7575,
+        "pages": 204
+      },
+      {
+        "name": "idx_actions_reply_created",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 786432,
+        "unused_bytes": 106413,
+        "cells": 15011,
+        "pages": 192
+      },
+      {
+        "name": "idx_email_classifications_account_status",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 688128,
+        "unused_bytes": 38996,
+        "cells": 9204,
+        "pages": 168
+      },
+      {
+        "name": "business_task_signals",
+        "table": "business_task_signals",
+        "type": "table",
+        "page_bytes": 675840,
+        "unused_bytes": 62198,
+        "cells": 1081,
+        "pages": 165
+      },
+      {
+        "name": "idx_state_dispatcher_terminal",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 638976,
+        "unused_bytes": 85218,
+        "cells": 10000,
+        "pages": 156
+      },
+      {
+        "name": "idx_email_classifications_status",
+        "table": "email_classifications",
+        "type": "index",
+        "page_bytes": 593920,
+        "unused_bytes": 56468,
+        "cells": 9204,
+        "pages": 145
+      },
+      {
+        "name": "idx_task20_published_8",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 540672,
+        "unused_bytes": 255141,
+        "cells": 9108,
+        "pages": 132
+      },
+      {
+        "name": "idx_actions_reply_run_recovery",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 450560,
+        "unused_bytes": 104865,
+        "cells": 15011,
+        "pages": 110
+      },
+      {
+        "name": "idx_email_messages_account_locator",
+        "table": "email_messages",
+        "type": "index",
+        "page_bytes": 446464,
+        "unused_bytes": 39298,
+        "cells": 9204,
+        "pages": 109
+      },
+      {
+        "name": "idx_actions_reply_public_order",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 430080,
+        "unused_bytes": 52369,
+        "cells": 15011,
+        "pages": 105
+      },
+      {
+        "name": "idx_task20_endpoint_feedback_processing_items",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 376832,
+        "unused_bytes": 50261,
+        "cells": 36182,
+        "pages": 92
+      },
+      {
+        "name": "idx_task20_endpoint_feedback_processing_rounds",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 372736,
+        "unused_bytes": 47849,
+        "cells": 36182,
+        "pages": 91
+      },
+      {
+        "name": "idx_task20_endpoint_feedback_iteration_decisions",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 372736,
+        "unused_bytes": 47851,
+        "cells": 36182,
+        "pages": 91
+      },
+      {
+        "name": "idx_configs_schedule_snapshot",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 339968,
+        "unused_bytes": 208871,
+        "cells": 110,
+        "pages": 83
+      },
+      {
+        "name": "idx_state_dispatcher_expiry",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 294912,
+        "unused_bytes": 41181,
+        "cells": 10056,
+        "pages": 72
+      },
+      {
+        "name": "idx_state_seen_messages_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 290816,
+        "unused_bytes": 33272,
+        "cells": 7294,
+        "pages": 71
+      },
+      {
+        "name": "idx_state_dispatcher_claim_leases_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 282624,
+        "unused_bytes": 40093,
+        "cells": 10056,
+        "pages": 69
+      },
+      {
+        "name": "idx_actions_sent_history",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 249856,
+        "unused_bytes": 27044,
+        "cells": 2411,
+        "pages": 61
+      },
+      {
+        "name": "sqlite_autoindex_business_task_signals_1",
+        "table": "business_task_signals",
+        "type": "index",
+        "page_bytes": 229376,
+        "unused_bytes": 26158,
+        "cells": 918,
+        "pages": 56
+      },
+      {
+        "name": "idx_task20_published_2",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 217088,
+        "unused_bytes": 28242,
+        "cells": 7575,
+        "pages": 53
+      },
+      {
+        "name": "idx_runs11_sample_model_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 217088,
+        "unused_bytes": 99084,
+        "cells": 2048,
+        "pages": 53
+      },
+      {
+        "name": "idx_configs_typed_public",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 217088,
+        "unused_bytes": 29676,
+        "cells": 4985,
+        "pages": 53
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_effects_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 212992,
+        "unused_bytes": 29412,
+        "cells": 1184,
+        "pages": 52
+      },
+      {
+        "name": "idx_state_conversation_runtime_sessions_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 204800,
+        "unused_bytes": 34840,
+        "cells": 5316,
+        "pages": 50
+      },
+      {
+        "name": "idx_configs_legacy",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 204800,
+        "unused_bytes": 24841,
+        "cells": 4985,
+        "pages": 50
+      },
+      {
+        "name": "idx_actions_email_email_action_plans_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 200704,
+        "unused_bytes": 23497,
+        "cells": 10238,
+        "pages": 49
+      },
+      {
+        "name": "idx_task20_native_4",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 196608,
+        "unused_bytes": 35828,
+        "cells": 924,
+        "pages": 48
+      },
+      {
+        "name": "idx_configs_public",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 196608,
+        "unused_bytes": 24143,
+        "cells": 4985,
+        "pages": 48
+      },
+      {
+        "name": "idx_agent_runtime_attempts_run",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 196608,
+        "unused_bytes": 27818,
+        "cells": 13772,
+        "pages": 48
+      },
+      {
+        "name": "idx_actions_sync_work_updates_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 196608,
+        "unused_bytes": 26080,
+        "cells": 5468,
+        "pages": 48
+      },
+      {
+        "name": "idx_task20_published_7",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 180224,
+        "unused_bytes": 20219,
+        "cells": 9108,
+        "pages": 44
+      },
+      {
+        "name": "idx_business_task_signals_source",
+        "table": "business_task_signals",
+        "type": "index",
+        "page_bytes": 180224,
+        "unused_bytes": 22373,
+        "cells": 918,
+        "pages": 44
+      },
+      {
+        "name": "idx_task_agent_runs_input",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 176128,
+        "unused_bytes": 24637,
+        "cells": 10752,
+        "pages": 43
+      },
+      {
+        "name": "idx_task20_native_1",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 172032,
+        "unused_bytes": 26571,
+        "cells": 1377,
+        "pages": 42
+      },
+      {
+        "name": "idx_task20_native_3",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 155648,
+        "unused_bytes": 23925,
+        "cells": 1377,
+        "pages": 38
+      },
+      {
+        "name": "idx_task20_native_2",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 155648,
+        "unused_bytes": 24822,
+        "cells": 1377,
+        "pages": 38
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_claims_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 155648,
+        "unused_bytes": 25300,
+        "cells": 1097,
+        "pages": 38
+      },
+      {
+        "name": "idx_business_work_todo_follow_up",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 147456,
+        "unused_bytes": 23282,
+        "cells": 3327,
+        "pages": 36
+      },
+      {
+        "name": "idx_actions_sync_follow_up_drafts_4",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 147456,
+        "unused_bytes": 27149,
+        "cells": 2477,
+        "pages": 36
+      },
+      {
+        "name": "idx_actions_email_email_feedback_requests_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 147456,
+        "unused_bytes": 16600,
+        "cells": 1413,
+        "pages": 36
+      },
+      {
+        "name": "idx_task20_published_5",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 143360,
+        "unused_bytes": 18009,
+        "cells": 8295,
+        "pages": 35
+      },
+      {
+        "name": "idx_task20_published_1",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 143360,
+        "unused_bytes": 19252,
+        "cells": 7575,
+        "pages": 35
+      },
+      {
+        "name": "idx_business_typed_anchor",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 143360,
+        "unused_bytes": 21471,
+        "cells": 5077,
+        "pages": 35
+      },
+      {
+        "name": "idx_business_typed_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 135168,
+        "unused_bytes": 18754,
+        "cells": 5077,
+        "pages": 33
+      },
+      {
+        "name": "idx_actions_sync_follow_up_drafts_5",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 131072,
+        "unused_bytes": 27769,
+        "cells": 2477,
+        "pages": 32
+      },
+      {
+        "name": "idx_actions_sync_follow_up_drafts_3",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 122880,
+        "unused_bytes": 19519,
+        "cells": 2477,
+        "pages": 30
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_receipts_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 122880,
+        "unused_bytes": 16854,
+        "cells": 1097,
+        "pages": 30
+      },
+      {
+        "name": "idx_business_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 118784,
+        "unused_bytes": 17569,
+        "cells": 5077,
+        "pages": 29
+      },
+      {
+        "name": "idx_actions_sync_follow_up_drafts_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 114688,
+        "unused_bytes": 21727,
+        "cells": 2477,
+        "pages": 28
+      },
+      {
+        "name": "idx_actions_email_email_feedback_requests_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 114688,
+        "unused_bytes": 15730,
+        "cells": 1413,
+        "pages": 28
+      },
+      {
+        "name": "idx_actions_sync_follow_up_drafts_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 110592,
+        "unused_bytes": 16984,
+        "cells": 2477,
+        "pages": 27
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_receipts_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 110592,
+        "unused_bytes": 14509,
+        "cells": 1097,
+        "pages": 27
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_claims_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 110592,
+        "unused_bytes": 14509,
+        "cells": 1097,
+        "pages": 27
+      },
+      {
+        "name": "idx_actions_email_email_feedback_requests_2",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 98304,
+        "unused_bytes": 17236,
+        "cells": 1413,
+        "pages": 24
+      },
+      {
+        "name": "idx_meeting_alignment_runs_created",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 94208,
+        "unused_bytes": 13511,
+        "cells": 2588,
+        "pages": 23
+      },
+      {
+        "name": "idx_actions_sync_work_updates_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 90112,
+        "unused_bytes": 14449,
+        "cells": 5468,
+        "pages": 22
+      },
+      {
+        "name": "idx_actions_sync_follow_up_drafts_2",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 90112,
+        "unused_bytes": 12929,
+        "cells": 2477,
+        "pages": 22
+      },
+      {
+        "name": "feedback_events",
+        "table": "feedback_events",
+        "type": "table",
+        "page_bytes": 90112,
+        "unused_bytes": 20008,
+        "cells": 68,
+        "pages": 22
+      },
+      {
+        "name": "idx_actions_reply_oa_history",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 86016,
+        "unused_bytes": 15501,
+        "cells": 1045,
+        "pages": 21
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_steps_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 86016,
+        "unused_bytes": 12379,
+        "cells": 829,
+        "pages": 21
+      },
+      {
+        "name": "idx_actions_global_business",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 81920,
+        "unused_bytes": 14637,
+        "cells": 437,
+        "pages": 20
+      },
+      {
+        "name": "business_attention_events",
+        "table": "business_attention_events",
+        "type": "table",
+        "page_bytes": 81920,
+        "unused_bytes": 17005,
+        "cells": 30,
+        "pages": 20
+      },
+      {
+        "name": "idx_actions_skill_load_pid",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 73728,
+        "unused_bytes": 11735,
+        "cells": 4273,
+        "pages": 18
+      },
+      {
+        "name": "idx_actions_skill_load_config",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 73728,
+        "unused_bytes": 13606,
+        "cells": 4273,
+        "pages": 18
+      },
+      {
+        "name": "idx_actions_intent_operation",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 69632,
+        "unused_bytes": 15356,
+        "cells": 214,
+        "pages": 17
+      },
+      {
+        "name": "email_historical_classification_history",
+        "table": "email_historical_classification_history",
+        "type": "table",
+        "page_bytes": 65536,
+        "unused_bytes": 10192,
+        "cells": 197,
+        "pages": 16
+      },
+      {
+        "name": "idx_task20_published_9",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 10745,
+        "cells": 757,
+        "pages": 14
+      },
+      {
+        "name": "idx_configs_binding_skill",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 12480,
+        "cells": 3881,
+        "pages": 14
+      },
+      {
+        "name": "idx_business_work_todo_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 9998,
+        "cells": 5077,
+        "pages": 14
+      },
+      {
+        "name": "idx_business_work_todo_project_status",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 57344,
+        "unused_bytes": 7668,
+        "cells": 3327,
+        "pages": 14
+      },
+      {
+        "name": "idx_configs_binding_order",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 53248,
+        "unused_bytes": 8687,
+        "cells": 3881,
+        "pages": 13
+      },
+      {
+        "name": "idx_configs_binding_config_order",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 53248,
+        "unused_bytes": 8687,
+        "cells": 3881,
+        "pages": 13
+      },
+      {
+        "name": "idx_business_task_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 53248,
+        "unused_bytes": 11250,
+        "cells": 5077,
+        "pages": 13
+      },
+      {
+        "name": "idx_runs11_metadata_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 21522,
+        "cells": 723,
+        "pages": 12
+      },
+      {
+        "name": "idx_meeting_alignment_runs_job",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 10127,
+        "cells": 2588,
+        "pages": 12
+      },
+      {
+        "name": "idx_configs_schedule_snapshot_public_id",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 9007,
+        "cells": 4985,
+        "pages": 12
+      },
+      {
+        "name": "idx_business_work_project_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 6558,
+        "cells": 5077,
+        "pages": 12
+      },
+      {
+        "name": "idx_business_work_cluster_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 8365,
+        "cells": 5077,
+        "pages": 12
+      },
+      {
+        "name": "idx_business_project_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 8349,
+        "cells": 5077,
+        "pages": 12
+      },
+      {
+        "name": "idx_business_anchor_public_id",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 8331,
+        "cells": 5077,
+        "pages": 12
+      },
+      {
+        "name": "idx_actions_text_public_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 49152,
+        "unused_bytes": 6824,
+        "cells": 437,
+        "pages": 12
+      },
+      {
+        "name": "business_task_evidence",
+        "table": "business_task_evidence",
+        "type": "table",
+        "page_bytes": 49152,
+        "unused_bytes": 7937,
+        "cells": 985,
+        "pages": 12
+      },
+      {
+        "name": "idx_business_work_project_status_priority",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 45056,
+        "unused_bytes": 8141,
+        "cells": 975,
+        "pages": 11
+      },
+      {
+        "name": "idx_task20_published_10",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 6727,
+        "cells": 757,
+        "pages": 10
+      },
+      {
+        "name": "idx_state_service_state_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 17348,
+        "cells": 278,
+        "pages": 10
+      },
+      {
+        "name": "idx_runs11_sample_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 18196,
+        "cells": 2048,
+        "pages": 10
+      },
+      {
+        "name": "idx_runs11_metadata_session",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 8189,
+        "cells": 723,
+        "pages": 10
+      },
+      {
+        "name": "idx_business_task_stage",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 7915,
+        "cells": 665,
+        "pages": 10
+      },
+      {
+        "name": "idx_business_task_evidence_task",
+        "table": "business_task_evidence",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 9096,
+        "cells": 975,
+        "pages": 10
+      },
+      {
+        "name": "idx_actions_sync_business_task_events_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 40960,
+        "unused_bytes": 8129,
+        "cells": 971,
+        "pages": 10
+      },
+      {
+        "name": "idx_business_task_relevance",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 7561,
+        "cells": 665,
+        "pages": 9
+      },
+      {
+        "name": "idx_actions_skill_export_revision",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 8094,
+        "cells": 2049,
+        "pages": 9
+      },
+      {
+        "name": "idx_actions_sent_external_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 8524,
+        "cells": 390,
+        "pages": 9
+      },
+      {
+        "name": "idx_actions_execution_receipt_operation",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 36864,
+        "unused_bytes": 4314,
+        "cells": 115,
+        "pages": 9
+      },
+      {
+        "name": "idx_state_conversations_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 32768,
+        "unused_bytes": 5731,
+        "cells": 528,
+        "pages": 8
+      },
+      {
+        "name": "idx_business_task_updated",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 32768,
+        "unused_bytes": 8896,
+        "cells": 665,
+        "pages": 8
+      },
+      {
+        "name": "idx_actions_candidates_task",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 32768,
+        "unused_bytes": 8996,
+        "cells": 886,
+        "pages": 8
+      },
+      {
+        "name": "sqlite_autoindex_business_task_evidence_1",
+        "table": "business_task_evidence",
+        "type": "index",
+        "page_bytes": 28672,
+        "unused_bytes": 6142,
+        "cells": 975,
+        "pages": 7
+      },
+      {
+        "name": "idx_runs11_metadata_source",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 28672,
+        "unused_bytes": 6269,
+        "cells": 723,
+        "pages": 7
+      },
+      {
+        "name": "business_attention_items",
+        "table": "business_attention_items",
+        "type": "table",
+        "page_bytes": 28672,
+        "unused_bytes": 9982,
+        "cells": 16,
+        "pages": 7
+      },
+      {
+        "name": "sqlite_autoindex_business_source_documents_1",
+        "table": "business_source_documents",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 9015,
+        "cells": 213,
+        "pages": 6
+      },
+      {
+        "name": "idx_workbench_events_event_type",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6945,
+        "cells": 810,
+        "pages": 6
+      },
+      {
+        "name": "idx_task20_published_13",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6907,
+        "cells": 169,
+        "pages": 6
+      },
+      {
+        "name": "idx_configs_revision_identity",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6194,
+        "cells": 192,
+        "pages": 6
+      },
+      {
+        "name": "idx_agent_run_state_events_run",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 8354,
+        "cells": 1157,
+        "pages": 6
+      },
+      {
+        "name": "idx_actions_sync_work_todo_dingtalk_links_2",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 7016,
+        "cells": 871,
+        "pages": 6
+      },
+      {
+        "name": "idx_actions_sync_work_todo_dingtalk_links_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 6846,
+        "cells": 875,
+        "pages": 6
+      },
+      {
+        "name": "idx_actions_intent_authorization",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 8172,
+        "cells": 214,
+        "pages": 6
+      },
+      {
+        "name": "idx_actions_external_key",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 24576,
+        "unused_bytes": 5529,
+        "cells": 259,
+        "pages": 6
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_classification_history_1",
+        "table": "email_historical_classification_history",
+        "type": "index",
+        "page_bytes": 20480,
+        "unused_bytes": 4022,
+        "cells": 183,
+        "pages": 5
+      },
+      {
+        "name": "idx_actions_td_task_memory_unique",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 20480,
+        "unused_bytes": 5637,
+        "cells": 613,
+        "pages": 5
+      },
+      {
+        "name": "idx_actions_memory_public_order",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 20480,
+        "unused_bytes": 6084,
+        "cells": 476,
+        "pages": 5
+      },
+      {
+        "name": "business_task_anchor_links",
+        "table": "business_task_anchor_links",
+        "type": "table",
+        "page_bytes": 20480,
+        "unused_bytes": 6185,
+        "cells": 102,
+        "pages": 5
+      },
+      {
+        "name": "schedules",
+        "table": "schedules",
+        "type": "table",
+        "page_bytes": 16384,
+        "unused_bytes": 7017,
+        "cells": 17,
+        "pages": 4
+      },
+      {
+        "name": "idx_workbench_events_turn_id_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4270,
+        "cells": 810,
+        "pages": 4
+      },
+      {
+        "name": "idx_workbench_events_sequence",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4962,
+        "cells": 810,
+        "pages": 4
+      },
+      {
+        "name": "idx_workbench_events_id_turn_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4270,
+        "cells": 810,
+        "pages": 4
+      },
+      {
+        "name": "idx_configs_snapshot_digest",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7450,
+        "cells": 122,
+        "pages": 4
+      },
+      {
+        "name": "idx_business_signal_document",
+        "table": "business_task_signals",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7931,
+        "cells": 918,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_td_task_lease",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4160,
+        "cells": 613,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_td_task_due",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 4160,
+        "cells": 613,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_td_meeting_lease",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 6001,
+        "cells": 595,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_td_meeting_due",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 6001,
+        "cells": 595,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_sync_task_todo_sync_outbox_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 6766,
+        "cells": 242,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_reviews_candidate",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 5155,
+        "cells": 876,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_memory_unique",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 5340,
+        "cells": 476,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_memory_status",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7724,
+        "cells": 476,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_consumer_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7032,
+        "cells": 886,
+        "pages": 4
+      },
+      {
+        "name": "idx_actions_audit_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 16384,
+        "unused_bytes": 7007,
+        "cells": 876,
+        "pages": 4
+      },
+      {
+        "name": "idx_business_anchor_identity",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 7220,
+        "cells": 50,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_td_meeting_memory_unique",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 5080,
+        "cells": 595,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_sync_work_todo_dingtalk_links_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 6289,
+        "cells": 540,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_sync_task_todo_sync_outbox_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 7104,
+        "cells": 242,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_observer_identity",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 7043,
+        "cells": 390,
+        "pages": 3
+      },
+      {
+        "name": "idx_actions_memory_attempt",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 12288,
+        "unused_bytes": 6032,
+        "cells": 476,
+        "pages": 3
+      },
+      {
+        "name": "wechat_memory_candidates",
+        "table": "wechat_memory_candidates",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_sequence",
+        "table": "sqlite_sequence",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2343,
+        "cells": 52,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_wechat_memory_candidates_1",
+        "table": "wechat_memory_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_iteration_decision_items_1",
+        "table": "feedback_iteration_decision_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_feedback_events_1",
+        "table": "feedback_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2079,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_operations_2",
+        "table": "email_historical_operations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_email_historical_operations_1",
+        "table": "email_historical_operations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_work_cluster_tasks_1",
+        "table": "business_work_cluster_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3902,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_relations_1",
+        "table": "business_task_relations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_task_anchor_links_1",
+        "table": "business_task_anchor_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3017,
+        "cells": 99,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_project_evidence_1",
+        "table": "business_project_evidence",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3611,
+        "cells": 44,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_legacy_links_3",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_legacy_links_2",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_legacy_links_1",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_attention_tasks_1",
+        "table": "business_attention_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_attention_proposal_tasks_1",
+        "table": "business_attention_proposal_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "sqlite_autoindex_business_attention_items_1",
+        "table": "business_attention_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3891,
+        "cells": 11,
+        "pages": 1
+      },
+      {
+        "name": "idx_task_agent_runs_active_input",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_text_identity",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 599,
+        "cells": 57,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_19",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3576,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_18",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1523,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_17",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3394,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_16",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1322,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_15",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2378,
+        "cells": 37,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_14",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2776,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_12",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3774,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_published_11",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2556,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_9",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1982,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_8",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3165,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_7",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3486,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_6",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3959,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_5",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_23",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_22",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_21",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_20",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_19",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_18",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_17",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_16",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1786,
+        "cells": 30,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_15",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2488,
+        "cells": 30,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_14",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3448,
+        "cells": 30,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_13",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4012,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_12",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3923,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_11",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4007,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_native_10",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3954,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_task20_active_turn",
+        "table": "tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_wechat_read_state_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4052,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_setup_wizard_steps_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3857,
+        "cells": 12,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_runtime_route_pauses_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4054,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_org_user_profiles_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2086,
+        "cells": 76,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_org_open_id",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 765,
+        "cells": 76,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_org_name",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2695,
+        "cells": 76,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_org_cache_metadata_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4028,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_email_scan_cursors_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4010,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_email_historical_traversals_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3918,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_daily_scan_state_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3866,
+        "cells": 9,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_codex_session_locks_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_state_channel_login_reservations_pk",
+        "table": "state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_schedules_migration_key",
+        "table": "schedules",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3590,
+        "cells": 15,
+        "pages": 1
+      },
+      {
+        "name": "idx_schedules_enabled",
+        "table": "schedules",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3903,
+        "cells": 15,
+        "pages": 1
+      },
+      {
+        "name": "idx_scheduled_task_runs_reply_execution",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2876,
+        "cells": 72,
+        "pages": 1
+      },
+      {
+        "name": "idx_runtime_attempt_active_route",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_runtime_attempt_active_lease",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_runs11_setup_step_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3593,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_runs11_setup_id",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3857,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_provider_state_generation_identity",
+        "table": "provider_state",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1914,
+        "cells": 55,
+        "pages": 1
+      },
+      {
+        "name": "idx_meeting_alignment_runs_active_job",
+        "table": "runs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_transitions_round",
+        "table": "feedback_processing_transitions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4029,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_transitions_feedback",
+        "table": "feedback_processing_transitions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3978,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_processing_transitions_batch_round",
+        "table": "feedback_processing_transitions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3871,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_iteration_decision_items_feedback_round",
+        "table": "feedback_iteration_decision_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_feedback_events_token",
+        "table": "feedback_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1335,
+        "cells": 48,
+        "pages": 1
+      },
+      {
+        "name": "idx_configs_wechat_scope",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3891,
+        "cells": 4,
+        "pages": 1
+      },
+      {
+        "name": "idx_configs_skill_name",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3460,
+        "cells": 21,
+        "pages": 1
+      },
+      {
+        "name": "idx_configs_schedule_ref_position",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3722,
+        "cells": 34,
+        "pages": 1
+      },
+      {
+        "name": "idx_configs_revision_number",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1992,
+        "cells": 192,
+        "pages": 1
+      },
+      {
+        "name": "idx_configs_binding_identity",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3292,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_configs_binding_active_provider",
+        "table": "configs",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3322,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_work_cluster_tasks_task",
+        "table": "business_work_cluster_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3902,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_todo_evidence_work_input",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4046,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_todo_evidence_todo",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4017,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_todo_evidence_status",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4023,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_todo_evidence_project",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4044,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_todo_evidence_dedupe_key",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3857,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_relations_to",
+        "table": "business_task_relations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_relations_from",
+        "table": "business_task_relations",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_date_evidence_task",
+        "table": "business_task_date_evidence",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_task_anchor_links_task",
+        "table": "business_task_anchor_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1958,
+        "cells": 99,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_project_candidates_cluster",
+        "table": "business_project_candidates",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3879,
+        "cells": 10,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_project_anchor",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3789,
+        "cells": 32,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_legacy_links_task",
+        "table": "business_legacy_links",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_context_project",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4011,
+        "cells": 6,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_bugfix_status",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3970,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_bugfix_feedback_event_key",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3941,
+        "cells": 3,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_tasks_task",
+        "table": "business_attention_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_proposal_tasks_task",
+        "table": "business_attention_proposal_tasks",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3836,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_items_list",
+        "table": "business_attention_items",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3551,
+        "cells": 11,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_attention_events_item",
+        "table": "business_attention_events",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3480,
+        "cells": 20,
+        "pages": 1
+      },
+      {
+        "name": "idx_business_anchor_public_type",
+        "table": "business",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3227,
+        "cells": 50,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_td_wechat_task_generation",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 594,
+        "cells": 133,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_td_wechat_status",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1634,
+        "cells": 133,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_td_wechat_actual_unique",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 869,
+        "cells": 133,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_follow_up_send_attempts_2",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1151,
+        "cells": 65,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_follow_up_send_attempts_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3129,
+        "cells": 65,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_follow_up_send_attempts_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1884,
+        "cells": 65,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_todo_sync_outbox_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_todo_sync_outbox_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_follow_ups_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_follow_ups_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_follow_up_send_attempts_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_follow_up_send_attempts_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_dingtalk_links_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_sync_business_task_dingtalk_links_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_selection_candidate",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_intent_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1147,
+        "cells": 214,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_execution_receipt_run",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 2697,
+        "cells": 115,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_execution_candidate",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1470,
+        "cells": 264,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_errors_unresolved",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3948,
+        "cells": 2,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_continuations_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_unsubscribe_cancellations_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3989,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_reply_receipts_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_reply_receipts_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_reply_dispatch_claims_2",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_reply_dispatch_claims_1",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_reply_dispatch_claims_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_email_email_direct_retry_requests_0",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 3987,
+        "cells": 1,
+        "pages": 1
+      },
+      {
+        "name": "idx_actions_attempt_sequence",
+        "table": "actions",
+        "type": "index",
+        "page_bytes": 4096,
+        "unused_bytes": 1226,
+        "cells": 259,
+        "pages": 1
+      },
+      {
+        "name": "feedback_processing_transitions",
+        "table": "feedback_processing_transitions",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3290,
+        "cells": 5,
+        "pages": 1
+      },
+      {
+        "name": "feedback_iteration_decision_items",
+        "table": "feedback_iteration_decision_items",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "email_schema_migrations",
+        "table": "email_schema_migrations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2827,
+        "cells": 39,
+        "pages": 1
+      },
+      {
+        "name": "email_historical_operations",
+        "table": "email_historical_operations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_work_cluster_tasks",
+        "table": "business_work_cluster_tasks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3597,
+        "cells": 16,
+        "pages": 1
+      },
+      {
+        "name": "business_task_relations",
+        "table": "business_task_relations",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_task_date_evidence",
+        "table": "business_task_date_evidence",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_project_evidence",
+        "table": "business_project_evidence",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2774,
+        "cells": 44,
+        "pages": 1
+      },
+      {
+        "name": "business_project_candidates",
+        "table": "business_project_candidates",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 2404,
+        "cells": 10,
+        "pages": 1
+      },
+      {
+        "name": "business_legacy_links",
+        "table": "business_legacy_links",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 4076,
+        "cells": 0,
+        "pages": 1
+      },
+      {
+        "name": "business_attention_tasks",
+        "table": "business_attention_tasks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3417,
+        "cells": 22,
+        "pages": 1
+      },
+      {
+        "name": "business_attention_proposal_tasks",
+        "table": "business_attention_proposal_tasks",
+        "type": "table",
+        "page_bytes": 4096,
+        "unused_bytes": 3417,
+        "cells": 22,
+        "pages": 1
+      }
+    ],
+    "tables": [
+      {
+        "table": "actions",
+        "page_bytes": 207241216,
+        "unused_bytes": 34056864,
+        "object_count": 97
+      },
+      {
+        "table": "runs",
+        "page_bytes": 134828032,
+        "unused_bytes": 9928741,
+        "object_count": 31
+      },
+      {
+        "table": "tasks",
+        "page_bytes": 71852032,
+        "unused_bytes": 7430329,
+        "object_count": 52
+      },
+      {
+        "table": "email_classifications",
+        "page_bytes": 40636416,
+        "unused_bytes": 11869571,
+        "object_count": 5
+      },
+      {
+        "table": "email_messages",
+        "page_bytes": 36282368,
+        "unused_bytes": 4720005,
+        "object_count": 3
+      },
+      {
+        "table": "provider_state",
+        "page_bytes": 34140160,
+        "unused_bytes": 2311288,
+        "object_count": 4
+      },
+      {
+        "table": "business",
+        "page_bytes": 11534336,
+        "unused_bytes": 1455967,
+        "object_count": 27
+      },
+      {
+        "table": "state",
+        "page_bytes": 9273344,
+        "unused_bytes": 626808,
+        "object_count": 21
+      },
+      {
+        "table": "configs",
+        "page_bytes": 8335360,
+        "unused_bytes": 582719,
+        "object_count": 17
+      },
+      {
+        "table": "business_source_documents",
+        "page_bytes": 7213056,
+        "unused_bytes": 129324,
+        "object_count": 2
+      },
+      {
+        "table": "sqlite_schema",
+        "page_bytes": 1896448,
+        "unused_bytes": 40592,
+        "object_count": 1
+      },
+      {
+        "table": "business_task_signals",
+        "page_bytes": 1101824,
+        "unused_bytes": 118660,
+        "object_count": 4
+      },
+      {
+        "table": "business_task_evidence",
+        "page_bytes": 118784,
+        "unused_bytes": 23175,
+        "object_count": 3
+      },
+      {
+        "table": "feedback_events",
+        "page_bytes": 98304,
+        "unused_bytes": 23422,
+        "object_count": 3
+      },
+      {
+        "table": "business_attention_events",
+        "page_bytes": 86016,
+        "unused_bytes": 20485,
+        "object_count": 2
+      },
+      {
+        "table": "email_historical_classification_history",
+        "page_bytes": 86016,
+        "unused_bytes": 14214,
+        "object_count": 2
+      },
+      {
+        "table": "business_attention_items",
+        "page_bytes": 36864,
+        "unused_bytes": 17424,
+        "object_count": 3
+      },
+      {
+        "table": "business_task_anchor_links",
+        "page_bytes": 28672,
+        "unused_bytes": 11160,
+        "object_count": 3
+      },
+      {
+        "table": "schedules",
+        "page_bytes": 24576,
+        "unused_bytes": 14510,
+        "object_count": 3
+      },
+      {
+        "table": "business_legacy_links",
+        "page_bytes": 20480,
+        "unused_bytes": 20380,
+        "object_count": 5
+      },
+      {
+        "table": "business_task_relations",
+        "page_bytes": 16384,
+        "unused_bytes": 16304,
+        "object_count": 4
+      },
+      {
+        "table": "feedback_processing_transitions",
+        "page_bytes": 16384,
+        "unused_bytes": 15168,
+        "object_count": 4
+      },
+      {
+        "table": "business_attention_proposal_tasks",
+        "page_bytes": 12288,
+        "unused_bytes": 11089,
+        "object_count": 3
+      },
+      {
+        "table": "business_attention_tasks",
+        "page_bytes": 12288,
+        "unused_bytes": 11089,
+        "object_count": 3
+      },
+      {
+        "table": "business_work_cluster_tasks",
+        "page_bytes": 12288,
+        "unused_bytes": 11401,
+        "object_count": 3
+      },
+      {
+        "table": "email_historical_operations",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "feedback_iteration_decision_items",
+        "page_bytes": 12288,
+        "unused_bytes": 12228,
+        "object_count": 3
+      },
+      {
+        "table": "business_project_candidates",
+        "page_bytes": 8192,
+        "unused_bytes": 6283,
+        "object_count": 2
+      },
+      {
+        "table": "business_project_evidence",
+        "page_bytes": 8192,
+        "unused_bytes": 6385,
+        "object_count": 2
+      },
+      {
+        "table": "business_task_date_evidence",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "wechat_memory_candidates",
+        "page_bytes": 8192,
+        "unused_bytes": 8152,
+        "object_count": 2
+      },
+      {
+        "table": "email_schema_migrations",
+        "page_bytes": 4096,
+        "unused_bytes": 2827,
+        "object_count": 1
+      },
+      {
+        "table": "sqlite_sequence",
+        "page_bytes": 4096,
+        "unused_bytes": 2343,
+        "object_count": 1
+      }
+    ]
+  },
+  "target_ordinary_tables": 31,
+  "temporary_root_removed": true,
+  "elapsed_seconds": 239.194,
+  "status": "measured"
+}

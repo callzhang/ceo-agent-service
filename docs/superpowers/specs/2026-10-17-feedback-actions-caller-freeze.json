@@ -1,0 +1,48 @@
+{
+  "recorded_at": "2026-10-17T16:38:43.730523+00:00",
+  "scope": "Feedback caller31→28 only; not final11/prod/copy acceptance",
+  "files": {
+    "app/action_feedback_definitions.py": "21cc41b7e5d93539930c59b18c595f8e0015a807c19efe76c4679d5e00c567ee",
+    "app/action_feedback_storage.py": "62150f281d547b35a7ed69155e896a27ae46e64727e79328c3b2ba73df380030",
+    "app/action_email_schema_release.py": "51c826b222ed884967549dd3f26e7d25a4b4c2c8ae1824d382401e18437282a5",
+    "app/configs_schema_release.py": "01a8547b36a2815890d5c385f5ae78abc83bea067ff4f56a68476533fe44f195",
+    "app/runs11_current_schema.py": "3e6fa4868ff0235276577cf4e1713a3a031031731ac5631e512c2531a5864b54",
+    "app/action_followup_sync_storage.py": "718f152fb59f1be841c58ea9f370e6375badcc433037d7eea9f43e763f40473a",
+    "app/action_storage.py": "278fd95aa17c42a5d5e8527e75424f91d5395ca304528988bc20c1fea747f533",
+    "app/email_store.py": "678cff7875039d43ab97db64c30c39fe4b3b6d58e5ba25f4523d815c94524179",
+    "app/audit_web.py": "4ea9d165780ef14622a538d0c94f8e84472a2dfde5630916ebe03bbd7f376eff",
+    "app/quality_gate.py": "7431b6bb2657987e3f9ffd0cdf6842fdc176019b0b20892c48f66964eb7585f2",
+    "app/store.py": "1adc99372a68a24fc5c09a46322e7d25fed57fc14cd7cc42d033d8452dbdf31c",
+    "app/task20_current_schema.py": "17e24da293d8226fdea2ff269995f9a3b2054f15d8f6a73e31e7afcd7533ea0d",
+    "tests/test_action_feedback_storage.py": "ba556cc4ae93e0805dbecd8cf439cc36c60b6330477dcee63686085615638fe6",
+    "tests/test_action_task_delivery_storage.py": "95404f64b237af3255d159e5a185a2097ba42932e59c5f2cc37b2c53534c9262",
+    "tests/test_feedback_processing.py": "3f9ecf8d87bb0ac951df07e11e49db5207b437d6cd56de04a98bb966f5460915",
+    "tests/test_feedback_iteration.py": "b330c50b7df72bc8fd270eacc592a60ed18b8960e1a6327784a9856e6255ca84",
+    "tests/test_feedback_processing_e2e.py": "3aab61890ab637c3501b99a92d9c7d2f9d93e3f6b9845259588cbed5d9cb06f2",
+    "tests/test_quality_gate.py": "c64da9ed1531325b8ec775a9790f92ddcdb45bb50b7474cde414049b05ec4dea",
+    "docs/architecture.md": "bb536390edd3566f55d9c0b08a11a381a767308f7de71fc2206e03a044f2dbd3",
+    "docs/runtime-mechanism.md": "452bfe1e3e677d3337066227d936fee726277b387e2675f142a9882db78e918b",
+    "docs/superpowers/plans/2026-10-17-feedback-actions-callers-plan.md": "04bdc72f4f74a41dbe0b7e802bb138fe8c4a0ad945c3ebb444846b4d47ce02ba",
+    "docs/superpowers/specs/2026-10-17-feedback-actions-source-metadata.json": "1d47f6b105a1759a0278676196af889e7d0454b13e03fcfdaf638cd5014ed205",
+    "docs/superpowers/specs/2026-10-17-feedback-actions-caller-inventory.json": "1ec980e5c6d32d1b5ba5ea05e26eccc4c09d14c7a2c7b4e655f04975758a1a85"
+  },
+  "tests": {
+    "processing": {
+      "passed": 218,
+      "seconds": 1374.35,
+      "exclusions": 0,
+      "pre_post_test_hash_stable": true
+    },
+    "focused_component_pair_current_quality": {
+      "passed": 28,
+      "seconds": 131.24
+    }
+  },
+  "all365_application_hashes_match_failure_inventory": true,
+  "prior39_suite_scope": "Earlier five-suite39pass with precise historical Skill receipt fixture exclusion; not full five-file green",
+  "independent_reviews": "pending SPEC then QUALITY",
+  "production_current_head": "83c1d7f030bb16cb6ef1fc729efc322be409dda2",
+  "production_ordinary_tables": 116,
+  "accepted_real_copy_candidate_tables": 31,
+  "prospective_candidate_tables": 28
+}

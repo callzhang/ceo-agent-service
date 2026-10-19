@@ -53,7 +53,7 @@ async function fileAsBase64(file: File, signal: AbortSignal): Promise<string> {
 }
 
 function nonterminal(turn: Turn | null) {
-  return Boolean(turn && ["queued", "running", "waiting_confirmation"].includes(turn.status));
+  return Boolean(turn && ["queued", "running"].includes(turn.status));
 }
 
 export function Composer({ taskId, activeTurn, attachments, capabilities, onTurnCreated, onTurnStopped, onAttachmentUploaded }: ComposerProps) {

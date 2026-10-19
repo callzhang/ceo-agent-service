@@ -1,0 +1,88 @@
+{
+  "scope": "Frozen actual Configs current-caller cold paired publication, current writes, whole inverse, genuine old-code writes and reforward; intermediate candidate only",
+  "candidate_commit": "6515d77f1792177d15ace76d6257c9edda26f036",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "old_code_commit": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "proof_script_sha256": "9a78a9b39f00db701eae78db55abe36509c81b6a37272a1d5c82673ca5e3a641",
+  "elapsed_seconds": 244.045,
+  "exit_code": 0,
+  "source_variant": "actual",
+  "source_config_families": 18,
+  "source_config_rows": 6823,
+  "checks": {
+    "two_real_cold_publications": true,
+    "whole_schema_exact_inverse": true,
+    "config_values_storage_classes_rowids_six_allocator_waters_exact": true,
+    "current_and_genuine_old_public_read_write": true,
+    "quick_check_at_each_checkpoint": "ok",
+    "original_unrelated_ordinary_tables_preserved_by_native_row_joins": 77,
+    "original_actions_runs_preserved": true,
+    "source_unchanged": true,
+    "owned_database_archive_code_temp_absent": true,
+    "owned_outer_proof_workspace_absent": true
+  },
+  "foreign_key_check": {
+    "baseline_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "findings_unchanged_at_each_checkpoint": true
+  },
+  "target_ordinary_tables": 82,
+  "public_write_cases": [
+    "managed Skill and revision",
+    "Skill export receipt",
+    "runtime config with successful load receipt",
+    "runtime config with failed load receipt",
+    "disabled schedule and pending manual run",
+    "disabled fake email account",
+    "duplicated new WeChat scope key with last-write-wins",
+    "nested read-snapshot receipt reads"
+  ],
+  "current_counts": {
+    "email_accounts": 3,
+    "managed_skills": 22,
+    "managed_skill_revisions": 173,
+    "runtime_feedback_iteration_capabilities": 21,
+    "runtime_skill_bindings": 243,
+    "runtime_skill_configs": 21,
+    "scheduled_task_config_versions": 70,
+    "wechat_reply_scopes": 5,
+    "scheduled_tasks": 16,
+    "managed_skill_export_receipts": 1940,
+    "runtime_skill_load_receipts": 4107
+  },
+  "after_old_write_counts": {
+    "email_accounts": 4,
+    "managed_skills": 23,
+    "managed_skill_revisions": 174,
+    "runtime_feedback_iteration_capabilities": 23,
+    "runtime_skill_bindings": 245,
+    "runtime_skill_configs": 23,
+    "scheduled_task_config_versions": 71,
+    "wechat_reply_scopes": 6,
+    "scheduled_tasks": 17,
+    "managed_skill_export_receipts": 1941,
+    "runtime_skill_load_receipts": 4109
+  },
+  "independent_reviews": {
+    "spec": "PASS exact6515:50 focused,12 native/typed duplicate differential controls, four hash seeds",
+    "quality": "PASS exact6515:8 focused and12 independent cold constructor controls across fixed/unset hash seeds"
+  },
+  "provider_calls": 0,
+  "native_agent_cli_starts": 0,
+  "real_sends": 0,
+  "production_writes": 0,
+  "limitations": [
+    "Not complete ten-core-table plus migration-ledger acceptance",
+    "Other migrated Email/Business/Provider units retain their separate earlier proofs; this run compares exact Config18 facts and original unrelated rows/actions/runs",
+    "No latest full CI or native Agent CLI acceptance",
+    "No production sizing or publication claim",
+    "Only aggregate elapsed time recorded; no per-phase timings",
+    "Initial two proof-preparation attempts corrected missing explicit read transaction and Business metadata parents key before any publication"
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "status": "selected development Runs11 accepted; APPLIED SPEC/QUALITY and fixture SPEC/QUALITY pass; broader556 pass",
+  "selected_commit": "317536b6e2760be7e52a5ef8eb365c5cc0fb0438",
+  "manifest_sha256": "41ded75d274034209d24051e14ceb44e0267e2fcc63c9ea6a05b346bc39b0ac9",
+  "installed_paths_exact": 15,
+  "installed_after_hashes_exact": true,
+  "installed_focused_tests": {
+    "passed": 396,
+    "seconds": 18.01
+  },
+  "ruff_python_paths": 13,
+  "cold_current_ordinary_tables": 51,
+  "fresh_foreign_key_check": [],
+  "actual_copy": {
+    "ordinary_tables": [
+      116,
+      51,
+      116,
+      51
+    ],
+    "seconds": 590.162,
+    "all_runtime_hashes_match": true,
+    "unchanged_source_families": 109,
+    "original_fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "source_unchanged": true,
+    "owned_temp_removed": true
+  },
+  "production_commit_last_read": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+  "production_changed": false,
+  "final_goal_ordinary_tables": 11,
+  "remaining_legacy_tables": 42,
+  "remaining_gates": [
+    "remaining42 legacy family consolidation and emails/provenance",
+    "complete nativeCLI fake-provider business/UI acceptance",
+    "performance/CI/final publication acceptance"
+  ],
+  "applied_spec": {
+    "status": "bounded pass",
+    "fresh_selected_tests": 487,
+    "seconds": 42.61,
+    "broader_tests_passed": 524,
+    "broader_tests_failed": 32,
+    "failure_scope": [
+      "unchanged tests/test_quality_gate.py retired physical task/sample fixtures",
+      "unchanged tests/test_email_current_schema.py retired service_state/version assertion"
+    ],
+    "broader_gate": "pending separate fixture maintenance and regression"
+  },
+  "applied_quality": {
+    "status": "bounded pass",
+    "fresh_focused_tests": 32,
+    "seconds": 5.63,
+    "all15_after_hashes_and9_runtime_copy_hashes_verified": true
+  },
+  "broader_regression": {
+    "passed": 556,
+    "failed": 0,
+    "seconds": 56.3,
+    "files": 12,
+    "two_file_fixture_red_green": {
+      "baseline_passed": 37,
+      "baseline_failed": 32,
+      "fixed_passed": 69
+    },
+    "test_only_fixture_hashes": {
+      "tests/test_quality_gate.py": "1cc297413dea59d3505eaf9b65930c316fde31e83efae93912632e8ec7de0bc4",
+      "tests/test_email_current_schema.py": "dbb5217ca874aa447a3c77abb68283612d40e1c557bbca3345c55c270f4cd39e"
+    },
+    "fixture_spec": "pass69/19.05s",
+    "runtime_changed": false,
+    "fixture_quality": "bounded pass; assertion AST/identity/transaction/hash verified"
+  }
+}

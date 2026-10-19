@@ -1,0 +1,299 @@
+{
+  "artifact": "business_task_events actual/fresh source declaration extension",
+  "captured_at": "2026-10-17T03:54:00Z",
+  "source_binding": "active LaunchAgent database, opened mode=ro with query_only=on",
+  "table": "business_task_events",
+  "observed_row_count": 971,
+  "source_fingerprints": {
+    "actual": "34e703a10cfef72b075f088b14b2fc105b7cf68acd7d02e556a7f5fc468cc4fa",
+    "fresh_candidate": "34e703a10cfef72b075f088b14b2fc105b7cf68acd7d02e556a7f5fc468cc4fa"
+  },
+  "actual": {
+    "sql": "CREATE TABLE business_task_events (\n                    id integer primary key autoincrement,\n                    task_id integer not null,\n                    event_type text not null check(event_type in (\n                        'created', 'promoted', 'commitment_changed', 'owner_changed',\n                        'deadline_changed', 'date_evidence_recorded', 'status_changed',\n                        'relevance_changed', 'details_changed', 'fields_changed', 'merged'\n                    )),\n                    signal_id integer,\n                    before_json text not null\n                        check(json_valid(before_json) and json_type(before_json) = 'object'),\n                    after_json text not null\n                        check(json_valid(after_json) and json_type(after_json) = 'object'),\n                    reason text not null check(trim(reason, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+    "columns": [
+      {
+        "cid": 0,
+        "name": "id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 1,
+        "hidden": 0
+      },
+      {
+        "cid": 1,
+        "name": "task_id",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 2,
+        "name": "event_type",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 3,
+        "name": "signal_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 4,
+        "name": "before_json",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 5,
+        "name": "after_json",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 6,
+        "name": "reason",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0,
+        "hidden": 0
+      },
+      {
+        "cid": 7,
+        "name": "created_at",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": "current_timestamp",
+        "pk": 0,
+        "hidden": 0
+      }
+    ],
+    "foreign_keys": [
+      {
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "id": 1,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ],
+    "indexes": [
+      {
+        "seq": 0,
+        "name": "idx_business_task_events_task",
+        "unique": 0,
+        "origin": "c",
+        "partial": 0,
+        "columns": [
+          {
+            "seqno": 0,
+            "cid": 1,
+            "name": "task_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 7,
+            "name": "created_at",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 0,
+            "name": "id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ],
+        "sql": "CREATE INDEX idx_business_task_events_task\n                    on business_task_events(task_id, created_at, id)"
+      }
+    ],
+    "triggers": []
+  },
+  "fresh_candidate": {
+    "columns": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "task_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "event_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "signal_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "before_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "after_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "hidden": 0,
+        "name": "reason",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": "current_timestamp",
+        "hidden": 0,
+        "name": "created_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "foreign_keys": [
+      {
+        "from": "signal_id",
+        "id": 0,
+        "match": "NONE",
+        "on_delete": "NO ACTION",
+        "on_update": "NO ACTION",
+        "seq": 0,
+        "table": "business_task_signals",
+        "to": "id"
+      },
+      {
+        "from": "task_id",
+        "id": 1,
+        "match": "NONE",
+        "on_delete": "NO ACTION",
+        "on_update": "NO ACTION",
+        "seq": 0,
+        "table": "business_tasks",
+        "to": "id"
+      }
+    ],
+    "indexes": [
+      {
+        "columns": [
+          {
+            "cid": 1,
+            "coll": "BINARY",
+            "desc": 0,
+            "key": 1,
+            "name": "task_id",
+            "seqno": 0
+          },
+          {
+            "cid": 7,
+            "coll": "BINARY",
+            "desc": 0,
+            "key": 1,
+            "name": "created_at",
+            "seqno": 1
+          },
+          {
+            "cid": 0,
+            "coll": "BINARY",
+            "desc": 0,
+            "key": 1,
+            "name": "id",
+            "seqno": 2
+          },
+          {
+            "cid": -1,
+            "coll": "BINARY",
+            "desc": 0,
+            "key": 0,
+            "name": null,
+            "seqno": 3
+          }
+        ],
+        "name": "idx_business_task_events_task",
+        "origin": "c",
+        "partial": 0,
+        "seq": 0,
+        "sql": "CREATE INDEX idx_business_task_events_task\n                    on business_task_events(task_id, created_at, id)",
+        "unique": 0
+      }
+    ],
+    "sql": "CREATE TABLE business_task_events (\n                    id integer primary key autoincrement,\n                    task_id integer not null,\n                    event_type text not null check(event_type in (\n                        'created', 'promoted', 'commitment_changed', 'owner_changed',\n                        'deadline_changed', 'date_evidence_recorded', 'status_changed',\n                        'relevance_changed', 'details_changed', 'fields_changed', 'merged'\n                    )),\n                    signal_id integer,\n                    before_json text not null\n                        check(json_valid(before_json) and json_type(before_json) = 'object'),\n                    after_json text not null\n                        check(json_valid(after_json) and json_type(after_json) = 'object'),\n                    reason text not null check(trim(reason, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+    "triggers": []
+  }
+}

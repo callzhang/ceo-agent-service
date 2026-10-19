@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.store import AutoReplyStore
+from app.business_storage import update_business
 from app.task_agent import apply_task_agent_decision, build_task_agent_prompt
 from app.task_business_resolution import BusinessResolutionService
 from app.task_models import ProjectProposal, TaskAgentDecision, WorkItem
@@ -129,8 +130,8 @@ def seed_project(store, *, title="示例创智", ref="legacy:project", active=Tr
         anchor_id=anchor_id, registry_source="registry:original"
     )
     if not active:
-        with store._connect() as db:
-            db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+        with store.business_task_transaction() as db:
+            update_business(db, "anchor", anchor_id, {"active": 0})
     return store.get_business_project(project_id)
 
 

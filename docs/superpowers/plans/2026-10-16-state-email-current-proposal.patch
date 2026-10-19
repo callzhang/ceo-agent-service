@@ -1,0 +1,141 @@
+--- a/app/email_store.py
++++ b/app/email_store.py
+@@ -74 +74,2 @@
+-from app.state_definitions import STATE_FIELDS
++from app.state_definitions import STATE_FIELDS, state_projection
++from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
+@@ -8720,4 +8721 @@
+-            """
+-            select uidvalidity, last_seen_uid from email_scan_cursors
+-            where account_id=? and folder=?
+-            """,
++            '\n            select uidvalidity, last_seen_uid from (' + state_projection('email_scan_cursors') + ')\n            where account_id=? and folder=?\n            ',
+@@ -8731,16 +8729,5 @@
+-            db.execute(
+-                """
+-                insert into email_scan_cursors (
+-                    account_id, folder, uidvalidity, last_seen_uid,
+-                    last_success_at, last_error
+-                ) values (?, ?, ?, ?, ?, ?)
+-                """,
+-                (
+-                    account_id,
+-                    folder,
+-                    uidvalidity,
+-                    last_seen_uid,
+-                    last_success_at,
+-                    last_error,
+-                ),
+-            )
++            insert_state(db, "email_scan_cursors", {
++                    "account_id": account_id, "folder": folder,
++                    "uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
++                    "last_success_at": last_success_at, "last_error": last_error,
++                })
+@@ -8758,15 +8745,9 @@
+-            db.execute(
+-                """
+-                update email_scan_cursors
+-                set last_seen_uid=max(last_seen_uid, ?),
+-                    last_success_at=?, last_error=?
+-                where account_id=? and folder=? and uidvalidity=?
+-                """,
+-                (
+-                    last_seen_uid,
+-                    last_success_at,
+-                    last_error,
+-                    account_id,
+-                    folder,
+-                    uidvalidity,
+-                ),
++            update_state_rows(
++                db, "email_scan_cursors",
++                {"last_success_at": last_success_at, "last_error": last_error},
++                update_json={"last_seen_uid":
++                    "case when state.last_seen_uid>=? then " +
++                    state_json_field("last_seen_uid", "state") + " else json_quote(?) end"},
++                update_parameters=(last_seen_uid, last_seen_uid),
++                where_sql="account_id=? and folder=? and uidvalidity=?",
++                parameters=(account_id, folder, uidvalidity),
+@@ -8780,16 +8761,7 @@
+-        updated = db.execute(
+-            """
+-            update email_scan_cursors
+-            set uidvalidity=?, last_seen_uid=?, last_success_at=?, last_error=?
+-            where account_id=? and folder=? and uidvalidity=?
+-            """,
+-            (
+-                uidvalidity,
+-                last_seen_uid,
+-                last_success_at,
+-                last_error,
+-                account_id,
+-                folder,
+-                expected_uidvalidity,
+-            ),
+-        ).rowcount
++        updated = update_state_rows(
++            db, "email_scan_cursors",
++            {"uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
++             "last_success_at": last_success_at, "last_error": last_error},
++            where_sql="account_id=? and folder=? and uidvalidity=?",
++            parameters=(account_id, folder, expected_uidvalidity),
++        )
+@@ -8987,4 +8959 @@
+-                """
+-                select * from email_scan_cursors
+-                where account_id=? and folder=?
+-                """,
++                '\n                select * from (' + state_projection('email_scan_cursors') + ')\n                where account_id=? and folder=?\n                ',
+@@ -9073,2 +9042 @@
+-                "select * from email_historical_traversals "
+-                "where account_id=? and folder=? and model_id=?",
++                'select * from (' + state_projection('email_historical_traversals') + ') where account_id=? and folder=? and model_id=?',
+@@ -9133,14 +9101,14 @@
+-            db.execute(
+-                """
+-                insert into email_historical_traversals (
+-                    account_id, folder, model_id, uidvalidity, last_seen_uid, updated_at
+-                ) values (?, ?, ?, ?, ?, ?)
+-                on conflict(account_id, folder, model_id) do update set
+-                    uidvalidity=excluded.uidvalidity,
+-                    last_seen_uid=case
+-                        when email_historical_traversals.uidvalidity=excluded.uidvalidity
+-                        then max(email_historical_traversals.last_seen_uid, excluded.last_seen_uid)
+-                        else excluded.last_seen_uid end,
+-                    updated_at=excluded.updated_at
+-                """,
+-                (account_id, folder, model_id, uidvalidity, last_seen_uid, now),
++            upsert_state(
++                db, "email_historical_traversals",
++                {"account_id": account_id, "folder": folder, "model_id": model_id,
++                 "uidvalidity": uidvalidity, "last_seen_uid": last_seen_uid,
++                 "updated_at": now},
++                {
++                    "uidvalidity": state_json_field("uidvalidity"),
++                    "last_seen_uid":
++                        "case when state.uidvalidity=excluded.uidvalidity and "
++                        "state.last_seen_uid>=excluded.last_seen_uid then " +
++                        state_json_field("last_seen_uid", "state") +
++                        " else " + state_json_field("last_seen_uid") + " end",
++                    "updated_at": state_json_field("updated_at"),
++                },
+@@ -9378 +9346 @@
+-                "select * from email_scan_cursors where account_id=? and folder=?",
++                'select * from (' + state_projection('email_scan_cursors') + ') where account_id=? and folder=?',
+@@ -9408 +9376 @@
+-                "select * from email_scan_cursors where account_id=? and folder=?",
++                'select * from (' + state_projection('email_scan_cursors') + ') where account_id=? and folder=?',
+@@ -14764,2 +14732 @@
+-                    "select value from service_state "
+-                    "where key like 'email_model_scan_progress:%'"
++                    'select value from (' + state_projection('service_state') + ") where key like 'email_model_scan_progress:%'"
+@@ -15172 +15139 @@
+-                    from email_scan_cursors as cursors
++                    from ({state_projection('email_scan_cursors')}) as cursors
+@@ -16890 +16857 @@
+-            "select 1 from service_state where key=?",
++            'select 1 from (' + state_projection('service_state') + ') where key=?',
+@@ -16909 +16876 @@
+-                or db.execute("select 1 from dispatcher_claim_leases where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
++                or db.execute('select 1 from (' + state_projection('dispatcher_claim_leases') + ") where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()

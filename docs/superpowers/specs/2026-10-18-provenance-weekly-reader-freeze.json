@@ -1,0 +1,43 @@
+{
+  "status": "unselected_a3_awaiting_fresh_spec_then_quality",
+  "files": {
+    "app/business_source_reader.py": "e67c89cb4113d206e7ddbdcb5677d36e0166c482ea8c3c4d95cab4889ceef488",
+    "app/business_weekly_source_reader.py": "f025d4e8a253472e1d36eb8049205cf5a330d5b1b02f0bda036daaba7a05ec61",
+    "tests/test_business_weekly_source_reader.py": "1bec907a75aded621c3aceef2e3d295032360712f3f115c9f9ff594afda2287c",
+    "docs/database-redesign-provenance-weekly-reader-validation-20261018.md": "b746cfcf8566552284f89afb92eff10ce2b3c5bc4c83955e3570d681e71a6a87"
+  },
+  "requirement_pins": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-18-provenance-reader-runtime-implementation-plan.md": "b0368db725ab87872e192afda8a373b48e62c5f46b03679cc35eeacb97bcbfe3",
+    "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-freeze-r2.json": "f773be42aa184f695ddc51b3cf51aca25add25fdb18dda244c22849a34f28f07",
+    "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-acceptance.json": "c67c2e7e6f77964f9dc90424f1c4f73b664f318fb52166805e5ed02cde4060a9",
+    "tests/test_business_source_reader.py": "f4296fa9ece7a185d82c1023619affba573bfdfc2c2c05839e88919d0f378468",
+    "tests/test_business_minutes_source_reader.py": "a7b072c7bc370444add1a3de5aee89daaff0e5bd96fc00145fb13bb4d8a7e934",
+    "tests/test_native_source_documents.py": "8c1e6815e097f0130cb199fa5bce2ff1f15c18b3389a0c04dc5c3a088d90e5ea",
+    "app/native_trajectory.py": "5b5ea4c0b880f78c08f0f020dde45c26ae1c38e21d012253b38cd50c30cadc04",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_report_scanner.py": "470f4014322d5acbc6110042effd1ed0e40f2350f4fd2f5a909f799362864026",
+    "app/dws_client.py": "1d6c0b379a63138904311baaf47d7f637bf2100163c6d6d4b8f592cf2e20103e",
+    "docs/superpowers/specs/2026-10-17-business-weekly-current4-source-probe.json": "28c489d3bd62ff4f40b4d2daf1fe37a6eb48d93fe0fa55b6bf2953388e9146fd",
+    "docs/superpowers/specs/2026-10-17-business-weekly-unattempted-source-probe.json": "db2dd2dcedc406d56607921a233bc1f125fc721f401e47e7ad2278b54b7444aa"
+  },
+  "scope": "Exact weekly locator retains only existing node/originalURL/optional explicit nonnegative integerhistoryVersion, reconstructs genuine ReportDocument canonical body via configured native doc+fetch and verified nested response; common A1 fullbody checks unchanged.",
+  "native_probe_source_evidence": {
+    "path": "/Users/derek/.codex/sessions/2026/10/09/rollout-2026-10-09T15-57-47-01a122e3-0bec-73b3-b7aa-c0be8e731a61.jsonl",
+    "one_based_line": 158051,
+    "raw_line_sha256_excluding_newline": "06b4d3654b260c9bca680408429e2c91ec386dafac6ad3feaa7c64cd94a134d3",
+    "payload_type": "custom_tool_call",
+    "tool_name": "exec",
+    "source_field": "input",
+    "purpose": "Executed current4 source probe, response-shape evidence only. Not a runtime source or body copy."
+  },
+  "author_evidence": "118 focused reader/native tests PASS; 3 genuine RED/GREEN version0/bool/float regressions. Initial feature tests authored after draft, no original feature RED claim. Broader scanner test fails stale historical SQL projection at testline88; separate sourcefixture repair remains open, no whole-suite pass.",
+  "not_selected": [
+    "Console reader",
+    "Store/API/transaction/bundle/backfill integration",
+    "DDL/body retirement",
+    "actual provider availability",
+    "release"
+  ],
+  "evidence_boundary": "Unselected component source+synthetic author evidence only; actual11attempt2 immutable preA2 code separately passed inverse/currentfacts/oldcode writes and is reforwarding."
+}

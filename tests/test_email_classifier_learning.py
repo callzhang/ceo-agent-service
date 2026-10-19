@@ -98,8 +98,7 @@ def test_selection_provenance_rejects_empty_selection_by_default() -> None:
                 ]
             }
 
-        def list_training_examples(self, *, include_inclusion: bool):
-            assert include_inclusion is True
+        def list_selected_training_records(self):
             return []
 
     with pytest.raises(ValueError, match="category is unavailable"):
@@ -259,7 +258,7 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     assert load_retrain_state(
         tmp_path / "models" / "retrain-state.json"
     ).last_feedback_at
-    assert store.list_training_examples()[0]["label"] == "legal"
+    assert store.owner_labelled_examples()[0][0]["category"] == "legal"
 
 
 def test_manual_training_selection_rejects_unknown_sources(tmp_path: Path):
@@ -593,7 +592,7 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
     assert corrected.confirmed["confirmed_category"] == "legal"
     assert corrected.confirmed["current_action_plan_id"] != first_plan_id
     assert corrected.confirmed["action_plan"]["action_plan_version"] == 2
-    assert store.list_training_examples()[0]["label"] == "legal"
+    assert store.owner_labelled_examples()[0][0]["category"] == "legal"
 
 
 def test_learning_service_exact_replay_does_not_record_or_request_retraining(
@@ -650,7 +649,7 @@ def test_feedback_only_never_starts_snapshot_training(tmp_path: Path):
     polled = service.poll_retrain(now=now + timedelta(seconds=31))
     assert polled.training_run is None
     assert registry.active_manifest() is None
-    assert len(store.list_unincluded_training_examples()) == 18
+    assert store.count_unincluded_training_examples() == 18
 
 
 def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path: Path):
@@ -668,7 +667,7 @@ def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path
     assert result is not None
     assert result.confirmed["status"] == "processed"
     assert result.error is None
-    assert store.list_training_examples()[0]["label"] == "work"
+    assert store.owner_labelled_examples()[0][0]["category"] == "work"
 
 
 def test_partial_taxonomy_feedback_waits_without_repeated_training_launch(
@@ -911,3 +910,32 @@ def test_unselected_categories_train_as_others_when_others_is_selected(tmp_path:
         str(row["category_key"])
         for row in without_others["selected_training_records"]
     ) == ["work", "work"]
+
+
+def test_folder_only_selection_does_not_read_unselected_service_inputs():
+    state={'snapshot_id':'snapshot-folder-only','snapshot_sha':'a'*64,
+           'snapshot_version':'email-folder-training-snapshot-v1','description_version':'description'}
+    snapshot={'observations':[{'account_id':'a','stable_message_identity':'a:message-id:<one@example.test>',
+        'provider_thread_id':None,'normalized_model_input':'{"body":"frozen"}','category_key':'work'}]}
+    class Store:
+        def latest_training_snapshot_state(self):return state
+        def get_training_snapshot(self,snapshot_id):return snapshot
+        def list_selected_training_records(self):
+            raise AssertionError('unselected service model inputs must not be read')
+    selected=_selection_provenance(Store(),sources=['folder_snapshot'],categories=['work'])
+    assert len(selected['selected_training_records'])==1
+    assert selected['selected_training_records'][0]['source']=='folder_snapshot'
+
+
+@pytest.fixture(autouse=True)
+def stored_training_input_substitute(monkeypatch):
+    from types import SimpleNamespace
+
+    # Existing selection/controller fixtures supply private inputs explicitly.
+    # Native default source wiring is verified in the source/Web integration tests.
+    monkeypatch.setattr(
+        "app.email_classifier_learning.build_selected_training_reader",
+        lambda store: SimpleNamespace(
+            list_selected_training_records=lambda *, sources: store.list_selected_training_records()
+        ),
+    )

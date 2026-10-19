@@ -1,0 +1,108 @@
+{
+  "date": "2026-10-16",
+  "purpose": "Exact reviewed State proposal method-byte transplant onto reconciled published main",
+  "historical_base_commit": "443fa0d4",
+  "published_main": "454bb72a5fcb42761046571280722fb9d2ba16f1",
+  "old_source_sha256": [
+    "03ba4a8c0136723caf94f779278849f1c569fea3e4ca6d772bca78c936f6097a",
+    "062e5aac9e7c7b1c0eac918fb74e293266998f0874de95bce2243de7410fd8fc",
+    "356b8c93020e947d05833b37aedfed4c1f203c36890213c0734c2faf98921f90"
+  ],
+  "new_source_sha256": [
+    "7e7dd5beb8a1193cb5512bcf43fa1e377d37bb9c3f474e8a04d2928f91d6ca73",
+    "bda0333fe0e90133ed519cdda977b836f5a18a0aa2041a6681be8b4cbae91456",
+    "e1abebbe9f299d39b5eb4f387fa9949b890ae53bdf88ee32ab4ba8507fb5027c"
+  ],
+  "old_artifact_sha256": [
+    "50b6d019225761995b922c59e5406d42445fbfbfb958a9f8232b224468a152c1",
+    "159213ceb3dfb44a90ca8162f5cc24611727dfbaa9578a0bcc0e8b7bc52f08aa"
+  ],
+  "new_artifact_sha256": [
+    "33ce49beb5cadce438fc253a79f7d98fb226653ed6a3d42d6ce8356d2ba4ab18",
+    "1757309d22483e6e1ad0896ac9249bebf0570929e640ad37bd238aaf345b7409"
+  ],
+  "dao_methods": [
+    "_get_metadata",
+    "_set_metadata",
+    "find_conversation_by_title",
+    "find_org_user_by_open_dingtalk_id",
+    "find_org_users_by_name",
+    "find_single_chat_conversation_by_title",
+    "get_codex_session_contract_hash",
+    "get_codex_session_id",
+    "get_conversation",
+    "get_daily_scan_state",
+    "get_org_user_profile",
+    "get_service_state",
+    "get_setup_wizard_step",
+    "get_wechat_read_state",
+    "has_seen",
+    "list_codex_conversations",
+    "list_org_user_ids",
+    "list_recent_single_chat_conversations",
+    "list_setup_wizard_steps",
+    "list_wechat_read_states",
+    "mark_seen",
+    "set_daily_scan_state",
+    "set_service_state",
+    "upsert_conversation",
+    "upsert_org_user_profile",
+    "upsert_setup_wizard_step",
+    "upsert_wechat_read_state"
+  ],
+  "lifecycle_methods": [
+    "_upsert_conversation_runtime_session_in_connection",
+    "acquire_codex_session_lock",
+    "active_runtime_route_pause",
+    "clear_codex_session",
+    "clear_codex_session_if_matches",
+    "clear_conversation_runtime_session_if_matches",
+    "clear_conversation_runtime_sessions",
+    "close_runtime_route_pause",
+    "get_conversation_runtime_session",
+    "get_conversation_runtime_session_contract_hash",
+    "open_runtime_route_pause",
+    "recover_interrupted_agent_runs_after_service_restart",
+    "release_codex_session_lock",
+    "rename_runtime_route",
+    "renew_codex_session_lock",
+    "reset_codex_sessions",
+    "reset_recoverable_okr_review_requests",
+    "resume_completed_agent_turns_after_service_restart",
+    "set_codex_session_contract_hash",
+    "skip_unstarted_service_tasks"
+  ],
+  "all_47_reviewed_method_bytes_preserved": true,
+  "all_other_base_method_asts_preserved": true,
+  "sequential_zero_context_apply_roundtrip": true,
+  "compile": true,
+  "ruff": true,
+  "runtime_selected": false,
+  "reconciled_base_commit": "6d45e32c",
+  "root_rebased_dao_probe": {
+    "variants": [
+      "actual",
+      "fresh"
+    ],
+    "matched_calls_per_variant": 61,
+    "distinct_methods": 27,
+    "all_15_family_facts_types_source_rowids_equal": true,
+    "only_cross_database_clock_values_normalized": [
+      "fetched_at",
+      "manual_confirmed_at",
+      "seen_at",
+      "updated_at"
+    ],
+    "seconds": 6.554,
+    "expected_defaultless_not_null_errors_preserve_facts": true,
+    "owned_temp_removed": true,
+    "not_current_cold_constructor_or_actual_copy": true
+  },
+  "remaining_runtime_closure": [
+    "23 additional current Store methods plus constructor helpers and historical-only disposition",
+    "Store and Email fresh/current constructors and exact manifests",
+    "direct periodic/UI/Email/dispatcher callers",
+    "all current version readers and explicitly bound upgrade progress/publication inverse",
+    "actual combined copy, genuine current predecessor rollback, cold native CLI and final ordinary/FTS names"
+  ]
+}

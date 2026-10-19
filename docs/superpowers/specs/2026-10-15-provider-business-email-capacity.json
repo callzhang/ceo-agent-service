@@ -1,0 +1,1379 @@
+{
+  "evidence_type": "read-only frozen-source and completed paired-target capacity observation while independent Email boundary cases remain in progress",
+  "executed_candidate_commit": "fd3ba699",
+  "source_copy_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "access": "mode=ro; query_only; one read transaction per file; handles closed; file SHA before/after",
+  "scope": "Paired target contains controlled public acceptance writes and has completed forward/current inverse/genuine predecessor writes/reforward. Not initial migration-only capacity, current production, VACUUM result or full four-case acceptance.",
+  "source": {
+    "sha256_before": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "file_bytes": 485212160,
+    "page_size": 4096,
+    "page_count": 118460,
+    "freelist_count": 0,
+    "tables": [
+      {
+        "name": "actions",
+        "rows": 23001,
+        "table_bytes": 80715776,
+        "index_bytes": 11223040
+      },
+      {
+        "name": "business_anchors",
+        "rows": 50,
+        "table_bytes": 12288,
+        "index_bytes": 16384
+      },
+      {
+        "name": "business_attention_events",
+        "rows": 14,
+        "table_bytes": 57344,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_attention_items",
+        "rows": 8,
+        "table_bytes": 20480,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_attention_proposal_tasks",
+        "rows": 18,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_attention_tasks",
+        "rows": 18,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_legacy_links",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 16384
+      },
+      {
+        "name": "business_object_tasks",
+        "rows": 7349,
+        "table_bytes": 1077248,
+        "index_bytes": 856064
+      },
+      {
+        "name": "business_project_candidates",
+        "rows": 10,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_project_context_revisions",
+        "rows": 6,
+        "table_bytes": 24576,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_project_evidence",
+        "rows": 33,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_projects",
+        "rows": 32,
+        "table_bytes": 12288,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_source_documents",
+        "rows": 188,
+        "table_bytes": 6139904,
+        "index_bytes": 20480
+      },
+      {
+        "name": "business_task_anchor_links",
+        "rows": 97,
+        "table_bytes": 20480,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_date_evidence",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_task_dingtalk_links",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_events",
+        "rows": 893,
+        "table_bytes": 1650688,
+        "index_bytes": 36864
+      },
+      {
+        "name": "business_task_evidence",
+        "rows": 897,
+        "table_bytes": 45056,
+        "index_bytes": 65536
+      },
+      {
+        "name": "business_task_follow_up_send_attempts",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_follow_ups",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_relations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "business_task_signals",
+        "rows": 833,
+        "table_bytes": 614400,
+        "index_bytes": 380928
+      },
+      {
+        "name": "business_task_todo_sync_outbox",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_tasks",
+        "rows": 594,
+        "table_bytes": 430080,
+        "index_bytes": 102400
+      },
+      {
+        "name": "business_work_cluster_tasks",
+        "rows": 16,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_work_clusters",
+        "rows": 16,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "channel_login_reservations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "codex_session_locks",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "codex_session_search_fts",
+        "rows": 700,
+        "table_bytes": 0,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_config",
+        "rows": 1,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_data",
+        "rows": 16,
+        "table_bytes": 24576,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_docsize",
+        "rows": 700,
+        "table_bytes": 12288,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_idx",
+        "rows": 14,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_index",
+        "rows": 700,
+        "table_bytes": 102400,
+        "index_bytes": 69632
+      },
+      {
+        "name": "conversation_runtime_sessions",
+        "rows": 5312,
+        "table_bytes": 524288,
+        "index_bytes": 180224
+      },
+      {
+        "name": "conversations",
+        "rows": 523,
+        "table_bytes": 81920,
+        "index_bytes": 36864
+      },
+      {
+        "name": "corpus_sources",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "daily_scan_state",
+        "rows": 9,
+        "table_bytes": 868352,
+        "index_bytes": 4096
+      },
+      {
+        "name": "dispatcher_claim_leases",
+        "rows": 10059,
+        "table_bytes": 966656,
+        "index_bytes": 925696
+      },
+      {
+        "name": "email_accounts",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_action_attempts",
+        "rows": 12371,
+        "table_bytes": 4120576,
+        "index_bytes": 1298432
+      },
+      {
+        "name": "email_action_plans",
+        "rows": 9971,
+        "table_bytes": 13766656,
+        "index_bytes": 1302528
+      },
+      {
+        "name": "email_actions",
+        "rows": 10365,
+        "table_bytes": 9052160,
+        "index_bytes": 4829184
+      },
+      {
+        "name": "email_agent_classification_tasks",
+        "rows": 1367,
+        "table_bytes": 2732032,
+        "index_bytes": 483328
+      },
+      {
+        "name": "email_category_configs",
+        "rows": 11,
+        "table_bytes": 12288,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_category_description_revisions",
+        "rows": 24,
+        "table_bytes": 20480,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_category_folder_bindings",
+        "rows": 22,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "email_classifications",
+        "rows": 8937,
+        "table_bytes": 36573184,
+        "index_bytes": 3244032
+      },
+      {
+        "name": "email_classifier_runtime_samples",
+        "rows": 2048,
+        "table_bytes": 299008,
+        "index_bytes": 126976
+      },
+      {
+        "name": "email_direct_retry_requests",
+        "rows": 1,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_feedback_requests",
+        "rows": 1413,
+        "table_bytes": 368640,
+        "index_bytes": 323584
+      },
+      {
+        "name": "email_historical_candidates",
+        "rows": 924,
+        "table_bytes": 692224,
+        "index_bytes": 172032
+      },
+      {
+        "name": "email_historical_classification_history",
+        "rows": 183,
+        "table_bytes": 65536,
+        "index_bytes": 20480
+      },
+      {
+        "name": "email_historical_operations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "email_historical_traversals",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_messages",
+        "rows": 8937,
+        "table_bytes": 33972224,
+        "index_bytes": 1544192
+      },
+      {
+        "name": "email_model_mode_transitions",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_model_promotion_configs",
+        "rows": 4,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_provider_folder_observation_generations",
+        "rows": 55,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_provider_observations",
+        "rows": 72142,
+        "table_bytes": 13328384,
+        "index_bytes": 11620352
+      },
+      {
+        "name": "email_reply_dispatch_claims",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "email_reply_receipts",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "email_scan_cursors",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_schema_migrations",
+        "rows": 38,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_training_snapshot_observations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "email_training_snapshots",
+        "rows": 122,
+        "table_bytes": 167936,
+        "index_bytes": 32768
+      },
+      {
+        "name": "email_unsubscribe_cancellations",
+        "rows": 1,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_unsubscribe_claims",
+        "rows": 1091,
+        "table_bytes": 1159168,
+        "index_bytes": 258048
+      },
+      {
+        "name": "email_unsubscribe_continuations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_unsubscribe_effects",
+        "rows": 1178,
+        "table_bytes": 581632,
+        "index_bytes": 237568
+      },
+      {
+        "name": "email_unsubscribe_receipts",
+        "rows": 1091,
+        "table_bytes": 2125824,
+        "index_bytes": 253952
+      },
+      {
+        "name": "email_unsubscribe_steps",
+        "rows": 827,
+        "table_bytes": 245760,
+        "index_bytes": 94208
+      },
+      {
+        "name": "errors",
+        "rows": 15397,
+        "table_bytes": 7585792,
+        "index_bytes": 966656
+      },
+      {
+        "name": "feedback_events",
+        "rows": 48,
+        "table_bytes": 90112,
+        "index_bytes": 8192
+      },
+      {
+        "name": "feedback_iteration_decision_items",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "feedback_iteration_decisions",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "feedback_processing_batches",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "feedback_processing_items",
+        "rows": 48,
+        "table_bytes": 12288,
+        "index_bytes": 12288
+      },
+      {
+        "name": "feedback_processing_rounds",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 16384
+      },
+      {
+        "name": "feedback_processing_transitions",
+        "rows": 5,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "follow_up_drafts",
+        "rows": 2477,
+        "table_bytes": 10596352,
+        "index_bytes": 610304
+      },
+      {
+        "name": "follow_up_send_attempts",
+        "rows": 65,
+        "table_bytes": 249856,
+        "index_bytes": 12288
+      },
+      {
+        "name": "managed_skill_export_receipts",
+        "rows": 1939,
+        "table_bytes": 290816,
+        "index_bytes": 28672
+      },
+      {
+        "name": "managed_skill_revisions",
+        "rows": 172,
+        "table_bytes": 4755456,
+        "index_bytes": 28672
+      },
+      {
+        "name": "managed_skills",
+        "rows": 21,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "meeting_alignment_delivery_claims",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "meeting_memory_write_events",
+        "rows": 572,
+        "table_bytes": 90112,
+        "index_bytes": 45056
+      },
+      {
+        "name": "oa_notification_events",
+        "rows": 30,
+        "table_bytes": 172032,
+        "index_bytes": 12288
+      },
+      {
+        "name": "okr_review_items",
+        "rows": 413,
+        "table_bytes": 937984,
+        "index_bytes": 0
+      },
+      {
+        "name": "org_cache_metadata",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "org_user_profiles",
+        "rows": 76,
+        "table_bytes": 24576,
+        "index_bytes": 12288
+      },
+      {
+        "name": "runs",
+        "rows": 231340,
+        "table_bytes": 76156928,
+        "index_bytes": 48828416
+      },
+      {
+        "name": "runtime_feedback_iteration_capabilities",
+        "rows": 19,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "runtime_route_pauses",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "runtime_skill_bindings",
+        "rows": 241,
+        "table_bytes": 12288,
+        "index_bytes": 12288
+      },
+      {
+        "name": "runtime_skill_configs",
+        "rows": 19,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "runtime_skill_load_receipts",
+        "rows": 4105,
+        "table_bytes": 4452352,
+        "index_bytes": 53248
+      },
+      {
+        "name": "scheduled_task_config_versions",
+        "rows": 69,
+        "table_bytes": 102400,
+        "index_bytes": 200704
+      },
+      {
+        "name": "scheduled_task_skill_refs",
+        "rows": 34,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "scheduled_tasks",
+        "rows": 15,
+        "table_bytes": 16384,
+        "index_bytes": 8192
+      },
+      {
+        "name": "seen_messages",
+        "rows": 7196,
+        "table_bytes": 696320,
+        "index_bytes": 315392
+      },
+      {
+        "name": "service_bugfix_candidates",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "service_state",
+        "rows": 252,
+        "table_bytes": 69632,
+        "index_bytes": 28672
+      },
+      {
+        "name": "setup_wizard_events",
+        "rows": 22,
+        "table_bytes": 12288,
+        "index_bytes": 4096
+      },
+      {
+        "name": "setup_wizard_steps",
+        "rows": 12,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "task_memory_write_events",
+        "rows": 567,
+        "table_bytes": 69632,
+        "index_bytes": 53248
+      },
+      {
+        "name": "task_todo_sync_outbox",
+        "rows": 242,
+        "table_bytes": 81920,
+        "index_bytes": 28672
+      },
+      {
+        "name": "tasks",
+        "rows": 25826,
+        "table_bytes": 43274240,
+        "index_bytes": 6299648
+      },
+      {
+        "name": "todo_evidence_candidates",
+        "rows": 3,
+        "table_bytes": 24576,
+        "index_bytes": 20480
+      },
+      {
+        "name": "wechat_deliveries",
+        "rows": 133,
+        "table_bytes": 131072,
+        "index_bytes": 12288
+      },
+      {
+        "name": "wechat_memory_candidates",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "wechat_memory_import_jobs",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "wechat_read_state",
+        "rows": 1,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "wechat_reply_scopes",
+        "rows": 4,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "work_projects",
+        "rows": 975,
+        "table_bytes": 6643712,
+        "index_bytes": 40960
+      },
+      {
+        "name": "work_todo_dingtalk_links",
+        "rows": 875,
+        "table_bytes": 2510848,
+        "index_bytes": 61440
+      },
+      {
+        "name": "work_todos",
+        "rows": 3327,
+        "table_bytes": 2420736,
+        "index_bytes": 188416
+      },
+      {
+        "name": "work_updates",
+        "rows": 5468,
+        "table_bytes": 12115968,
+        "index_bytes": 249856
+      },
+      {
+        "name": "workbench_artifacts",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "workbench_attachments",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "workbench_confirmations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 40960
+      }
+    ],
+    "sha256_after": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "stable_read": true
+  },
+  "paired_target": {
+    "sha256_before": "a37b421e73729950b765622c2597e7c09f7b8eed89e54001059e91acb3b56ba9",
+    "file_bytes": 543625216,
+    "page_size": 4096,
+    "page_count": 132721,
+    "freelist_count": 6417,
+    "tables": [
+      {
+        "name": "actions",
+        "rows": 61328,
+        "table_bytes": 127983616,
+        "index_bytes": 26320896
+      },
+      {
+        "name": "business",
+        "rows": 690,
+        "table_bytes": 704512,
+        "index_bytes": 217088
+      },
+      {
+        "name": "business_attention_events",
+        "rows": 14,
+        "table_bytes": 57344,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_attention_items",
+        "rows": 8,
+        "table_bytes": 20480,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_attention_proposal_tasks",
+        "rows": 18,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_attention_tasks",
+        "rows": 18,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_legacy_links",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 16384
+      },
+      {
+        "name": "business_object_tasks",
+        "rows": 7349,
+        "table_bytes": 1077248,
+        "index_bytes": 856064
+      },
+      {
+        "name": "business_project_candidates",
+        "rows": 10,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_project_evidence",
+        "rows": 33,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_source_documents",
+        "rows": 188,
+        "table_bytes": 6139904,
+        "index_bytes": 20480
+      },
+      {
+        "name": "business_task_anchor_links",
+        "rows": 97,
+        "table_bytes": 20480,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_date_evidence",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "business_task_dingtalk_links",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_events",
+        "rows": 893,
+        "table_bytes": 1650688,
+        "index_bytes": 36864
+      },
+      {
+        "name": "business_task_evidence",
+        "rows": 897,
+        "table_bytes": 45056,
+        "index_bytes": 65536
+      },
+      {
+        "name": "business_task_follow_up_send_attempts",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_follow_ups",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_task_relations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "business_task_signals",
+        "rows": 833,
+        "table_bytes": 614400,
+        "index_bytes": 380928
+      },
+      {
+        "name": "business_task_todo_sync_outbox",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_work_cluster_tasks",
+        "rows": 16,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "business_work_clusters",
+        "rows": 16,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "channel_login_reservations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "codex_session_locks",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "codex_session_search_fts",
+        "rows": 700,
+        "table_bytes": 0,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_config",
+        "rows": 1,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_data",
+        "rows": 16,
+        "table_bytes": 24576,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_docsize",
+        "rows": 700,
+        "table_bytes": 12288,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_fts_idx",
+        "rows": 14,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "codex_session_search_index",
+        "rows": 700,
+        "table_bytes": 102400,
+        "index_bytes": 69632
+      },
+      {
+        "name": "conversation_runtime_sessions",
+        "rows": 5312,
+        "table_bytes": 524288,
+        "index_bytes": 180224
+      },
+      {
+        "name": "conversations",
+        "rows": 523,
+        "table_bytes": 81920,
+        "index_bytes": 36864
+      },
+      {
+        "name": "corpus_sources",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "daily_scan_state",
+        "rows": 9,
+        "table_bytes": 868352,
+        "index_bytes": 4096
+      },
+      {
+        "name": "dispatcher_claim_leases",
+        "rows": 10059,
+        "table_bytes": 966656,
+        "index_bytes": 925696
+      },
+      {
+        "name": "email_accounts",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_agent_classification_tasks",
+        "rows": 1367,
+        "table_bytes": 2732032,
+        "index_bytes": 483328
+      },
+      {
+        "name": "email_category_configs",
+        "rows": 11,
+        "table_bytes": 12288,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_category_description_revisions",
+        "rows": 24,
+        "table_bytes": 20480,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_category_folder_bindings",
+        "rows": 22,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "email_classifications",
+        "rows": 8940,
+        "table_bytes": 36573184,
+        "index_bytes": 3252224
+      },
+      {
+        "name": "email_classifier_runtime_samples",
+        "rows": 2048,
+        "table_bytes": 299008,
+        "index_bytes": 126976
+      },
+      {
+        "name": "email_historical_candidates",
+        "rows": 924,
+        "table_bytes": 692224,
+        "index_bytes": 172032
+      },
+      {
+        "name": "email_historical_classification_history",
+        "rows": 183,
+        "table_bytes": 65536,
+        "index_bytes": 20480
+      },
+      {
+        "name": "email_historical_operations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "email_historical_traversals",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_messages",
+        "rows": 8940,
+        "table_bytes": 33972224,
+        "index_bytes": 1552384
+      },
+      {
+        "name": "email_model_mode_transitions",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_model_promotion_configs",
+        "rows": 4,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_scan_cursors",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "email_schema_migrations",
+        "rows": 39,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "email_training_snapshot_observations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "email_training_snapshots",
+        "rows": 122,
+        "table_bytes": 167936,
+        "index_bytes": 32768
+      },
+      {
+        "name": "errors",
+        "rows": 15397,
+        "table_bytes": 7585792,
+        "index_bytes": 966656
+      },
+      {
+        "name": "feedback_events",
+        "rows": 48,
+        "table_bytes": 90112,
+        "index_bytes": 8192
+      },
+      {
+        "name": "feedback_iteration_decision_items",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "feedback_iteration_decisions",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "feedback_processing_batches",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "feedback_processing_items",
+        "rows": 48,
+        "table_bytes": 12288,
+        "index_bytes": 12288
+      },
+      {
+        "name": "feedback_processing_rounds",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 16384
+      },
+      {
+        "name": "feedback_processing_transitions",
+        "rows": 5,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "follow_up_drafts",
+        "rows": 2477,
+        "table_bytes": 10596352,
+        "index_bytes": 610304
+      },
+      {
+        "name": "follow_up_send_attempts",
+        "rows": 65,
+        "table_bytes": 249856,
+        "index_bytes": 12288
+      },
+      {
+        "name": "managed_skill_export_receipts",
+        "rows": 1939,
+        "table_bytes": 290816,
+        "index_bytes": 28672
+      },
+      {
+        "name": "managed_skill_revisions",
+        "rows": 172,
+        "table_bytes": 4755456,
+        "index_bytes": 28672
+      },
+      {
+        "name": "managed_skills",
+        "rows": 21,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "meeting_alignment_delivery_claims",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "meeting_memory_write_events",
+        "rows": 572,
+        "table_bytes": 90112,
+        "index_bytes": 45056
+      },
+      {
+        "name": "oa_notification_events",
+        "rows": 30,
+        "table_bytes": 172032,
+        "index_bytes": 12288
+      },
+      {
+        "name": "okr_review_items",
+        "rows": 413,
+        "table_bytes": 937984,
+        "index_bytes": 0
+      },
+      {
+        "name": "org_cache_metadata",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "org_user_profiles",
+        "rows": 76,
+        "table_bytes": 24576,
+        "index_bytes": 12288
+      },
+      {
+        "name": "provider_state",
+        "rows": 72201,
+        "table_bytes": 21348352,
+        "index_bytes": 12926976
+      },
+      {
+        "name": "runs",
+        "rows": 231340,
+        "table_bytes": 76156928,
+        "index_bytes": 48828416
+      },
+      {
+        "name": "runtime_feedback_iteration_capabilities",
+        "rows": 19,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "runtime_route_pauses",
+        "rows": 2,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "runtime_skill_bindings",
+        "rows": 241,
+        "table_bytes": 12288,
+        "index_bytes": 12288
+      },
+      {
+        "name": "runtime_skill_configs",
+        "rows": 19,
+        "table_bytes": 4096,
+        "index_bytes": 0
+      },
+      {
+        "name": "runtime_skill_load_receipts",
+        "rows": 4105,
+        "table_bytes": 4452352,
+        "index_bytes": 53248
+      },
+      {
+        "name": "scheduled_task_config_versions",
+        "rows": 69,
+        "table_bytes": 102400,
+        "index_bytes": 200704
+      },
+      {
+        "name": "scheduled_task_skill_refs",
+        "rows": 34,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "scheduled_tasks",
+        "rows": 15,
+        "table_bytes": 16384,
+        "index_bytes": 8192
+      },
+      {
+        "name": "seen_messages",
+        "rows": 7196,
+        "table_bytes": 696320,
+        "index_bytes": 315392
+      },
+      {
+        "name": "service_bugfix_candidates",
+        "rows": 3,
+        "table_bytes": 4096,
+        "index_bytes": 8192
+      },
+      {
+        "name": "service_state",
+        "rows": 252,
+        "table_bytes": 69632,
+        "index_bytes": 28672
+      },
+      {
+        "name": "setup_wizard_events",
+        "rows": 22,
+        "table_bytes": 12288,
+        "index_bytes": 4096
+      },
+      {
+        "name": "setup_wizard_steps",
+        "rows": 12,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "task_memory_write_events",
+        "rows": 567,
+        "table_bytes": 69632,
+        "index_bytes": 53248
+      },
+      {
+        "name": "task_todo_sync_outbox",
+        "rows": 242,
+        "table_bytes": 81920,
+        "index_bytes": 28672
+      },
+      {
+        "name": "tasks",
+        "rows": 25826,
+        "table_bytes": 43274240,
+        "index_bytes": 6299648
+      },
+      {
+        "name": "todo_evidence_candidates",
+        "rows": 3,
+        "table_bytes": 24576,
+        "index_bytes": 20480
+      },
+      {
+        "name": "wechat_deliveries",
+        "rows": 133,
+        "table_bytes": 131072,
+        "index_bytes": 12288
+      },
+      {
+        "name": "wechat_memory_candidates",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "wechat_memory_import_jobs",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "wechat_read_state",
+        "rows": 1,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "wechat_reply_scopes",
+        "rows": 4,
+        "table_bytes": 4096,
+        "index_bytes": 4096
+      },
+      {
+        "name": "work_projects",
+        "rows": 975,
+        "table_bytes": 6643712,
+        "index_bytes": 40960
+      },
+      {
+        "name": "work_todo_dingtalk_links",
+        "rows": 875,
+        "table_bytes": 2510848,
+        "index_bytes": 61440
+      },
+      {
+        "name": "work_todos",
+        "rows": 3327,
+        "table_bytes": 2420736,
+        "index_bytes": 188416
+      },
+      {
+        "name": "work_updates",
+        "rows": 5468,
+        "table_bytes": 12115968,
+        "index_bytes": 249856
+      },
+      {
+        "name": "workbench_artifacts",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "workbench_attachments",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 12288
+      },
+      {
+        "name": "workbench_confirmations",
+        "rows": 0,
+        "table_bytes": 4096,
+        "index_bytes": 40960
+      }
+    ],
+    "sha256_after": "a37b421e73729950b765622c2597e7c09f7b8eed89e54001059e91acb3b56ba9",
+    "stable_read": true
+  }
+}

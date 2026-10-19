@@ -1,0 +1,239 @@
+{
+  "scope": "Exact mechanical selection only; no main/push/production/deploy.",
+  "patches": [
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-store-schema-proposal.patch",
+      "sha256": "a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-executor-proposal.patch",
+      "sha256": "294fc6f7ac837a0d064c3af39e8af7e6ea6e6c3d12c132bf37fce262610cee47"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-surface-proposal.patch",
+      "sha256": "0d437d6586e5f35d07cdf3a5c4bd98845885e29c0aaa884987fd4292799d71c6"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-release-proposal.patch",
+      "sha256": "25ba3d7e84828be021a498332606d6ed9579ad8116725cf205ba0ba5a9a0047b"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-executor-test-proposal.patch",
+      "sha256": "ad5e2e00f383ce3313e2a2c04e9439f75f7a7678c0d01908c14b90beb5164e7e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-executor-existing-tests-proposal.patch",
+      "sha256": "20a0d49353d54180d5ad0387539dde33074fee3259f706a43acabb560d493710"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-surface-proposal-tests.patch",
+      "sha256": "e83cfac91542872f5b6ef2e3be2952fac74594990fea1fa0c7331878e2ee7125"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-api-fixtures-proposal.patch",
+      "sha256": "a4cd6b3169fbf601a57fb8f2e0a2f47da711f9f4d204f8446788400a7b7cbc61"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-surface-store-tests-proposal.patch",
+      "sha256": "e7bb38f61e7ee0285b256ceb2df44dadf002a249b9727667a87eb43959870dda"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-current-schema-tests-proposal.patch",
+      "sha256": "fa58c10dc7b300d72ff01aa13bc26cd8d6e614332106cb54bf46c8fec6f681fb"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-copy-checker-proposal.patch",
+      "sha256": "b67ee98d58a604f64080924ef714fc918ad3e9a7105320551edefbc78231f6d3"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-behavior-docs-proposal.patch",
+      "sha256": "d765761b70bc8782a408c29111eb6fde97b7d88ec921cd1b49fe2be2d690b979"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-confirmation-executor-task20-fixture-proposal.patch",
+      "sha256": "ed9dafe6a0c5594a4e32f0c3b24a8a0653c7bc68bb35075f29a069acc84bb69f",
+      "include": "tests/test_workbench_native_events.py"
+    }
+  ],
+  "copies": [
+    {
+      "from": "docs/superpowers/plans/2026-10-16-confirmation-release-tests-canonical.py",
+      "to": "tests/test_confirmation_schema_release.py",
+      "sha256": "1c7dce5fbc48a69c660e1bfb51c9bf0891df90d37e4f849c454c62ec6c7b21de"
+    }
+  ],
+  "files": {
+    "app/action_email_schema_release.py": {
+      "before": "758f361905f4beeb1e615c301ee8103dd2eda1cce6fe13846a37e2c5a70ae196",
+      "after": "0a8eb8bdf777d911275b3d1ed721a8d5b7c94d402a65d536feb2475ff5da5dc8"
+    },
+    "app/confirmation_schema_release.py": {
+      "before": null,
+      "after": "aab9a5d8da35a810df42cab038a3915106c0a688baa6a37d26722db696da7bdf"
+    },
+    "app/store.py": {
+      "before": "72b40d7917af0cf48ffcb131d347c66799432efbec98a1f61e759d2804253d86",
+      "after": "695078ab9dcddb860836b7fcd224b9a8a6d8f89cc4a11d40ad23e759e4864da2"
+    },
+    "app/task20_current_schema.py": {
+      "before": "db842484203c5add4b79dae41f599e86f94279c50b4bcaf4d8367e9b876cfb38",
+      "after": "9755559984b454d36e494b76e9b8fb1823f27e348ad0e8d55bfc950b1eb88667"
+    },
+    "app/task20_definitions.py": {
+      "before": "b7e23407ff77b37522639aaff0317d8fdccfac61c3f073ccd3d9774817e7785e",
+      "after": "1000c4baeaaad66444b75ceeba1264d626239647e0186c8ee839dfc089b91784"
+    },
+    "app/task20_schema_release.py": {
+      "before": "27389ce5aae538f8812a5db6351fb2fa37a9fcec221ecd74430f29f6be204caf",
+      "after": "db0bda4c8947bf59fa708b5d67331f86b03657f8fceb42d8baca4378ae5bb3b2"
+    },
+    "app/workbench/__init__.py": {
+      "before": "2f710a3a1cadf49fd7632cd4ef2c142674bac4f1f28d8db17906f4e318e8a488",
+      "after": "0eb36ab0767bd795723435711ed8f947abc02c44494bc8a53d03e80c71a9353b"
+    },
+    "app/workbench/api.py": {
+      "before": "4a3847fb8db9b71e5618d77ce4e2392588f06e5db190994d652622e789f184ae",
+      "after": "9401605ccbad499b6c6dccb110d2c3d0853c493250e492a51f2c9d467760cdf8"
+    },
+    "app/workbench/executor.py": {
+      "before": "5c4bfc85412af9e36846b1c4964a47d28e7d202ca223656abd6badd04eae06fe",
+      "after": "57f1b4e4b413a0eb1a18ef6b832727003f9579acc45c48ac756474214f6768a8"
+    },
+    "app/workbench/models.py": {
+      "before": "4bb51e47c980a63924bf48358b22f7fe38c2950de69a860b7f31e99934e40ecd",
+      "after": "ce50cb87b4f1669b8522ace48700a06fb9af9641d196b26ead65e5507d49f16c"
+    },
+    "app/workbench/native_events.py": {
+      "before": "1cf7a6de80676539fa5f5945cccda4327ac61eb4f1e059ffb40cefc9876b85e1",
+      "after": "925bb9c1415665d5f0b8e9cd3d2b0a9d272a6fc1dbd079bd4eee64080f7e0955"
+    },
+    "app/workbench/runtime.py": {
+      "before": "b6fd3630ed4b432433e90400ee8ae24e183128ab2516945a1bfb35991edd44f2",
+      "after": "b8233dc7663a47d780ff9c381d74aaabb7479a320759c2bc5a75bdf15d95f4a8"
+    },
+    "app/workbench/store.py": {
+      "before": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
+      "after": "96a14d20140720556b47ea79df7e58f22fffabfd1b8b4b1f9e330072e6b06583"
+    },
+    "docs/architecture.md": {
+      "before": "42788632e830e380cf58188f537f0f8579af674d7a53effe70ab0e17ca78118b",
+      "after": "df86389310c959072e2bc66ddc58fa272c70eb0bae9402dac94925984b5ba0f1"
+    },
+    "docs/runtime-mechanism.md": {
+      "before": "32f45425edbf8f80e1060fda402c7757369f53bc336f0ed0daabbb7d259d56d2",
+      "after": "6d0e3e759fe68b7534daf5095077807511cd384b1df5427ba025959397af7b45"
+    },
+    "frontend/src/api.test.ts": {
+      "before": "7a1068606fb0dbbccf2da8ed811005aac7c5d85d01f9114088661c92ae9cac07",
+      "after": "ac22f19fdaec3e08853d2c06c41d3d2a7ddad5d759c7a22830bf5afff28cdb51"
+    },
+    "frontend/src/api.ts": {
+      "before": "fd9586db8de0691d1cbceab4171411a0bcfcbc5b898e0d870b20158f7255f79c",
+      "after": "da49f420e223a34ac27d0a983267d860d3ef469b1a3485fffa9031a305528e12"
+    },
+    "frontend/src/app.test.tsx": {
+      "before": "240e8ce510d000993d1c1d8bd79899b32c70d1756b1354fb77bbc3fd25c38175",
+      "after": "ba6444a47d53fd3aedad0f8331dd228bd6bc278ffbf538506443ab9901a53fca"
+    },
+    "frontend/src/app.tsx": {
+      "before": "b9c7a36b6b8923f7bf938f744dba77c21aca68b56ad260dab1e950129eeea68e",
+      "after": "be4950c19e6c8f8d8bc3df046e3497332c88db756e967c0d066d515403ab01da"
+    },
+    "frontend/src/components/Composer.tsx": {
+      "before": "fbd96e60699d5e0ce06f0d8b002283ba8a14eaa4ffe96f2ed3acdd10d208baea",
+      "after": "70f1fc33c0a4deeb888313667c645e134b6f730b5f81f9c3425284f8be2c3e2a"
+    },
+    "frontend/src/components/ConfirmationCard.tsx": {
+      "before": "4c59ff58f9f04da666be71348f55d4f8b86eb7c6f32e52f42b335ddeff19e5f1",
+      "after": null
+    },
+    "frontend/src/components/ConversationTimeline.test.tsx": {
+      "before": "f55a14ba935d8513066b33fa1a629552b6fbd74e31793c265aff93a320e8e309",
+      "after": "f42693af5b8f87a79ff709843f4b1209d4999dacb5c3b3aa15b2cfd05adc223e"
+    },
+    "frontend/src/components/ConversationTimeline.tsx": {
+      "before": "7864b43fdada90ef3994e32c5a4fdd6d24e12f29e2a826de39ed5abf27368ce8",
+      "after": "afefe56b5a5823986969dc34b5276ac2f4341d33005a948843901a87573664fb"
+    },
+    "frontend/src/components/TaskList.test.tsx": {
+      "before": "4481cefa4c58c487ccc196c8d3ed5540c0e5f8caa0eed18198db01f5482cd48f",
+      "after": "3ef9acaaddd9cee0fb2733eb00ed1a798059787da3787f63692caf2fd70236bc"
+    },
+    "frontend/src/components/TurnInspector.tsx": {
+      "before": "2ec205c993286ca4e890e8b052286c289ad5701ebbdcbbdbe49cf2af1b4b944d",
+      "after": "6545447f3ff39022b472db8a568508bb7c25ed3d6314713e8e712bcece12d8a7"
+    },
+    "frontend/src/components/status/StatusBadge.tsx": {
+      "before": "acd8f721849130c789eccab40c275d58bcfb3fd048217272836df1ed4e45f082",
+      "after": "7df11d412df30e474108871674a94c96ed94f68608d58a3d2605fc5945b1d688"
+    },
+    "frontend/src/events.test.ts": {
+      "before": "5ac055696fbf0b7f2d8eca4f99ee97a1eac00c96040684761ddecf683cafe7db",
+      "after": "819cb0e09f7d5c6d83696f785268cc1a48504c92b4f5db3bec668e5a65140796"
+    },
+    "frontend/src/events.ts": {
+      "before": "e9cee5bb13961887f9c34b2ddca7aa5f54e4be386e64b9ab946b31eacde2b512",
+      "after": "d12ed81347b6554b545db3f52dd2872bc08f61efebde92b5eda65e1dd49352cd"
+    },
+    "frontend/src/presentation.test.ts": {
+      "before": "07fe2223777c624f6ef288f38741399a5729f8ecd33dab6182038f03f6b78c44",
+      "after": "56d22b8fd3f9679e6a53d5562c4b6745f8df8348a708181e8b61c12f9961a78f"
+    },
+    "frontend/src/presentation.ts": {
+      "before": "e81ce8e9e366187dfb746ce89bbd62eb304bee36b5e7bd645aa2bd9da8862813",
+      "after": "2b60daba016f2f2bf71796a217972202cce38b6fe1b1aac1ab5fdfc9f110d26b"
+    },
+    "frontend/src/styles.css": {
+      "before": "e095ebbdb2407a900b0a859887a83badbda4ce0bd4dc025a2c4043bfa21be3e4",
+      "after": "54def2a8c5edc0b7c518b1d5b2a3fe2c62cc46cdf61d0821f0ca3943c1e53914"
+    },
+    "frontend/src/types.ts": {
+      "before": "3ad9d7adc960e81669109e7293a361652257a5ddd16c259862764ec78694c1d5",
+      "after": "83e6495fca1798810cdbff504d55097122fe4f2e9c4f8d88cf43f2afd4a12e10"
+    },
+    "scripts/validate_task20_runtime_copy.py": {
+      "before": "8fc0119e3aa53bccb5eeca22aa179925006b776e8e602b4102c8a194991dbb32",
+      "after": "0b2858a92e99efb9e32b674ae0def559b9e1e392f5cd927eebce16fedf46d148"
+    },
+    "tests/test_confirmation_schema_release.py": {
+      "before": null,
+      "after": "1c7dce5fbc48a69c660e1bfb51c9bf0891df90d37e4f849c454c62ec6c7b21de"
+    },
+    "tests/test_task20_current_schema.py": {
+      "before": "6e7cba7a807114b12b16013a2db9845c867aeb227c47c9520ac2acdf1c95280b",
+      "after": "83113ac875a058580da425257ebb3673c43104a9668d446fde3fd20fb4a59b9c"
+    },
+    "tests/test_workbench_api.py": {
+      "before": "cf004a4a38b5ca69d682402abc0882bc5862733d0a3495e25b148651e6b44a9d",
+      "after": "05fabadc828082bf81ae153e2e8b37d6b52e84dd7c44e397747e44a5677ff64b"
+    },
+    "tests/test_workbench_confirmation_retirement.py": {
+      "before": null,
+      "after": "ee922c5fe1fd57d500769e69065db880bddc3fcac45a905465207ec7ac5712c6"
+    },
+    "tests/test_workbench_confirmation_retirement_api.py": {
+      "before": null,
+      "after": "4e2cd6307ddffd63b8b867e4ff17b978d67682a5c3c80f93ee26e103533444d8"
+    },
+    "tests/test_workbench_executor.py": {
+      "before": "7ee79c37f0cdf6525ea7b1ff661e35ee2d029dfa77fba0c40eb45e402fa7421f",
+      "after": "561a99482236b396c61259252a0936da3572f9dbcb09d9b0851823d2bfd23abb"
+    },
+    "tests/test_workbench_native_events.py": {
+      "before": "658e6b446fbc9a6a1c401e548cf31c749b5d46986fdbae6b8b3cc26c5cd0419b",
+      "after": "e67bbf1baadb2df9fa7ca1bde2f56fc6434fb0b55695d9122f9724fbd347d41f"
+    },
+    "tests/test_workbench_store.py": {
+      "before": "76258eabf981c563722a3ccfa1ecd9f219da20d68b83fd669af28a1be925c623",
+      "after": "f36ab8525ae980c499664e3ecfb9682867df4048f493b3285da2f23398649d3a"
+    }
+  },
+  "unchanged_native": {
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/workbench_storage.py": "03e99ec30333e9a6dbde422d06ef49b03bd2fb0c02211bb915fa7b94c3249398",
+    "app/agent_cli.py": "fcd40c67fcfbec339a1c9ece44a0e77f5ba7b2a93837053ee18712216df105ac",
+    "app/workbench/service_runtime.py": "d9c7d9b84bc8a372887692c8ad24a3694193c43efb5a79f87134cf166cd64f60",
+    "app/native_cli_metadata.py": "06775c56c99831698647d1d64abcf027e2a2267748278594cd61eace0ff8a2dc"
+  },
+  "known_test_boundary": "Full retained Store module47pass3preexisting unsupported hybrid source13 fixture failures, unchanged assertions; API52pass; canonical migrated315pass; independent quality201+301 backend and135frontend/build pass; actualcopy receipt separate."
+}

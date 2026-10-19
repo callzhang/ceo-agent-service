@@ -62,10 +62,10 @@ const commandRefs = [{ ...managedRef, position: 0 }, { ...operationRef, position
 const commandRun: ScheduledTaskRun = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs } };
 const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "处理新的钉钉消息", description: "发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs, recent_run: commandRun };
 
-function setup(items: TestTask[] = [task]) {
+function setup(items: TestTask[] = [task], runs = { scheduled_task: task, items: [run], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } }) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
   api.getScheduledTaskOptions.mockResolvedValue(options);
-  api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: task, items: [run], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
+  api.listScheduledTaskRuns.mockResolvedValue(runs);
   api.createScheduledTask.mockImplementation(async (draft) => ({ item: { ...task, ...draft, id: 8, version: 1, recent_run: null }, meta: { snapshot_at: "now" } }));
   api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...task, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
   api.setScheduledTaskEnabled.mockImplementation(async (_id, enabled) => ({ item: { ...task, enabled, version: 4 }, meta: { snapshot_at: "now" } }));
@@ -90,8 +90,7 @@ function deferred<T>() {
 
 describe("ScheduledTasksPage", () => {
   it("links each Trigger run to its Attempt detail while keeping the row compact", async () => {
-    setup();
-    api.listScheduledTaskRuns.mockResolvedValue({
+    setup([task], {
       scheduled_task: task,
       items: [{ ...run, attempts: [{ id: 8840, status: "completed" }, { id: 8841, status: "skipped" }] }],
       meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false },

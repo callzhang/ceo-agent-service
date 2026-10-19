@@ -1,0 +1,22 @@
+{
+  "status": "accepted_unselected_a1_component",
+  "freeze": "docs/superpowers/specs/2026-10-18-provenance-reader-binding-freeze.json",
+  "freeze_sha256": "9811a60165913ef2702925643edc4ed2a21b7159703ac7cd5286b3907f8dfbb4",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-reader-binding-spec-review.json",
+    "sha256": "beb14b0e240f335e8eafbe538be7c4f7b42dec443e77c2c22d3dd2d91fffc18d"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-provenance-reader-binding-quality-review.json",
+    "sha256": "40e1e78c6d4c1460052c84108c6015cddd070dba2d9ce7f425a274480564068c"
+  },
+  "remaining": [
+    "provider/Console adapters",
+    "Store/API/model and transaction/bundle/backfill callers",
+    "physical body-free provenance/inline identity",
+    "source availability and historical20 retirement decision",
+    "post-forward body-required inverse or forward-repair release design",
+    "actual-data/capacity/nativeCLI/UI/CI/deploy acceptance"
+  ],
+  "evidence_boundary": "Immutable binding/fact, exact native transient reader and typed native failure component only. Existing source bodies and Store/callers retained."
+}

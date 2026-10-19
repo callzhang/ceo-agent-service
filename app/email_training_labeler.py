@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import re
 from types import SimpleNamespace
+from app.email_canonical_storage import email_classification_projection
 
 LABEL_ONLY_MODEL_ID = "email-classifier-agent:v1"
 
@@ -461,13 +462,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     email_store = EmailStore(db_path)
     cache_path = db_path.parent / "email-models" / "provider-training-observations.json"
     cache = json.loads(cache_path.read_text(encoding="utf-8"))
-    classified = frozenset(
-        str(row["stable_message_identity"])
-        for row in email_store.list_selected_training_records()
-    ) | frozenset(
-        identity
-        for identity in _all_classified_identities(email_store)
-    )
+    classified = _all_classified_identities(email_store)
     source_factory = _build_email_source_factory(SimpleNamespace())
     fetched: dict[str, Mapping[str, object]] = {}
     search_source = None
@@ -568,7 +563,9 @@ def _all_classified_identities(email_store: object) -> frozenset[str]:
     with email_store._connect() as db:
         return frozenset(
             str(row["stable_message_identity"])
-            for row in db.execute("select stable_message_identity from email_classifications")
+            for row in db.execute(
+                f"select stable_message_identity from ({email_classification_projection()})"
+            )
         )
 
 

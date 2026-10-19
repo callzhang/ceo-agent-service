@@ -1,0 +1,423 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -63,0 +64 @@
++    CURRENT_STATE_REPAIRABLE_INDEXES, state_current_or_known_dispatcher_index_repair,
+@@ -96,2 +97,3 @@
+-from app.state_definitions import state_projection
+-from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
++from app.state_definitions import STATE_INDEX_DDL, state_projection
++from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES, state_schema_is_current
++from app.state_storage import create_state_schema, insert_state, state_json_field, update_state_rows, upsert_state
+@@ -217 +218,0 @@
+-from app.action_reply_storage import migrate_action_reply_schema
+@@ -375,0 +377 @@
++    "state",
+@@ -384 +385,0 @@
+-    "conversation_runtime_sessions",
+@@ -392 +392,0 @@
+-    "runtime_route_pauses",
+@@ -396 +395,0 @@
+-    "dispatcher_claim_leases",
+@@ -461,2 +459,0 @@
+-    "idx_dispatcher_claim_leases_expiry",
+-    "idx_dispatcher_claim_leases_terminal",
+@@ -501,0 +499 @@
++    *STATE_SOURCE_TABLES,
+@@ -612,5 +609,0 @@
+-    "dispatcher_claim_leases": (
+-        "terminal_at",
+-        "last_error",
+-        "owner_pid",
+-    ),
+@@ -635 +627,0 @@
+-    "conversation_runtime_sessions": ("contract_hash",),
+@@ -1906 +1898 @@
+-                healthy = self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
++                healthy = state_schema_is_current(db) and self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
+@@ -2498,0 +2491 @@
++            and state_schema_is_current(db)
+@@ -2536 +2529 @@
+-        # A fresh database has no service_state table yet. This probe is an
++        # A fresh database has no State table yet. This probe is an
+@@ -2544 +2537 @@
+-                    "select value from service_state where key=?",
++                    f"select value from ({state_projection('service_state')}) where key=?",
+@@ -2731,4 +2724,12 @@
+-        with self._connect() as db:
+-            fresh = db.execute(
+-                "select 1 from sqlite_schema where type='table' and name='service_state'"
+-            ).fetchone() is None
++        fresh = self._require_supported_store_bootstrap_source()
++        with self._connect() as db:
++            if fresh:
++                create_state_schema(db)
++            else:
++                for sql in STATE_INDEX_DDL:
++                    name = sql.split(" on state(", 1)[0].split()[-1].strip('"')
++                    if name in CURRENT_STATE_REPAIRABLE_INDEXES and db.execute(
++                        "select 1 from sqlite_schema where type='index' and name=?",
++                        (name,),
++                    ).fetchone() is None:
++                        db.execute(sql)
+@@ -2750,32 +2751,5 @@
+-                create table if not exists conversations (
+-                    conversation_id text primary key,
+-                    title text not null,
+-                    single_chat integer not null,
+-                    codex_session_id text,
+-                    codex_session_contract_hash text not null default ''
+-                );
+-                create table if not exists dispatcher_claim_leases (
+-                    adapter_name text not null,
+-                    source_id text not null,
+-                    owner text not null default '',
+-                    owner_pid integer not null default 0,
+-                    generation integer not null default 0 check(generation >= 0),
+-                    lease_expires_at text not null default '',
+-                    terminal_at text not null default '',
+-                    last_error text not null default '',
+-                    created_at text not null default current_timestamp,
+-                    updated_at text not null default current_timestamp,
+-                    primary key(adapter_name, source_id)
+-                );
+-                create index if not exists idx_dispatcher_claim_leases_expiry
+-                    on dispatcher_claim_leases(
+-                        adapter_name, lease_expires_at, source_id
+-                    );
+-                create index if not exists idx_dispatcher_claim_leases_terminal
+-                    on dispatcher_claim_leases(terminal_at)
+-                    where terminal_at<>'';
+-                create table if not exists seen_messages (
+-                    message_id text primary key,
+-                    conversation_id text not null,
+-                    seen_at text not null default current_timestamp
+-                );
++                
++                
++                
++                
++                
+@@ -2981,28 +2955,3 @@
+-                create table if not exists conversation_runtime_sessions (
+-                    conversation_id text not null,
+-                    route_name text not null,
+-                    session_id text not null,
+-                    contract_hash text not null default '',
+-                    updated_at text not null default current_timestamp,
+-                    primary key(conversation_id, route_name)
+-                );
+-                create table if not exists runtime_route_pauses (
+-                    route_name text primary key,
+-                    failure_code text not null,
+-                    retry_at text not null,
+-                    opened_at text not null default current_timestamp,
+-                    updated_at text not null default current_timestamp
+-                );
+-                create table if not exists wechat_read_state (
+-                    account_id text primary key,
+-                    account_dir text not null,
+-                    db_dir text not null,
+-                    app_version text not null,
+-                    self_user_id text not null default '',
+-                    capability_status text not null default 'blocked',
+-                    capability_reason text not null default '',
+-                    watermark_sent_at text not null default '',
+-                    watermark_message_id text not null default '',
+-                    last_scan_at text not null default '',
+-                    updated_at text not null default current_timestamp
+-                );
++                
++                
++                
+@@ -3072,44 +3021,8 @@
+-                create table if not exists corpus_sources (
+-                    source_key text primary key,
+-                    last_collected_at text
+-                );
+-                create table if not exists org_user_profiles (
+-                    user_id text primary key,
+-                    name text not null default '',
+-                    title text not null default '',
+-                    open_dingtalk_id text,
+-                    manager_user_id text,
+-                    manager_name text not null default '',
+-                    department_ids_json text not null,
+-                    department_names_json text not null default '[]',
+-                    org_labels_json text not null default '[]',
+-                    has_subordinate integer,
+-                    fetched_at text not null default current_timestamp
+-                );
+-                create index if not exists idx_org_user_profiles_open_dingtalk_id
+-                    on org_user_profiles(open_dingtalk_id);
+-                create index if not exists idx_org_user_profiles_name
+-                    on org_user_profiles(name);
+-                create table if not exists org_cache_metadata (
+-                    key text primary key,
+-                    value_json text not null,
+-                    updated_at text not null default current_timestamp
+-                );
+-                create table if not exists service_state (
+-                    key text primary key,
+-                    value text not null,
+-                    updated_at text not null default current_timestamp
+-                );
+-                create table if not exists channel_login_reservations (
+-                    channel text primary key,
+-                    reservation_owner text not null,
+-                    reserved_at text not null
+-                );
+-                create table if not exists setup_wizard_steps (
+-                    step_id text primary key,
+-                    status text not null,
+-                    summary text not null default '',
+-                    manual_confirmed_at text not null default '',
+-                    manual_confirmed_by text not null default '',
+-                    updated_at text not null default current_timestamp
+-                );
++                
++                
++                
++                
++                
++                
++                
++                
+@@ -3130,5 +3043 @@
+-                create table if not exists codex_session_locks (
+-                    conversation_id text primary key,
+-                    owner text not null,
+-                    locked_at text not null default current_timestamp
+-                );
++                
+@@ -3692,7 +3601 @@
+-                create table if not exists daily_scan_state (
+-                    scanner_name text primary key,
+-                    last_success_at text not null default '',
+-                    cursor_json text not null default '{}',
+-                    last_error text not null default '',
+-                    updated_at text not null default current_timestamp
+-                );
++                
+@@ -3954,9 +3857,2 @@
+-            conversation_columns = {
+-                row["name"]
+-                for row in db.execute("pragma table_info(conversations)").fetchall()
+-            }
+-            if "codex_session_contract_hash" not in conversation_columns:
+-                db.execute(
+-                    "alter table conversations add column "
+-                    "codex_session_contract_hash text not null default ''"
+-                )
++            
++            
+@@ -3974,16 +3870,2 @@
+-            dispatcher_lease_columns = {
+-                row["name"]
+-                for row in db.execute(
+-                    "pragma table_info(dispatcher_claim_leases)"
+-                ).fetchall()
+-            }
+-            for column, definition in (
+-                ("terminal_at", "text not null default ''"),
+-                ("last_error", "text not null default ''"),
+-                ("owner_pid", "integer not null default 0"),
+-            ):
+-                if column not in dispatcher_lease_columns:
+-                    db.execute(
+-                        f"alter table dispatcher_claim_leases "
+-                        f"add column {column} {definition}"
+-                    )
++            
++            
+@@ -4189,15 +4071,2 @@
+-            org_user_profile_columns = {
+-                row["name"]
+-                for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
+-            }
+-            for column, definition in (
+-                ("title", "text not null default ''"),
+-                ("manager_name", "text not null default ''"),
+-                ("department_names_json", "text not null default '[]'"),
+-                ("org_labels_json", "text not null default '[]'"),
+-                ("has_subordinate", "integer"),
+-            ):
+-                if column not in org_user_profile_columns:
+-                    db.execute(
+-                        f"alter table org_user_profiles add column {column} {definition}"
+-                    )
++            
++            
+@@ -4292,22 +4161,3 @@
+-            runtime_session_columns = {
+-                row["name"]
+-                for row in db.execute(
+-                    "pragma table_info(conversation_runtime_sessions)"
+-                ).fetchall()
+-            }
+-            if "contract_hash" not in runtime_session_columns:
+-                db.execute(
+-                    "alter table conversation_runtime_sessions add column "
+-                    "contract_hash text not null default ''"
+-                )
+-            db.execute(
+-                """
+-                insert or ignore into conversation_runtime_sessions (
+-                    conversation_id, route_name, session_id, contract_hash
+-                )
+-                select conversation_id, 'codex_oauth', codex_session_id,
+-                       coalesce(codex_session_contract_hash, '')
+-                from conversations
+-                where codex_session_id is not null and codex_session_id <> ''
+-                """
+-            )
++            
++            
++            
+@@ -4352,4 +4202,4 @@
+-            db.execute(
+-                "insert into service_state(key,value,updated_at) values(?,?,current_timestamp) "
+-                "on conflict(key) do update set value=excluded.value,updated_at=current_timestamp",
+-                (STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION),
++            upsert_state(
++                db, "service_state",
++                {"key": STORE_SCHEMA_VERSION_KEY, "value": STORE_SCHEMA_VERSION},
++                {"value": state_json_field("value"), "updated_at": "json_quote(current_timestamp)"},
+@@ -4362 +4212 @@
+-        if db.execute("select 1 from service_state where key=?", (marker,)).fetchone() is not None:
++        if db.execute(f"select 1 from ({state_projection('service_state')}) where key=?", (marker,)).fetchone() is not None:
+@@ -4380 +4230 @@
+-        db.execute("insert into service_state(key, value) values (?, '1')", (marker,))
++        insert_state(db, "service_state", {"key": marker, "value": "1"})
+@@ -8439 +8289 @@
+-            db.execute("delete from service_state where key = 'dws_auth_backup'")
++            db.execute("delete from state where record_type='service_state' and key='dws_auth_backup'")
+@@ -8642 +8492 @@
+-    def _require_supported_store_bootstrap_source(self) -> None:
++    def _require_supported_store_bootstrap_source(self) -> bool:
+@@ -8645,0 +8496,6 @@
++            state_names = (*STATE_SOURCE_TABLES, "state", *STATE_TARGET_INDEXES)
++            if db.execute(
++                "select 1 from temp.sqlite_schema where name collate nocase in ("
++                + ",".join("?" for _ in state_names) + ") limit 1", state_names,
++            ).fetchone() is not None:
++                raise sqlite3.IntegrityError("unsupported State TEMP name collision")
+@@ -8648,4 +8504,4 @@
+-                db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
+-                if "service_state" in tables else None
+-            )
+-            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
++                db.execute(f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
++                if "state" in tables else None
++            )
++            store_tables = {"state", *STATE_SOURCE_TABLES, *STATE_TARGET_INDEXES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
+@@ -8683,0 +8540 @@
++                and state_current_or_known_dispatcher_index_repair(db)
+@@ -8686 +8543 @@
+-                return
++                return False
+@@ -8697,23 +8553,0 @@
+-        finally:
+-            db.close()
+-
+-    def _migrate_known_task_schema(self) -> bool:
+-        """Migrate the explicit preceding release before fresh schema bootstrap."""
+-        db = self._open_connection()
+-        try:
+-            if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
+-                return False
+-            marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
+-            if marker is None or marker[0] != "2026-10-13.4":
+-                return False
+-            db.execute("pragma foreign_keys=off")
+-            db.execute("begin immediate")
+-            if not (run_schema_is_current(db, include_task_runs=True, include_workbench=True)
+-                    and task_schema_is_current(db, include_workbench=True)
+-                    and workbench_schema_is_current(db)):
+-                raise sqlite3.IntegrityError("invalid preceding Store core schema")
+-            migrate_action_reply_schema(db)
+-            if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
+-                raise RuntimeError("typed task migration manifest differs")
+-            db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
+-            db.commit()
+@@ -8722,0 +8557,2 @@
++
++    
+--- a/app/action_email_schema_release.py
++++ b/app/action_email_schema_release.py
+@@ -53,0 +54,6 @@
++from app.state_definitions import state_projection
++from app.state_storage import create_state_schema
++from app.state_schema_release import (
++    SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES,
++    state_schema_is_current,
++)
+@@ -131,0 +138,34 @@
++
++
++CURRENT_STATE_REPAIRABLE_INDEXES = frozenset({
++    "idx_state_dispatcher_terminal", "idx_state_dispatcher_expiry",
++})
++
++
++@lru_cache(maxsize=1)
++def _canonical_state_declaration():
++    with closing(sqlite3.connect(":memory:")) as reference:
++        create_state_schema(reference)
++        return _source_declaration(reference, "state")
++
++
++def state_current_or_known_dispatcher_index_repair(db: sqlite3.Connection) -> bool:
++    """Exact State target, allowing only the existing two lease-index repairs."""
++    if state_schema_is_current(db):
++        return True
++    names = (*STATE_SOURCE_TABLES, "state", *STATE_TARGET_INDEXES)
++    if db.execute(
++        "select 1 from temp.sqlite_schema where name collate nocase in ("
++        + ",".join("?" for _ in names) + ") limit 1", names,
++    ).fetchone() is not None:
++        return False
++    if db.execute(
++        "select 1 from main.sqlite_schema where name collate nocase in ("
++        + ",".join("?" for _ in STATE_SOURCE_TABLES) + ") limit 1",
++        STATE_SOURCE_TABLES,
++    ).fetchone() is not None:
++        return False
++    return _current_table_with_known_missing_objects(
++        db, _source_declaration(db, "state"), _canonical_state_declaration(),
++        indexes=CURRENT_STATE_REPAIRABLE_INDEXES,
++    )
+@@ -180 +220,7 @@
+-        marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
++        email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
++        if email == SOURCE_EMAIL_VERSION:
++            marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
++        elif "state" in tables:
++            marker = db.execute(f"select value from ({state_projection('service_state')}) where key=?", (VERSION_KEY,)).fetchone()
++        else:
++            marker = None
+@@ -182 +227,0 @@
+-        email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
+@@ -193 +238 @@
+-                if provider_state_schema_is_current(db) and any(
++                if state_current_or_known_dispatcher_index_repair(db) and provider_state_schema_is_current(db) and any(
+@@ -200 +245 @@
+-                if any(configs_current_or_known_skill_guard_repair(db, action_variant=variant)
++                if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant)
+--- a/app/email_current_schema.py
++++ b/app/email_current_schema.py
+@@ -426,0 +427 @@
++    from app.state_definitions import STATE_FIELDS
+@@ -430 +431 @@
+-    retired = {*CONFIG_FIELDS, "email_training_snapshot_observations"}
++    retired = {*CONFIG_FIELDS, *STATE_FIELDS, "email_training_snapshot_observations"}
+--- a/app/email_store.py
++++ b/app/email_store.py
+@@ -73,0 +74,2 @@
++from app.state_definitions import STATE_FIELDS
++from app.state_schema_release import state_schema_is_current
+@@ -6965,0 +6968,2 @@
++            if not state_schema_is_current(db):
++                raise EmailPersistenceCorruption("required State declaration is missing or malformed")
+@@ -6978 +6982 @@
+-            retired_config_tables = {*CONFIG_FIELDS, "email_training_snapshot_observations"}
++            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, "email_training_snapshot_observations"}

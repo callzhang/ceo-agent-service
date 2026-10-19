@@ -8,9 +8,10 @@ import pytest
 from app.audit_web import _queue_attention_rows, _queue_status_snapshots
 from app.dispatcher.adapters import ReplyQueueAdapter, WorkSummaryQueueAdapter
 from app.repository_updater import in_flight_work
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.task_schema_release import publication_task_sources
-from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL, migrate_task_schema
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task_storage import REPLY_TASK_SQL as TASK_RELEASE_REPLY_TASK_SQL, migrate_task_schema
 from tests.test_task_storage import source_database
 
 
@@ -40,7 +41,7 @@ def test_publication_quiet_sources_read_exact_source_and_target(tmp_path, row_fa
         db.commit()
         assert in_flight_work(path) == 1
         reply_sql, work_sql = publication_task_sources(db)
-        assert reply_sql == REPLY_TASK_SQL
+        assert reply_sql == TASK_RELEASE_REPLY_TASK_SQL
         assert "record_type='work_summary_inputs'" in work_sql
         assert db.execute(f"select count(*) from ({reply_sql}) where status='processing'").fetchone()[0] == 1
         assert db.execute(f"select count(*) from ({work_sql}) where status='processing'").fetchone()[0] == 1
@@ -58,13 +59,15 @@ def test_dispatcher_and_status_use_public_work_item_id(tmp_path):
     )
     public_work_id = 17
     with store._connect() as db:
-        from app.task_storage import insert_task
-        insert_task(db, "work_summary_inputs", {"legacy_key": public_work_id, "source_type": "reply_attempt", "source_ref": "one", "payload_json": '{"summary":"Work summary"}'})
-    with store._connect() as db:
+        parts = task8_insert_parts("work_summary_inputs", {
+            "legacy_key": public_work_id, "source_type": "reply_attempt",
+            "source_ref": "one", "payload_json": '{"summary":"Work summary"}',
+        })
         physical_work_id = db.execute(
-            "select id from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (public_work_id,),
-        ).fetchone()[0]
+            f"insert into tasks ({parts.columns}) values ({parts.values})",
+            parts.parameters,
+        ).lastrowid
+    with store._connect() as db:
         assert physical_work_id != public_work_id
         assert db.execute(f"select id from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (public_work_id,)).fetchone()[0] == public_work_id
     reply = ReplyQueueAdapter(store)
@@ -77,16 +80,28 @@ def test_dispatcher_and_status_use_public_work_item_id(tmp_path):
     work_claim = work.claim(NOW, owner="work-owner", lease=timedelta(minutes=5))
     assert work_claim is not None and work_claim.source_id == str(public_work_id)
     with store._connect() as db:
-        assert db.execute("select status from tasks where id=?", (physical_work_id,)).fetchone()[0] == "processing"
+        assert db.execute(
+            f"select status from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
+            (public_work_id,),
+        ).fetchone()[0] == "processing"
     work.release(work_claim, owner="work-owner", now=NOW)
     with store._connect() as db:
-        assert db.execute("select status from tasks where id=?", (physical_work_id,)).fetchone()[0] == "pending"
+        assert db.execute(
+            f"select status from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
+            (public_work_id,),
+        ).fetchone()[0] == "pending"
     snapshots = _queue_status_snapshots(store)
     work_snapshot = next(item for item in snapshots if item["name"] == "Work items")
     assert work_snapshot["pending"] == 1
     assert work_snapshot["processing"] == 0
     with store._connect() as db:
-        db.execute("update tasks set status='failed',error='failed work' where id=?", (physical_work_id,))
+        parts = task8_set_parts("work_summary_inputs", {
+            "status": "failed", "error": "failed work",
+        })
+        db.execute(
+            f"update tasks set {parts.sql} where id=?",
+            (*parts.parameters, physical_work_id),
+        )
     rows = _queue_attention_rows(store)
     work_row = next(item for item in rows if item["category"] == "Work item")
     assert work_row["id"] == str(public_work_id)
@@ -98,7 +113,7 @@ def test_public_work_id_keeps_codec_and_terminal_provenance(tmp_path):
     import json
 
     from app.storage_maintenance import compact_terminal_work_summary_inputs
-    from app.task_storage import insert_task
+    from app.task8_storage import task8_insert_parts
     from app.work_summary_payload import decode_work_summary_payload, migrate_work_summary_payloads
 
     store = AutoReplyStore(tmp_path / "codec.db")
@@ -107,20 +122,30 @@ def test_public_work_id_keeps_codec_and_terminal_provenance(tmp_path):
         "summary": "repeated text " * 200,
     })
     with store._connect() as db:
-        pending_physical = insert_task(db, "work_summary_inputs", {
+        pending = task8_insert_parts("work_summary_inputs", {
             "legacy_key": 17, "source_type": "test", "source_ref": "pending",
             "payload_json": payload,
-        }).lastrowid
-        done_physical = insert_task(db, "work_summary_inputs", {
+        })
+        pending_physical = db.execute(
+            f"insert into tasks ({pending.columns}) values ({pending.values})",
+            pending.parameters,
+        ).lastrowid
+        done = task8_insert_parts("work_summary_inputs", {
             "legacy_key": 18, "source_type": "test", "source_ref": "done",
             "payload_json": payload, "status": "done",
-        }).lastrowid
+        })
+        done_physical = db.execute(
+            f"insert into tasks ({done.columns}) values ({done.values})",
+            done.parameters,
+        ).lastrowid
         assert pending_physical not in (17, 18)
         assert done_physical not in (17, 18)
     compressed = migrate_work_summary_payloads(store.path)
     assert compressed["compressed"] == 1
     with store._connect() as db:
-        stored = db.execute("select payload_json from tasks where id=?", (pending_physical,)).fetchone()[0]
+        stored = db.execute(
+            f"select payload_json from ({WORK_SUMMARY_INPUT_SQL}) where id=17"
+        ).fetchone()[0]
         assert isinstance(stored, bytes)
         assert decode_work_summary_payload(stored) == payload
     compacted = compact_terminal_work_summary_inputs(store.path)
@@ -182,13 +207,16 @@ def test_current14_quiet_readers_are_read_only_and_preserve_busy(tmp_path, row_f
 @pytest.mark.parametrize("version", ["unknown", "2026-10-12.2"])
 def test_scheduled_quiet_rejects_unknown_marker(tmp_path, version):
     from app.scheduled_config_storage import publication_scheduled_source
+    from app.state_storage import update_state
+    from app.state_definitions import state_projection
 
     store = AutoReplyStore(tmp_path / "unknown.db")
     with store._connect() as db:
-        db.execute(
-            "update service_state set value=? where key='store_schema_version'",
-            (version,),
-        )
+        marker_id = db.execute(
+            f"select rowid from ({state_projection('service_state', include_rowid=True)}) where key='store_schema_version'"
+        ).fetchone()[0]
+        db.execute("begin")
+        update_state(db, "service_state", marker_id, {"value": version})
         with pytest.raises(ValueError, match="unknown"):
             publication_scheduled_source(db)
 
@@ -198,6 +226,8 @@ def test_scheduled_quiet_rejects_unknown_marker(tmp_path, version):
 @pytest.mark.parametrize("has_scheduled_row", [False, True])
 def test_source_marker_cannot_hide_typed_scheduled_layout(tmp_path, version, row_factory, has_scheduled_row):
     from app.scheduled_config_storage import publication_scheduled_source
+    from app.state_storage import update_state
+    from app.state_definitions import state_projection
     from tests.test_scheduled_task_store import _create_task, NOW as CRON_NOW
 
     store = AutoReplyStore(tmp_path / "mixed-scheduled.db")
@@ -209,7 +239,11 @@ def test_source_marker_cannot_hide_typed_scheduled_layout(tmp_path, version, row
         assert in_flight_work(store.path) == 1
     with sqlite3.connect(store.path) as db:
         db.row_factory = row_factory
-        db.execute("update service_state set value=? where key='store_schema_version'", (version,))
+        marker_id = db.execute(
+            f"select rowid from ({state_projection('service_state', include_rowid=True)}) where key='store_schema_version'"
+        ).fetchone()[0]
+        db.execute("begin")
+        update_state(db, "service_state", marker_id, {"value": version})
         db.execute("create table scheduled_task_runs(dispatch_status text,lease_owner text,lease_expires_at text)")
         db.commit()
         before_changes = db.total_changes

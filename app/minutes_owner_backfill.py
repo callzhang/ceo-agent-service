@@ -15,9 +15,11 @@ transcript excerpts and the meeting summary), so running this twice queues nothi
 the second time.
 """
 from __future__ import annotations
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.provenance_storage import signal_projection
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.task20_definitions import task20_projection
+from app.action_business_definitions import business_action_projection
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,6 +32,8 @@ from app.task_scanners import (
     _minutes_todo_actions,
     minutes_work_item,
 )
+
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 # Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's
@@ -50,40 +54,31 @@ class OwnerBackfillResult:
     decisions: list[dict[str, Any]] = field(default_factory=list)
 
 
-def ownerless_candidate_meetings(store: AutoReplyStore) -> list[tuple[str, dict[str, Any], list[int]]]:
-    """(minutes id, the meeting record its Tasks were found through, ownerless open candidate Task ids), newest first."""
+def ownerless_candidate_meetings(store: AutoReplyStore) -> list[tuple[str, list[int]]]:
+    """Exact meeting IDs and ownerless candidate Task IDs, newest first."""
     with store._connect() as db:
         rows = db.execute(
-            """select s.id, s.source_ref, document.body, t.id
-               from business_tasks t
-               join business_task_evidence e on e.task_id = t.id and e.evidence_role = 'discovery'
-               join business_task_signals s on s.id = e.signal_id
-               join business_source_documents document on document.id = s.source_document_id
-               where t.stage = 'candidate' and t.status in ('open', 'waiting')
-                 and t.owner_name = '' and t.owner_user_id = '' and s.source_type = 'ai_minutes'
-               order by s.id desc"""
+            f'select s.id, s.source_ref, t.id\n               from ({BUSINESS_PROJECTIONS["task"]}) t\n               join ({business_action_projection("business_task_evidence")}) e on e.task_id = t.id and e.evidence_role = \'discovery\'\n               join ({signal_projection()}) s on s.id = e.signal_id\n               where t.stage = \'candidate\' and t.status in (\'open\', \'waiting\')\n                 and t.owner_name = \'\' and t.owner_user_id = \'\' and s.source_type = \'ai_minutes\'\n               order by s.id desc'
         ).fetchall()
-    meetings: dict[str, tuple[dict[str, Any], list[int]]] = {}
-    for _signal_id, source_ref, evidence_text, task_id in rows:
+    meetings: dict[str, list[int]] = {}
+    for _signal_id, source_ref, task_id in rows:
         minutes_id = source_ref.split("#", 1)[0]
-        if minutes_id not in meetings:
-            # The newest signal of a meeting carries the record the scan saw.
-            record = json.loads(evidence_text).get("meeting")
-            meetings[minutes_id] = (record if isinstance(record, dict) else {}, [])
-        meetings[minutes_id][1].append(int(task_id))
-    return [(minutes_id, record, sorted(ids)) for minutes_id, (record, ids) in meetings.items()]
+        meetings.setdefault(minutes_id, []).append(int(task_id))
+    return [(minutes_id, sorted(set(ids))) for minutes_id, ids in meetings.items()]
 
 
 def backfill_minutes_owners(
     store: AutoReplyStore, dws, *, dry_run: bool = True, limit: int | None = None
 ) -> OwnerBackfillResult:
     result = OwnerBackfillResult(dry_run=dry_run)
-    for minutes_id, record, task_ids in ownerless_candidate_meetings(store)[:limit]:
+    for minutes_id, task_ids in ownerless_candidate_meetings(store)[:limit]:
         result.inspected += 1
         decision: dict[str, Any] = {"minutes_id": minutes_id, "task_ids": task_ids}
         result.decisions.append(decision)
-        if not record or _minutes_id(record) != minutes_id:
-            decision["outcome"] = "skipped: the meeting record is not in its stored signal"
+        info = dws.get_minutes_info(minutes_id)
+        record = info.get("result") if isinstance(info, dict) else None
+        if not isinstance(record, dict) or _minutes_id(record) != minutes_id:
+            decision["outcome"] = "skipped: the current meeting record does not match its ID"
             continue
         todos_payload = dws.get_minutes_todos(minutes_id)
         actions = _minutes_todo_actions(todos_payload)

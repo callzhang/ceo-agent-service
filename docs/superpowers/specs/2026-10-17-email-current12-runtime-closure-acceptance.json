@@ -1,0 +1,28 @@
+{
+  "recorded_at": "2026-10-18T03:20:58.902389+00:00",
+  "status": "local_scoped_runtime_unit_accepted",
+  "freeze_sha256": "f7b3de2af72b3ecc80f4969c1e0ccd1ff441304395e97b3237b37781d736d89f",
+  "spec": {
+    "agent": "/root/email_runtime_closure_spec",
+    "result": "APPROVE",
+    "source_only": true,
+    "scope_reversals_independently_verified": true
+  },
+  "quality": {
+    "agent": "/root/email_runtime_closure_quality",
+    "result": "APPROVE",
+    "independent_cases_passed": 5,
+    "seconds": 80.07,
+    "wrapper_seconds": 80.34,
+    "run": "quality-c7e648a7f0dc",
+    "session": 93622,
+    "exit_code": 0,
+    "temporary_directory_removed": true
+  },
+  "scope": "2runtimehunks+2boundedtestfunctionfixtures/metadata coverage+newvalidation; existingbehaviorrestored",
+  "known_remaining_test_fixture": "Quoted-identifier helper expects17retiredphysicalEmailtables; fails before current code; pending explicit final test disposition",
+  "whole_file_green": false,
+  "actual_copy_accepted": false,
+  "capacity_accepted": false,
+  "deployed": false
+}

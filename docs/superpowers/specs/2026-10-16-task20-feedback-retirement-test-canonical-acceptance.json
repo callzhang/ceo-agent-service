@@ -1,0 +1,20 @@
+{
+  "recorded_utc": "2026-10-16T21:02:44.802050+00:00",
+  "status": "canonical_feedback_retirement_tests_spec_quality_pass",
+  "proposal_commit": "64d39aa98903df0f32e1486f5a9b23a6e7754ff1",
+  "patch_sha256": "3ffb68481e6bb6a23459e8dc32515bec9058e4f2d85d8b74b1ecbdc742344e6f",
+  "fresh_spec": {
+    "named_tests": 8,
+    "seconds": 9.45,
+    "findings": []
+  },
+  "fresh_quality": {
+    "named_tests": 8,
+    "seconds": 10.09,
+    "findings": []
+  },
+  "preserved": "Four resolved-key/idempotency/badge/filter setup purposes; normal public-batch lineage/pointer/timestamps/status contracts; cold round DTOs across two uncached opens; both direct HTTP409 route ASTs and two historical source test ASTs unchanged. Explicitly synthetic receipts, no external action.",
+  "retired": "Four current recurring startup repair tests and obsolete direct resolver behavior; removed manually missing projection scenario explicitly documented.",
+  "remaining": "61 unchanged native-name fixture owners /183literal sites require separate conversion/source-fixture role proof. No whole-file/full-suite green claim.",
+  "boundary": "Canonical test proposal only; actual app selection, applied reviews and installed current-write copy proof remain separate."
+}

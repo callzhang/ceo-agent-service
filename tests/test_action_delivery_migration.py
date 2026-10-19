@@ -1,4 +1,7 @@
-"""Finite delivery transition against independent frozen source declarations."""
+"""Finite delivery transition against independent frozen source declarations.
+
+The imported ``target_db`` provides historical TEXT DML only for this boundary.
+"""
 import sqlite3
 
 import pytest

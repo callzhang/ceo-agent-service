@@ -1,0 +1,32 @@
+{
+  "recorded_utc": "2026-10-16T21:01:25.525444+00:00",
+  "status": "canonical_current_fixtures_and_selection_documentation_spec_quality_pass",
+  "patches": {
+    "2026-10-16-task20-feedback-e2e-fixture-proposal.patch": "369a9ef1a788c98cc6ae06b1e055f79514e5ac6e58e110ad2f8c1223ab8cf1cb",
+    "2026-10-16-task20-workbench-private-fixture-proposal.patch": "598e1b33499cf5dd0a9d9fe65000b53d28af56de7d031e5b793294ec03b14b3b",
+    "2026-10-16-task20-selection-documentation-proposal.patch": "c3b89a11ec9d3ef956ec4497d8f648beb5de2fb9392726044b29990c306fe456"
+  },
+  "root_focused_suites": {
+    "cases": 34,
+    "seconds": 31.85,
+    "source": "whole business resolution and feedback E2E modules plus three Workbench tests with real current constructors",
+    "earlier_failure": "old raw wide-column fixture resume_context; application unchanged by fixture conversion"
+  },
+  "fresh_spec": {
+    "affected_tests": 2,
+    "seconds": 6.35,
+    "all_assert_sources_exact": true,
+    "five_helper_modules_docstrings_only": true,
+    "reverse_reapply_compile": "pass",
+    "findings": []
+  },
+  "fresh_quality": {
+    "affected_tests": 2,
+    "seconds": 5.16,
+    "assert_asts_and_connection_context_headers_exact": true,
+    "five_helper_modules_docstrings_only": true,
+    "reverse_reapply_compile": "pass",
+    "findings": []
+  },
+  "boundary": "Documentation applies only together with coupled selection. No implementation logic changed in five helper modules; fixture keys/values/transactions/privacy and business assertions retained. No production."
+}

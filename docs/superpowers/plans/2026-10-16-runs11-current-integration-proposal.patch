@@ -1,0 +1,500 @@
+--- a/app/configs_schema_release.py
++++ b/app/configs_schema_release.py
+@@ -215,8 +215,8 @@
+         raise ValueError('native declaration reconstruction differs')
+ 
+ 
+-def configs_schema_is_current(db: sqlite3.Connection, *, action_variant: str) -> bool:
+-    """Read-only predicate for the exact unselected final config declaration."""
++def configs_content_schema_is_current(db: sqlite3.Connection, *, action_variant: str) -> bool:
++    """Read-only config/action predicate, independent of the Runs source profile."""
+     if action_variant not in _ACTION_VARIANTS:
+         raise ValueError('unsupported action declaration variant')
+     return (all(target_declaration_matches(db, kind, declaration)
+@@ -225,9 +225,14 @@
+             and action_storage.action_schema_is_current(
+                 db, include_reply=True, reply_variant=action_variant,
+                 include_email=True, include_skill_config_receipts=True)
+-            and _run_objects(db) == _run_declarations(mapped=True)
+             and all(_source_declaration(db, kind)['sql'] is None
+                     for kind in (*SOURCE_TABLES, _OBSERVATIONS)))
++
++
++def configs_schema_is_current(db: sqlite3.Connection, *, action_variant: str) -> bool:
++    """Original mapped Runs8 contract for the historical Config release."""
++    return (configs_content_schema_is_current(db, action_variant=action_variant)
++            and _run_objects(db) == _run_declarations(mapped=True))
+ 
+ 
+ def migrate_config_schema(db: sqlite3.Connection, metadata: dict) -> dict[str, int]:
+--- /dev/null
++++ b/app/runs11_current_schema.py
+@@ -0,0 +1,62 @@
++"""Current Runs11 factories; historical Runs8 factories remain native oracles."""
++import sqlite3
++
++from app.configs_run_schema import _objects
++from app.configs_schema_release import configs_content_schema_is_current
++from app.run_storage import RETIRED_RUN_TABLES
++from app.runs11_definitions import RUN11_NEW_KINDS
++from app.runs11_schema_release import _target_objects, _fts_objects
++
++RETIRED_RUN11_NAMES = tuple(dict.fromkeys((
++    *RETIRED_RUN_TABLES, 'scheduled_task_runs', 'workbench_events',
++    *RUN11_NEW_KINDS, *(row[1] for row in _fts_objects()),
++)))
++
++
++def current_run11_objects():
++    """Return exact finite current declarations, independent of source factories."""
++    return _target_objects().copy()
++
++
++def create_current_run11_schema(db: sqlite3.Connection):
++    """Keep native explicit missing-object repair and caller transaction ownership.
++
++    Creating declarations never resets current source or physical counters.
++    Source eligibility is checked by the current constructor before this factory.
++    """
++    for sql in current_run11_objects().values():
++        for prefix in ('CREATE TABLE ', 'CREATE UNIQUE INDEX ', 'CREATE INDEX ', 'CREATE TRIGGER '):
++            if sql.startswith(prefix):
++                db.execute(prefix + 'IF NOT EXISTS ' + sql[len(prefix):])
++                break
++        else:
++            raise ValueError('unsupported current Runs11 declaration category')
++
++
++def current_run11_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False):
++    """Match one current layout, never accept the native Runs8 source as current."""
++    if any(db.execute('select 1 from main.sqlite_schema where name=? collate nocase',
++                      (name,)).fetchone() for name in RETIRED_RUN11_NAMES):
++        return False
++    expected = current_run11_objects()
++    actual = _objects(db)
++    if actual.get('runs') != expected['runs'] or not set(actual) <= set(expected):
++        return False
++    if allow_missing_objects:
++        for name in set(expected) - set(actual):
++            if name == 'runs':
++                return False
++            owner = db.execute(
++                'select type,tbl_name from main.sqlite_schema where name=? collate nocase',
++                (name,),
++            ).fetchone()
++            if owner is not None:
++                return False
++    return all(actual.get(name, sql) == sql if allow_missing_objects
++               else actual.get(name) == sql for name, sql in expected.items())
++
++
++def current_configs_schema_is_current(db: sqlite3.Connection, *, action_variant):
++    """Use unchanged config/action facts with the one current Runs11 binding."""
++    return (configs_content_schema_is_current(db, action_variant=action_variant)
++            and current_run11_schema_is_current(db))
+--- a/app/task20_current_schema.py
++++ b/app/task20_current_schema.py
+@@ -13,10 +13,9 @@
+ from app.task_storage import RETIRED_TASK_TABLES
+ from app.workbench_storage import (
+     RETIRED_WORKBENCH_TABLES,
+-    SEARCH_TABLE_DDL, SEARCH_INDEX_DDL, SEARCH_FTS_DDL,
+ )
+ from app.run_storage import _schema_objects
+-from app.configs_run_schema import _declarations as _run_declarations, _objects as _run_objects
++from app.runs11_current_schema import current_run11_schema_is_current
+ 
+ RETIRED_TASK_NAMES = tuple(dict.fromkeys((*RETIRED_TASK_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS, "workbench_confirmations")))
+ 
+@@ -70,10 +69,7 @@
+ 
+ 
+ def create_current_workbench_auxiliary_schema(db):
+-    """Retain search auxiliaries; no folded children or legacy confirmations."""
+-    db.execute(SEARCH_TABLE_DDL.replace("create table ", "create table if not exists ", 1))
+-    db.execute(SEARCH_INDEX_DDL.replace("create index ", "create index if not exists ", 1))
+-    db.execute(SEARCH_FTS_DDL.replace("create virtual table ", "create virtual table if not exists ", 1))
++    """Retain child guards after folding persistent search metadata into Runs."""
+     install_current_task_child_guards(db)
+ 
+ 
+@@ -85,7 +81,6 @@
+         create_current_workbench_auxiliary_schema(reference)
+         return {table: _schema_objects(reference,table) for table in (
+             "tasks","feedback_iteration_decision_items",
+-            "codex_session_search_index","codex_session_search_fts",
+         )}
+ 
+ 
+@@ -119,20 +114,6 @@
+ 
+ def task20_workbench_schema_is_current(db, *, allow_missing_objects=False):
+     """Keep mapped runs and retained Workbench auxiliary recognition together."""
+-    expected_runs = _run_declarations(mapped=True)
+-    actual_runs = _run_objects(db)
+-    if (actual_runs.get("runs") != expected_runs["runs"] or not set(actual_runs) <= set(expected_runs)
+-            or any(actual_runs.get(name,sql) != sql if allow_missing_objects else actual_runs.get(name) != sql
+-                   for name,sql in expected_runs.items())
+-            or not task20_schema_is_current(db,allow_missing_objects=allow_missing_objects)):
+-        return False
+-    for table, expected in _current_objects().items():
+-        if table in ("tasks","feedback_iteration_decision_items"):
+-            continue
+-        actual = {obj["name"]:obj for obj in _schema_objects(db,table)}
+-        for obj in expected:
+-            if obj["name"] not in actual and allow_missing_objects and obj["type"] != "table":
+-                continue
+-            if actual.get(obj["name"]) != obj:
+-                return False
+-    return True
++    return (current_run11_schema_is_current(db, allow_missing_objects=allow_missing_objects)
++            and task20_schema_is_current(db, allow_missing_objects=allow_missing_objects)
++            and task20_feedback_child_is_current(db, allow_missing_objects=allow_missing_objects))
+--- a/app/store.py
++++ b/app/store.py
+@@ -33,12 +33,11 @@
+ )
+ from app.sqlite_schema_lock import schema_initialize_lock
+ from app.email_classification_schema import create_current_email_classifications
+-from app.configs_schema_release import configs_schema_is_current
+-from app.configs_run_schema import (
+-    _declarations as _config_run_declarations,
+-    _objects as _config_run_objects,
+-    map_runs_to_configs,
++from app.runs11_current_schema import (
++    create_current_run11_schema, current_run11_schema_is_current,
++    current_configs_schema_is_current,
+ )
++
+ from app.configs_definitions import config_projection
+ from app.configs_storage import create_configs_schema, insert_config, update_config, delete_config
+ from app.action_skill_config_storage import (
+@@ -66,7 +65,7 @@
+ from app.email_publication_sources import current_email_actions_available
+ from app.run_storage import (
+     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
+-    create_run_schema, install_run_child_guards, insert_run,
++    install_run_child_guards, insert_run,
+ )
+ from app.runs11_definitions import run11_projection
+ from app.runs11_storage import insert_run11_fact
+@@ -91,7 +90,7 @@
+ from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
+ 
+ from app.workbench_storage import (
+-    RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS,
++    RETIRED_WORKBENCH_TABLES,
+ )
+ 
+ from app.agent_cron.models import (
+@@ -505,13 +504,13 @@
+     *RECEIPT_ACTION_TYPES,
+     *RETIRED_WORKBENCH_TABLES,
+     *RETIRED_TASK_TABLES,
++    "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
+     "agent_runs", "agent_runtime_attempts", "agent_run_state_events", "agent_run_events",
+     "universal_plan_executions",
+     "universal_action_executions",
+ )
+ STORE_SCHEMA_REMOVED_COLUMNS = {
+     "tasks": ("final_text",),
+-    "codex_session_search_index": SEARCH_RETIRED_COLUMNS,
+     "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
+              "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
+     "business_task_signals": ("evidence_text",),
+@@ -1823,7 +1822,7 @@
+         try:
+             with self._connect() as db:
+                 healthy = state_schema_is_current(db) and self._feedback_processing_round_guard_state_is_valid(db) and business_schema_is_current(db) and any(
+-                    configs_schema_is_current(db, action_variant=variant)
++                    current_configs_schema_is_current(db, action_variant=variant)
+                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
+                 )
+         except BaseException:
+@@ -2109,13 +2108,13 @@
+             and required_trigger_definitions_present
+             and feedback_processing_round_storage_valid
+             and required_columns_present
+-            and _config_run_objects(db) == _config_run_declarations(mapped=True)
++            and current_run11_schema_is_current(db)
+             and task20_schema_is_current(db)
+             and task20_feedback_child_is_current(db)
+             and task20_workbench_schema_is_current(db)
+             and business_schema_is_current(db)
+             and state_schema_is_current(db)
+-            and any(configs_schema_is_current(db, action_variant=variant)
++            and any(current_configs_schema_is_current(db, action_variant=variant)
+                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
+             and reply_input_foreign_keys_present
+             and not removed_columns_present
+@@ -2368,7 +2367,7 @@
+             )
+             create_current_task20_schema(db)
+             create_current_feedback_child_schema(db)
+-            create_run_schema(db, include_task_runs=True, include_workbench=True)
++            create_current_run11_schema(db)
+             create_current_workbench_auxiliary_schema(db)
+             self._migrate_business_task_source_documents(db)
+             if db.execute("select 1 from sqlite_schema where type='table' "
+@@ -2524,20 +2523,6 @@
+                 
+                 
+                 
+-                create table if not exists setup_wizard_events (
+-                    id integer primary key autoincrement,
+-                    step_id text not null,
+-                    action_id text not null,
+-                    status text not null,
+-                    summary text not null default '',
+-                    evidence_json text not null default '{}',
+-                    stdout_excerpt text not null default '',
+-                    stderr_excerpt text not null default '',
+-                    started_at text not null default current_timestamp,
+-                    finished_at text not null default ''
+-                );
+-                create index if not exists idx_setup_wizard_events_step
+-                    on setup_wizard_events(step_id, id);
+                 
+                 """
+                 f"""
+@@ -3559,8 +3544,6 @@
+                 db, include_reply=True, reply_variant=reply_variant,
+                 include_email=True, include_skill_config_receipts=True,
+             )
+-            if fresh:
+-                map_runs_to_configs(db)
+             
+             
+             
+@@ -7842,16 +7825,13 @@
+                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)),
+                             *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True)),
+                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS,
++                            "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
+                             *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"') for sql in TASK20_INDEX_DDL),
+                             *(sql.split()[2] for sql in TASK20_TRIGGER_DDL)}
+-            expected_runs = _config_run_declarations(mapped=True)
+-            actual_runs = _config_run_objects(db)
+             current_core_with_known_repairs = (
+                 marker is not None
+                 and marker[0] == STORE_SCHEMA_VERSION
+-                and actual_runs.get("runs") == expected_runs["runs"]
+-                and set(actual_runs) <= set(expected_runs)
+-                and all(actual_runs.get(name, sql) == sql for name, sql in expected_runs.items())
++                and current_run11_schema_is_current(db, allow_missing_objects=True)
+                 and any(configs_current_or_known_skill_guard_repair(
+                     db, action_variant=variant)
+                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
+--- a/app/email_current_schema.py
++++ b/app/email_current_schema.py
+@@ -426,10 +426,11 @@
+     from app.configs_definitions import CONFIG_FIELDS
+     from app.state_definitions import STATE_FIELDS
+     from app.task20_definitions import TASK20_NEW_KINDS
++    from app.runs11_definitions import RUN11_NEW_KINDS
+     from app.email_store import _REQUIRED_TRIGGER_SQL, _REQUIRED_TRIGGER_TABLES
+     from app.provider_state_storage import create_provider_state_schema
+ 
+-    retired = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations"}
++    retired = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, *RUN11_NEW_KINDS, "email_training_snapshot_observations"}
+     create_current_email_classifications(db)
+     for name, sql in _CURRENT_TABLE_SQL:
+         if name not in retired:
+@@ -439,6 +440,7 @@
+         "idx_email_agent_classification_tasks_status",
+         "idx_email_training_observations_split",
+         "idx_email_training_observations_provider_truth",
++        "idx_email_classifier_runtime_model_id",
+     }
+     for name, sql in _CURRENT_INDEX_SQL:
+         if name not in retired_indexes:
+--- a/app/email_store.py
++++ b/app/email_store.py
+@@ -90,7 +90,7 @@
+ )
+ from app.configs_definitions import CONFIG_FIELDS, config_projection
+ from app.configs_storage import insert_config, update_config, delete_config
+-from app.configs_schema_release import configs_schema_is_current
++from app.runs11_current_schema import current_configs_schema_is_current
+ from app.email_html_text import html_to_text, visible_email_text
+ from app.email_provider_folders import FolderRole
+ from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
+@@ -7002,7 +7002,7 @@
+             # Historical maps remain the source contract. Current validation
+             # retains the original nonaction coverage and validates actions
+             # against the exact accepted finite manifest separately.
+-            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations"}
++            retired_config_tables = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, "email_training_snapshot_observations", "email_classifier_runtime_samples"}
+             required_tables = {
+                 table: columns
+                 for table, columns in _REQUIRED_TABLE_COLUMNS.items()
+@@ -7029,7 +7029,7 @@
+                 )
+ 
+             if not any(
+-                configs_schema_is_current(db, action_variant=variant)
++                current_configs_schema_is_current(db, action_variant=variant)
+                 for variant in REPLY_VARIANTS
+             ):
+                 raise EmailPersistenceCorruption(
+--- a/app/action_email_schema_release.py
++++ b/app/action_email_schema_release.py
+@@ -57,14 +57,15 @@
+ from app.configs_schema_release import (
+     _OBSERVATION_HASHES, _OBSERVATIONS, _config_metadata, _foreign_key_children,
+     _no_temp_names, _state as _validate_config_metadata,
+-    capture_config_source, configs_schema_is_current, migrate_config_schema,
++    capture_config_source, migrate_config_schema,
+     restore_config_schema,
+ )
+ from app.configs_schema_transfer import (
+     SOURCE_TABLES as CONFIG_SOURCE_TABLES, capture_config_declarations,
+     _target_declarations as _config_target_declarations,
+ )
+-from app.run_storage import create_run_schema
++from app.runs11_current_schema import create_current_run11_schema, current_configs_schema_is_current, current_run11_objects, current_run11_schema_is_current
++from app.runs11_schema_release import capture_run11_source, migrate_run11_schema, restore_run11_schema
+ from app.state_storage import create_state_schema
+ from app.state_schema_release import (
+     SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES,
+@@ -114,7 +115,7 @@
+ @lru_cache(maxsize=1)
+ def _canonical_run_object_types() -> dict[str, str]:
+     with closing(sqlite3.connect(":memory:")) as reference:
+-        create_run_schema(reference, include_task_runs=True, include_workbench=True)
++        create_current_run11_schema(reference)
+         return dict(reference.execute(
+             "select name,type from sqlite_schema where tbl_name='runs' and sql is not null"
+         ))
+@@ -185,7 +186,7 @@
+ 
+ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, action_variant: str) -> bool:
+     """Exact target, allowing only Store's known missing Skill guard repair."""
+-    if configs_schema_is_current(db, action_variant=action_variant):
++    if current_configs_schema_is_current(db, action_variant=action_variant):
+         return True
+     target = _config_target_declarations()
+     if not _current_table_with_known_missing_objects(
+@@ -199,7 +200,7 @@
+         triggers=CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
+     ):
+         return False
+-    expected_runs = _config_run_declarations(mapped=True)
++    expected_runs = current_run11_objects()
+     actual_runs = _config_run_objects(db)
+     run_types = _canonical_run_object_types()
+     return (action_schema_is_current(db, allow_missing_objects=True,
+@@ -207,6 +208,7 @@
+                                      include_email=True, include_skill_config_receipts=True)
+             and action_storage.email_action_auxiliary_objects_are_current(
+                 db, reply_variant=action_variant)
++            and current_run11_schema_is_current(db, allow_missing_objects=True)
+             and actual_runs.get("runs") == expected_runs["runs"]
+             and set(actual_runs) <= set(expected_runs)
+             and set(expected_runs) == set(run_types)
+@@ -288,6 +290,7 @@
+         "configs": source["configs"],
+         "state": source["state"],
+         "tasks": source["tasks"],
++        "runs11": source["runs11"],
+         "confirmation": source["confirmation"],
+     }
+ 
+@@ -380,6 +383,7 @@
+         current["state"] = capture_state_source(db)
+         current["confirmation"] = capture_confirmation_source(db)
+         current["tasks"] = capture_task20_source(db)
++        current["runs11"] = capture_run11_source(db)
+         current_declarations = _inverse_metadata(current)
+         source_declarations = _inverse_metadata(self.source_schema)
+         # Counter presence is mutable state; retain it for inverse transport,
+@@ -415,7 +419,9 @@
+             raise ValueError("paired Business target declaration mismatch")
+         if not provider_state_schema_is_current(db):
+             raise ValueError("paired Provider target declaration mismatch")
+-        if not configs_schema_is_current(db, action_variant=self.source_schema["action_variant"]):
++        if not current_run11_schema_is_current(db):
++            raise ValueError("paired Runs11 target declaration mismatch")
++        if not current_configs_schema_is_current(db, action_variant=self.source_schema["action_variant"]):
+             raise ValueError("paired Configs target declaration mismatch")
+         account_names = {item['name'] for item in self.source_schema['configs']
+                          ['configs']['tables']['email_accounts']['triggers']}
+@@ -458,6 +464,7 @@
+                 migrate_state_schema(db, self.source_schema["state"])
+                 migrate_task20_schema(db, self.source_schema["tasks"])
+                 retire_confirmation_schema(db, self.source_schema["confirmation"])
++                migrate_run11_schema(db, self.source_schema["runs11"])
+                 now = datetime.now(timezone.utc).isoformat()
+                 update_state_rows(db, "service_state",
+                     {"value": self.target_store_version, "updated_at": now},
+@@ -494,6 +501,7 @@
+                 restore_confirmation_schema(db, self.source_schema["confirmation"])
+                 restore_task20_schema(db, self.source_schema["tasks"])
+                 restore_state_schema(db, self.source_schema["state"])
++                restore_run11_schema(db, self.source_schema["runs11"])
+                 restore_config_schema(db, self.source_schema["configs"])
+                 restore_business_schema(db, self.source_schema["business"])
+                 restore_email_action_schema(db, email_inverse_metadata(self.source_schema))
+@@ -564,6 +572,7 @@
+         source["state"] = capture_state_source(db)
+         source["confirmation"] = capture_confirmation_source(db)
+         source["tasks"] = capture_task20_source(db)
++        source["runs11"] = capture_run11_source(db)
+         release = ActionEmailSchemaRelease(
+             root, path, version, versions, source, _foreign_keys(db),
+             target_store_version, target_email_version,
+--- a/tests/test_task20_current_schema.py
++++ b/tests/test_task20_current_schema.py
+@@ -6,6 +6,7 @@
+ 
+ from app import task20_schema_release as release
+ from app import task20_current_schema as current
++from app.runs11_current_schema import create_current_run11_schema
+ from app.task_storage import create_task_schema, install_task_child_guards
+ from app.workbench_storage import create_workbench_auxiliary_schema
+ from app.task8_storage import register_task8_functions
+@@ -20,6 +21,7 @@
+ def db():
+     with closing(sqlite3.connect(':memory:')) as connection:
+         register_task8_functions(connection)
++        create_current_run11_schema(connection)
+         current.create_current_task20_schema(connection)
+         current.create_current_feedback_child_schema(connection)
+         current.create_current_workbench_auxiliary_schema(connection)
+@@ -34,10 +36,8 @@
+         native.execute('begin')
+         metadata=release.capture_task20_source(native)
+         release.migrate_task20_schema(native,metadata)
+-        release._target_shape(db,metadata)
+-        for table in ('tasks','feedback_iteration_decision_items','codex_session_search_index','codex_session_search_fts'):
+-            if table in ('tasks','feedback_iteration_decision_items'):
+-                assert release._declaration(db,table)==release._declaration(native,table)
++        for table in ('tasks','feedback_iteration_decision_items'):
++            assert release._declaration(db,table)==release._declaration(native,table)
+     assert current.task20_schema_is_current(db)
+     assert current.task20_feedback_child_is_current(db)
+     assert not db.execute('select 1 from main.sqlite_schema where name in ('+','.join('?' for _ in current.RETIRED_TASK_NAMES)+')',current.RETIRED_TASK_NAMES).fetchone()
+@@ -143,18 +143,13 @@
+     assert current.task20_feedback_child_is_current(db,allow_missing_objects=True)
+ 
+ 
+-def test_workbench_retained_auxiliaries_and_mapped_runs_remain_required(db):
+-    expected=current._run_declarations(mapped=True)
+-    db.execute(expected['runs'])
+-    for name,sql in expected.items():
+-        if name!='runs':
+-            db.execute(sql)
++def test_workbench_current_runs11_and_missing_index_repair(db):
+     assert current.task20_workbench_schema_is_current(db)
+-    db.execute('drop index idx_codex_session_search_source')
++    db.execute('drop index idx_runs11_metadata_source')
+     assert not current.task20_workbench_schema_is_current(db)
+     assert current.task20_workbench_schema_is_current(db,allow_missing_objects=True)
+-    current.create_current_workbench_auxiliary_schema(db)
++    create_current_run11_schema(db)
+     assert current.task20_workbench_schema_is_current(db)
+-    assert not db.execute("select 1 from sqlite_schema where name='workbench_confirmations'").fetchone()
+-    db.execute('create table workbench_confirmations(id text)')
++    assert not db.execute("select 1 from sqlite_schema where name='codex_session_search_index'").fetchone()
++    db.execute('create table codex_session_search_index(id integer)')
+     assert not current.task20_workbench_schema_is_current(db,allow_missing_objects=True)

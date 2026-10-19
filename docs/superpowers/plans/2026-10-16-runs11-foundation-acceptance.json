@@ -1,0 +1,42 @@
+{
+  "status": "accepted_unselected_foundation",
+  "code_commit": "c14cb181dd18dfa7a62a05dc52093440fd8d2149",
+  "review_commits": {
+    "spec": "31363799ab1b916e1edebcfb63075d6c775b938c",
+    "quality": "f60e0b2ff6534eaac221ba78053890bd2f88e10f"
+  },
+  "installed_hashes": {
+    "app/runs11_definitions.py": "4e39bd7fb03c1ffb0f476c7d8b0251e430bb1d865528edba8cd67f03de570176",
+    "app/runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+    "app/runs11_schema_release.py": "9730fae5af1e1a2b6735e2dafe1c84901ae632eabba41cb70805077dbf5e1281",
+    "tests/test_runs11_definitions.py": "4bebc9286b81f0ae510459fa199d43b9a685f5171ae16b714165e97bdc395eb1",
+    "tests/test_runs11_storage.py": "da1d03eae1efb29e6ccbcd77f92692e46b82a5873e372a8c47ac154e8688c494",
+    "tests/test_runs11_schema_release.py": "c92154a45a8f824ee91306c0773405d675bd37e6e1bd226075432eeef51355e9",
+    "tests/fixtures/runs11-native-source-oracle.json": "ed0c98618591f6d81a0bc9303ab29b94178a1dd5f850498a1c940d52afda6c89"
+  },
+  "review_hashes": {
+    "applied-spec-review.md": "3600d770a3eeeed4560537e80732c1af7fe65c51e83e162742cfa23bb199adc5",
+    "applied-quality-review.md": "e91f581464a755199830c39d58fbf849f7de9d51c2b34a4400742f41e4cbdeee"
+  },
+  "copy_evidence_sha256": "17966f00866771a20d2bb19ab147238dde1cf1fb9e17219607046491b7f674e3",
+  "applied_evidence_sha256": "5e540c4f8437e6a5c361a1c9c63470b8c3ec7b464a8ae795f9b14b3ff75f5d9a",
+  "applied_tests": 275,
+  "fresh_applied_spec_tests": 275,
+  "fresh_applied_quality_tests": 61,
+  "copied_table_sequence": [
+    116,
+    54,
+    51,
+    54,
+    51
+  ],
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "copy_elapsed_seconds": 474.445,
+  "current_installed_schema_ordinary_tables": 54,
+  "current_email_ledger": 52,
+  "final_table_goal": 11,
+  "production_commit_readonly_verified": "44ee956d10a1360c1ba9b44bf08f4c61e630beb4",
+  "publication_performed": false,
+  "owned_actual_copy_directories_absent": true,
+  "remaining_scope": "Store/Email/search/quality_gate callers and constructors, paired51 coordinator and genuine-predecessor full inverse, remaining42 legacy families after futureRuns11 activation and final11/nativeCLI/fake-provider/UI/performance/CI acceptance."
+}

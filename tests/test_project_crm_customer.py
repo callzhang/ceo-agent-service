@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
-
-from app import store as store_module
 from app.store import AutoReplyStore
 
 
 def _project(store: AutoReplyStore) -> int:
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         anchor_id = store.create_business_anchor_in_transaction(
             anchor_type="project",
             anchor_ref="registry:crm-customer-migration",
@@ -22,46 +19,6 @@ def _project(store: AutoReplyStore) -> int:
         )
 
 
-def test_existing_project_schema_migration_keeps_identity_and_leaves_customer_null(tmp_path):
-    path = tmp_path / "projects.sqlite3"
-    store = AutoReplyStore(path)
-    project_id = _project(store)
-
-    with sqlite3.connect(path) as db:
-        columns = {
-            row[1] for row in db.execute("pragma table_info(business_projects)")
-        }
-        crm_columns = {
-            "crm_customer_id",
-            "crm_customer_name",
-            "crm_customer_lookup_status",
-            "crm_customer_candidates_json",
-            "crm_customer_label",
-            "crm_customer_evidence_json",
-        }
-        for column in crm_columns & columns:
-            db.execute(f"alter table business_projects drop column {column}")
-        db.execute(
-            "update business_projects set title=? where id=?",
-            ("甲客户一期交付项目", project_id),
-        )
-
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    migrated = AutoReplyStore(path).get_business_project(project_id)
-
-    assert migrated is not None
-    assert migrated.title == "甲客户一期交付项目"
-    assert migrated.crm_customer_id == ""
-    assert migrated.crm_customer_name == ""
-    assert migrated.crm_customer_lookup_status == "not_requested"
-    assert migrated.crm_customer_candidates == []
-    with sqlite3.connect(path) as db:
-        migrated_columns = {
-            row[1] for row in db.execute("pragma table_info(business_projects)")
-        }
-    assert crm_columns.issubset(migrated_columns)
-
-
 def test_project_customer_lookup_preserves_confirmed_association_on_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "projects.sqlite3")
     project_id = _project(store)
@@ -71,7 +28,7 @@ def test_project_customer_lookup_preserves_confirmed_association_on_failure(tmp_
 
     # The store update API is expected to preserve the selected CRM identity
     # while replacing only the latest lookup result.
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         store.update_business_project_crm_customer_lookup_in_transaction(
             project_id=project_id,
             label="甲客户",
@@ -103,7 +60,7 @@ def test_project_customer_lookup_preserves_confirmed_association_on_failure(tmp_
 def test_conflicting_later_match_does_not_replace_confirmed_crm_customer(tmp_path):
     store = AutoReplyStore(tmp_path / "projects.sqlite3")
     project_id = _project(store)
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         store.update_business_project_crm_customer_lookup_in_transaction(
             project_id=project_id,
             label="甲客户",
@@ -136,7 +93,7 @@ def test_conflicting_later_match_does_not_replace_confirmed_crm_customer(tmp_pat
 def test_explicit_clear_removes_only_the_local_project_customer_link(tmp_path):
     store = AutoReplyStore(tmp_path / "projects.sqlite3")
     project_id = _project(store)
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         store.update_business_project_crm_customer_lookup_in_transaction(
             project_id=project_id,
             label="甲客户",
@@ -166,7 +123,7 @@ def test_project_crm_confirmation_accepts_only_saved_candidate_and_is_idempotent
         "registered_name": "甲客户科技有限公司",
         "matched_fields": ["name"],
     }
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         store.update_business_project_crm_customer_lookup_in_transaction(
             project_id=project_id,
             label="甲客户",

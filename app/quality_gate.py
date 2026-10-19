@@ -8,7 +8,12 @@ table as a failed check rather than silently dropping a queue from coverage.
 """
 
 from __future__ import annotations
-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.state_definitions import state_projection
+from app.runs11_definitions import run11_projection
+from app.task20_definitions import task20_projection
+from app.task12_storage import task12_projection
+from app.action_feedback_definitions import feedback_projection
+
 
 import json
 import sqlite3
@@ -20,7 +25,7 @@ from urllib.parse import urlsplit
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL
+from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL, ERROR_SQL
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
@@ -30,8 +35,17 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL,
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     reply_action_projection,
-    validated_reply_variant,
+    task_delivery_projection,
+    _reply_variant_for,
+    action_schema_is_current,
 )
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.current_database_schema import FINAL_ACTION_OPTIONS
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+OKR_REQUEST_SQL = task20_projection('okr_review_requests')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 REQUIRED_SOURCES = (
@@ -134,11 +148,11 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs", "follow_up_drafts": "actions", "work_todo_dingtalk_links": "actions", "task_todo_sync_outbox": "actions", "wechat_deliveries": "actions", "errors": "actions", "feedback_events": "actions"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
-            *(source for source in OPTIONAL_QUEUE_SOURCES if source in existing),
+            *(source for source in OPTIONAL_QUEUE_SOURCES if physical_source.get(source, source) in existing),
         )
         if missing:
             return QualityGateReport(
@@ -171,9 +185,9 @@ def scan_hourly_quality(
         _check_reply_attempts(db, checked_now, violations, attention)
         _check_agent_runs(db, checked_now, violations, attention)
         _check_work_items(db, checked_now, violations, attention)
-        if "email_agent_classification_tasks" in existing:
+        if physical_source["email_agent_classification_tasks"] in existing:
             _check_email_classification_tasks(db, checked_now, violations)
-        if "email_classifier_runtime_samples" in existing:
+        if physical_source["email_classifier_runtime_samples"] in existing:
             _check_email_model_runtime(db, checked_now, violations, attention)
         _check_email_model_left_active(Path(db_path), violations)
         # Legacy follow_up_drafts are history only (Derek 2026-09-25: a
@@ -526,7 +540,7 @@ def _check_structured_needs_human(
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task
-                  join business_object_tasks as current_business_object
+                  join ({task12_projection('business_object_tasks')}) as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
                   where historical_task.channel=a.channel
@@ -647,7 +661,7 @@ def _check_email_classification_tasks(
         code="failed",
         count=_count(
             db,
-            "select count(*) from email_agent_classification_tasks where lower(status)='failed'",
+            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')}) where lower(status)='failed'""",
         ),
         severity="error",
         detail="email classification reached a non-retryable failure",
@@ -658,7 +672,7 @@ def _check_email_classification_tasks(
         code="running_stale",
         count=_count(
             db,
-            """select count(*) from email_agent_classification_tasks
+            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
                where lower(status)='running'
                  and datetime(updated_at) < datetime(?)""",
             (_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),),
@@ -672,7 +686,7 @@ def _check_email_classification_tasks(
         code="pending_stale",
         count=_count(
             db,
-            """select count(*) from email_agent_classification_tasks
+            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
                where lower(status)='pending'
                  and (available_at='' or datetime(available_at) <= datetime(?))
                  and datetime(updated_at) < datetime(?)""",
@@ -745,10 +759,9 @@ def _check_email_model_runtime(
     counts = {
         str(row["outcome"]): int(row["total"])
         for row in db.execute(
-            """select outcome, count(*) as total
-               from email_classifier_runtime_samples
-               where recorded_at >= ?
-               group by outcome""",
+            "select outcome, count(*) as total from ("
+            + run11_projection("email_classifier_runtime_samples")
+            + ") where recorded_at >= ? group by outcome",
             (cutoff,),
         )
     }
@@ -758,10 +771,9 @@ def _check_email_model_runtime(
     recent_outcomes = [
         str(row["outcome"] or "")
         for row in db.execute(
-            """select outcome
-               from email_classifier_runtime_samples
-               where recorded_at >= ?
-               order by recorded_at desc, id desc""",
+            "select outcome from ("
+            + run11_projection("email_classifier_runtime_samples")
+            + ") where recorded_at >= ? order by recorded_at desc, id desc",
             (cutoff,),
         )
     ]
@@ -865,19 +877,26 @@ def _check_external_delivery_queues(
             "and not (lower(status)='failed' and attempt_count < 3)",
         ),
     ):
-        source_sql = (
-            f"({reply_action_projection('memory_write_events', validated_reply_variant(db))})"
-            if source == "memory_write_events" else source
-        )
+        if source == "memory_write_events":
+            variant = _reply_variant_for(db)
+            if not action_schema_is_current(db, reply_variant=variant, **FINAL_ACTION_OPTIONS):
+                raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
+            source_sql = f"({reply_action_projection('memory_write_events', variant)})"
+        elif source in SYNC_ACTION_PROJECTIONS:
+            source_sql = f"({SYNC_ACTION_PROJECTIONS[source]})"
+        elif source in ("wechat_deliveries", "meeting_memory_write_events"):
+            source_sql = f"({task_delivery_projection(source)})"
+        else:
+            source_sql = source
         if source == "work_todo_dingtalk_links":
             failed = _count(
                 db,
-                """select count(*)
-                   from work_todo_dingtalk_links failed_link
+                f"""select count(*)
+                   from {source_sql} failed_link
                    where lower(failed_link.status)='failed'
                      and not exists (
                         select 1
-                        from work_todo_dingtalk_links recovered_link
+                        from {source_sql} recovered_link
                         where recovered_link.work_todo_id=failed_link.work_todo_id
                           and recovered_link.id > failed_link.id
                           and lower(recovered_link.status) in ('creating','active','done')
@@ -953,7 +972,8 @@ def _check_feedback(
     violations: list[QualityIssue],
 ) -> None:
     _add(violations, source="feedback_events", code="unresolved", count=_count(
-        db, "select count(*) from feedback_events where resolved_at='' or resolved_at is null"
+        db, f"select count(*) from ({feedback_projection('feedback_events')}) "
+            "where resolved_at='' or resolved_at is null"
     ), severity="error", detail="user feedback has not reached a recorded resolution")
 
 
@@ -963,27 +983,21 @@ def _check_scan_health(
     attention: list[QualityIssue],
 ) -> None:
     _add(violations, source="daily_scan_state", code="last_error", count=_count(
-        db, "select count(*) from daily_scan_state where trim(last_error) != ''"
+        db, 'select count(*) from (' + state_projection('daily_scan_state') + ") where trim(last_error) != ''"
     ), severity="error", detail="source scanner reports an unresolved error")
     _add(attention, source="daily_scan_state", code="pagination_deferred", count=_count(
         db,
-        """select count(*) from daily_scan_state
-           where scanner_name='ai_minutes'
-             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1""",
+        'select count(*) from (' + state_projection('daily_scan_state') + ")\n           where scanner_name='ai_minutes'\n             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1",
     ), severity="info", detail="AI minutes first page completed; a later page will retry")
     _add(attention, source="daily_scan_state", code="oa_detail_read", count=_count(
         db,
-        """select count(*) from daily_scan_state
-           where scanner_name='oa_pending'
-             and json_array_length(
-                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')
-             ) > 0""",
+        'select count(*) from (' + state_projection('daily_scan_state') + ")\n           where scanner_name='oa_pending'\n             and json_array_length(\n                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')\n             ) > 0",
     ), severity="info", detail="some OA approval details need a later read")
     # A disabled reader only blocks quality when it has work to process. This
     # avoids treating an intentionally unconfigured channel as an outage.
     blocked_reader = _count(
         db,
-        "select count(*) from wechat_read_state where lower(capability_status) not in ('ready','')",
+        'select count(*) from (' + state_projection('wechat_read_state') + ") where lower(capability_status) not in ('ready','')",
     )
     active_wechat = _count(
         db, f"select count(*) from ({REPLY_TASK_SQL}) where lower(channel)='wechat' and lower(status) in ('pending','processing')"
@@ -1009,7 +1023,7 @@ def _check_recent_errors(
     )
     scheduled_count = _count(
         db,
-        f"""select count(*) from errors error_event
+        f"""select count(*) from ({ERROR_SQL}) error_event
             where datetime(error_event.created_at) >= datetime(?)
               and coalesce(error_event.resolved_at, '') = ''
               and {scheduled_predicate}""",
@@ -1022,7 +1036,7 @@ def _check_recent_errors(
     _add(violations, source="errors", code="recent_error", count=_count(
         db,
         """select count(*)
-           from errors error_event
+           from ({ERROR_SQL}) error_event
            where datetime(error_event.created_at) >= datetime(?)
              and coalesce(error_event.resolved_at, '') = ''
              and error_event.kind <> 'codex_capacity_pause'
@@ -1038,6 +1052,7 @@ def _check_recent_errors(
             scheduled_predicate,
             ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES),
             REPLY_ATTEMPT_COMMON_SQL=REPLY_ATTEMPT_COMMON_SQL,
+            ERROR_SQL=ERROR_SQL,
         ),
         (
             _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),
@@ -1053,7 +1068,7 @@ def _check_scheduler_health(
     violations: list[QualityIssue],
 ) -> None:
     row = db.execute(
-        "select value from service_state where key=?",
+        'select value from (' + state_projection('service_state') + ') where key=?',
         (f"{SERVICE_HEALTH_STATE_PREFIX}agent-cron-scheduler",),
     ).fetchone()
     if row is None:
@@ -1103,7 +1118,7 @@ def _check_runtime_route_pauses(
     count = _count(
         db,
         f"""select count(*)
-           from runtime_route_pauses paused
+           from ({state_projection('runtime_route_pauses')}) paused
            where datetime(paused.retry_at) > datetime(?)
              and exists (
                 select 1
@@ -1129,7 +1144,7 @@ def _has_active_codex_capacity_pause(
     now: datetime,
 ) -> bool:
     row = db.execute(
-        "select value from service_state where key='codex_capacity_pause'"
+        'select value from (' + state_projection('service_state') + ") where key='codex_capacity_pause'"
     ).fetchone()
     if row is None:
         return False

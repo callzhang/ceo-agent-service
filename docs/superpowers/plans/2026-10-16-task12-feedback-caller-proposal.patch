@@ -1,0 +1,788 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -77,7 +77,7 @@
+
+ from app.task20_definitions import task20_column, task20_projection
+ from app.task8_storage import task8_insert_parts, task8_set_parts, task8_meeting_returning
+-from app.task12_storage import insert_task12, task12_projection, task12_set_parts
++from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
+
+ from app.workbench_storage import (
+     RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS, create_workbench_auxiliary_schema,
+@@ -19496,21 +19496,13 @@
+             )
+             # Keep a durable, independently mutable processing projection while
+             # preserving the original feedback event as the source of truth.
++            _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key}, insert_sql={'status': "case when trim((select resolved_at from feedback_events where key=?)) <> ''\n                              then 'resolved' else 'pending' end", 'resolved_at': "coalesce((select resolved_at from feedback_events where key=?), '')"}, insert_parameters=(key, key,))
+             db.execute(
+-                """
+-                insert into feedback_processing_items (feedback_key, status, resolved_at)
+-                values (?, case when trim((select resolved_at from feedback_events where key=?)) <> ''
+-                              then 'resolved' else 'pending' end,
+-                        coalesce((select resolved_at from feedback_events where key=?), ''))
+-                on conflict(feedback_key) do update set
+-                    status=case when trim((select resolved_at from feedback_events where key=excluded.feedback_key)) <> ''
+-                                then 'resolved' else feedback_processing_items.status end,
+-                    resolved_at=case when trim((select resolved_at from feedback_events where key=excluded.feedback_key)) <> ''
+-                                     then (select resolved_at from feedback_events where key=excluded.feedback_key)
+-                                     else feedback_processing_items.resolved_at end,
+-                    updated_at=current_timestamp
+-                """,
+-                (key, key, key),
++                f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': f"""case when trim((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
++                                then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
++                                     then (select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
++                                     else tasks.{task20_column('feedback_processing_items', 'resolved_at')} end""", 'updated_at': 'current_timestamp'}).sql}""",
++                _task12_insert.parameters,
+             )
+
+     @staticmethod
+@@ -19713,7 +19705,7 @@
+         keys = tuple(decision.feedback_keys)
+         with self._immediate_write_transaction() as db:
+             batch = db.execute(
+-                "select status from feedback_processing_batches where batch_id=?",
++                f"""select status from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (cleaned_batch_id,),
+             ).fetchone()
+             if batch is None or str(batch["status"]) != "processing":
+@@ -19723,8 +19715,8 @@
+                 f"""select item.feedback_key, item.current_round_id, item.batch_id,
+                            item.status, round.workbench_task_id,
+                            round.workbench_turn_id
+-                    from feedback_processing_items item
+-                    join feedback_processing_rounds round
++                    from ({task12_projection('feedback_processing_items')}) as item
++                    join ({task12_projection('feedback_processing_rounds')}) as round
+                       on round.id=item.current_round_id
+                      and round.feedback_key=item.feedback_key
+                      and round.batch_id=item.batch_id
+@@ -19763,30 +19755,24 @@
+                 raise FeedbackIterationAssociationMismatchError(
+                     "feedback iteration decision must match the current processing round association"
+                 )
+-            cursor = db.execute(
+-                """insert into feedback_iteration_decisions
+-                   (batch_id, workbench_task_id, workbench_turn_id, decision_json)
+-                   values (?, ?, ?, ?)""",
+-                (
+-                    cleaned_batch_id,
+-                    canonical_task_id,
+-                    canonical_turn_id,
+-                    decision.model_dump_json(),
+-                ),
+-            )
+-            decision_id = int(cursor.lastrowid)
++            _task12_insert = task12_insert_parts(db, 'feedback_iteration_decisions', {'batch_id': cleaned_batch_id, 'workbench_task_id': canonical_task_id, 'workbench_turn_id': canonical_turn_id, 'decision_json': decision.model_dump_json()})
++            db.execute(
++                f"""{_task12_insert.sql}""",
++                _task12_insert.parameters,
++            )
++            decision_id = int(_task12_insert.source_rowid)
+             db.executemany(
+                 """insert into feedback_iteration_decision_items
+                    (decision_id, feedback_key, round_id) values (?, ?, ?)""",
+                 [(decision_id, key, round_ids_by_key[key]) for key in keys],
+             )
+             row = db.execute(
+-                """select decision.id, decision.batch_id, decision.workbench_task_id,
++                f"""select decision.id, decision.batch_id, decision.workbench_task_id,
+                           decision.workbench_turn_id, decision.decision_json,
+                           decision.created_at,
+                           json_group_array(item.feedback_key) as feedback_keys_json,
+                           json_group_array(item.round_id) as round_ids_json
+-                     from feedback_iteration_decisions decision
++                     from ({task12_projection('feedback_iteration_decisions')}) as decision
+                      join feedback_iteration_decision_items item on item.decision_id=decision.id
+                     where decision.id=?
+                     group by decision.id""",
+@@ -19800,12 +19786,12 @@
+     ) -> tuple[FeedbackIterationDecisionRecord, ...]:
+         with self._connect() as db:
+             rows = db.execute(
+-                """select decision.id, decision.batch_id, decision.workbench_task_id,
++                f"""select decision.id, decision.batch_id, decision.workbench_task_id,
+                           decision.workbench_turn_id, decision.decision_json,
+                           decision.created_at,
+                           json_group_array(item.feedback_key) as feedback_keys_json,
+                           json_group_array(item.round_id) as round_ids_json
+-                     from feedback_iteration_decisions decision
++                     from ({task12_projection('feedback_iteration_decisions')}) as decision
+                      join feedback_iteration_decision_items item on item.decision_id=decision.id
+                     where decision.batch_id=?
+                     group by decision.id
+@@ -19827,14 +19813,14 @@
+         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
+         with self._immediate_write_transaction() as db:
+             existing_batch = db.execute(
+-                "select * from feedback_processing_batches where batch_id=?",
++                f"""select * from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (cleaned_batch_id,),
+             ).fetchone()
+             if existing_batch is not None:
+                 existing_keys = {
+                     str(row["feedback_key"])
+                     for row in db.execute(
+-                        "select feedback_key from feedback_processing_items where batch_id=?",
++                        f"""select feedback_key from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where batch_id=?""",
+                         (cleaned_batch_id,),
+                     )
+                 }
+@@ -19859,10 +19845,10 @@
+                 ):
+                     raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
+             conflicting = db.execute(
+-                """
++                f"""
+                 select fe.key as feedback_key from feedback_events fe
+-                left join feedback_processing_items pi on pi.feedback_key=fe.key
+-                where fe.key in ({})
++                left join ({task12_projection('feedback_processing_items')}) as pi on pi.feedback_key=fe.key
++                where fe.key in ({{}})
+                   and (
+                       trim(pi.batch_id) <> ''
+                       or pi.status='resolved'
+@@ -19873,45 +19859,26 @@
+             ).fetchall()
+             if conflicting:
+                 raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
++            _task12_insert = task12_insert_parts(db, 'feedback_processing_batches', {'batch_id': cleaned_batch_id, 'requested_count': len(keys)})
+             db.execute(
+-                """
+-                insert into feedback_processing_batches (batch_id, requested_count)
+-                values (?, ?)
+-                on conflict(batch_id) do update set
+-                    requested_count=excluded.requested_count,
+-                    updated_at=current_timestamp
+-                """,
+-                (cleaned_batch_id, len(keys)),
++                f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_batches', 'batch_id')}) where record_type='feedback_processing_batches' do update set {task12_set_parts('feedback_processing_batches', {}, update_sql={'requested_count': f"""excluded.{task20_column('feedback_processing_batches', 'requested_count')}""", 'updated_at': 'current_timestamp'}).sql}""",
++                _task12_insert.parameters,
+             )
+             for key in keys:
++                _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key, 'batch_id': cleaned_batch_id}, insert_sql={'status': "case when trim(coalesce((select resolved_at from feedback_events where key=?), '')) <> ''\n                             then 'resolved' else 'pending' end", 'resolved_at': "coalesce((select resolved_at from feedback_events where key=?), '')"}, insert_parameters=(key, key,))
+                 db.execute(
+-                    """
+-                    insert into feedback_processing_items (
+-                        feedback_key, batch_id, status, resolved_at
+-                    )
+-                    values (
+-                        ?, ?,
+-                        case when trim(coalesce((select resolved_at from feedback_events where key=?), '')) <> ''
+-                             then 'resolved' else 'pending' end,
+-                        coalesce((select resolved_at from feedback_events where key=?), '')
+-                    )
+-                    on conflict(feedback_key) do update set
+-                        batch_id=case
+-                            when feedback_processing_items.status='resolved'
+-                            then feedback_processing_items.batch_id
+-                            else excluded.batch_id
+-                        end,
+-                        status=case when trim(coalesce((select resolved_at from feedback_events where key=excluded.feedback_key), '')) <> ''
+-                                    then 'resolved' else feedback_processing_items.status end,
+-                        resolved_at=case when trim(coalesce((select resolved_at from feedback_events where key=excluded.feedback_key), '')) <> ''
+-                                         then (select resolved_at from feedback_events where key=excluded.feedback_key)
+-                                         else feedback_processing_items.resolved_at end,
+-                        updated_at=current_timestamp
+-                    """,
+-                    (key, cleaned_batch_id, key, key),
++                    f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'batch_id': f"""case
++                            when tasks.{task20_column('feedback_processing_items', 'status')}='resolved'
++                            then tasks.{task20_column('feedback_processing_items', 'batch_id')}
++                            else excluded.{task20_column('feedback_processing_items', 'batch_id')}
++                        end""", 'status': f"""case when trim(coalesce((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')}), '')) <> ''
++                                    then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim(coalesce((select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')}), '')) <> ''
++                                         then (select resolved_at from feedback_events where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
++                                         else tasks.{task20_column('feedback_processing_items', 'resolved_at')} end""", 'updated_at': 'current_timestamp'}).sql}""",
++                    _task12_insert.parameters,
+                 )
+             row = db.execute(
+-                "select * from feedback_processing_batches where batch_id=?",
++                f"""select * from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (cleaned_batch_id,),
+             ).fetchone()
+         assert row is not None
+@@ -19931,9 +19898,9 @@
+             raise FeedbackIterationDisabledError("feedback iteration is disabled")
+         with self._immediate_write_transaction() as db:
+             existing_batch = db.execute(
+-                """
++                f"""
+                 select status, requested_count
+-                  from feedback_processing_batches where batch_id=?
++                  from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?
+                 """,
+                 (cleaned_batch_id,),
+             ).fetchone()
+@@ -19946,7 +19913,7 @@
+                 existing_keys = {
+                     str(row["feedback_key"])
+                     for row in db.execute(
+-                        "select feedback_key from feedback_processing_items where batch_id=?",
++                        f"""select feedback_key from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where batch_id=?""",
+                         (cleaned_batch_id,),
+                     )
+                 }
+@@ -19961,7 +19928,7 @@
+                        coalesce(pi.batch_id, '') as item_batch_id,
+                        coalesce(pi.current_round_id, 0) as current_round_id
+                 from feedback_events fe
+-                left join feedback_processing_items pi on pi.feedback_key=fe.key
++                left join ({task12_projection('feedback_processing_items')}) as pi on pi.feedback_key=fe.key
+                 where fe.key in ({placeholders})
+                 """,
+                 keys,
+@@ -20002,8 +19969,7 @@
+                     ) from exc
+                 rows = db.execute(
+                     f"""
+-                    select * from feedback_processing_items
+-                    where feedback_key in ({placeholders}) and batch_id=?
++                    select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key in ({placeholders}) and batch_id=?
+                     order by created_at asc, feedback_key asc
+                     """,
+                     [*keys, cleaned_batch_id],
+@@ -20029,10 +19995,9 @@
+                 if pointers_by_key[key] != 0:
+                     raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
+                 history = db.execute(
+-                    """
++                    f"""
+                     select status, reopened_at, reopen_reason
+-                      from feedback_processing_rounds
+-                     where feedback_key=?
++                      from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where feedback_key=?
+                      order by round_number desc, id desc
+                     """,
+                     (key,),
+@@ -20044,13 +20009,11 @@
+                     or any(str(row["status"] or "") != "resolved" for row in history)
+                 ):
+                     raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
++            _task12_insert = task12_insert_parts(db, 'feedback_processing_batches', {'batch_id': cleaned_batch_id, 'requested_count': len(keys)}, ignore=True)
+             db.execute(
+-                """
+-                insert or ignore into feedback_processing_batches
+-                    (batch_id, requested_count)
+-                values (?, ?)
++                f"""{_task12_insert.sql}
+                 """,
+-                (cleaned_batch_id, len(keys)),
++                _task12_insert.parameters,
+             )
+             claim_timestamp_row = db.execute(
+                 "select current_timestamp as claim_timestamp"
+@@ -20058,35 +20021,23 @@
+             claim_timestamp = str(claim_timestamp_row["claim_timestamp"])
+             for key in keys:
+                 row = db.execute(
+-                    """
++                    f"""
+                     select coalesce(max(round_number), 0) + 1 as next_round_number
+-                      from feedback_processing_rounds
+-                     where feedback_key=?
++                      from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where feedback_key=?
+                     """,
+                     (key,),
+                 ).fetchone()
+                 next_round_number = int(row["next_round_number"] or 1)
++                _task12_insert = task12_insert_parts(db, 'feedback_processing_rounds', {'feedback_key': key, 'round_number': next_round_number, 'batch_id': cleaned_batch_id, 'status': 'processing', 'receipt_version': 2, 'started_at': claim_timestamp})
++                db.execute(
++                    f"""{_task12_insert.sql}
++                    """,
++                    _task12_insert.parameters,
++                )
++                round_id = int(_task12_insert.source_rowid)
+                 cursor = db.execute(
+-                    """
+-                    insert into feedback_processing_rounds (
+-                        feedback_key, round_number, batch_id, status,
+-                        receipt_version, started_at
+-                    ) values (?, ?, ?, 'processing', 2, ?)
+-                    """,
+-                    (key, next_round_number, cleaned_batch_id, claim_timestamp),
+-                )
+-                round_id = int(cursor.lastrowid)
+-                cursor = db.execute(
+-                    """
+-                    update feedback_processing_items
+-                       set current_round_id=?, batch_id=?, status='processing',
+-                           workbench_task_id='', workbench_turn_id='',
+-                           attempt_id=0, agent_run_id=0, commit_sha='',
+-                           test_evidence_json='{}', restart_evidence_json='{}',
+-                           health_evidence_json='{}', note='', resolved_at='',
+-                           updated_at=current_timestamp
+-                     where feedback_key=? and status='pending'
+-                       and current_round_id=0
++                    f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'current_round_id': '?', 'batch_id': '?', 'status': "'processing'", 'workbench_task_id': "''", 'workbench_turn_id': "''", 'attempt_id': '0', 'agent_run_id': '0', 'commit_sha': "''", 'test_evidence_json': "'{}'", 'restart_evidence_json': "'{}'", 'health_evidence_json': "'{}'", 'note': "''", 'resolved_at': "''", 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'status')}='pending'
++                       and {task20_column('feedback_processing_items', 'current_round_id')}=0
+                     """,
+                     (round_id, cleaned_batch_id, key),
+                 )
+@@ -20102,17 +20053,13 @@
+                     (key, round_id, cleaned_batch_id, claim_timestamp),
+                 )
+             db.execute(
+-                """
+-                update feedback_processing_batches
+-                set status='processing', updated_at=current_timestamp
+-                where batch_id=?
++                f"""update tasks set {task12_set_parts('feedback_processing_batches', {}, update_sql={'status': "'processing'", 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_batches' and {task20_column('feedback_processing_batches', 'batch_id')}=?
+                 """,
+                 (cleaned_batch_id,),
+             )
+             rows = db.execute(
+                 f"""
+-                select * from feedback_processing_items
+-                where feedback_key in ({placeholders}) and batch_id=?
++                select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key in ({placeholders}) and batch_id=?
+                   and status='processing'
+                 order by created_at asc, feedback_key asc
+                 """,
+@@ -20136,7 +20083,7 @@
+             return None
+         with self._immediate_write_transaction() as db:
+             item = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (cleaned_key,),
+             ).fetchone()
+             if item is None:
+@@ -20165,12 +20112,11 @@
+                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                 ) from exc
+             current_round = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where id=? and feedback_key=? and batch_id=? and status='resolved'
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='resolved'
+                    and round_number=(
+                        select max(latest_round.round_number)
+-                         from feedback_processing_rounds latest_round
++                         from ({task12_projection('feedback_processing_rounds')}) as latest_round
+                         where latest_round.feedback_key=?
+                    )
+                 """,
+@@ -20186,8 +20132,7 @@
+                 (cleaned_key,),
+             ).fetchone()
+             batch = db.execute(
+-                "select status, requested_count, resolved_at, updated_at "
+-                "from feedback_processing_batches where batch_id=?",
++                f"""select status, requested_count, resolved_at, updated_at from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (str(item["batch_id"] or ""),),
+             ).fetchone()
+             if (
+@@ -20223,11 +20168,8 @@
+             ).fetchone()
+             reopen_timestamp = str(reopen_timestamp_row["reopen_timestamp"])
+             cursor = db.execute(
+-                """
+-                update feedback_processing_rounds
+-                   set reopened_at=?, reopen_reason=?
+-                 where id=? and feedback_key=? and batch_id=? and status='resolved'
+-                   and trim(reopened_at)='' and trim(reopen_reason)=''
++                f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql={'reopened_at': '?', 'reopen_reason': '?'}).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=? and {task20_column('feedback_processing_rounds', 'status')}='resolved'
++                   and trim({task20_column('feedback_processing_rounds', 'reopened_at')})='' and trim({task20_column('feedback_processing_rounds', 'reopen_reason')})=''
+                 """,
+                 (
+                     reopen_timestamp,
+@@ -20260,15 +20202,7 @@
+                 ),
+             )
+             cursor = db.execute(
+-                """
+-                update feedback_processing_items
+-                   set current_round_id=0, batch_id='', status='pending',
+-                       workbench_task_id='', workbench_turn_id='',
+-                       attempt_id=0, agent_run_id=0, commit_sha='',
+-                       test_evidence_json='{}', restart_evidence_json='{}',
+-                       health_evidence_json='{}', note='', resolved_at='',
+-                       updated_at=current_timestamp
+-                 where feedback_key=? and status='resolved' and current_round_id=?
++                f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'current_round_id': '0', 'batch_id': "''", 'status': "'pending'", 'workbench_task_id': "''", 'workbench_turn_id': "''", 'attempt_id': '0', 'agent_run_id': '0', 'commit_sha': "''", 'test_evidence_json': "'{}'", 'restart_evidence_json': "'{}'", 'health_evidence_json': "'{}'", 'note': "''", 'resolved_at': "''", 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'status')}='resolved' and {task20_column('feedback_processing_items', 'current_round_id')}=?
+                 """,
+                 (cleaned_key, round_id),
+             )
+@@ -20291,7 +20225,7 @@
+                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                 )
+             refreshed = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (cleaned_key,),
+             ).fetchone()
+         assert refreshed is not None
+@@ -20305,9 +20239,8 @@
+             return []
+         with self._connect() as db:
+             rows = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where feedback_key=?
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where feedback_key=?
+                  order by round_number desc, id desc
+                 """,
+                 (cleaned_key,),
+@@ -20324,9 +20257,8 @@
+             return []
+         with self._connect() as db:
+             rows = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where batch_id=?
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where batch_id=?
+                  order by feedback_key asc, id asc
+                 """,
+                 (cleaned_batch_id,),
+@@ -20365,7 +20297,7 @@
+             return None
+         with self._immediate_write_transaction() as db:
+             current = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (cleaned_key,),
+             ).fetchone()
+             if current is None:
+@@ -20382,9 +20314,8 @@
+                     "feedback association requires the exact current processing batch"
+                 )
+             current_round = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where id=? and feedback_key=? and batch_id=? and status='processing'
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='processing'
+                 """,
+                 (round_id, cleaned_key, batch_id),
+             ).fetchone()
+@@ -20396,11 +20327,7 @@
+             ):
+                 raise ValueError("feedback association requires the exact current processing round")
+             round_cursor = db.execute(
+-                """
+-                update feedback_processing_rounds
+-                   set workbench_task_id=?, workbench_turn_id=?, attempt_id=?,
+-                       agent_run_id=?, updated_at=current_timestamp
+-                 where id=? and feedback_key=? and batch_id=? and status='processing'
++                f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql={'workbench_task_id': '?', 'workbench_turn_id': '?', 'attempt_id': '?', 'agent_run_id': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=? and {task20_column('feedback_processing_rounds', 'status')}='processing'
+                 """,
+                 (
+                     workbench_task_id,
+@@ -20413,12 +20340,8 @@
+                 ),
+             )
+             item_cursor = db.execute(
+-                """
+-                update feedback_processing_items
+-                set workbench_task_id=?, workbench_turn_id=?, attempt_id=?,
+-                    agent_run_id=?, updated_at=current_timestamp
+-                where feedback_key=? and current_round_id=? and batch_id=?
+-                  and status='processing'
++                f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'workbench_task_id': '?', 'workbench_turn_id': '?', 'attempt_id': '?', 'agent_run_id': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'current_round_id')}=? and {task20_column('feedback_processing_items', 'batch_id')}=?
++                  and {task20_column('feedback_processing_items', 'status')}='processing'
+                 """,
+                 (
+                     workbench_task_id,
+@@ -20433,7 +20356,7 @@
+             if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                 raise ValueError("feedback association requires the exact current processing round")
+             row = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (cleaned_key,),
+             ).fetchone()
+         return self._feedback_processing_item_from_row(row) if row else None
+@@ -20443,7 +20366,7 @@
+     ) -> FeedbackProcessingBatch | None:
+         with self._connect() as db:
+             row = db.execute(
+-                "select * from feedback_processing_batches where batch_id=?",
++                f"""select * from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (batch_id.strip(),),
+             ).fetchone()
+         return self._feedback_processing_batch_from_row(row) if row else None
+@@ -20453,7 +20376,7 @@
+     ) -> FeedbackProcessingItem | None:
+         with self._connect() as db:
+             row = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (feedback_key.strip(),),
+             ).fetchone()
+         return self._feedback_processing_item_from_row(row) if row else None
+@@ -20481,7 +20404,7 @@
+             raise ValueError("only atomic batch claim may mark feedback processing")
+         if status is not None:
+             raise ValueError("evidence patch cannot change feedback processing status")
+-        assignments: list[str] = ["updated_at=current_timestamp"]
++        assignments: dict[str, str] = {"updated_at": "current_timestamp"}
+         args: list[object] = []
+         for field, value in (
+             ("test_evidence_json", test_evidence),
+@@ -20491,15 +20414,15 @@
+             if value is not None:
+                 if not isinstance(value, dict):
+                     raise TypeError(f"{field} must be a JSON object")
+-                assignments.append(f"{field}=?")
++                assignments[field] = "?"
+                 args.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+         for field, value in (("commit_sha", commit_sha), ("note", note), ("status", status)):
+             if value is not None:
+-                assignments.append(f"{field}=?")
++                assignments[field] = "?"
+                 args.append(value)
+         with self._immediate_write_transaction() as db:
+             current = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (cleaned_key,),
+             ).fetchone()
+             if current is None:
+@@ -20510,9 +20433,8 @@
+             )
+             batch_id = str(current["batch_id"] or "")
+             current_round = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where id=? and feedback_key=? and batch_id=? and status='processing'
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='processing'
+                 """,
+                 (round_id, cleaned_key, batch_id),
+             ).fetchone()
+@@ -20547,20 +20469,17 @@
+             if not changed:
+                 return self._feedback_processing_item_from_row(current)
+             round_cursor = db.execute(
+-                f"update feedback_processing_rounds set {', '.join(assignments)} "
+-                "where id=? and feedback_key=? and batch_id=? and status='processing'",
++                f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql=assignments).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=? and {task20_column('feedback_processing_rounds', 'status')}='processing'""",
+                 [*args, round_id, cleaned_key, batch_id],
+             )
+             item_cursor = db.execute(
+-                f"update feedback_processing_items set {', '.join(assignments)} "
+-                "where feedback_key=? and current_round_id=? and batch_id=? "
+-                "and status='processing'",
++                f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql=assignments).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'current_round_id')}=? and {task20_column('feedback_processing_items', 'batch_id')}=? and {task20_column('feedback_processing_items', 'status')}='processing'""",
+                 [*args, cleaned_key, round_id, batch_id],
+             )
+             if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                 raise ValueError("evidence patch requires the exact current processing round")
+             row = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (cleaned_key,),
+             ).fetchone()
+         return self._feedback_processing_item_from_row(row) if row else None
+@@ -20777,8 +20696,7 @@
+             if expected_status not in {"processing", "resolved"}:
+                 raise ValueError(stable_error)
+             batch = db.execute(
+-                "select status, requested_count, resolved_at, updated_at "
+-                "from feedback_processing_batches where batch_id=?",
++                f"""select status, requested_count, resolved_at, updated_at from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (batch_id,),
+             ).fetchone()
+             if (
+@@ -20790,13 +20708,11 @@
+                 raise ValueError(stable_error)
+             requested_count = batch["requested_count"]
+             items = db.execute(
+-                "select * from feedback_processing_items "
+-                "where batch_id=? order by feedback_key",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where batch_id=? order by feedback_key""",
+                 (batch_id,),
+             ).fetchall()
+             rounds = db.execute(
+-                "select * from feedback_processing_rounds "
+-                "where batch_id=? order by feedback_key, id",
++                f"""select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where batch_id=? order by feedback_key, id""",
+                 (batch_id,),
+             ).fetchall()
+             item_keys = [str(item["feedback_key"]) for item in items]
+@@ -20849,8 +20765,7 @@
+                     or str(current_round["status"] or "") != expected_status
+                     or int(current_round["round_number"])
+                     != db.execute(
+-                        "select max(round_number) "
+-                        "from feedback_processing_rounds where feedback_key=?",
++                        f"""select max(round_number) from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where feedback_key=?""",
+                         (feedback_key,),
+                     ).fetchone()[0]
+                 ):
+@@ -20961,8 +20876,7 @@
+         if not batch_resolved_at.strip() or not batch_updated_at.strip():
+             raise ValueError("resolved batch completion timestamp is incomplete")
+         rounds = db.execute(
+-            "select * from feedback_processing_rounds "
+-            "where batch_id=? order by feedback_key, id",
++            f"""select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where batch_id=? order by feedback_key, id""",
+             (batch_id,),
+         ).fetchall()
+         round_keys = [str(round_row["feedback_key"]) for round_row in rounds]
+@@ -21122,7 +21036,7 @@
+             if bool(reopened_at) != bool(reopen_reason):
+                 raise ValueError("resolved batch reopen history is incomplete")
+             item = db.execute(
+-                "select * from feedback_processing_items where feedback_key=?",
++                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                 (feedback_key,),
+             ).fetchone()
+             source = db.execute(
+@@ -21178,13 +21092,12 @@
+                     raise ValueError("resolved batch reopened projection is incomplete")
+                 continue
+             current_round = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where id=? and feedback_key=? and batch_id=? and status=?
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status=?
+                    and round_number>?
+                    and round_number=(
+                        select max(latest_round.round_number)
+-                         from feedback_processing_rounds latest_round
++                         from ({task12_projection('feedback_processing_rounds')}) as latest_round
+                         where latest_round.feedback_key=?
+                    )
+                 """,
+@@ -21250,12 +21163,12 @@
+         """
+
+         rows = db.execute(
+-            """select decision.id, decision.batch_id, decision.workbench_task_id,
++            f"""select decision.id, decision.batch_id, decision.workbench_task_id,
+                       decision.workbench_turn_id, decision.decision_json,
+                       decision.created_at,
+                       json_group_array(item.feedback_key) as feedback_keys_json,
+                       json_group_array(item.round_id) as round_ids_json
+-                 from feedback_iteration_decisions decision
++                 from ({task12_projection('feedback_iteration_decisions')}) as decision
+                  join feedback_iteration_decision_items item on item.decision_id=decision.id
+                 where decision.batch_id=?
+                 group by decision.id
+@@ -21408,8 +21321,7 @@
+         )
+         with self._immediate_write_transaction() as db:
+             batch = db.execute(
+-                "select status, requested_count, resolved_at, updated_at "
+-                "from feedback_processing_batches where batch_id=?",
++                f"""select status, requested_count, resolved_at, updated_at from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                 (cleaned_batch_id,),
+             ).fetchone()
+             if batch is None:
+@@ -21437,16 +21349,14 @@
+             if type(requested_count) is not int or requested_count <= 0:
+                 raise ValueError("resolution requires valid batch membership")
+             rows = db.execute(
+-                """
+-                select * from feedback_processing_items
+-                 where batch_id=? order by feedback_key
++                f"""
++                select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where batch_id=? order by feedback_key
+                 """,
+                 (cleaned_batch_id,),
+             ).fetchall()
+             round_rows = db.execute(
+-                """
+-                select * from feedback_processing_rounds
+-                 where batch_id=? order by feedback_key, id
++                f"""
++                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where batch_id=? order by feedback_key, id
+                 """,
+                 (cleaned_batch_id,),
+             ).fetchall()
+@@ -21635,12 +21545,8 @@
+             )
+             for item, current_round in verified:
+                 round_cursor = db.execute(
+-                    """
+-                    update feedback_processing_rounds
+-                       set status='resolved', resolved_at=?,
+-                           backlog_evidence_json=?, scope_receipt_json=?, updated_at=?
+-                     where id=? and feedback_key=? and batch_id=?
+-                       and status='processing'
++                    f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'backlog_evidence_json': '?', 'scope_receipt_json': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=?
++                       and {task20_column('feedback_processing_rounds', 'status')}='processing'
+                     """,
+                     (
+                         resolution_timestamp,
+@@ -21653,11 +21559,8 @@
+                     ),
+                 )
+                 item_cursor = db.execute(
+-                    """
+-                    update feedback_processing_items
+-                       set status='resolved', resolved_at=?, updated_at=?
+-                     where feedback_key=? and batch_id=? and current_round_id=?
+-                       and status='processing'
++                    f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'batch_id')}=? and {task20_column('feedback_processing_items', 'current_round_id')}=?
++                       and {task20_column('feedback_processing_items', 'status')}='processing'
+                     """,
+                     (
+                         resolution_timestamp,
+@@ -21697,10 +21600,7 @@
+             if source_cursor.rowcount != requested_count:
+                 raise ValueError("resolution source feedback changed during update")
+             cursor = db.execute(
+-                """
+-                update feedback_processing_batches
+-                   set status='resolved', resolved_at=?, updated_at=?
+-                 where batch_id=? and status='processing'
++                f"""update tasks set {task12_set_parts('feedback_processing_batches', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_batches' and {task20_column('feedback_processing_batches', 'batch_id')}=? and {task20_column('feedback_processing_batches', 'status')}='processing'
+                 """,
+                 (resolution_timestamp, resolution_timestamp, cleaned_batch_id),
+             )
+@@ -21943,7 +21843,7 @@
+                     on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
+                 left join ({AGENT_RUN_SQL}) ar
+                     on ar.id = ra.agent_run_id
+-                left join feedback_processing_items pi
++                left join ({task12_projection('feedback_processing_items')}) as pi
+                     on pi.feedback_key = fe.key
+                 order by fe.received_at desc, fe.updated_at desc
+                 limit ?
+@@ -22027,7 +21927,7 @@
+                     on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
+                 left join ({AGENT_RUN_SQL}) ar
+                     on ar.id = ra.agent_run_id
+-                left join feedback_processing_items pi
++                left join ({task12_projection('feedback_processing_items')}) as pi
+                     on pi.feedback_key = fe.key
+                 order by fe.key asc
+                 """,
+@@ -22072,7 +21972,7 @@
+                 )
+                 select count(*) as pending_count
+                 from feedback_events fe
+-                left join feedback_processing_items pi
++                left join ({task12_projection('feedback_processing_items')}) as pi
+                     on pi.feedback_key = fe.key
+                 left join latest_attempt_by_token latest
+                     on latest.feedback_token = fe.feedback_token
+@@ -22101,18 +22001,11 @@
+                 (cleaned_key,),
+             )
+             if cursor.rowcount == 1:
++                _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': cleaned_key, 'status': 'resolved'}, insert_sql={'resolved_at': 'current_timestamp'}, insert_parameters=())
+                 db.execute(
+-                    """
+-                    insert into feedback_processing_items (
+-                        feedback_key, status, resolved_at
+-                    ) values (?, 'resolved', current_timestamp)
+-                    on conflict(feedback_key) do update set
+-                        status='resolved',
+-                        resolved_at=current_timestamp,
+-                        updated_at=current_timestamp
+-                    """,
+-                    (cleaned_key,),
++                    f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': "'resolved'", 'resolved_at': 'current_timestamp', 'updated_at': 'current_timestamp'}).sql}""",
++                    _task12_insert.parameters,
+                 )
+             return cursor.rowcount == 1
+
+     def update_sent_reply_recall(
