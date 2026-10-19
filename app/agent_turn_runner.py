@@ -27,6 +27,7 @@ from app.agent_effects import (
     _is_signed_url,
 )
 from app.agent_result import ResultParseError
+from app.agent_wire_contracts import claude_consumer_output_schema
 from app.reviewed_sources import ReviewedSourceReadError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
@@ -1150,6 +1151,10 @@ class AgentTurnProcess(Generic[ResultT]):
                         session_id=route_session_id,
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
+                        json_schema=(
+                            claude_consumer_output_schema()
+                            if run.role is AgentRole.CONSUMER else None
+                        ),
                         policy=(
                             ClaudeCommandPolicy.consumer(
                                 task_id=self.task.id,

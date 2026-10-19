@@ -127,6 +127,32 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
     }
 
 
+def test_consumer_native_schema_is_inline_and_not_added_to_audit(adapter, route):
+    from app.agent_wire_contracts import claude_consumer_output_schema
+
+    schema = claude_consumer_output_schema()
+    consumer = adapter.build_command(
+        route=route, session_id=None, max_turns=5,
+        policy=ClaudeCommandPolicy.consumer(
+            task_id=17, db_path="/tmp/role.sqlite3", execution_generation="generation"
+        ),
+        json_schema=schema,
+    )
+    audit = adapter.build_command(
+        route=route, session_id=None, max_turns=5,
+        policy=ClaudeCommandPolicy.audit(
+            task_id=17, db_path="/tmp/role.sqlite3", execution_generation="generation"
+        ),
+    )
+
+    assert json.loads(consumer[consumer.index("--json-schema") + 1]) == schema
+    assert "--json-schema" not in audit
+    assert schema["type"] == "object"
+    assert "oneOf" not in schema
+    assert "allOf" not in schema["$defs"]["ProposedAction"]
+    assert "error_code" in schema["required"]
+
+
 def test_normal_command_delegates_tool_review_to_claude_runtime(
     adapter, route, tmp_path, monkeypatch
 ):

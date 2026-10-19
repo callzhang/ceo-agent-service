@@ -1687,3 +1687,46 @@ processing queue zero, Attention count four without task 405641, and History
 HTTP 200. The exact task and execution read back as `done`, with its action
 attempt verified. This proves release and receipt reconciliation, not a
 subsequent real project approval.
+
+## Claude Consumer native wire format: repeated malformed results (2026-10-19)
+
+Task 405497 had four consecutive Claude OAuth Consumer failures on the same
+business item before a Codex route completed it. I read all four complete
+Claude session files, including their tool calls, returns and final messages.
+Each Claude turn reached a terminal `end_turn` after reading the relevant OA
+source and Skill. The first final message included a fenced JSON object with a
+syntax error; the other three final messages contained no JSON object. The
+service's `claude_result_validation_failed` reports therefore reflect actual
+model output, not a truncated CLI stream or missing tool response. This is a
+format transport failure; it does not establish that the proposed OA business
+actions were correct.
+
+Acceptance is limited to Claude Consumer: its final result must be valid native
+JSON and pass the existing full Pydantic wire and business validation after
+read-only source tools, in both a fresh and resumed session. It must preserve
+the no-action versus proposal decision, exact target identity and no external
+execution in anonymous fixed cases. Audit, Codex, Friday, routing, retries,
+permissions, Skill selection and business rules must not change.
+
+The installed Claude CLI 2.1.269 supports inline `--json-schema`. An anonymous
+minimal schema probe returned structured output. The complete Consumer wire
+schema was rejected because its `oneOf` and `allOf` conditions are outside the
+provider's accepted input-schema subset. A projection retaining field types,
+references and required fields while removing only those three conditional
+branches was accepted. The unchanged Pydantic model remains authoritative for
+the omitted cross-field conditions. Focused service tests failed before the
+new native command option and passed after it was connected only to Consumer.
+
+Three anonymous read-only Sonnet probes used the existing synthetic MCP server,
+with no production record, Work Profile, business MCP or external action: a
+fresh already-handled message returned valid `no_action` after one read; a
+fresh direct-confirmation request returned a valid `proposal` with the exact
+synthetic recipient and `send_direct_message` operation after one read; and a
+fresh/continued pair reused one Claude session, read the source on both turns
+and returned valid `no_action` twice. These probes establish native schema,
+tool and continuation compatibility for these fixtures, not production
+business quality. The two affected test files passed with 227 tests and four
+skips; a subsequent negative case confirmed that Pydantic still rejects a
+`proposal` outcome without a plan despite the projected native schema. Ruff,
+diff check and independent review found no blocking issue. Production deploy
+and readback are still required.
