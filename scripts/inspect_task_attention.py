@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.native_standalone import latest_task_ref, task_decision_value
-from app.task_storage import TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL
+from app.store import TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 
 def inspect_run(db, run, decision):

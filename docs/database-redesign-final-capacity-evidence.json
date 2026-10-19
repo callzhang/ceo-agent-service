@@ -34738,5 +34738,32 @@
       "log": "/tmp/db-redesign-final-guard.3LeMgv/final-task-project-centered-eval-focused.log"
     },
     "root_review": "Full diff reviewed; negative owner/membership/version/receipt/outbound intent oracles retained; subsequent edits indentation only; Ruff and diff check clean"
+  },
+  "final_inspect_task_attention_current_caller": {
+    "first_fixture_red": {
+      "result": "1 failed, 9 passed in 8.68s",
+      "cause": "Project context fixture omitted transient prepared originals",
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-inspect-attention-red.log"
+    },
+    "actual_current_caller_red": {
+      "result": "1 failed in 8.30s",
+      "cause": "Legacy work-summary projection selects retired t.source_type on final schema"
+    },
+    "runtime_fix": "Import Task/Run projections from current app.store; readonly URI/native-only decision and connection lifecycle unchanged",
+    "final_root_frozen_file": {
+      "passed": 12,
+      "seconds": 26.31,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-inspect-task-attention-root.log"
+    },
+    "preserved": [
+      "Original completed status and private payload fixture",
+      "Public-vs-physical identity and exact run selection",
+      "Missing invalid unavailable native result negatives",
+      "Exact replay artifact matching",
+      "Read-only file bytes and no creation on missing database",
+      "Close DB connection before native reads"
+    ],
+    "review": "Full diff root-reviewed; no schema, provider, real model or production changes; Ruff/diff clean"
   }
 }

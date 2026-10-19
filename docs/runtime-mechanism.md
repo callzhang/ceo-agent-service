@@ -1315,7 +1315,7 @@ TaskAgentDecision 必须明确返回三项无默认列表：
 仍需非空 update_summary。当前 parser 不接受 TaskDecision 中的旧 project_proposal、
 project_link_proposal、attention_proposal。历史运行只保存原生执行引用，原始决定按该次准确范围读取；
 原生来源缺失或旧格式无法解析时，过程详情明确不可用，不从数据库副本恢复或重新执行。
-已应用的业务投影回执仍由服务保存。
+已应用的业务投影回执仍由服务保存。 `scripts/inspect_task_attention.py` 以只读 URI 打开数据库，通过当前 Store 的 Task／Run 公共投影读取输入状态、公开身份和投影回执；原生决定读取在查询连接关闭后进行，不依赖已退休的平铺字段或保存正文。
 Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
