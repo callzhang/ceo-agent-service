@@ -21,6 +21,50 @@ from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
 
 
+def test_document_search_native_tool_declares_existing_page_size_limit():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "search_dingtalk_documents"
+    )
+    page_size = tool.parameters["properties"]["page_size"]
+    assert page_size["minimum"] == 1
+    assert page_size["maximum"] == 20
+    assert tool.fn_metadata.arg_model.model_validate({"query": "example"}).page_size == 10
+    assert tool.fn_metadata.arg_model.model_validate(
+        {"query": "example", "page_size": 20}
+    ).page_size == 20
+    for invalid in (0, 50, 100):
+        with pytest.raises(ValidationError) as error:
+            tool.fn_metadata.arg_model.model_validate(
+                {"query": "example", "page_size": invalid}
+            )
+        assert ("page_size",) in [entry["loc"] for entry in error.value.errors()]
+
+
+def test_document_search_native_call_preserves_valid_queries_and_rejects_oversize_before_provider(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeDws:
+        def search_documents(self, query, page_size):
+            calls.append((query, page_size))
+            return []
+
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "search_dingtalk_documents"
+    )
+    assert asyncio.run(tool.run({"query": "example"})) == {"documents": []}
+    assert asyncio.run(tool.run({"query": "example", "page_size": 20})) == {
+        "documents": []
+    }
+    for invalid in (50, 100):
+        with pytest.raises(ToolError) as error:
+            asyncio.run(tool.run({"query": "example", "page_size": invalid}))
+        assert isinstance(error.value.__cause__, ValidationError)
+    assert calls == [("example", 10), ("example", 20)]
+
+
 def test_weekly_report_tool_declares_metric_array_and_rejects_object_mapping():
     tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
     arguments = {"manifest": {}, "report": {"company_metrics": {"orders": {"current": "无数据"}}}, "previous_issues": []}

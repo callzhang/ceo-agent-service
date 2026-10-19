@@ -23,6 +23,7 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
+from typing import Annotated
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -30,6 +31,7 @@ from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from pydantic_core import to_json
@@ -2082,7 +2084,9 @@ def build_role_server(
         profiles = DwsClient().search_user_profiles(query)
         return {"users": [item.model_dump(mode="json") for item in profiles]}
 
-    def search_dingtalk_documents(query: str, page_size: int = 10) -> dict[str, object]:
+    def search_dingtalk_documents(
+        query: str, page_size: Annotated[int, Field(ge=1, le=20)] = 10,
+    ) -> dict[str, object]:
         """Find DingTalk documents by title before reading an exact node."""
         from app.dws_client import DwsClient
         if not query.strip() or type(page_size) is not int or not 1 <= page_size <= 20:
