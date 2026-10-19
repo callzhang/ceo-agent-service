@@ -4108,6 +4108,58 @@ def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
     ) is not None
 
 
+def test_generic_dingtalk_send_to_conversation_gets_prepared_before_audit(tmp_path):
+    """A generic send_message may target a conversation without a recipient ID."""
+    from types import SimpleNamespace
+
+    from app.agent_contracts import ConsumerAgentResult
+    from app.consumer_agent import _prepare_outgoing_dingtalk_messages
+    from app.service_message_sender import agent_message_delivery_key
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = SimpleNamespace(
+        id=1, business_object_key="reply-task:405687",
+        execution_generation="generation-1",
+    )
+    context = SimpleNamespace(
+        channel="dingtalk", trigger_text="原始触发消息", trigger_raw_payload={},
+    )
+    result = ConsumerAgentResult.model_validate({
+        "outcome": "proposal", "summary": "Send a reviewed message.",
+        "proposal": {
+            "objective": "Answer in the current conversation",
+            "actions": [{
+                "description": "在当前会话发送回复",
+                "action_identity": "conversation-reply",
+                "capability": "dingtalk-chat", "operation": "send_message",
+                "effect": "external", "target": {"conversation_id": "group-1"},
+                "payload": {"content": "有依据的回复"},
+            }],
+            "sourced_facts": [], "authored_judgment": "Reply once.",
+        },
+        "decision_options": [],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+
+    prepared_result = _prepare_outgoing_dingtalk_messages(
+        result, store=store, task=task, context=context, proposal_revision=0,
+    )
+
+    action = prepared_result.proposal.actions[0]
+    key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity=action.action_identity,
+        execution_generation=task.execution_generation,
+        proposal_revision=0,
+    )
+    prepared = store.get_outbound_postfix("dingtalk", key)
+    assert prepared is not None
+    assert action.payload["content"] == prepared.final_body
+    assert "有依据的回复" in prepared.final_body
+
+
 def test_source_capture_failure_preserves_native_error_and_authentication(store, task, context):
     from app.dws_client import DwsError
     class Source:
