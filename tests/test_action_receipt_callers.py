@@ -2,12 +2,21 @@
 
 import pytest
 
+from app.task8_storage import task8_set_parts
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, insert_action, update_action
 from app.run_storage import AGENT_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
 from tests.test_action_receipt_source import source_values
 from tests.test_agent_turn_store import _claim_consumer, _task
 from tests.test_reviewed_candidate_store import _reviewed
+
+
+def _update_reply_task_fixture(db, task_id, values):
+    parts = task8_set_parts("reply_tasks", values)
+    return db.execute(
+        f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+        (*parts.parameters, task_id),
+    ).rowcount
 
 
 @pytest.fixture
@@ -27,8 +36,9 @@ def test_candidate_receipt_idempotency_conflicts_and_late_result(receipt_store, 
             update_action(db, "review_candidates", candidate["id"], {
                 "invalidated_at": "2026-10-13 12:00:00", "invalidation_reason": "new source fact",
             })
-            db.execute("update tasks set execution_generation='next-generation',status='pending' "
-                       "where record_type='reply_tasks' and id=?", (task.id,))
+            _update_reply_task_fixture(db, task.id, {
+                "execution_generation": "next-generation", "status": "pending",
+            })
     args = (execution["id"], "worker", 0, "01", "send", {"user_id": "x"})
     saved = store.record_candidate_external_action(*args, {"receipt": "原始"})
     assert store.record_candidate_external_action(*args, {"receipt": "原始"}) == saved
@@ -66,15 +76,14 @@ def test_independent_delivery_receipt_keeps_first_result_and_recovery_projection
     with pytest.raises(ValueError, match="conflicting external action result"):
         store.record_completed_agent_message_delivery(**(values | {"operation": "another-operation"}))
     with store._connect() as db:
-        db.execute("update tasks set status='failed',error='later failure' "
-                   "where record_type='reply_tasks' and id=?", (task.id,))
+        _update_reply_task_fixture(db, task.id, {"status": "failed", "error": "later failure"})
     assert store.resolve_reconciled_failed_reply_task(task.id, external_action_key="01")
     with store._connect() as db:
         db.execute("update runs set status='failed',structured_error_json=? "
                    "where record_type='agent_runs' and id=?", ('{"code":"later_failure"}', run.id))
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
     with store._connect() as db:
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,))
+        _update_reply_task_fixture(db, task.id, {"status": "needs_human"})
     assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
     assert store.get_reply_task(task.id).status == "done"
     assert store.get_candidate_external_action("01") == saved

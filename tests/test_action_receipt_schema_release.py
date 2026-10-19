@@ -13,6 +13,14 @@ from tests.test_action_receipt_storage import source15_database
 from tests.test_action_receipt_source import source_values
 
 
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """Run rollback-era writes against the source Store15 TEXT Actions layout."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
+
+
 SOURCE = ('2026-10-13.1', 'original marker time')
 
 
