@@ -3679,8 +3679,9 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        updated_at, error
                 from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
                 where rowid in (
-                    select rowid from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
-                    where lower(status)='failed'
+                    select cast(legacy_key as integer) from tasks
+                    where record_type='email_agent_classification_tasks'
+                      and {task20_column('email_agent_classification_tasks', 'status')}='failed'
                 )
                 order by updated_at desc, task_id desc
             """

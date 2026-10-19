@@ -23,6 +23,7 @@ Actions 合并六十一种已有方案、审查、候选、修订、动作、尝
 Reply、Email、Sync、delivery、Errors、Feedback、Business evidence、Email history
 及 Skill receipt 调用方均使用这一结构；原事务、CAS、claim/lease、约束顺序和
 幂等回执合同保留。Errors 的 ID/时间读取和 Attention 的未解决项使用其既有局部索引。
+Email Attention 先在 Tasks 的现有类型／状态索引上筛选 failed 的公开 ROWID，再读取这些任务的内容；不通过通用完整投影扫描成功任务的输入。
 
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Reply 公开 ID 继续按 legacy_key 的整数语义读取（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词，避免逐 run 扫描全部任务，不新增索引或字段。

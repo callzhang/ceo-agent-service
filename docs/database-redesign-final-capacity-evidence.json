@@ -32409,20 +32409,39 @@
     "finding": null
   },
   "final_parallel_regression": {
-    "status": "running_failures_observed_not_accepted",
+    "status": "terminated_failed_fixture_triage_in_progress",
     "command": "nice -n10 python -m pytest -q -n6 --maxfail=8",
     "pid": 24191,
     "session": 51230,
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-parallel-pytest.log",
     "live_tests_enabled": false,
     "known_execution_detail": "xdist preassigned large chunks continue draining after the maxfail threshold; future bounded runs need --maxschedchunk=2",
-    "interrupt_attempt": "session control-C had no effect; direct kill -INT24191 rejected by automatic approval review because approval is required and mode is Never; no bypass",
+    "interrupt_attempt": "session control-C had no effect; direct kill -INT24191 rejected by automatic approval review because approval is required and mode is Never; no bypass; process subsequently exited naturally",
     "production_health_during_run": {
       "http_status": 200,
       "status": "ok",
       "seconds": 0.038
     },
     "new_deployment_attempted": false,
+    "production_writes": false,
+    "result": {
+      "failed": 31,
+      "passed": 1133,
+      "skipped": 87,
+      "seconds": 465.06,
+      "exit_code": 2
+    },
+    "triage": "Named failures reach retired schema fixture SQL or obsolete canceled API setup. Historical Business TEXT migration is intentional transaction intermediate; do not change runtime declaration to satisfy final-writer test fixture."
+  },
+  "final_email_attention_index": {
+    "status": "focused_passed",
+    "existing_index": "idx_task20_native_1",
+    "root_cause": "generic full Tasks projection prevented retained status index selection; lowercase state is schema-constrained",
+    "schema_changed": false,
+    "red_seconds": 7.21,
+    "equality_only_still_failed_seconds": 3.89,
+    "green_seconds": 4.1,
+    "test": "tests/test_attention_email_query_plan.py",
     "production_writes": false
   }
 }
