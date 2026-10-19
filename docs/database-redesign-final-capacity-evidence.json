@@ -34420,7 +34420,45 @@
     "log": "/tmp/db-redesign-final-guard.3LeMgv/latest-old-cold.log",
     "current_candidate_cold_readback_exact": true,
     "current_candidate_readback": "/tmp/db-redesign-final-guard.3LeMgv/current-projection-native-readback.json",
-    "current_candidate_note": "After numeric projection fix, final target copy native snapshot exactly matches earlier real CLI task/business/results/receipts; no new model call or dispatch"
+    "current_candidate_note": "After numeric projection fix, final target copy native snapshot exactly matches earlier real CLI task/business/results/receipts; no new model call or dispatch",
+    "native_full_business_facts": {
+      "tables": {
+        "candidate_executions": {
+          "rows": 1,
+          "fields": 10,
+          "sha256": "b3aa1401c3f306002e938d66b900d9b60045fbf3f70293698dd174fdcb6d7056"
+        },
+        "candidate_reviews": {
+          "rows": 1,
+          "fields": 7,
+          "sha256": "41795bfb8e1d0f02f12c4408bfe42e8fe7d6937e8f737fc0ab46b1d97587cffa"
+        },
+        "external_action_results": {
+          "rows": 1,
+          "fields": 9,
+          "sha256": "4ff7faa6bce51500050c55834c557ea3fb45cde83fc7ad4d88e1e2fe16f88dac"
+        },
+        "reply_attempts": {
+          "rows": 1,
+          "fields": 54,
+          "sha256": "6dc7c021f750319a52c0e7822cfe18827eb68ac7d93231f570964b3fd9dd50c6"
+        },
+        "review_candidates": {
+          "rows": 1,
+          "fields": 12,
+          "sha256": "2bd076351bcd3e16127497013aa266fc7bcc4dee80c3fdd201a3324a806dc760"
+        },
+        "sent_replies": {
+          "rows": 1,
+          "fields": 14,
+          "sha256": "59c2134696558034eff62e43fb8c4a42c4756e6e39a33480dd42070399a8463f"
+        }
+      },
+      "all_fields_types_and_values_exact": true,
+      "target_evidence": "/tmp/db-redesign-final-guard.3LeMgv/native-full-facts-target.json",
+      "latest_old_code_evidence": "/tmp/db-redesign-final-guard.3LeMgv/native-full-facts-inverse.json",
+      "scope": "Full reviewed candidate, audit result, execution result, provider receipt, sent ledger and reply attempt for actual post-migration native task; no raw contents copied to evidence"
+    }
   },
   "final_email_worker_fixture_verification": {
     "runtime_changes": false,
@@ -34431,5 +34469,16 @@
     "followup_log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-worker-current-pointer.log",
     "scope": "Task generation/audited-input replacement, historical-candidate read, canonical paired locator scanner race and rollback, actual source reader fake interface; privacy/lifecycle/receipt assertions retained",
     "whole_file_run": false
+  },
+  "final_email_store_observed_failure_closure": {
+    "mapped_broad_failed_nodes": 50,
+    "result": "52 passed in 145.43s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-store-focused.log",
+    "root_followup": "Names and parameter SQL now describe actual current State constraint and Configs type/check mutations",
+    "followup_result": "3 passed, 300 deselected in 10.99s",
+    "followup_log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-store-current-declaration.log",
+    "independent_review": "Dynamic instrumentation confirms five reachable metadata labels and zero FK-enum calls on current ctor; obsolete legacy constructor cases refocused to actual current paths/helper boundary. Current shared FK declaration corruption tests retained. No demonstrated coverage loss on current path.",
+    "runtime_changes_in_fixture_commit": false,
+    "known_runtime_issue": "Numeric lineage scan fixed separately in0ef34a960, original500 VM-step bound retained"
   }
 }

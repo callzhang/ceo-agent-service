@@ -59,6 +59,8 @@ from app.email_store import (
     EmailStore,
     email_unsubscribe_effect_digest,
 )
+from app.action_storage import _encoded_native_sqlite_value
+from app.configs_definitions import config_payload_fields
 from app.email_important import ImportantSignals
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
@@ -90,8 +92,10 @@ from tests.test_email_canonical_storage import (
     _classification as _native_email_classification,
 )
 from app.configs_definitions import config_projection
-from app.configs_storage import insert_config, update_config
-from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.configs_storage import delete_config, insert_config, update_config
+from app.task8_storage import (
+    register_task8_functions, task8_insert_parts, task8_set_parts,
+)
 
 
 def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
@@ -102,10 +106,14 @@ def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
             (value, snapshot_id),
         )
     else:
+        payload_index = config_payload_fields("email_training_snapshots").index(field)
         db.execute(
-            "update configs set payload_json=json_set(payload_json, ?, ?) "
+            "update configs set payload_json=json_set(payload_json, ?, json(?)) "
             "where record_type='email_training_snapshots' and public_key=?",
-            ("$." + field, value, snapshot_id),
+            (f"$[{payload_index}]", json.dumps(
+                _encoded_native_sqlite_value(value), ensure_ascii=False,
+                allow_nan=False, separators=(",", ":"),
+            ), snapshot_id),
         )
 
 
@@ -581,27 +589,32 @@ def test_snapshot_publication_rejects_corrupt_previous_identity(tmp_path):
         assert db.execute("select count(*) from configs where record_type='email_training_snapshots'").fetchone()[0] == 1
 
 
-def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
+def test_readback_rejects_coherent_timestamp_tampering_with_stale_digests(
     tmp_path: Path,
 ):
+    from app.email_training_data import TrainingSnapshotUnavailable, data_path
+
     store = EmailStore(tmp_path / "training-snapshot-time-corrupt.sqlite3")
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
     tampered_time = "2026-09-07T19:00:00+00:00"
+    path = data_path(store.path, snapshot.snapshot_digest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["observed_at"] = tampered_time
+    for observation in payload["observations"]:
+        observation["observed_at"] = tampered_time
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
     with sqlite3.connect(store.path) as db:
-        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
-        db.execute("drop trigger trg_email_training_observations_immutable_update")
-        db.execute(
-            "update email_training_snapshots set observed_at=? where snapshot_id=?",
-            (tampered_time, snapshot.snapshot_id),
-        )
-        db.execute(
-            "update email_training_snapshot_observations set observed_at=? "
-            "where snapshot_id=?",
-            (tampered_time, snapshot.snapshot_id),
-        )
+        db.execute("drop trigger trg_configs_snapshot_update")
+        _set_training_snapshot_raw(db, snapshot.snapshot_id, "observed_at", tampered_time)
 
-    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+    with pytest.raises(
+        TrainingSnapshotUnavailable,
+        match="training snapshot data is unavailable or corrupt",
+    ):
         store.get_training_snapshot(snapshot.snapshot_id)
 
 
@@ -1038,6 +1051,24 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
+def _set_reply_task_parts(db, task_id: int, **values: object) -> None:
+    register_task8_functions(db)
+    parts = task8_set_parts("reply_tasks", values)
+    db.execute(
+        f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+        (*parts.parameters, task_id),
+    )
+
+
+def _set_task_input_parts(db, input_id: int, **values: object) -> None:
+    register_task8_functions(db)
+    parts = task8_set_parts("reply_task_inputs", values)
+    db.execute(
+        f"update tasks set {parts.sql} where record_type='reply_task_inputs' and cast(legacy_key as integer)=?",
+        (*parts.parameters, input_id),
+    )
+
+
 def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
     tmp_path: Path,
 ) -> None:
@@ -1094,15 +1125,13 @@ def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
     sent_id = create_task("legacy-sent", lifecycle_version=legacy)
     create_task("non-email", lifecycle_version=legacy, channel="dingtalk")
     with sqlite3.connect(database) as db:
-        db.executemany(
-            "update tasks set status=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (
-                ("processing", processing_id),
-                ("done", done_id),
-                ("failed", failed_id),
-                ("sent", sent_id),
-            ),
-        )
+        for status, task_id in (
+            ("processing", processing_id),
+            ("done", done_id),
+            ("failed", failed_id),
+            ("sent", sent_id),
+        ):
+            _set_reply_task_parts(db, task_id, status=status)
 
     before = [
         tuple(row)
@@ -1309,10 +1338,7 @@ def test_legacy_terminalization_leaves_nonmatching_tasks_unchanged(
     task = _create_legacy_terminalization_task(task_store, name, **task_kwargs)
     if terminal_status is not None:
         with sqlite3.connect(database) as db:
-            db.execute(
-                "update tasks set status=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                (terminal_status, task.id),
-            )
+            _set_reply_task_parts(db, task.id, status=terminal_status)
     before = tuple(
         _fetchall(
             database,
@@ -1351,9 +1377,8 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
     original = _create_legacy_terminalization_task(task_store, race)
     with sqlite3.connect(database) as db:
         if race == "generation":
-            db.execute(
-                "update tasks set execution_generation=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                ("replacement-generation", original.id),
+            _set_reply_task_parts(
+                db, original.id, execution_generation="replacement-generation"
             )
         else:
             replacement_payload = json.dumps(
@@ -1364,11 +1389,12 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
                 },
                 sort_keys=True,
             )
-            db.execute(
-                "update tasks set trigger_message_json=? where record_type='reply_task_inputs' "
-                "and id=(select current_input_id from tasks where record_type='reply_tasks' "
-                "and cast(legacy_key as integer)=?)",
-                (replacement_payload, original.id),
+            input_id = db.execute(
+                f"select current_input_id from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (original.id,),
+            ).fetchone()[0]
+            _set_task_input_parts(
+                db, input_id, trigger_message_json=replacement_payload
             )
     before = tuple(
         _fetchall(
@@ -1613,9 +1639,9 @@ def _count_connections(store: EmailStore, monkeypatch) -> list[int]:
     opened = [0]
     original = store._open_connection
 
-    def counted() -> sqlite3.Connection:
+    def counted(*args, **kwargs) -> sqlite3.Connection:
         opened[0] += 1
-        return original()
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(store, "_open_connection", counted)
     return opened
@@ -1702,9 +1728,8 @@ def test_a_failed_unsubscribe_task_without_a_receipt_carries_its_own_error(
         execution_generation="generation:inflight-unsubscribe-error",
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update tasks set status='failed', error=? where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            ("email_unsubscribe_browser_timeout", task.id),
+        _set_reply_task_parts(
+            db, task.id, status="failed", error="email_unsubscribe_browser_timeout"
         )
 
     events = email_store.list_email_classification_observability(
@@ -1780,18 +1805,22 @@ def _corrupt_schema_object_name(
         db.execute("pragma writable_schema = off")
 
 
-def _replace_email_scan_cursors(database: Path, *, columns_sql: str) -> None:
+def _weaken_scan_cursor_state_check(database: Path) -> None:
     with sqlite3.connect(database) as db:
-        db.executescript(
-            f"""
-            alter table email_scan_cursors rename to old_email_scan_cursors;
-            create table email_scan_cursors (
-                {columns_sql},
-                primary key (account_id, folder)
-            );
-            drop table old_email_scan_cursors;
-            """
+        original = db.execute(
+            "select sql from sqlite_schema where type='table' and name='state'"
+        ).fetchone()[0]
+        assert original.count("uidvalidity>0") == 1
+        damaged = original.replace("uidvalidity>0", "uidvalidity>=0", 1)
+        version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema=on")
+        db.execute(
+            "update sqlite_schema set sql=? where type='table' and name='state'",
+            (damaged,),
         )
+        db.execute(f"pragma schema_version={version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema=off")
 
 
 def _replace_email_action_attempts(
@@ -1991,12 +2020,10 @@ def _assert_current_email_metadata_rejected_without_repair(database: Path) -> No
         ).fetchall()
     bytes_before = sha256(database.read_bytes()).hexdigest()
     for validate_rows in (True, False):
-        with pytest.raises(sqlite3.IntegrityError) as error:
+        with pytest.raises(
+            sqlite3.IntegrityError, match="malformed current provider/config declaration"
+        ):
             EmailStore(database, validate_rows=validate_rows)
-        assert str(error.value) == (
-            "unsupported or malformed Store source schema; expected a fresh Store, "
-            "or the current 2026-10-14.1 schema"
-        )
     with sqlite3.connect(database) as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
         assert db.execute("select count(*) from actions").fetchone()[0] >= 0
@@ -2052,6 +2079,7 @@ def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path,
         execution_generation="test-generation",
     )
     with store._connect() as db:
+        register_task8_functions(db)
         db.execute(
             "update tasks set "
             f"{task8_set_parts('reply_tasks', {}, update_sql={'status': '?'}).sql} "
@@ -2072,38 +2100,31 @@ def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path,
 
 def _insert_account_with_scan_folders_json(database: Path, value: object) -> None:
     with sqlite3.connect(database) as db:
-        db.execute("pragma ignore_check_constraints = on")
-        db.execute(
-            """
-            insert into email_accounts (
-                account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, smtp_host,
-                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
-                enabled, scan_folders_json, scan_interval_seconds, created_at,
-                updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "shape-test-account",
-                "Shape test",
-                "redacted@example.com",
-                "imap.example.com",
-                993,
-                1,
-                "redacted@example.com",
-                "IMAP_SECRET_REFERENCE",
-                "smtp.example.com",
-                465,
-                1,
-                "redacted@example.com",
-                "SMTP_SECRET_REFERENCE",
-                1,
-                value,
-                60,
-                "2026-08-29T16:00:00+00:00",
-                "2026-08-29T16:00:00+00:00",
-            ),
-        )
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            # Preserve the malformed-UTF8 corruption case by bypassing only
+            # the payload-shape CHECK, as the historical fixture did.
+            db.execute("pragma ignore_check_constraints = on")
+        db.execute("begin immediate")
+        insert_config(db, "email_accounts", {
+            "account_id": "shape-test-account",
+            "display_name": "Shape test",
+            "email_address": "redacted@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": 1,
+            "imap_username": "redacted@example.com",
+            "imap_secret_reference": "IMAP_SECRET_REFERENCE",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 465,
+            "smtp_tls": 1,
+            "smtp_username": "redacted@example.com",
+            "smtp_secret_reference": "SMTP_SECRET_REFERENCE",
+            "enabled": 1,
+            "scan_folders_json": value,
+            "scan_interval_seconds": 60,
+            "created_at": "2026-08-29T16:00:00+00:00",
+            "updated_at": "2026-08-29T16:00:00+00:00",
+        })
 
 
 def _create_prototype_database(
@@ -3129,15 +3150,11 @@ def test_current_schema_rejects_non_text_sqlite_master_identifiers(
 @pytest.mark.parametrize(
     "metadata_field",
     (
+        "sqlite_master object name",
+        "sqlite_master object owner",
         "sqlite_master table name",
         "pragma table_info column name",
-        "pragma index_list index name",
-        "pragma index_info column name",
-        "pragma foreign_key_list source column",
-        "pragma foreign_key_list target table",
-        "pragma foreign_key_list target column",
         "sqlite_master trigger name",
-        "sqlite_master trigger table name",
     ),
 )
 def test_schema_metadata_paths_reject_non_text_identifiers(
@@ -3164,34 +3181,11 @@ def test_schema_metadata_paths_reject_non_text_identifiers(
         EmailStore(database)
 
 
-def test_foreign_key_on_delete_metadata_rejects_non_text_value(tmp_path: Path):
-    database = tmp_path / "invalid-foreign-key-on-delete.sqlite3"
-    EmailStore(database)
-
-    class CorruptOnDeleteRow:
-        def __init__(self, row: sqlite3.Row):
-            self._row = row
-
-        def __getitem__(self, key: object):
-            if key == "on_delete":
-                return 7
-            return self._row[key]
-
-    class CorruptOnDeleteStore(EmailStore):
-        def _open_connection(self) -> sqlite3.Connection:
-            db = super()._open_connection()
-
-            def row_factory(cursor: sqlite3.Cursor, values: tuple[object, ...]):
-                row = sqlite3.Row(cursor, values)
-                if "on_delete" in row.keys():
-                    return CorruptOnDeleteRow(row)
-                return row
-
-            db.row_factory = row_factory
-            return db
-
+def test_schema_metadata_enum_rejects_non_text_on_delete_value():
     with pytest.raises(EmailPersistenceCorruption, match="schema text.*on_delete"):
-        CorruptOnDeleteStore(database)
+        email_store_module._schema_metadata_enum(
+            7, field="pragma foreign_key_list on_delete"
+        )
 
 
 def test_current_schema_rejects_uppercase_action_status_literals(tmp_path: Path):
@@ -3265,27 +3259,17 @@ def test_current_schema_rejects_extra_canonical_email_column(tmp_path: Path):
     }
 
 
-def test_current_schema_rejects_weakened_cursor_column_declarations_and_checks(
+def test_current_schema_rejects_weakened_cursor_state_check(
     tmp_path: Path,
 ):
     database = tmp_path / "weakened-cursor-schema.sqlite3"
     EmailStore(database)
     gc.collect()
-    _replace_email_scan_cursors(
-        database,
-        columns_sql="""
-            account_id text not null,
-            folder text not null,
-            uidvalidity text,
-            last_seen_uid text,
-            last_success_at text,
-            last_error text
-        """,
-    )
+    _weaken_scan_cursor_state_check(database)
 
     with pytest.raises(
-        EmailPersistenceCorruption,
-        match="email_scan_cursors.*uidvalidity",
+        sqlite3.IntegrityError,
+        match="malformed current provider/config declaration",
     ):
         EmailStore(database)
 
@@ -3440,69 +3424,37 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    "damaged_declaration",
+    ("original_clause", "damaged_clause"),
     (
-        "threshold text not null check(threshold >= 0.0 and threshold <= 1.0)",
-        "core_description text check(trim(core_description) != '')",
+        ("category_threshold real generated always", "category_threshold text generated always"),
+        ("trim(category_core_description)!=''", "trim(category_core_description)=''"),
     ),
 )
-def test_current_schema_rejects_wrong_config_column_type_or_default(
+def test_current_schema_rejects_wrong_config_type_or_check(
     tmp_path: Path,
-    damaged_declaration: str,
+    original_clause: str,
+    damaged_clause: str,
 ):
     database = tmp_path / "wrong-config-declaration.sqlite3"
     EmailStore(database)
     gc.collect()
-    core_description_declaration = (
-        damaged_declaration
-        if damaged_declaration.startswith("core_description")
-        else "core_description text not null check(trim(core_description) != '')"
-    )
-    threshold_declaration = (
-        damaged_declaration
-        if damaged_declaration.startswith("threshold")
-        else "threshold real not null check(threshold >= 0.0 and threshold <= 1.0)"
-    )
     with sqlite3.connect(database) as db:
-        db.executescript(
-            f"""
-                alter table email_category_configs rename to old_email_category_configs;
-                create table email_category_configs (
-                    category_key text primary key check(trim(category_key) != ''),
-                    display_name text not null check(trim(display_name) != ''),
-                    {core_description_declaration},
-                    include_json text not null
-                        check(json_valid(include_json))
-                        check(json_type(include_json) = 'array')
-                        check(json_array_length(include_json) > 0)
-                        check(trim(json_extract(include_json, '$[0]')) != ''),
-                    exclude_json text not null
-                        check(json_valid(exclude_json))
-                        check(json_type(exclude_json) = 'array')
-                        check(json_array_length(exclude_json) > 0)
-                        check(trim(json_extract(exclude_json, '$[0]')) != ''),
-                    {threshold_declaration},
-                    actions_json text not null check(json_valid(actions_json)),
-                    action_parameters_json text not null
-                        check(json_valid(action_parameters_json)),
-                    enabled integer not null check(enabled in (0, 1)),
-                    description_version text not null
-                        check(trim(description_version) != ''),
-                    config_version text not null check(trim(config_version) != ''),
-                    updated_at text not null check(trim(updated_at) != '')
-                );
-            drop table old_email_category_configs;
-            """
+        original = db.execute(
+            "select sql from sqlite_schema where type='table' and name='configs'"
+        ).fetchone()[0]
+        assert original.count(original_clause) == 1
+        damaged = original.replace(original_clause, damaged_clause, 1)
+        version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema=on")
+        db.execute(
+            "update sqlite_schema set sql=? where type='table' and name='configs'",
+            (damaged,),
         )
-
-    expected_column = (
-        "core_description"
-        if damaged_declaration.startswith("core_description")
-        else "threshold"
-    )
+        db.execute(f"pragma schema_version={version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema=off")
     with pytest.raises(
-        EmailPersistenceCorruption,
-        match=rf"email_category_configs.*{expected_column}",
+        sqlite3.IntegrityError, match="malformed current provider/config declaration"
     ):
         EmailStore(database)
 
@@ -3530,14 +3482,14 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
 @pytest.mark.parametrize(
     ("damage_sql", "match"),
     (
-        ("drop table email_scan_cursors", "email_scan_cursors"),
+        ("drop table state", "unsupported or mixed Store/Email source schema"),
         (
-            "drop index idx_actions_email_email_actions_1",
-            "required Email29 action schema is missing or malformed",
+            "drop index idx_state_email_scan_cursors_pk",
+            "malformed current provider/config declaration",
         ),
         (
-            "drop trigger trg_email_classification_status_insert",
-            "trg_email_classification_status_insert",
+            "drop trigger trg_configs_snapshot_update",
+            "malformed current provider/config declaration",
         ),
     ),
 )
@@ -3550,28 +3502,10 @@ def test_current_schema_missing_required_structure_is_domain_corruption(
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
-        if damage_sql == "drop index idx_actions_email_email_actions_1":
-            assert db.execute(
-                "select sql from sqlite_schema where type='index' and name=?",
-                ("idx_actions_email_email_actions_1",),
-            ).fetchone()[0] == (
-                "CREATE INDEX idx_actions_email_email_actions_1 "
-                "on actions(email_status,email_updated_at,email_action_id) "
-                "where record_type='email_actions'"
-            )
         db.execute(damage_sql)
-        if damage_sql == "drop index idx_actions_email_email_actions_1":
-            assert db.execute(
-                "select 1 from sqlite_schema where name='idx_actions_email_email_actions_1'"
-            ).fetchone() is None
 
-    with pytest.raises(EmailPersistenceCorruption, match=match):
+    with pytest.raises(sqlite3.IntegrityError, match=match):
         EmailStore(database)
-    if damage_sql == "drop index idx_actions_email_email_actions_1":
-        with sqlite3.connect(database) as db:
-            assert db.execute(
-                "select 1 from sqlite_schema where name='idx_actions_email_email_actions_1'"
-            ).fetchone() is None
 
 
 def test_current_schema_requires_unsubscribe_receipt_classification_index(
@@ -3597,8 +3531,7 @@ def test_current_schema_requires_unsubscribe_receipt_classification_index(
         db.execute(f"drop index {index_name}")
 
     with pytest.raises(
-        EmailPersistenceCorruption,
-        match="required Email29 action schema is missing or malformed",
+        sqlite3.IntegrityError, match="malformed current provider/config declaration"
     ):
         EmailStore(database)
     with sqlite3.connect(database) as db:
@@ -3754,24 +3687,31 @@ def test_current_schema_missing_required_foreign_key_is_domain_corruption(
     _assert_current_email_metadata_rejected_without_repair(database)
 
 
-def test_current_schema_missing_required_primary_key_is_domain_corruption(
+def test_current_schema_missing_required_state_primary_key_is_rejected(
     tmp_path: Path,
 ):
     database = tmp_path / "missing-cursor-primary-key.sqlite3"
     EmailStore(database)
     gc.collect()
     with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            alter table email_scan_cursors rename to old_email_scan_cursors;
-            create table email_scan_cursors as
-                select * from old_email_scan_cursors where false;
-            drop table old_email_scan_cursors;
-            """
+        original = db.execute(
+            "select sql from sqlite_schema where type='table' and name='state'"
+        ).fetchone()[0]
+        assert original.count("id integer primary key") == 1
+        damaged = original.replace("id integer primary key", "id integer", 1)
+        version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema=on")
+        db.execute(
+            "update sqlite_schema set sql=? where type='table' and name='state'",
+            (damaged,),
         )
+        db.execute(f"pragma schema_version={version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema=off")
 
     with pytest.raises(
-        EmailPersistenceCorruption, match="primary key.*email_scan_cursors"
+        sqlite3.IntegrityError,
+        match="malformed current provider/config declaration",
     ):
         EmailStore(database)
 
@@ -5615,8 +5555,8 @@ def test_direct_action_probe_does_not_load_retired_pending_plan_bodies(
     original_open = store._open_connection
     payload_reads = []
 
-    def instrumented_connection():
-        db = original_open()
+    def instrumented_connection(*args, **kwargs):
+        db = original_open(*args, **kwargs)
 
         def authorize(operation, table, column, database, trigger):
             if operation == sqlite3.SQLITE_READ and table == "actions" and column == "email_actions_json":
@@ -5652,8 +5592,8 @@ def test_idle_direct_action_poll_does_not_wait_for_writer(tmp_path, monkeypatch,
                     })
     open_connection = store._open_connection
 
-    def no_wait_connection():
-        db = open_connection()
+    def no_wait_connection(*args, **kwargs):
+        db = open_connection(*args, **kwargs)
         db.execute("pragma busy_timeout=0")
         return db
 
@@ -7682,8 +7622,8 @@ def test_unsubscribe_state_snapshot_surfaces_real_sqlite_busy(
 
     original_open_connection = store._open_connection
 
-    def no_wait_open_connection():
-        db = original_open_connection()
+    def no_wait_open_connection(*args, **kwargs):
+        db = original_open_connection(*args, **kwargs)
         db.execute("pragma busy_timeout=0")
         return db
 
@@ -9043,8 +8983,8 @@ def test_connect_closes_connection_after_each_call(
     opened: list[sqlite3.Connection] = []
     original_open_connection = EmailStore._open_connection
 
-    def recording_open_connection(self: EmailStore) -> sqlite3.Connection:
-        db = original_open_connection(self)
+    def recording_open_connection(self: EmailStore, *args, **kwargs) -> sqlite3.Connection:
+        db = original_open_connection(self, *args, **kwargs)
         opened.append(db)
         return db
 
@@ -9076,8 +9016,8 @@ def test_connect_rolls_back_and_closes_when_the_body_raises(
     opened: list[sqlite3.Connection] = []
     original_open_connection = EmailStore._open_connection
 
-    def recording_open_connection(self: EmailStore) -> sqlite3.Connection:
-        db = original_open_connection(self)
+    def recording_open_connection(self: EmailStore, *args, **kwargs) -> sqlite3.Connection:
+        db = original_open_connection(self, *args, **kwargs)
         opened.append(db)
         return db
 
@@ -9085,10 +9025,14 @@ def test_connect_rolls_back_and_closes_when_the_body_raises(
 
     with pytest.raises(RuntimeError, match="body failed"):
         with store._connect() as db:
-            db.execute(
-                "delete from email_accounts where account_id=?",
+            db.execute("begin immediate")
+            account = db.execute(
+                f"select rowid from ({config_projection('email_accounts', include_rowid=True)}) "
+                "where account_id=?",
                 ("fd-regression-account",),
-            )
+            ).fetchone()
+            assert account is not None
+            delete_config(db, "email_accounts", account[0])
             raise RuntimeError("body failed")
 
     assert len(opened) == 1

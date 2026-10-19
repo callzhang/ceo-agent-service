@@ -153,3 +153,7 @@ Consumer dispatcher 的旧夹具20个已观察失败已闭合：整文件74项�
 最新生产冷恢复补验通过：独立副本逆迁后由干净生产代码 `78e8c4474` 冷启动，新原生任务5715333616543262及其run／attempt／业务结果／唯一执行回执完全一致，quick_check=ok、FK仅原基线，未重新执行。耗时1739.245秒，0生产写入／0真实发送／0本次模型调用；保留此前完整inverse／实际child再正迁证据，不重复计原文退休。数值投影修复后又以当前候选冷读最终副本，native业务快照逐项相等。
 
 Email worker 此前17个观察到的失败节点全部定向通过（64.89秒）。主agent复核后，输入修改准确关联 current_input_id，并恢复精确单行写入断言；代际／输入替换／恢复12项追加控制通过（43.81秒），原隐私、生命周期、回执及scanner冲突回滚断言保留。未重复跑整文件；无运行时变更。
+
+Email Store 已按当前名称／参数映射50个观察到的旧失败，合并定向52项通过（145.43秒）。主agent将cursor／config破坏案例改为准确当前声明名称及实际SQL参数后3项通过（10.99秒）。动态独立复核确认当前constructor实际覆盖5种metadata标识路径；旧FK-enum路径不再由当前constructor执行，单独保留helper测试，当前共享FK声明破坏拒绝仍有独立覆盖。未新增运行时检查或兼容分支。
+
+最新旧代码恢复读回另作完整值比较：原生任务的review_candidate、audit_review、execution、external_action_result、sent_reply、reply_attempt共6类各1行，所有公开字段、SQLite值类型及完整值在最终副本与逆迁后旧代码投影逐项一致；证据仅存字段数／hash，不复制正文。
