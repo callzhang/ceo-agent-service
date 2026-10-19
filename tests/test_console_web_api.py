@@ -3611,7 +3611,11 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=1")
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
+        )
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     sends = []
     monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
@@ -3643,8 +3647,12 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update tasks set execution_generation=?,status='pending' where record_type='reply_tasks' and cast(legacy_key as integer)=1", (generation,))
-        db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
+        parts = task8_set_parts("reply_tasks", {"execution_generation": generation, "status": "pending"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
+        )
+        update_task_delivery_action(db, "wechat_deliveries", delivery_id, {"conversation_id": conversation})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     with _client(tmp_path) as client:
         item = client.get(f"/api/console/history/{attempt_id}").json()["item"]
