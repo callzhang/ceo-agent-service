@@ -58,4 +58,15 @@ Skill 的仓库源以 `ci/shared-skills` 为准；既有 operation Skill 仍按�
 
 ## 发布核查
 
-使用 `python -m app.deploy --publish-consumer-system-contracts`，由部署器等待静默、备份、快进生产、发布 Skill/配置、重启和读回。发布结果、生产版本、PID、healthz、队列、Attention、History、14 项配置以实际核查补充。已有完成报告不重放。
+使用 `python -m app.deploy --publish-consumer-system-contracts`，由部署器等待静默、备份、快进生产、发布 Skill/配置、重启和读回。已有完成报告不重放。
+
+2026-10-19 实际发布结果：
+
+- 部署操作 `deploy-5c9b8d79-070c-40f5-b362-2911e2b3db7d`，状态 succeeded，无错误。生产从 `0b6728edb533415527f7ee66c39d2bd54c9bfc99` 更新为 `51781f1c2eee5a0f46ebf880fd8f66b422b67388`。发布前已保留并核对同期主线变更，合并后另有52项交叉测试通过。
+- 主进程 PID `73291`，healthz 返回 ok，active runtime Skill config `348`。三项报告的 managed Skill 摘要与仓库一致；本次26项发布资产通过部署器加载校验。
+- 14项任务的ID、迁移键、周期、时区、启停状态逐项一致；非报告任务prompt未改变。OKR任务6已由 service command 改为普通 codex_oauth Agent，三项报告使用新prompt/Skill；历史138份配置快照完整摘要仍为 `130f6afff6bfaca9fe2d72d84e54c9ff1c51b8a25f279a9c42f5f797c0311bfe`。
+- 22:01 UTC读回：Attention由5降至4；History失败记录仍为同一8条，无新增ID。Reply队列的1项待处理来自既有 `manual_rerun_from_attempt:15698`；本次没有触发该重跑。其后已由dispatcher领取，独立于报告迁移。
+- 22:03 UTC起，调度器和dispatcher有新心跳，自动产生钉钉/邮件/日历扫描385880、385881、385882，使用当前任务版本。后续周期按原有overlap规则跳过未完成的同任务执行；初次观察时扫描仍在运行，未将pending记作完成。随后385880完成，摘要 `produce-once queued=0`；385881完成，摘要 `email-message-check-once accounts=2 discovered=5 failures=0`；385882仍在执行。再次读取History仍为相同8条失败记录。
+- 日报下一次为2026-10-20 13:00 UTC，管理周报为2026-10-24 19:00 UTC，OKR周报为2026-10-25 10:00 UTC。没有手动重放既有报告；本次未取得新版本报告的真实外部发布回执。
+
+代码与发布检查通过不等于固定Agent七案例全通过，也不等于下一次报告已经发布。严格Agent注释验收和真实报告结果仍按上述边界保留未验证/未通过状态。
