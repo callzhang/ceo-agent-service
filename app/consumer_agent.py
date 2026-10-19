@@ -341,7 +341,8 @@ proposal merely because a tool writes. Use actual tool results and readback as
 evidence of that work. A summary is not a receipt of a controlled action.
 Use consumer_artifact_write for ordinary local drafts and files, with
 read_task_artifact/list_task_artifacts for this task generation's artifacts.
-consumer_document_write remains the bound scheduled-report document workflow.
+consumer_document_write writes a scheduled task artifact to its explicit document target.
+consumer_run_skill_script executes a selected Skill script for deterministic local work.
 Codex Consumer can run local code using native command and patch tools in its
 current task workspace. The native workspace sandbox keeps writes in that
 workspace and native temporary directories, and disables command network

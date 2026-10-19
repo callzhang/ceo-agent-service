@@ -957,7 +957,7 @@ Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取当
 作为耐久参考区、禁止把临时代码、测试、数据库、日志、下载、截图、缓存、草稿、中间结果或单次运行
 工件存入 memory，临时文件只使用 task-bound `/tmp` 工作区；有价值的最终材料仅在已有授权目的地按主题
 归档。部署前遗留的 workspace 工件会在任务下次读写时迁入 `/tmp`，终态清理也会清除尚未访问的旧位置。
-原 `consumer_document_write` 继续只处理绑定的日报/周报文档。工具返回的实际内容读回及 SHA
+`consumer_document_write` 处理当前 scheduled 任务产物和显式文档目标。工具返回的实际内容读回及 SHA
 证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
 Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
 系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，
@@ -2141,10 +2141,20 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 
 所有任务只通过 `app/service_browser.py` 的 `launch_service_chrome` 启动浏览器：真 Chrome、始终无头、指向调用方自己的资料目录；启动前把最新的副本放进该目录的 `Default/Cookies`，并去掉 Playwright 默认的 `--use-mock-keychain`（否则 Chrome 解不开复制来的 cookie）。这样由真 Chrome 自己读“Chrome Safe Storage”钥匙串项，不会弹授权。副本是快照，会话过期后等下一次同步；不连接你正在用的 Chrome（Chrome 136 起默认资料目录不允许远程调试）。
 
-另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，Audit 只读审核，审核通过后由 System Executor 使用原生 sender 执行精确持久化动作。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）精确匹配目标与上期文档。目标只接受目标周一标题；上期缺少前一个周一标题时，仅在上一报告周内回看最近日期的精确标准标题，支持实际会议改期到周日等日期；后缀草稿不匹配，无唯一标准标题返回 `exists: false`，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
-访问申请页需等待申请按钮实际可用；按钮仍禁用时保留为申请人未解析，下一轮继续尝试。页面仅显示加载壳或其他非权限内容时不能当作已可读，只有听记读取 API 能确认可读。
-默认 seed。
-周报校验与渲染工具的参数结构由 `app/weekly_report_contracts.py` 声明。原生工具 schema 展示 manifest 的对象结构、company_metrics 的对象数组及报告其他容器；SDK 在调用前返回格式错误的字段路径。目标文档存在时，manifest 必须含完整 node ID 与非负整数 revision（可为 provider 返回的十进制字符串）；目标不存在时必须含目标标题和已解析的创建父节点，revision 不适用。保留额外字段和原始值，不补默认业务内容、不转换错误容器，也不将结构规范全量加入 prompt。渲染工具自行读取服务解析出的目标文档完整 JSONML；目标缺失时改用上期周会完整 JSONML。若已存在目标只含空段落与空文本 span 的结构骨架，渲染工具以完整上期周会 JSONML 作为模板，同时保留空白目标当前的存在状态、revision 和写入守卫，并返回实际基底标题；有其他结构或内容的目标仍按原文渲染，空白目标缺少完整上期材料时停止。Skill validator 在渲染前核对业务约束及 renderer 实际读取的指标、问题、负责人和业务线字段，避免校验通过后才因缺字段在渲染器内逐项失败。服务只接受 `publishable: true` 的校验结果，并将其绑定到该份报告的稳定 JSON 摘要；未通过或缺失校验时不允许渲染，报告变化后必须重新校验。每次校验都会清除之前的渲染绑定，因此失败校验后旧 `render_id` 也不能写入。`consumer-system-contract-release` 将 `report_contract.py`、`validate_run.py` 与 Weekly Report Skill 一起原子发布。渲染通过后，服务不把完整目标 JSONML放进工具响应，而将精确正文、目标存在状态和 revision 绑定在当前 Consumer turn；工具向 Agent 返回完整七节草稿、解析结果及 `render_id`。任务绑定写入通过该 ID 提交同一正文，沿用 JSONML 校验，并对已有目标使用绑定 revision 做版本守卫，对缺失目标执行创建。若目标在渲染后出现或消失，写入阻止继续，需重新读取和渲染。
+另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。
+
+定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
+
+`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
+
+日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。
+
+OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
+
+发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
+
+访问申请页等待申请按钮实际可用；非权限加载壳不能当作已可读，只有听记读取 API 确认可读。Lark 没有默认定时任务 seed。
+
 内部投递、发送状态确认、错误恢复仍是内部机制，不外化为 Cron；催办不自动发送，只由 Derek 点按钮发送。
 
 Task Agent 的正常 liveness 由结构化 provider stdout 事件驱动：执行器在完整事件行被消费后续租
@@ -2307,8 +2317,7 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
   英文 `QR Code` 标签匹配；可见的“立即登录”按钮可能被遮罩挡住，因此只有扫码入口缺失时
   才尝试直接账号入口。SSO 选择器/组织缺失和导航错误必须保留实际异常，不能静默吞掉后
   统一报“会话过期”；有限等待超时仍按真实认证/浏览器故障失败，不绕过验证或伪造取数成功。
-- `weekly_okr`：定时生成管理者 OKR 进度周报。评分范围是当前 OKR 周期起始日至报告日（例如 Q3 至今），本周窗口只用于标记新增进展和风险。全流程先领取并持续续租全局 run lease，避免超过重试间隔的长任务被重复启动；每位管理者的模型分析调用直接使用服务统一配置的应急总上限（生产为 2 小时）和 idle watchdog（生产为 5 分钟）；只要持续产生有效结构化进展事件，模型可以在应急上限内继续运行。超时只失败该管理者的分析任务并释放其租约，主流程不会无限等待；管理者分析的父租约覆盖完整模型调用、一次结构化校验重试及运行时恢复余量，避免维护扫尾在分析仍运行时提前回收并造成终态冲突；结构化输出同时固定每个管理者恰好 3 个文化价值观维度，模型复述 KR 标题且省略可用 ID 时，在行数准确且标题非空的前提下按实时源顺序绑定，仍校验重复、缺行和全名单覆盖；分析、报告发布和群摘要获得 provider 成功结果后，推进周报成功日期。每位 OKR 名单成员都必须保留一条评分区块；系统没有本周进展时按无新增进展和证据缺口评分，不得因为分析输出缺行而发布部分人员版本。
-- 实际使用 AgentOrchestrator 的业务候选遵循新的 Consumer → 只读 Audit → System 执行契约。微信 task3 仍由 dispatcher 调用 WechatReplyConsumer / WechatDecisionRunner，持久化 delivery 后由独立 Sender 循环处理，没有独立 Audit 回合；本次未将它迁移到 candidate/review/SystemExecutor。其 audit_summary 是既有决策字段，不是独立审核回执。扫描、下载、登录等服务命令沿用技术结果验证，系统任务对应表不为这些路径新增 Audit 回合。
+- 管理者 OKR 周报使用普通 scheduled Agent 与 `ceo-weekly-okr-report` Skill。实时取数按成员执行；评分公式、身份绑定和渲染在 Skill 脚本，来源和发布事实使用既有记录。历史 weekly_okr runtime/分析记录保留，当前调度不再创建该独立工作流。
 
 ## 文档索引
 

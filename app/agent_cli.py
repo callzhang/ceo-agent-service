@@ -7,7 +7,6 @@ import base64
 import argparse
 import hashlib
 import errno
-import importlib
 import json
 import mimetypes
 import os
@@ -36,9 +35,10 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from pydantic_core import to_json
 
-from app.action_contract_catalog import read_system_action_contract as load_system_action_contract
+from app.action_contract_catalog import (
+    read_system_action_contract as load_system_action_contract,
+)
 from app.agent_result import EffectKind
-from app.weekly_report_contracts import WeeklyReport, WeeklyReportManifest
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_skill_usage import resolve_authorized_skill_path
 from app.bounded_process import (
@@ -62,8 +62,8 @@ from app.native_cli_metadata import (
 )
 from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
 
-REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+REPLY_TASK_INPUT_SQL = task20_projection("reply_task_inputs")
+REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
@@ -86,7 +86,7 @@ SPREADSHEET_MATERIAL_ROOTS = (
     Path(tempfile.gettempdir()).resolve(),
 )
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
-MAX_TASK_FILE_BYTES = MAX_CLI_OUTPUT_BYTES
+MAX_TASK_FILE_BYTES = 2 * 1024 * 1024
 _TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
 
 
@@ -1401,321 +1401,165 @@ def _task_file_path(root: Path, name: str) -> Path:
     return path
 
 
-def _read_task_file(root: Path, name: str) -> dict[str, str]:
+def _read_task_file(
+    root: Path, name: str, offset: int = 0, max_chars: int = 20000
+) -> dict[str, object]:
     path = _task_file_path(root, name)
     if not path.is_file():
         raise ValueError("task file is unavailable")
     data = path.read_bytes()
     if len(data) > MAX_TASK_FILE_BYTES:
         raise ValueError("task file is too large")
-    item = {"name": name, "content": data.decode("utf-8"),
-            "sha256": hashlib.sha256(data).hexdigest()}
+    text = data.decode("utf-8")
+    if type(offset) is not int or offset < 0 or not 1 <= max_chars <= 20000:
+        raise ValueError("invalid artifact read interval")
+    item = {
+        "name": name,
+        "content": text[offset : offset + max_chars],
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    if offset or len(text) > max_chars:
+        item.update(
+            offset=offset,
+            total_chars=len(text),
+            next_offset=offset + max_chars if offset + max_chars < len(text) else None,
+        )
     if len(json.dumps(item).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
         raise ValueError("task file readback is too large")
     return item
 
 
-def _bound_report(db_path: Path | None, task_id: int | None):
+def _bound_scheduled_run(db_path: Path | None, task_id: int | None):
     from app.store import AutoReplyStore
 
     if db_path is None or type(task_id) is not int or task_id <= 0:
-        raise AgentReadOnlyViolationError("agent_cli_task_binding_missing")
+        raise ValueError("scheduled task binding is missing")
     store = AutoReplyStore(db_path)
     task = store.get_reply_task(task_id)
     if task is None or task.channel != "scheduled":
-        raise AgentReadOnlyViolationError("agent_cli_report_task_invalid")
+        raise ValueError("scheduled task required")
     run = store.get_scheduled_task_run_for_reply_execution(task_id)
     if run is None:
-        raise AgentReadOnlyViolationError("agent_cli_report_run_missing")
-    skill_names = {ref.skill_name for ref in run.snapshot.skill_refs}
-    if "ceo-daily-report" in skill_names:
-        return store, run, "daily"
-    if "ceo-weekly-report" in skill_names:
-        return store, run, "weekly"
-    raise AgentReadOnlyViolationError("agent_cli_report_skill_missing")
+        raise ValueError("scheduled run is missing")
+    return store, run
 
 
-def _weekly_skill_module(name: str):
-    """Import one installed, fixed weekly-report script as a Python module."""
-    skill_root = Path.home() / ".agents" / "skills" / "ceo-weekly-report"
-    if not (skill_root / "scripts" / f"{name}.py").is_file():
-        raise AgentReadOnlyViolationError("weekly_report_script_unavailable")
-    skill_path = str(skill_root)
-    if skill_path not in sys.path:
-        sys.path.insert(0, skill_path)
-    module = importlib.import_module(f"scripts.{name}")
-    if not Path(module.__file__).resolve().is_relative_to(skill_root.resolve()):
-        raise AgentReadOnlyViolationError("weekly_report_script_mismatch")
-    return module
-
-
-def _write_bound_report_document(
-    *, db_path: Path | None, task_id: int | None, content: str,
-    expected_revision: int | None, expected_target_exists: bool | None = None,
+def _write_document_artifact(
+    *,
+    root: Path,
+    artifact_name: str,
+    title: str,
+    doc_format: str,
+    node_id: str = "",
+    parent_id: str = "",
+    workspace_id: str = "",
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
-    """Write only the report document resolved from this scheduled run."""
-    from app.config import workspace_path
-    from app.daily_report_facts import report_window_for_run
+    """Submit an exact task artifact to an explicit provider target."""
     from app.dws_client import DwsClient
-    from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-    from app.weekly_report_materials import (
-        MANAGEMENT_WIKI_NAME,
-        _at_most_one, _data_list, _nodes, _single,
-        collect_weekly_report_materials,
-    )
 
-    store, run, kind = _bound_report(db_path, task_id)
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError("report document content is required")
-    if len(content.encode("utf-8")) > 2 * 1024 * 1024:
-        raise ValueError("report document content is too large")
+    material = _task_file_path(root, artifact_name)
+    if not material.is_file() or material.stat().st_size > MAX_TASK_FILE_BYTES:
+        raise ValueError("document artifact is unavailable or too large")
+    content = material.read_bytes().decode("utf-8")
+    if not content.strip() or not title.strip():
+        raise ValueError("document title and content are required")
+    if doc_format not in {"markdown", "jsonml"}:
+        raise ValueError("unsupported document format")
     dws = DwsClient()
-    if kind == "weekly":
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError("weekly report JSONML is invalid") from exc
-        if not isinstance(parsed, list):
-            raise ValueError("weekly report JSONML must be an array")
-        errors = _weekly_skill_module("jsonml_check").check_document(parsed)
-        if errors:
-            raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
-        native_parse = dws.validate_report_jsonml(content)
-        assessment = native_parse.get("assessment")
-        if assessment is None and isinstance(native_parse.get("data"), dict):
-            assessment = native_parse["data"].get("assessment")
+    if doc_format == "jsonml":
+        parsed = dws.validate_report_jsonml(content)
+        assessment = parsed.get(
+            "assessment", (parsed.get("data") or {}).get("assessment")
+        )
         if assessment != "passed":
-            raise ValueError("weekly report document parser did not pass")
-    if kind == "daily":
-        report_date = report_window_for_run(store, run.id).report_date
-        title = f"CEO 每日总结 {report_date.isoformat()}"
-        workspace_id = _single(
-            [
-                item for item in _data_list(dws.run_json([
-                    dws.dws_bin, "wiki", "+space-list", "--type", "orgWikiSpace",
-                    "--limit", "50", "--page-all", "--format", "json",
-                ]), "spaces")
-                if item.get("name") == MANAGEMENT_WIKI_NAME
-            ],
-            "CEO management wiki",
-        )["workspaceId"]
-        folder = _at_most_one(
-            [node for node in _nodes(dws, workspace_id, parent_id=None)
-             if node.get("name") == "CEO 每日总结"],
-            "CEO daily report folder",
-        )
-        if folder is None:
-            dws.run_json([
-                dws.dws_bin, "wiki", "+node-create", "--workspace", workspace_id,
-                "--name", "CEO 每日总结", "--type", "folder", "--format", "json",
-            ])
-            folder = _single(
-                [node for node in _nodes(dws, workspace_id, parent_id=None)
-                 if node.get("name") == "CEO 每日总结"],
-                "CEO daily report folder",
-            )
-        folder_id = folder["nodeId"]
-        doc_format = "markdown"
-    else:
-        materials = collect_weekly_report_materials(
-            store, dws, workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
-            run.scheduled_for,
-        )
-        docs = materials["documents"]
-        title = docs["target"]["title"]
-        folder_id = docs["target"]["year_page_id"]
-        workspace_id = docs["workspace_id"]
-        if not folder_id:
-            dws.run_json([
-                dws.dws_bin, "wiki", "+node-create", "--workspace", workspace_id,
-                "--folder", docs["meeting_folder_id"],
-                "--name", docs["target"]["year_page_name"],
-                "--type", "adoc", "--format", "json",
-            ])
-            folder_id = _single(
-                [node for node in _nodes(dws, workspace_id, parent_id=docs["meeting_folder_id"])
-                 if node.get("name") == docs["target"]["year_page_name"]],
-                "meeting year page",
-            )["nodeId"]
-        doc_format = "jsonml"
-
-    found = _at_most_one(
-        [node for node in _nodes(dws, workspace_id, parent_id=folder_id)
-         if node.get("name") == title],
-        "current report document",
-    )
-    if (
-        kind == "weekly"
-        and expected_target_exists is not None
-        and (found is not None) != expected_target_exists
-    ):
-        raise ValueError("weekly report target existence changed after rendering")
-    if found is None:
-        if kind == "weekly" and expected_revision is not None:
-            raise ValueError("weekly report target disappeared after rendering")
-        result = dws.create_report_document(
-            name=title, content=content, doc_format=doc_format,
-            folder_id=folder_id,
-        )
-        found = _single(
-            [node for node in _nodes(dws, workspace_id, parent_id=folder_id)
-             if node.get("name") == title],
-            "created report document",
-        )
-        operation = "created"
-    else:
-        version = None
-        if kind == "weekly":
+            raise ValueError("document JSONML parser did not pass")
+    version = None
+    if node_id:
+        if parent_id:
+            raise ValueError("document update takes node_id, not parent_id")
+        if doc_format == "jsonml":
             if type(expected_revision) is not int or expected_revision < 0:
-                raise ValueError("weekly report requires expected revision")
-            version = dws.save_report_document_version(found["nodeId"])
+                raise ValueError("JSONML update requires expected_revision")
+            version = dws.save_report_document_version(node_id)
         result = dws.overwrite_report_document(
-            node_id=found["nodeId"], content=content, doc_format=doc_format,
+            node_id=node_id,
+            content=content,
+            doc_format=doc_format,
             expected_revision=expected_revision,
         )
         operation = "updated"
+    else:
+        if not parent_id or not workspace_id or expected_revision is not None:
+            raise ValueError(
+                "document creation requires parent_id and workspace_id without revision"
+            )
+
+        def matching_nodes():
+            payload = dws.run_json(
+                [
+                    dws.dws_bin,
+                    "wiki",
+                    "+node-list",
+                    "--workspace",
+                    workspace_id,
+                    "--folder",
+                    parent_id,
+                    "--page-all",
+                    "--format",
+                    "json",
+                ]
+            )
+            data = payload.get("data")
+            if (
+                not isinstance(data, dict)
+                or not isinstance(data.get("nodes"), list)
+                or data.get("hasMore")
+            ):
+                raise ValueError("document parent listing is incomplete")
+            return [item for item in data["nodes"] if item.get("name") == title]
+
+        if matching_nodes():
+            raise ValueError("document target appeared before creation; reread target")
+        result = dws.create_report_document(
+            name=title, content=content, doc_format=doc_format, folder_id=parent_id
+        )
+        found = matching_nodes()
+        if len(found) != 1:
+            raise ValueError("created document target is ambiguous")
+        node_id = found[0]["nodeId"]
+        operation = "created"
     readback = (
-        dws.fetch_report_document_full(found["nodeId"])
-        if kind == "weekly" else dws.read_doc(found["nodeId"])
+        dws.fetch_report_document_full(node_id)
+        if doc_format == "jsonml"
+        else dws.read_doc(node_id)
     )
-    receipt = {
-        "operation": operation, "node_id": found["nodeId"], "title": title,
-        "provider_result": result, "readback": readback,
-        "saved_version": version if kind == "weekly" and operation == "updated" else None,
+    raw = json.dumps(readback, ensure_ascii=False).encode("utf-8")
+    receipt_name = (
+        hashlib.sha256(raw).hexdigest()
+        + ".readback.json"
+    )
+    _task_file_path(root, receipt_name).write_bytes(raw)
+    return {
+        "operation": operation,
+        "node_id": node_id,
+        "title": title,
+        "provider_result": result,
+        "saved_version": version,
+        "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "readback": {
+            "artifact_name": receipt_name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        },
     }
-    if kind == "daily":
-        receipt["folder"] = folder
-    return receipt
-
-
-def _weekly_report_jsonml_is_blank(document: object) -> bool:
-    """Recognize only an empty DingTalk paragraph skeleton as a blank report."""
-    if not isinstance(document, list) or len(document) < 3 or document[0] != "root":
-        return False
-
-    def blank_node(node: object) -> bool:
-        if not isinstance(node, list) or len(node) < 2:
-            return False
-        tag, attributes = node[0], node[1]
-        if tag == "p":
-            if not isinstance(attributes, dict):
-                return False
-        elif tag == "span":
-            if (
-                not isinstance(attributes, dict)
-                or attributes.get("data-type") not in {"text", "leaf"}
-            ):
-                return False
-        else:
-            return False
-        for child in node[2:]:
-            if isinstance(child, str):
-                if child.strip():
-                    return False
-            elif isinstance(child, list):
-                if not blank_node(child):
-                    return False
-            else:
-                return False
-        return True
-
-    for child in document[2:]:
-        if not blank_node(child):
-            return False
-    return True
-
-
-def _weekly_report_render_source(
-    run, dws, materials: dict[str, object] | None = None,
-):
-    """Fetch the full, service-resolved JSONML base for one weekly render."""
-    from app.weekly_report_materials import resolve_meeting_documents, weekly_window
-
-    documents = (
-        materials["documents"]
-        if materials is not None
-        else resolve_meeting_documents(dws, weekly_window(run.scheduled_for))
-    )
-    target = documents["target"]
-    if type(target.get("exists")) is not bool:
-        raise ValueError("weekly report target existence is unavailable")
-    target_exists = target["exists"]
-    source = target if target_exists else documents["previous"]
-    source_node_id = source.get("node_id")
-    source_title = source.get("title")
-    if not source.get("exists") or not isinstance(source_node_id, str) or not source_node_id:
-        raise ValueError("weekly report render source document is unavailable")
-
-    payload = dws.fetch_report_document_full(source_node_id)
-    if payload.get("complete") is not True:
-        raise ValueError("weekly report render source document is incomplete")
-    content = payload.get("content")
-    if (
-        not isinstance(content, dict)
-        or content.get("success") is not True
-        or content.get("nodeId") != source_node_id
-    ):
-        raise ValueError("weekly report render source identity changed")
-    raw_jsonml = content.get("jsonml")
-    try:
-        before = json.loads(raw_jsonml) if isinstance(raw_jsonml, str) else raw_jsonml
-    except json.JSONDecodeError as exc:
-        raise ValueError("weekly report render source JSONML is invalid") from exc
-    if not isinstance(before, list) or len(before) < 3 or before[0] != "root":
-        raise ValueError("weekly report render source must be a complete JSONML document")
-
-    revision = None
-    if target_exists:
-        raw_revision = content.get("revision")
-        try:
-            revision = int(raw_revision)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("weekly report target revision is unavailable") from exc
-        if revision < 0 or str(revision) != str(raw_revision):
-            raise ValueError("weekly report target revision is invalid")
-        if _weekly_report_jsonml_is_blank(before):
-            previous = documents["previous"]
-            previous_node_id = previous.get("node_id")
-            if (
-                not previous.get("exists")
-                or not isinstance(previous_node_id, str)
-                or not previous_node_id
-            ):
-                raise ValueError(
-                    "blank weekly report target has no previous meeting document"
-                )
-            source_title = previous.get("title")
-            previous_payload = dws.fetch_report_document_full(previous_node_id)
-            previous_content = previous_payload.get("content")
-            if (
-                previous_payload.get("complete") is not True
-                or not isinstance(previous_content, dict)
-                or previous_content.get("success") is not True
-                or previous_content.get("nodeId") != previous_node_id
-            ):
-                raise ValueError(
-                    "previous weekly report render source document is unavailable"
-                )
-            previous_jsonml = previous_content.get("jsonml")
-            try:
-                before = (
-                    json.loads(previous_jsonml)
-                    if isinstance(previous_jsonml, str)
-                    else previous_jsonml
-                )
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    "previous weekly report render source JSONML is invalid"
-                ) from exc
-            if not isinstance(before, list) or len(before) < 3 or before[0] != "root":
-                raise ValueError(
-                    "previous weekly report render source must be a complete JSONML document"
-                )
-    return before, target_exists, revision, target["title"], source_title
 
 
 def build_role_server(
-    role: str, *, task_id: int | None = None, db_path: Path | None = None,
+    role: str,
+    *,
+    task_id: int | None = None,
+    db_path: Path | None = None,
     execution_generation: str | None = None,
 ) -> FastMCP:
     """Expose only the operations owned by one Agent role."""
@@ -1723,15 +1567,27 @@ def build_role_server(
         raise ValueError("unsupported agent role")
     artifact_generation = (
         _current_task_generation(db_path, task_id)
-        if task_id is not None and db_path is not None else None
+        if task_id is not None and db_path is not None
+        else None
     )
     if execution_generation is not None and artifact_generation != execution_generation:
         raise ValueError("task file generation changed")
-    bound = FastMCP("agent_cli", instructions="Task-bound Agent reads and Consumer report documents")
-    read = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
-                           idempotentHint=True, openWorldHint=True)
-    write = ToolAnnotations(readOnlyHint=False, destructiveHint=False,
-                            idempotentHint=False, openWorldHint=True)
+    bound = FastMCP(
+        "agent_cli",
+        instructions="Task-bound Agent reads, artifacts and explicit documents",
+    )
+    read = ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+    write = ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
     bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
@@ -1962,10 +1818,15 @@ def build_role_server(
 
     bound.add_tool(read_task_skill, name="read_task_skill", annotations=read)
 
-    def read_task_artifact(name: str) -> dict[str, str]:
+    def read_task_artifact(
+        name: str, offset: int = 0, max_chars: int = 20000
+    ) -> dict[str, object]:
         """Read a text artifact from this task's current execution generation."""
         return _read_task_file(
-            _task_file_root(db_path, task_id, artifact_generation, create=False), name
+            _task_file_root(db_path, task_id, artifact_generation, create=False),
+            name,
+            offset,
+            max_chars,
         )
 
     def list_task_artifacts() -> dict[str, object]:
@@ -2289,59 +2150,144 @@ def build_role_server(
             "--page-limit", "50", "--max-items", "1000", "--format", "json",
         ])
 
-    weekly_materials_snapshot: dict[str, object] | None = None
-    weekly_render_binding: dict[str, object] | None = None
-    weekly_validation_report_digest: str | None = None
+    def read_scheduled_context() -> dict[str, object]:
+        """Read trigger, task version and raw historical completion facts."""
+        from app.service_activity import scheduled_context
 
-    def daily_report_facts() -> dict[str, object]:
-        """Read the fixed service facts for this scheduled daily report."""
-        from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
+        store, run = _bound_scheduled_run(db_path, task_id)
+        context = scheduled_context(store, run.id)
+        context["artifact_directory"] = str(
+            _task_file_root(
+                db_path, task_id, artifact_generation, create=role == "consumer"
+            )
+        )
+        return context
+
+    def read_service_activity(
+        start: str, end: str, sources: list[str] | None = None
+    ) -> dict[str, object]:
+        """Read selected service facts in an explicit aware [start, end) interval.
+
+        sources: meetings, tasks, attention, emails, attempts, waiting. Attention
+        and waiting return current unresolved records with their timestamps.
+        """
+        from datetime import datetime
+        from app.service_activity import collect_service_activity
         from app.email_store import EmailStore
-        store, run, kind = _bound_report(db_path, task_id)
-        if kind != "daily":
-            raise AgentReadOnlyViolationError("daily_report_task_required")
-        return collect_daily_report_facts(
+
+        store, _run = _bound_scheduled_run(db_path, task_id)
+        return collect_service_activity(
             store,
             EmailStore(db_path, validate_rows=False),
-            report_window_for_run(store, run.id),
+            datetime.fromisoformat(start),
+            datetime.fromisoformat(end),
+            sources,
         )
 
-    def weekly_report_materials() -> dict[str, object]:
-        """Read the fixed inputs for this scheduled CEO weekly report."""
-        nonlocal weekly_materials_snapshot
-        from app.config import workspace_path
-        from app.dws_client import DwsClient
-        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-        from app.weekly_report_materials import collect_weekly_report_materials
-        store, run, kind = _bound_report(db_path, task_id)
-        if kind != "weekly":
-            raise AgentReadOnlyViolationError("weekly_report_task_required")
-        weekly_materials_snapshot = collect_weekly_report_materials(
-            store, DwsClient(), workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
-            run.scheduled_for,
-        )
-        return weekly_materials_snapshot
-
-    def read_weekly_report_archive(path: str) -> dict[str, object]:
-        """Read one transcript named in this run's meeting archive index."""
-        from app.config import workspace_path
-        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-        from app.weekly_report_materials import minutes_index, weekly_window
-        store, run, kind = _bound_report(db_path, task_id)
-        if kind != "weekly":
-            raise AgentReadOnlyViolationError("weekly_report_task_required")
-        archive_dir = workspace_path() / MINUTES_ARCHIVE_DIRECTORY
-        allowed = {
-            item["archive_path"]
-            for item in minutes_index(store, archive_dir, weekly_window(run.scheduled_for))
-            if item["archive_path"]
+    def _source_artifact(name: str, payload: dict) -> dict[str, object]:
+        if role == "audit":
+            name = "audit-" + name
+        root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        _task_file_path(root, name).write_bytes(raw)
+        return {
+            "artifact_name": name,
+            "path": str(root / name),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
         }
-        if path not in allowed:
-            raise AgentReadOnlyViolationError("weekly_report_archive_not_in_run")
-        material = Path(path)
-        if not material.is_file() or material.stat().st_size > MAX_TEXT_MATERIAL_BYTES:
-            raise AgentReadOnlyViolationError("weekly_report_archive_unavailable")
-        return {"path": path, "content": material.read_text(encoding="utf-8")}
+
+    def read_okr_roster(group_name: str) -> dict[str, object]:
+        """Read a group's stable roster; save complete source JSON as a task artifact."""
+        from app.cli import build_parser, settings_from_args
+        from app.weekly_okr_report import weekly_okr_roster
+
+        payload = weekly_okr_roster(
+            settings_from_args(
+                build_parser().parse_args(
+                    [
+                        "weekly-okr-roster",
+                        "--group-name",
+                        group_name,
+                        "--db",
+                        str(db_path),
+                    ]
+                )
+            ),
+            group_name=group_name,
+        )
+        return {
+            **_source_artifact("okr-roster.json", payload),
+            "member_count": len(payload["managers"]),
+        }
+
+    def read_okr_member(
+        user_id: str,
+        name: str,
+        period_label: str,
+        title: str = "",
+        open_dingtalk_id: str = "",
+    ) -> dict[str, object]:
+        """Read one member's live OKR and provenance, bounded to one source request."""
+        from app.cli import build_parser, settings_from_args
+        from app.weekly_okr_report import weekly_okr_member
+
+        payload = weekly_okr_member(
+            settings_from_args(
+                build_parser().parse_args(
+                    [
+                        "weekly-okr-member",
+                        "--user-id",
+                        user_id,
+                        "--name",
+                        name,
+                        "--period-label",
+                        period_label,
+                        "--db",
+                        str(db_path),
+                    ]
+                )
+            ),
+            user_id=user_id,
+            name=name,
+            period_label=period_label,
+            title=title,
+            open_dingtalk_id=open_dingtalk_id,
+        )
+        filename = (
+            "okr-member-" + hashlib.sha256(user_id.encode()).hexdigest() + ".json"
+        )
+        return {
+            **_source_artifact(filename, payload),
+            "user_id": user_id,
+            "source_outcome": payload.get("sourceOutcome"),
+        }
+
+    def read_meeting_archive(meeting_id: str) -> dict[str, str]:
+        """Read the archive attached to a discovered meeting's stable source ID."""
+        from app.config import workspace_path
+        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, archive_path_for
+
+        store, _run = _bound_scheduled_run(db_path, task_id)
+        job = store.get_meeting_alignment_job_by_meeting_id(meeting_id)
+        if job is None:
+            raise ValueError("meeting archive source is missing")
+        source = json.loads(job.source_json or "{}")
+        basic = (source.get("minutes_info") or {}).get("result") or {}
+        path = archive_path_for(
+            workspace_path() / MINUTES_ARCHIVE_DIRECTORY, basic, task_uuid=meeting_id
+        )
+        if (
+            path is None
+            or not path.is_file()
+            or path.stat().st_size > MAX_TEXT_MATERIAL_BYTES
+        ):
+            raise ValueError("meeting archive is unavailable")
+        return {
+            "meeting_id": meeting_id,
+            "path": str(path),
+            "content": path.read_text(encoding="utf-8"),
+        }
 
     for name, tool in (
         ("read_dingtalk_document", read_dingtalk_document),
@@ -2376,23 +2322,28 @@ def build_role_server(
         ("read_dingtalk_minutes", read_dingtalk_minutes),
         ("recent_dingtalk_conversations", recent_dingtalk_conversations),
         ("read_dingtalk_messages_in_window", read_dingtalk_messages_in_window),
-        ("daily_report_facts", daily_report_facts),
-        ("weekly_report_materials", weekly_report_materials),
-        ("read_weekly_report_archive", read_weekly_report_archive),
+        ("read_scheduled_context", read_scheduled_context),
+        ("read_okr_roster", read_okr_roster),
+        ("read_okr_member", read_okr_member),
+        ("read_service_activity", read_service_activity),
+        ("read_meeting_archive", read_meeting_archive),
     ):
         bound.add_tool(tool, name=name, annotations=read)
 
     if role == "consumer":
-        def consumer_artifact_write(name: str, content: str) -> dict[str, str]:
+
+        def consumer_artifact_write(name: str, content: str) -> dict[str, object]:
             """Write a text artifact only in this task's current workspace generation."""
-            if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TASK_FILE_BYTES:
+            if (
+                not isinstance(content, str)
+                or len(content.encode("utf-8")) > MAX_TASK_FILE_BYTES
+            ):
                 raise ValueError("task file content is invalid or too large")
             root = _task_file_root(db_path, task_id, artifact_generation, create=True)
             path = _task_file_path(root, name)
-            if len(json.dumps({"name": name, "content": content,
-                               "sha256": "0" * 64}).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
-                raise ValueError("task file readback is too large")
-            descriptor, temporary = tempfile.mkstemp(prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root
+            )
             try:
                 with os.fdopen(descriptor, "wb") as output:
                     output.write(content.encode("utf-8"))
@@ -2404,125 +2355,84 @@ def build_role_server(
                     os.unlink(temporary)
             return _read_task_file(root, name)
 
-        bound.add_tool(consumer_artifact_write, name="consumer_artifact_write", annotations=write)
+        bound.add_tool(
+            consumer_artifact_write, name="consumer_artifact_write", annotations=write
+        )
 
-        def validate_weekly_report(
-            manifest: WeeklyReportManifest, report: WeeklyReport, previous_issues: list[dict],
+        def consumer_run_skill_script(
+            name: str, script: str, arguments: list[str] | None = None
         ) -> dict[str, object]:
-            """Validate a scheduled CEO weekly report using its installed Skill."""
-            nonlocal weekly_render_binding, weekly_validation_report_digest
-            _store, _run, kind = _bound_report(db_path, task_id)
-            if kind != "weekly":
-                raise AgentReadOnlyViolationError("weekly_report_task_required")
-            weekly_render_binding = None
-            weekly_validation_report_digest = None
-            result = _weekly_skill_module("validate_run").validate_run(
-                manifest, report, previous_issues
-            )
-            if isinstance(result, dict) and result.get("publishable") is True:
-                report_bytes = json.dumps(
-                    report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                ).encode("utf-8")
-                weekly_validation_report_digest = hashlib.sha256(report_bytes).hexdigest()
-            return result
+            """Run a selected Skill's Python script in this task's artifact directory.
 
-        def render_weekly_report(report: WeeklyReport) -> dict[str, object]:
-            """Render against the service-resolved current or previous meeting document."""
-            nonlocal weekly_render_binding, weekly_validation_report_digest
-            from app.dws_client import DwsClient
-            _store, _run, kind = _bound_report(db_path, task_id)
-            if kind != "weekly":
-                raise AgentReadOnlyViolationError("weekly_report_task_required")
-            report_bytes = json.dumps(
-                report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-            report_digest = hashlib.sha256(report_bytes).hexdigest()
-            if weekly_validation_report_digest is None:
-                raise ValueError("weekly report requires successful validation before render")
-            if report_digest != weekly_validation_report_digest:
-                weekly_validation_report_digest = None
-                weekly_render_binding = None
-                raise ValueError("weekly report must match the successfully validated report")
-            renderer = _weekly_skill_module("render_dingtalk_jsonml")
-            checker = _weekly_skill_module("jsonml_check")
-            dws = DwsClient()
-            before, target_exists, expected_revision, target_title, render_source_title = (
-                _weekly_report_render_source(
-                    _run, dws,
-                    weekly_materials_snapshot,
-                )
+            Use relative script paths such as scripts/window.py. Arguments are
+            passed directly without a shell. Scripts should emit compact JSON
+            and save large inputs/outputs as task artifacts.
+            """
+            _read_bound_task_skill(db_path, task_id, artifact_generation, name)
+            skill_root = Path.home() / ".agents" / "skills" / name
+            path = (skill_root / script).resolve()
+            if (
+                not path.is_relative_to(skill_root.resolve())
+                or path.suffix != ".py"
+                or not path.is_file()
+            ):
+                raise ValueError("Skill Python script is unavailable")
+            root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+            result = subprocess.run(
+                [sys.executable, str(path), *(arguments or [])],
+                cwd=root,
+                env={**os.environ, "PYTHONPATH": str(skill_root)},
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
-            source_errors = checker.check_document(before)
-            if source_errors:
+            if len((result.stdout + result.stderr).encode()) > MAX_CLI_OUTPUT_BYTES:
                 raise ValueError(
-                    "weekly report render source JSONML invalid: "
-                    + "; ".join(source_errors)
+                    "Skill script output is too large; save output as an artifact"
                 )
-            target_after = renderer.render_meeting_document(before, report)
-            draft = renderer.render_draft(report)
-            errors = checker.check_document(target_after) + checker.check_document(draft)
-            if errors:
-                raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
-            target_content = json.dumps(target_after, ensure_ascii=False)
-            native_parse = dws.validate_report_jsonml(target_content)
-            if target_exists and expected_revision is None:
-                raise ValueError("weekly report target revision is unavailable")
-            render_id = hashlib.sha256(target_content.encode("utf-8")).hexdigest()
-            weekly_render_binding = {
-                "expected_revision": expected_revision,
-                "target_exists": target_exists,
-                "render_id": render_id,
-                "content": target_content,
-            }
-            weekly_validation_report_digest = None
             return {
-                "draft": draft,
-                "native_parse": native_parse,
-                "target_exists": target_exists,
-                "target_title": target_title,
-                "render_source_title": render_source_title,
-                "expected_revision": expected_revision,
-                "render_id": render_id,
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
             }
+
+        bound.add_tool(
+            consumer_run_skill_script,
+            name="consumer_run_skill_script",
+            annotations=write,
+        )
 
         def consumer_document_write(
-            content: str | None = None, render_id: str | None = None,
+            artifact_name: str,
+            title: str,
+            doc_format: str = "markdown",
+            node_id: str = "",
+            parent_id: str = "",
+            workspace_id: str = "",
+            expected_revision: int | None = None,
         ) -> dict[str, object]:
-            """Publish this scheduled CEO report to its service-resolved document."""
-            nonlocal weekly_render_binding
-            if artifact_generation is None:
-                raise ValueError("task file binding is missing")
-            if _current_task_generation(db_path, task_id) != artifact_generation:
-                raise ValueError("task file generation changed")
-            store, _run, kind = _bound_report(db_path, task_id)
-            expected_revision = None
-            if kind == "weekly":
-                if weekly_render_binding is None:
-                    raise ValueError("weekly report must be rendered before write")
-                if (
-                    not isinstance(render_id, str)
-                    or render_id != weekly_render_binding["render_id"]
-                    or content is not None
-                ):
-                    raise ValueError("weekly report write must use the current render_id")
-                content = str(weekly_render_binding["content"])
-                expected_revision = weekly_render_binding["expected_revision"]
-            elif not isinstance(content, str) or render_id is not None:
-                raise ValueError("document content is required for this report task")
-            receipt = _write_bound_report_document(
-                db_path=db_path, task_id=task_id, content=content,
-                expected_revision=expected_revision,
-                expected_target_exists=(
-                    weekly_render_binding["target_exists"] if kind == "weekly" else None
-                ),
-            )
-            if kind == "weekly":
-                weekly_render_binding = None
-            return receipt
+            """Write an exact artifact to an explicit document and return its readback receipt.
 
-        bound.add_tool(validate_weekly_report, name="validate_weekly_report", annotations=read)
-        bound.add_tool(render_weekly_report, name="render_weekly_report", annotations=read)
-        bound.add_tool(consumer_document_write, name="consumer_document_write", annotations=write)
+            Update: node_id, plus expected_revision for JSONML. Create: parent_id
+            and workspace_id. Decide titles, destinations and business readiness
+            using the selected Skill. Read the returned readback artifact to verify.
+            """
+            _bound_scheduled_run(db_path, task_id)
+            root = _task_file_root(db_path, task_id, artifact_generation, create=False)
+            return _write_document_artifact(
+                root=root,
+                artifact_name=artifact_name,
+                title=title,
+                doc_format=doc_format,
+                node_id=node_id,
+                parent_id=parent_id,
+                workspace_id=workspace_id,
+                expected_revision=expected_revision,
+            )
+
+        bound.add_tool(
+            consumer_document_write, name="consumer_document_write", annotations=write
+        )
     return bound
 
 
@@ -2533,5 +2443,9 @@ if __name__ == "__main__":
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--execution-generation", required=True)
     args = parser.parse_args()
-    build_role_server(args.role, task_id=args.task_id, db_path=args.db,
-                      execution_generation=args.execution_generation).run(transport="stdio")
+    build_role_server(
+        args.role,
+        task_id=args.task_id,
+        db_path=args.db,
+        execution_generation=args.execution_generation,
+    ).run(transport="stdio")

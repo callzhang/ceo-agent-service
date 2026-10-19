@@ -77,17 +77,18 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_minutes",
     "recent_dingtalk_conversations",
     "read_dingtalk_messages_in_window",
-    "daily_report_facts",
-    "weekly_report_materials",
-    "read_weekly_report_archive",
+    "read_scheduled_context",
+    "read_service_activity",
+    "read_meeting_archive",
+    "read_okr_roster",
+    "read_okr_member",
     "read_task_artifact",
     "list_task_artifacts",
 )
 AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
     "consumer_document_write",
     "consumer_artifact_write",
-    "validate_weekly_report",
-    "render_weekly_report",
+    "consumer_run_skill_script",
 )
 
 # Exact tools from the service's reviewed MCP effect registry. New provider
