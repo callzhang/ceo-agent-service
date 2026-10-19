@@ -2288,6 +2288,7 @@ def build_role_server(
 
     weekly_materials_snapshot: dict[str, object] | None = None
     weekly_render_binding: dict[str, object] | None = None
+    weekly_validation_report_digest: str | None = None
 
     def daily_report_facts() -> dict[str, object]:
         """Read the fixed service facts for this scheduled daily report."""
@@ -2407,20 +2408,39 @@ def build_role_server(
             manifest: WeeklyReportManifest, report: WeeklyReport, previous_issues: list[dict],
         ) -> dict[str, object]:
             """Validate a scheduled CEO weekly report using its installed Skill."""
+            nonlocal weekly_render_binding, weekly_validation_report_digest
             _store, _run, kind = _bound_report(db_path, task_id)
             if kind != "weekly":
                 raise AgentReadOnlyViolationError("weekly_report_task_required")
-            return _weekly_skill_module("validate_run").validate_run(
+            weekly_render_binding = None
+            weekly_validation_report_digest = None
+            result = _weekly_skill_module("validate_run").validate_run(
                 manifest, report, previous_issues
             )
+            if isinstance(result, dict) and result.get("publishable") is True:
+                report_bytes = json.dumps(
+                    report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                weekly_validation_report_digest = hashlib.sha256(report_bytes).hexdigest()
+            return result
 
         def render_weekly_report(report: WeeklyReport) -> dict[str, object]:
             """Render against the service-resolved current or previous meeting document."""
-            nonlocal weekly_render_binding
+            nonlocal weekly_render_binding, weekly_validation_report_digest
             from app.dws_client import DwsClient
             _store, _run, kind = _bound_report(db_path, task_id)
             if kind != "weekly":
                 raise AgentReadOnlyViolationError("weekly_report_task_required")
+            report_bytes = json.dumps(
+                report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            report_digest = hashlib.sha256(report_bytes).hexdigest()
+            if weekly_validation_report_digest is None:
+                raise ValueError("weekly report requires successful validation before render")
+            if report_digest != weekly_validation_report_digest:
+                weekly_validation_report_digest = None
+                weekly_render_binding = None
+                raise ValueError("weekly report must match the successfully validated report")
             renderer = _weekly_skill_module("render_dingtalk_jsonml")
             checker = _weekly_skill_module("jsonml_check")
             dws = DwsClient()
@@ -2452,6 +2472,7 @@ def build_role_server(
                 "render_id": render_id,
                 "content": target_content,
             }
+            weekly_validation_report_digest = None
             return {
                 "draft": draft,
                 "native_parse": native_parse,

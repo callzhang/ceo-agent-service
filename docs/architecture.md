@@ -371,7 +371,7 @@ migration key 任务在启动时原地转换为命令形式，
 启用状态，包括从未被编辑过的 version 1 任务。默认的名称与 Cron 与负责人本机的现行任务一致。Lark
 不创建默认 seed；其余已有任务的用户修改不会被 seed 覆盖。
 
-另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML；目标存在但仅含空白段落骨架时，也用上期完整 JSONML 作渲染基底，同时保留目标存在状态及当前 revision 的写入守卫，并向 Agent 返回实际基底标题。其他已有目标仍使用其完整 JSONML。上一期周会如改期至上一报告周内的其他日期，仅在存在唯一精确标准标题时读取最近日期的文档，后缀草稿不作为基底。Skill validator 在渲染前核对 renderer 所需字段。为避免上期文档的完整 JSONML 截断工具回传，服务将通过检查的目标正文保留在当前 Consumer turn，仅向 Agent 返回完整七节草稿、元数据和 `render_id`；任务绑定写入通过该 ID 提交原始渲染正文，并沿用目标存在状态及 revision 守卫。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
+另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML；目标存在但仅含空白段落骨架时，也用上期完整 JSONML 作渲染基底，同时保留目标存在状态及当前 revision 的写入守卫，并向 Agent 返回实际基底标题。其他已有目标仍使用其完整 JSONML。上一期周会如改期至上一报告周内的其他日期，仅在存在唯一精确标准标题时读取最近日期的文档，后缀草稿不作为基底。Skill validator 在渲染前核对 renderer 所需字段；服务要求当前报告存在匹配的 `publishable: true` 校验结果后才允许渲染。新校验会清除旧渲染绑定，失败或报告内容变更时旧 `render_id` 不能用于写入。为避免上期文档的完整 JSONML 截断工具回传，服务将通过检查的目标正文保留在当前 Consumer turn，仅向 Agent 返回完整七节草稿、元数据和 `render_id`；任务绑定写入通过该 ID 提交原始渲染正文，并沿用目标存在状态及 revision 守卫。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
 
 ### Runtime-managed Skill 生命周期
 
@@ -1649,7 +1649,7 @@ DingTalk 原始发送方法或 WeChat IPC runner。Email 不属于该文本发�
 
 Consumer/Audit 的完整 Application Result Contract 各在 Developer 的“应用结果合同”段注入一次。Task context 只渲染当前事实、阶段、候选与反馈，继续保留显式自定义 Audit Rules；不再次复制通用结果合同。Audit 的旧 Role Boundary 与应用结果合同完全相同，合并为同一段。输出 wire schema、业务合同内容、会话绑定与路由不变；Settings 使用同一装配函数显示该来源与顺序，历史输入按原保存内容展示。
 
-周报的 `validate_weekly_report` 和 `render_weekly_report` 使用 `app/weekly_report_contracts.py` 中的原生工具参数结构。Agent 可从工具 schema 查询现有报告字段与嵌套容器类型；格式不符时 SDK 在执行前返回字段路径错误。结构声明不注入 prompt；额外字段完整保留，缺失业务章节和发布要求仍由安装的周报 Skill 校验，不转换对象映射为数组，也不修改候选内容。
+周报的 `validate_weekly_report` 和 `render_weekly_report` 使用 `app/weekly_report_contracts.py` 中的原生工具参数结构。Agent 可从工具 schema 查询现有报告字段与嵌套容器类型；格式不符时 SDK 在执行前返回字段路径错误。结构声明不注入 prompt；额外字段完整保留，缺失业务章节和发布要求仍由安装的周报 Skill 校验，不转换对象映射为数组，也不修改候选内容。服务将 `publishable: true` 绑定到通过稳定 JSON 摘要识别的报告，只有相同报告可以渲染；每次重新校验会废止旧渲染，`publishable: false` 后不能渲染或使用旧 `render_id` 写入。
 
 Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的提示、工具调用、输出和
 结果。SQLite 只保存恢复所需的最小状态：
