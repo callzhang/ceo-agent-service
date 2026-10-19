@@ -34354,5 +34354,19 @@
     "unchanged_proof": "four untouched late-file nodes passed earlier broad diagnostic; not rerun",
     "scope": "27 focused passing nodes across groups, not one fresh full-file pass; no sends beyond in-memory handler",
     "production_receipt_feedback_reference": "unchanged app/agent_orchestrator.py upstream 5d45bcbf4 and docs/runtime-mechanism.md receipt followup contract"
+  },
+  "final_consumer_dispatcher": {
+    "runtime_changes": false,
+    "scope": "Actual typed Tasks and State lease seeding; retry, lease ownership/fencing, pruning, enqueue wake, recovery and metric assertions retained",
+    "result": "74 passed in 343.94s before final one-test schema readback adjustment",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-consumer-dispatcher.log",
+    "post_full_change": {
+      "scope": "Read actual database lease projection cursor-description, not static field constants",
+      "result": "1 passed in 4.13s",
+      "evidence": "agent tool transcript"
+    },
+    "observed_broad_failures_closed": 20,
+    "timing_control": "Original 2s enqueue-wake assertion retained; isolated 1 passed in 6.21s after loaded-run failure",
+    "root_review": "Full diff reviewed; Ruff and diff check clean"
   }
 }
