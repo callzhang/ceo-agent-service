@@ -23,7 +23,9 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
@@ -71,6 +73,7 @@ MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 MAX_PDF_PAGES = 100
 MAX_OCR_AGENT_INPUT_BYTES = 700 * 1024
+MAX_OA_COMMENT_IMAGE_BYTES = 20 * 1024 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -710,6 +713,93 @@ def _download_dingtalk_oa_comment_attachment(
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
             raise AgentReadOnlyViolationError("oa_comment_attachment_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
+
+
+def _download_dingtalk_oa_comment_image(
+    *,
+    process_instance_id: str,
+    image_url: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read one exact DingTalk OA comment image URL into bounded OCR input."""
+    if not process_instance_id.strip():
+        raise AgentReadOnlyViolationError("oa_comment_image_identity_required")
+    try:
+        parsed = urlsplit(image_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise AgentReadOnlyViolationError("oa_comment_image_url_invalid") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "static.dingtalk.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.fragment
+        or not parsed.path.startswith("/media/")
+    ):
+        raise AgentReadOnlyViolationError("oa_comment_image_url_invalid")
+
+    class RejectRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    material_root.mkdir(parents=True, exist_ok=True)
+    request = Request(image_url, headers={"User-Agent": "ceo-agent-service"})
+    try:
+        with build_opener(RejectRedirects()).open(request, timeout=15) as response:
+            if response.status != 200:
+                raise AgentReadOnlyViolationError(
+                    f"oa_comment_image_http_{response.status}"
+                )
+            if urlsplit(response.geturl()).hostname != "static.dingtalk.com":
+                raise AgentReadOnlyViolationError("oa_comment_image_origin_changed")
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            if not content_type.startswith("image/"):
+                raise AgentReadOnlyViolationError("oa_comment_image_content_type_invalid")
+            declared_size = response.headers.get("Content-Length")
+            if declared_size:
+                try:
+                    declared_bytes = int(declared_size)
+                except ValueError as exc:
+                    raise AgentReadOnlyViolationError(
+                        "oa_comment_image_content_length_invalid"
+                    ) from exc
+                if declared_bytes > MAX_OA_COMMENT_IMAGE_BYTES:
+                    raise AgentReadOnlyViolationError("oa_comment_image_file_too_large")
+            contents = response.read(MAX_OA_COMMENT_IMAGE_BYTES + 1)
+    except HTTPError as exc:
+        raise AgentReadOnlyViolationError(
+            f"oa_comment_image_http_{exc.code}"
+        ) from exc
+    except OSError as exc:
+        raise AgentReadOnlyViolationError("oa_comment_image_download_failed") from exc
+    if len(contents) > MAX_OA_COMMENT_IMAGE_BYTES:
+        raise AgentReadOnlyViolationError("oa_comment_image_file_too_large")
+
+    suffix = mimetypes.guess_extension(content_type) or ".img"
+    digest = hashlib.sha256(contents).hexdigest()
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=digest[:12] + "-", suffix=suffix,
+        dir=material_root, delete=False,
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    try:
+        extracted = read_text_file(str(material_path))
+        result = {
+            "process_instance_id": process_instance_id,
+            "image_url": image_url,
+            "file_name": material_path.name,
+            **extracted,
+            "sha256": digest,
+        }
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError("oa_comment_image_response_too_large")
         return result
     except BaseException:
         material_path.unlink()
@@ -1648,6 +1738,36 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_oa_comment_attachment,
         name="read_dingtalk_oa_comment_attachment",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_comment_image(
+        process_instance_id: str,
+        image_url: str,
+    ) -> dict[str, object]:
+        """Read one image URL returned by read_dingtalk_oa_records for OCR.
+
+        Use this when an OA operation-record comment exposes an image URL
+        instead of a file_id. The fetch is limited to DingTalk's media origin,
+        does not follow redirects, and returns bounded OCR input and a digest.
+        The image remains only for this MCP process lifetime. Read failures are
+        technical evidence gaps, never evidence that material is missing.
+        """
+        nonlocal drive_material_directory
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(
+                prefix="oa-review-"
+            )
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_oa_comment_image(
+            process_instance_id=process_instance_id,
+            image_url=image_url,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_oa_comment_image,
+        name="read_dingtalk_oa_comment_image",
         annotations=read,
     )
 

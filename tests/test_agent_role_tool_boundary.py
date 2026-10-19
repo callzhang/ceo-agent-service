@@ -180,12 +180,16 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     assert "ocr_page_numbers" in audit_catalogue[
         "read_dingtalk_oa_comment_attachment"
     ].description
+    assert "instead of a file_id" in audit_catalogue[
+        "read_dingtalk_oa_comment_image"
+    ].description
     assert {
         "list_dingtalk_minutes", "read_dingtalk_minutes", "search_dingtalk_messages",
         "search_dingtalk_conversations", "search_dingtalk_contacts",
         "list_dingtalk_calendar_events", "list_dingtalk_pending_oa",
         "read_dingtalk_oa_records", "read_dingtalk_oa_tasks",
         "read_dingtalk_oa_comment_attachment",
+        "read_dingtalk_oa_comment_image",
         "read_dingtalk_oa_revert_activities", "search_dingtalk_documents",
         "read_dingtalk_document_info", "read_dingtalk_document_permissions",
         "read_dingtalk_drive_info", "read_dingtalk_drive_file", "list_dingtalk_sheets",
