@@ -34193,5 +34193,23 @@
     "source": "genuine published 2773d6f4 constructor",
     "scope": "whole forward; new direct facts; inverse; genuine-old reopen; real child republish; current reopen",
     "real_external_sends": 0
+  },
+  "final_email_dao_whole_publish_fixture_controls": {
+    "reply": {
+      "passed": 1,
+      "seconds": 429.08,
+      "test": "test_claim_replay_immutable_binding_and_owner_cas_match_genuine_source",
+      "red": "partial fixture lacks main.emails"
+    },
+    "unsubscribe": {
+      "passed": 2,
+      "seconds": 439.57,
+      "tests": [
+        "test_continuation_native_upsert_preserves_locator_created_at_and_scalar_codec",
+        "test_claim_and_snapshot_match_genuine_old_public_api"
+      ],
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-unsubscribe-current.log"
+    },
+    "scope": "fixture full real publish and real EmailStore; native source oracle untouched; other nodes not yet revalidated"
   }
 }

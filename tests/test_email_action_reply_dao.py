@@ -17,12 +17,7 @@ def reply_pair(tmp_path, request):
     import subprocess
     import sys
     import tarfile
-    from app.action_email_storage import migrate_email_action_schema
-    from app.configs_schema_release import capture_config_source, migrate_config_schema
-    from app.provider_state_schema_release import (
-        apply_provider_state_migration,
-        capture_provider_state_source,
-    )
+    from app.store_schema_release import prepare_database_schema_release
     from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
     from app.email_store import EmailStore
     from tests.test_email_store import _classification, _task2_account_values
@@ -107,18 +102,13 @@ if sys.argv[4] in ('receipt','noncanonical_receipt'):
         closing(sqlite3.connect(target)) as db,
     ):
         original.backup(db)
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        provider_source = capture_provider_state_source(db)
-        migrate_email_action_schema(db)
-        apply_provider_state_migration(db, provider_source)
-        # Current account readers/writers use Configs. Keep this explicit
-        # converted-copy fixture on that same prerequisite schema.
-        migrate_config_schema(db, capture_config_source(db))
-        db.commit()
-    store = object.__new__(EmailStore)
-    store.path = target
-    store.training_run_id = None
+    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], target)
+    try:
+        release.publish()
+    except subprocess.CalledProcessError as error:
+        error.add_note(error.stderr or "paired child returned no stderr")
+        raise
+    store = EmailStore(target)
     store._now = lambda: "2026-10-14T10:00:00+00:00"
     return store, classifications[0], None, source, old
 
