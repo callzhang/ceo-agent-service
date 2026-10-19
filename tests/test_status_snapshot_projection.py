@@ -2,39 +2,136 @@ import sqlite3
 
 import pytest
 
+from app.action_storage import insert_email_action
 from app.audit_web import _email_action_queue_snapshot, _reply_task_queue_snapshot
-from app.action_email_definitions import EMAIL_FIELDS, EMAIL_TYPES
+from app.current_database_schema import create_current_database_schema
+from app.email_canonical_storage import insert_email_classification, insert_email_message
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
+from app.task12_storage import insert_task12
+from app.task8_storage import register_task8_functions, task8_insert_parts
 
 
 @pytest.fixture
 def database():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
-    db.executescript("""
-        create table tasks (
-            id integer primary key, status text, business_object_key text,
-            updated_at text, error text, record_type text not null default 'reply_tasks'
-        );
-        create table business_object_tasks (
-            business_object_key text primary key, reply_task_id integer
-        );
-        create table email_classifications (
-            id integer primary key, status text, current_action_plan_id text
-        );
-    """)
-    db.execute(
-        "create table actions (record_type text not null, email_action_id text primary key, "
-        + ", ".join(
-            f"email_{field} {EMAIL_TYPES[field]}"
-            for field in EMAIL_FIELDS["email_actions"] if field != "action_id"
-        )
-        + ")"
-    )
+    create_current_database_schema(db)
+    register_task8_functions(db)
     try:
         yield db
     finally:
         db.close()
+
+
+def _insert_task8(db, kind, values):
+    parts = task8_insert_parts(kind, values)
+    return db.execute(
+        f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters,
+    ).lastrowid
+
+
+def _insert_reply_task(db, task_id, status, updated_at, error="", business_object_key=""):
+    inserted = _insert_task8(db, "reply_tasks", {
+        "channel": "dingtalk",
+        "conversation_id": f"conversation-{task_id}",
+        "conversation_title": f"Conversation {task_id}",
+        "single_chat": 0,
+        "trigger_message_id": f"message-{task_id}",
+        "trigger_create_time": "2026-10-11",
+        "trigger_sender": "sender",
+        "status": status,
+        "error": error,
+        "updated_at": updated_at,
+        "business_object_key": business_object_key,
+    })
+    assert inserted == task_id
+    return inserted
+
+
+def _email_locator(classification_id):
+    return {
+        "account_id": "account",
+        "stable_message_identity": f"message-{classification_id}",
+        "folder": "INBOX",
+        "uidvalidity": 1,
+        "uid": classification_id,
+    }
+
+
+def _insert_email_message(db, classification_id):
+    insert_email_message(db, _email_locator(classification_id) | {
+        "rfc_message_id": "",
+        "in_reply_to": "",
+        "references_json": "[]",
+        "thread_identity": "",
+        "sender": "Sender",
+        "recipients_json": "[]",
+        "subject": "Subject",
+        "normalized_text": "",
+        "preview": "",
+        "attachment_metadata_json": "[]",
+        "received_at": "",
+        "created_at": "",
+        "updated_at": "",
+    })
+
+
+def _classification_values(classification_id, plan_id, status):
+    return _email_locator(classification_id) | {
+        "id": classification_id,
+        "status": status,
+        "classification_source": "model",
+        "confidence": 0.5,
+        "margin": 0.1,
+        "probabilities_json": "{}",
+        "model_id": "model",
+        "config_version": "config",
+        "current_action_plan_id": plan_id,
+        "sender": "Sender",
+        "subject": "Subject",
+        "updated_at": "2026-10-12",
+    }
+
+
+def _insert_email_classification(db, classification_id, plan_id, status):
+    insert_email_classification(db, _classification_values(classification_id, plan_id, status))
+
+
+def _insert_email_plan(db, plan_id, classification_id, version=1):
+    insert_email_action(db, "email_action_plans", {
+        "action_plan_id": plan_id,
+        "action_plan_version": version,
+        "classification_id": classification_id,
+        "account_id": "account",
+        "category": "work",
+        "classification_source": "model",
+        "confidence": 0.5,
+        "model_id": "model",
+        "config_version": "config",
+        "actions_json": '["archive","move","trash","label","mark_read"]',
+        "action_parameters_json": "{}",
+        "created_at": "2026-10-12",
+    })
+
+
+def _insert_email_action_row(db, *, action_id, plan_id, classification_id,
+                             status, attempts, next_attempt_at, updated_at, error,
+                             action_type="archive"):
+    insert_email_action(db, "email_actions", {
+        "action_id": action_id,
+        "action_plan_id": plan_id,
+        "classification_id": classification_id,
+        "account_id": "account",
+        "action_type": action_type,
+        "parameters_json": "{}",
+        "config_version": "config",
+        "status": status,
+        "attempt_count": attempts,
+        "next_attempt_at": next_attempt_at,
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "error": error,
+    })
 
 
 @pytest.mark.parametrize("snapshot", [_reply_task_queue_snapshot, _email_action_queue_snapshot])
@@ -49,16 +146,17 @@ def test_queue_summary_evaluates_current_projection_once(database, snapshot):
 
 
 def test_reply_summary_preserves_current_business_identity_and_latest_error(database):
-    database.executemany(
-        "insert into tasks(id,status,business_object_key,updated_at,error) values(?,?,?,?,?)",
-        [
-            (1, "failed", "object-a", "2026-10-12", "retired error"),
-            (2, "done", "object-a", "2026-10-11", ""),
-            (3, "FAILED", "", "2026-10-10", "older failure"),
-            (4, "error", None, "2026-10-11", ""),
-        ],
-    )
-    database.execute("insert into business_object_tasks values('object-a',2)")
+    for row in (
+        (1, "failed", "object-a", "2026-10-12", "retired error"),
+        (2, "done", "object-a", "2026-10-11", ""),
+        (3, "FAILED", "", "2026-10-10", "older failure"),
+        (4, "error", "", "2026-10-11", ""),
+    ):
+        task_id, status, business_key, updated_at, error = row
+        _insert_reply_task(database, task_id, status, updated_at, error, business_key)
+    insert_task12(database, "business_object_tasks", {
+        "business_object_key": "object-a", "reply_task_id": 2,
+    })
     result = _reply_task_queue_snapshot(database)
     assert result["counts"] == {"done": 1, "error": 1, "failed": 1}
     assert result["failed"] == 2
@@ -67,36 +165,66 @@ def test_reply_summary_preserves_current_business_identity_and_latest_error(data
 
 
 def test_reply_summary_latest_failed_tie_uses_id(database):
-    database.executemany(
-        "insert into tasks(id,status,business_object_key,updated_at,error) values(?,?,?,?,?)",
-        [(1, "failed", "", "2026-10-11", "first"),
-         (2, "failed", "", "2026-10-11", "second")],
-    )
+    _insert_reply_task(database, 1, "failed", "2026-10-11", "first")
+    _insert_reply_task(database, 2, "failed", "2026-10-11", "second")
     assert _reply_task_queue_snapshot(database)["latest_error"] == "second"
 
 
+def test_email_summary_rejects_retired_status_values(database):
+    _insert_email_message(database, 1)
+    with pytest.raises(sqlite3.IntegrityError, match="invalid email classification status"):
+        insert_email_classification(database, _classification_values(1, "current", "pending"))
+    _insert_email_classification(database, 1, "current", "pending_feedback")
+    _insert_email_plan(database, "current", 1)
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_email_action_row(
+            database, action_id="uppercase", plan_id="current", classification_id=1,
+            status="FAILED", attempts=0, next_attempt_at="", updated_at="2026-10-12",
+            error="uppercase status",
+        )
+
+
+def test_reply_summary_rejects_null_business_object_key(database):
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_task8(database, "reply_tasks", {
+            "channel": "dingtalk",
+            "conversation_id": "conversation-null-business-key",
+            "conversation_title": "Conversation",
+            "single_chat": 0,
+            "trigger_message_id": "message-null-business-key",
+            "trigger_create_time": "2026-10-11",
+            "trigger_sender": "sender",
+            "status": "done",
+            "error": "",
+            "updated_at": "2026-10-11",
+            "business_object_key": None,
+        })
+
+
 def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
-    database.executemany(
-        "insert into email_classifications values(?,?,?)",
-        [(1, "processed", "current"), (2, "pending", "inactive")],
-    )
-    database.executemany(
-        "insert into actions (record_type, email_action_id, email_classification_id, "
-        "email_action_plan_id, email_status, email_attempt_count, "
-        "email_next_attempt_at, email_updated_at, email_error) "
-        "values('email_actions',?,?,?,?,?,?,?,?)",
-        [
-            ("old", 1, "retired", "processing", 0, "", "2026-10-12", "retired error"),
-            ("retry", 1, "current", "FAILED", DIRECT_ACTION_MAX_ATTEMPTS - 1,
-             "2026-10-11T00:00:00+00:00", "2026-10-10", "retryable"),
-            ("exhausted", 1, "current", "failed", DIRECT_ACTION_MAX_ATTEMPTS,
-             "2026-10-11T00:00:00+00:00", "2026-10-10", "terminal"),
-            ("invalid", 1, "current", "failed", 0, "invalid date", "2026-10-10", "invalid"),
-            ("b", 1, "current", "done", 1, "", "2026-10-11", "first"),
-            ("z", 1, "current", "done", 1, "", "2026-10-11", "最新\x1f错误"),
-            ("inactive", 2, "inactive", "pending", 0, "", "2026-10-12", "inactive"),
-        ],
-    )
+    _insert_email_message(database, 1)
+    _insert_email_classification(database, 1, "current", "processed")
+    _insert_email_plan(database, "retired", 1, 1)
+    _insert_email_plan(database, "current", 1, 2)
+    _insert_email_message(database, 2)
+    _insert_email_classification(database, 2, "inactive", "pending_feedback")
+    _insert_email_plan(database, "inactive", 2)
+    for action_id, classification_id, plan_id, status, attempts, next_at, updated, error, action_type in (
+        ("old", 1, "retired", "processing", 0, "", "2026-10-12", "retired error", "archive"),
+        ("retry", 1, "current", "failed", DIRECT_ACTION_MAX_ATTEMPTS - 1,
+         "2026-10-11T00:00:00+00:00", "2026-10-10", "retryable", "archive"),
+        ("exhausted", 1, "current", "failed", DIRECT_ACTION_MAX_ATTEMPTS,
+         "2026-10-11T00:00:00+00:00", "2026-10-10", "terminal", "move"),
+        ("invalid", 1, "current", "failed", 0, "invalid date", "2026-10-10", "invalid", "trash"),
+        ("b", 1, "current", "done", 1, "", "2026-10-11", "first", "label"),
+        ("z", 1, "current", "done", 1, "", "2026-10-11", "最新\x1f错误", "mark_read"),
+        ("inactive", 2, "inactive", "pending", 0, "", "2026-10-12", "inactive", "archive"),
+    ):
+        _insert_email_action_row(
+            database, action_id=action_id, plan_id=plan_id,
+            classification_id=classification_id, status=status, attempts=attempts,
+            next_attempt_at=next_at, updated_at=updated, error=error, action_type=action_type,
+        )
     result = _email_action_queue_snapshot(database)
     assert result["counts"] == {"done": 2, "failed": 3}
     assert result["retryable"] == 1
@@ -106,23 +234,13 @@ def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
     assert result["latest_error"] == "最新\x1f错误"
 
 
-def test_email_summary_scans_actions_in_storage_order_for_current_plan(database):
-    database.execute(
-        "create index idx_email_classifications_status "
-        "on email_classifications(status, id desc)"
-    )
-    database.execute(
-        "create index idx_email_actions_classification_plan "
-        "on actions(email_classification_id, email_action_plan_id)"
-    )
-    database.execute(
-        "insert into email_classifications values(1, 'processed', 'current')"
-    )
-    database.execute(
-        "insert into actions (record_type, email_action_id, email_classification_id, "
-        "email_action_plan_id, email_status, email_attempt_count, "
-        "email_next_attempt_at, email_updated_at, email_error) "
-        "values('email_actions', 'one', 1, 'current', 'done', 1, '', '2026-10-14', '')"
+def test_email_summary_uses_indexed_actions_and_classification_lookup(database):
+    _insert_email_message(database, 1)
+    _insert_email_classification(database, 1, "current", "processed")
+    _insert_email_plan(database, "current", 1)
+    _insert_email_action_row(
+        database, action_id="one", plan_id="current", classification_id=1,
+        status="done", attempts=1, next_attempt_at="", updated_at="2026-10-14", error="",
     )
 
     statements = []
@@ -135,14 +253,17 @@ def test_email_summary_scans_actions_in_storage_order_for_current_plan(database)
     ]
 
     assert snapshot["counts"] == {"done": 1}
-    assert any("SCAN a" in step for step in plan)
-    assert any("SEARCH c USING INTEGER PRIMARY KEY" in step for step in plan)
+    assert any("SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)" in step
+               for step in plan), plan
+    assert any("SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 (classification_id=?)" in step
+               for step in plan), plan
 
 
 def test_reply_summary_excludes_other_task_types(database):
-    database.execute(
-        "insert into tasks(id,record_type,status,updated_at,error) values(99,'work_summary_inputs','failed','future','other-type-error')"
-    )
+    _insert_task8(database, "work_summary_inputs", {
+        "source_type": "message", "source_ref": "other-type",
+        "payload_json": "{}", "status": "failed", "updated_at": "future",
+    })
     result = _reply_task_queue_snapshot(database)
     assert result["counts"] == {}
     assert result["failed"] == 0

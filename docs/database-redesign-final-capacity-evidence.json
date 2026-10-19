@@ -34604,5 +34604,25 @@
       "both historical TEXT DDL variants"
     ],
     "clock_fixture": "Memory-update comparison seeds identical explicit source and target clocks; separate defaults test still exercises current_timestamp"
+  },
+  "final_status_snapshot_projection": {
+    "passed": 9,
+    "seconds": 6.21,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-status-snapshot-root.log",
+    "runtime_changes": false,
+    "scope": [
+      "one SQL per snapshot",
+      "current business pointer",
+      "latest error tie",
+      "retry date and attempt threshold",
+      "inactive classification and retired plan excluded",
+      "other task types excluded"
+    ],
+    "invalid_original_fixture_values": "Historical source already rejects classification pending and Action FAILED; explicit refusal tests replace impossible rows. NULL reply business key rejected; empty no-pointer key used directly. Uppercase reply Task FAILED retained. No normalization helper.",
+    "query_plan": "Actions outer kind index idx_actions_email_public_key and indexed canonical Emails classification lookup; explicit latest ORDER BY unchanged",
+    "source_evidence": [
+      "docs/superpowers/specs/2026-10-13-database-redesign-email-actions-source.json",
+      "docs/superpowers/specs/2026-10-11-database-redesign-schema-baseline.json"
+    ]
   }
 }
