@@ -16,5 +16,5 @@
 - [x] Implement `app/consumer_purpose_retry.py` using existing state SQL transactions; connect pre-invocation reservations and reviewed retry outcomes in `app/agent_orchestrator.py`, and honor deferral in Worker/scheduled paths.
 - [x] Add focused orchestrator integration cases: request -> verified execution -> reviewed retry -> delayed new Consumer; Audit correction; business return; no replay of verified request.
 - [x] Update `ci/shared-skills/dingtalk-oa-approval/SKILL.md`, `ci/shared-skills/ceo-document-review/SKILL.md`, architecture/runtime docs, action contracts and release digests. Run focused affected tests, Ruff and diff checks.
-- [ ] Commit only this worktree's changes. Reconcile current origin/main by fast-forward/cherry-pick into a clean release branch, run affected checks, push and deploy with `python -m app.deploy --publish-consumer-system-contracts`.
-- [ ] Read back live version/PID, health, queues, Attention and History. Record exact verification boundary and retire the claim.
+- [x] Commit only this worktree's changes. Merge current origin/main into the isolated release branch, run affected checks, push and deploy with `python -m app.deploy --publish-consumer-system-contracts`.
+- [x] Read back live version/PID, health, queues, Attention and History. Record exact verification boundary and retire the claim.
