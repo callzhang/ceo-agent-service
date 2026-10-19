@@ -141,6 +141,67 @@ def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
     assert writes == []
 
 
+def test_weekly_report_invalid_validation_blocks_render_and_write(monkeypatch, tmp_path):
+    import types
+    import app.dws_client as dws_module
+
+    monkeypatch.setattr(agent_cli, "_current_task_generation", lambda *_: "generation")
+    monkeypatch.setattr(
+        agent_cli,
+        "_bound_report",
+        lambda *_: (object(), types.SimpleNamespace(scheduled_for="now"), "weekly"),
+    )
+    validator = types.SimpleNamespace(
+        validate_run=lambda *_: {"publishable": False, "errors": ["invalid report"]}
+    )
+    renderer = types.SimpleNamespace(
+        render_meeting_document=lambda *_: ["root", {}],
+        render_draft=lambda *_: ["root", {}],
+    )
+    checker = types.SimpleNamespace(check_document=lambda _document: [])
+    monkeypatch.setattr(
+        agent_cli,
+        "_weekly_skill_module",
+        lambda name: {
+            "validate_run": validator,
+            "render_dingtalk_jsonml": renderer,
+            "jsonml_check": checker,
+        }[name],
+    )
+    monkeypatch.setattr(
+        agent_cli,
+        "_weekly_report_render_source",
+        lambda *_: (["root", {}], True, 42, "target", "target"),
+    )
+
+    class Dws:
+        def validate_report_jsonml(self, _content):
+            return {"assessment": "passed"}
+
+    monkeypatch.setattr(dws_module, "DwsClient", Dws)
+    writes = []
+    monkeypatch.setattr(
+        agent_cli, "_write_bound_report_document", lambda **kwargs: writes.append(kwargs)
+    )
+
+    server = agent_cli.build_role_server(
+        "consumer", task_id=1, db_path=tmp_path / "db.sqlite",
+        execution_generation="generation",
+    )
+    validate = server._tool_manager.get_tool("validate_weekly_report").fn
+    render = server._tool_manager.get_tool("render_weekly_report").fn
+    write = server._tool_manager.get_tool("consumer_document_write").fn
+
+    assert validate(manifest={}, report={}, previous_issues=[]) == {
+        "publishable": False, "errors": ["invalid report"]
+    }
+    with pytest.raises(ValueError, match="requires successful validation"):
+        render(report={})
+    with pytest.raises(ValueError, match="must be rendered before write"):
+        write(render_id="any")
+    assert writes == []
+
+
 @pytest.mark.parametrize(
     ("target_exists", "expected_source", "expected_revision"),
     [(True, "target-node", 42), (False, "previous-node", None)],
@@ -271,10 +332,18 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
         render_draft=lambda _report: ["root", {}],
     )
     checker = types.SimpleNamespace(check_document=lambda _document: [])
+    validator = types.SimpleNamespace(
+        result={"publishable": True, "errors": []},
+    )
+    validator.validate_run = lambda *_args: validator.result
     monkeypatch.setattr(
         agent_cli,
         "_weekly_skill_module",
-        lambda name: renderer if name == "render_dingtalk_jsonml" else checker,
+        lambda name: {
+            "render_dingtalk_jsonml": renderer,
+            "jsonml_check": checker,
+            "validate_run": validator,
+        }[name],
     )
     writes = []
     monkeypatch.setattr(
@@ -286,6 +355,18 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
     server = agent_cli.build_role_server(
         "consumer", task_id=1, db_path=tmp_path / "db.sqlite", execution_generation="generation"
     )
+    validate = server._tool_manager.get_tool("validate_weekly_report").fn
+    assert validate(manifest={}, report={}, previous_issues=[]) == {
+        "publishable": True, "errors": []
+    }
+    with pytest.raises(ValueError, match="match the successfully validated report"):
+        server._tool_manager.get_tool("render_weekly_report").fn(
+            report={"ceo_judgment": "changed after validation"}
+        )
+    assert dws.requested == []
+    assert validate(manifest={}, report={}, previous_issues=[]) == {
+        "publishable": True, "errors": []
+    }
     rendered = server._tool_manager.get_tool("render_weekly_report").fn(report={})
     assert dws.requested == (
         ["target-node", "previous-node"] if target_blank else [expected_source]
@@ -298,6 +379,14 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
     assert len(rendered["render_id"]) == 64
     rendered_content = json.dumps(rendered_jsonml, ensure_ascii=False)
     write = server._tool_manager.get_tool("consumer_document_write").fn
+    validator.result = {"publishable": False, "errors": ["new validation failed"]}
+    assert validate(manifest={}, report={}, previous_issues=[]) == validator.result
+    with pytest.raises(ValueError, match="must be rendered before write"):
+        write(render_id=rendered["render_id"])
+    assert writes == []
+    validator.result = {"publishable": True, "errors": []}
+    assert validate(manifest={}, report={}, previous_issues=[]) == validator.result
+    rendered = server._tool_manager.get_tool("render_weekly_report").fn(report={})
     with pytest.raises(ValueError, match="must use the current render_id"):
         write(render_id="stale-render")
     assert writes == []
