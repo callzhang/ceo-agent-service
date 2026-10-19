@@ -25,6 +25,7 @@ serialization so their immutable bytes and digests remain stable.
   one obsolete prompt-text assertion failed, was updated to the new action
   wording and passed in the focused rerun.
 - Final contract/schema/purpose-output group: 142 passed.
+- After merging current origin/main, the full purpose/contract/schema/release/document-Skill group passed 184 tests.
 - Purpose budgets, orchestration, release manifest and document Skill group:
   183 passed before the final retry-error-state constraint; the final schema
   group above covers that constraint.
