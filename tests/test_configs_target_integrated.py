@@ -82,7 +82,8 @@ def target():
         for name in ('business_tasks','business_task_signals'):
             db.execute(business[name]['sql'])
         create_action_schema(db, include_reply=True, reply_variant='fresh_memory_fk', include_email=True,
-                             include_followup_sync=True, include_skill_config_receipts=True)
+                             include_followup_sync=True, include_skill_config_receipts=True,
+                             compact_payload=True)
         create_configs_schema(db)
         db.commit()
         db.execute('begin')
@@ -227,7 +228,8 @@ def test_receipt_bytes_activation_independent_sequence_and_sha_policy(target):
     assert receipt.loaded_json.encode()==expected.encode() and receipt.config_id==30
     assert list_skill_load_receipts(target,30)==[receipt]
     assert latest_skill_load_receipt_for_pid(target,7)==receipt
-    assert target.execute("select payload_json from actions where id=?",(receipt_id,)).fetchone()[0].find('loaded_json')==-1
+    payload = target.execute("select json(payload_json) from actions where id=?", (receipt_id,)).fetchone()[0]
+    assert payload.find('loaded_json') == -1
     assert update_config(target,'runtime_skill_configs',30,{'status':'active'})==1
     assert insert_skill_receipt(target,'managed_skill_export_receipts',{'revision_id':'0200','sha256':'mismatch-allowed','path':'p','created_at':'t'},source_id=700)==700
     export_id=target.execute("select id from actions where record_type='managed_skill_export_receipts'").fetchone()[0]

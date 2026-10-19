@@ -11,6 +11,8 @@ from app.run_storage import insert_run
 from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
+from app.task8_storage import task8_set_parts
+from app.task20_definitions import task20_column
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
@@ -196,7 +198,12 @@ def test_attempt_detail_does_not_promote_current_uncertain_execution_to_done(tmp
             "resolved_at": "2026-10-16 00:00:00",
             "resolution": "Business follow-up closed; original external receipt remains unverified.",
         })
-        db.execute("update tasks set status='done' where id=?", (task.id,))
+        task_update = task8_set_parts("reply_tasks", {"status": "done"})
+        assert db.execute(
+            f"update tasks set {task_update.sql} "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (*task_update.parameters, task.id),
+        ).rowcount == 1
 
     status, payload = build_attempt_detail(store, attempt_id)
 
@@ -581,7 +588,9 @@ def _seed_email_attempt(store: AutoReplyStore, *, with_agent_runs: bool) -> int:
         return attempt_id
     with store._connect() as db:
         task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
+            "select id from tasks where record_type='reply_tasks' and "
+            f"{task20_column('reply_tasks', 'conversation_id')}=? and "
+            f"{task20_column('reply_tasks', 'trigger_message_id')}=?",
             (CONVERSATION, TRIGGER),
         ).fetchone()[0]
         consumer = insert_run(db, 'agent_runs', {
@@ -1226,11 +1235,14 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
     with store._connect() as db:
         db.execute("update runs set status='failed', execution_generation='old-generation', "
                    "structured_error_json=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (raw, run.id))
-        db.execute(
-            "update tasks set status='failed', error='agent_reported_failure' "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
+        task_update = task8_set_parts(
+            "reply_tasks", {"status": "failed", "error": "agent_reported_failure"}
         )
+        assert db.execute(
+            f"update tasks set {task_update.sql} "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (*task_update.parameters, task.id),
+        ).rowcount == 1
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
