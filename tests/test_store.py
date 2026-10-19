@@ -2183,7 +2183,7 @@ def test_route_sessions_do_not_overwrite_other_routes(tmp_path: Path):
     ) == "api-session"
 
 
-def test_route_session_initialization_backfills_legacy_codex_session(tmp_path: Path):
+def test_partial_legacy_conversation_source_is_rejected_without_mutation(tmp_path: Path):
     db_path = tmp_path / "legacy-route-sessions.sqlite3"
     with sqlite3.connect(db_path) as db:
         db.execute(
@@ -2204,24 +2204,10 @@ def test_route_session_initialization_backfills_legacy_codex_session(tmp_path: P
             """
         )
 
-    store = AutoReplyStore(db_path)
-
-    assert store.get_codex_session_id("legacy-cid") == "legacy-session"
-    assert (
-        store.get_conversation_runtime_session("legacy-cid", "codex_oauth")
-        == "legacy-session"
-    )
-    assert store.get_conversation_runtime_session_contract_hash(
-        "legacy-cid", "codex_oauth"
-    ) == ""
-    assert store.get_conversation_runtime_session(
-        "legacy-cid",
-        "codex_oauth",
-        required_contract_hash="current-wire-contract",
-    ) is None
+    assert_store_reopen_rejected_without_mutation(db_path)
 
 
-def test_route_session_migration_marks_existing_rows_contract_unknown(tmp_path: Path):
+def test_partial_legacy_route_source_is_rejected_without_mutation(tmp_path: Path):
     db_path = tmp_path / "old-route-session-schema.sqlite3"
     with sqlite3.connect(db_path) as db:
         db.execute(
@@ -2243,63 +2229,29 @@ def test_route_session_migration_marks_existing_rows_contract_unknown(tmp_path: 
             """
         )
 
+    assert_store_reopen_rejected_without_mutation(db_path)
+
+
+def test_current_route_session_unknown_contract_survives_reopen(tmp_path: Path):
+    db_path = tmp_path / "current-route-unknown-contract.sqlite3"
     store = AutoReplyStore(db_path)
-
-    assert store.get_conversation_runtime_session_contract_hash(
-        "cid", "codex_api"
-    ) == ""
-    assert store.get_conversation_runtime_session(
-        "cid", "codex_api", required_contract_hash="current-contract"
-    ) is None
-
-
-def test_current_schema_reopens_and_repairs_old_route_session_shape(tmp_path: Path):
-    db_path = tmp_path / "current-version-old-route-table.sqlite3"
-    store = AutoReplyStore(db_path)
-    store.upsert_conversation_runtime_session(
-        "cid", "codex_api", "old-api-session", "old-contract"
-    )
+    store.upsert_conversation_runtime_session('cid', 'codex_api', 'old-api-session', '')
     with store._connect() as db:
-        db.execute(
-            "alter table conversation_runtime_sessions rename to route_sessions_new"
-        )
-        db.execute(
-            """
-            create table conversation_runtime_sessions (
-                conversation_id text not null,
-                route_name text not null,
-                session_id text not null,
-                updated_at text not null default current_timestamp,
-                primary key(conversation_id, route_name)
-            )
-            """
-        )
-        db.execute(
-            """
-            insert into conversation_runtime_sessions (
-                conversation_id, route_name, session_id, updated_at
-            )
-            select conversation_id, route_name, session_id, updated_at
-            from route_sessions_new
-            """
-        )
-        db.execute("drop table route_sessions_new")
-        version = db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()[0]
-    assert version == store_module.STORE_SCHEMA_VERSION
-    assert store._schema_is_current() is False
+        before = [tuple(row) for row in db.execute(
+            f"select * from ({state_projection('conversation_runtime_sessions')})"
+        )]
+    assert store._schema_is_current() is True
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
     reopened = AutoReplyStore(db_path)
-
-    assert reopened.get_conversation_runtime_session_contract_hash(
-        "cid", "codex_api"
-    ) == ""
+    assert reopened.get_conversation_runtime_session('cid', 'codex_api') == 'old-api-session'
+    assert reopened.get_conversation_runtime_session_contract_hash('cid', 'codex_api') == ''
     assert reopened.get_conversation_runtime_session(
-        "cid", "codex_api", required_contract_hash="current-contract"
+        'cid', 'codex_api', required_contract_hash='current-contract',
     ) is None
+    with reopened._connect() as db:
+        assert [tuple(row) for row in db.execute(
+            f"select * from ({state_projection('conversation_runtime_sessions')})"
+        )] == before
 
 
 def test_route_pause_is_independent_and_expires(tmp_path: Path):

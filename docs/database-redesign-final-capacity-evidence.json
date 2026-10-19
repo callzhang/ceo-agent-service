@@ -35155,5 +35155,11 @@
     },
     "remaining": "Ten legacy partial-schema/startup migration expectations: three route-session, one setup-wizard, two removed-runtime manual converter, one follow-up-draft, three meeting-memory standalone-table cases. Distinguish retired startup layout expectations from supported explicit migration before retirement/replacement. Not a whole-module pass.",
     "runtime_changes": false
+  },
+  "store_route_source_contracts_20261019": {
+    "passed": 3,
+    "seconds": 7.73,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-route-source.log",
+    "scope": "Two partial legacy source layouts are rejected with full persisted dump unchanged; current unknown route contract/session survives reopen and cannot satisfy a required current contract. Retires automatic startup backfill/standalone table repair expectations; explicit historical State conversion coverage remains separate. No runtime change."
   }
 }

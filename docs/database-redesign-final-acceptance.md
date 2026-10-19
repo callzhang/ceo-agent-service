@@ -199,3 +199,5 @@ Store 定向66项已闭合：同轮65 pass／230.97秒，最后一项旧schedule
 旧失败清单剩余31函数实际展开35节点，当前诊断10 pass／25 fail、218.99秒；没有把旧夹具错误归为生产缺陷。随后当前夹具14项通过（6＋1＋3＋2＋2）：State事务／锁／排序、Task输入schema与失效运行、业务采纳和输入压缩的同事务回滚、审查rerun回滚、准确schema拒绝及完整dump不变、History当前索引、会议memory旧代次、Task／Action缺失索引重开修复及行保留。仅测试更新，无运行时修改。Source13真实正迁及Store重开先前已完成；主审在同一副本用当前Task20投影读回原lease及当前恢复索引，避免重复历史正迁；这不记作重跑整项pytest通过。
 
 仍需处理10个历史部分schema／启动迁移断言：3个route-session、1个setup-wizard、2个removed-runtime手动converter、1个follow-up draft、3个meeting-memory独立旧表。现有运行时仅接受最终结构或明确支持的完整历史迁移，不能为这些旧fixture添加兼容回退；须对照实际声明与既有显式迁移证据逐项替换或退休后才能关闭整体回归差项。
+
+Route-session三项已按现有合同替换并通过（7.73秒）：两类不完整旧源在启动时明确拒绝，完整dump不变；当前State中的未知contract／原session可重开保留，不能满足指定current contract。没有给运行时恢复旧表回退。剩余历史断言从10降为7（setup1、removed-runtime手动converter2、follow-up1、meeting-memory3）；它们的退休／明确迁移归属仍需闭合。
