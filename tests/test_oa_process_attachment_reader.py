@@ -95,3 +95,11 @@ def test_both_roles_expose_process_attachment_reader_with_paged_pdf_input(monkey
         payload = json.loads(response[0][0].text)
         assert payload["ocr_required"] is True
         assert payload["ocr_page_numbers"] == [1]
+
+
+def test_process_attachment_reader_is_registered_once(caplog):
+    agent_cli.build_role_server("audit")
+    assert not any(
+        "Tool already exists: read_dingtalk_oa_process_attachment" in record.message
+        for record in caplog.records
+    )
