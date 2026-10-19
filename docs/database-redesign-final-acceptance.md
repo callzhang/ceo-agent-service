@@ -10,7 +10,7 @@
 
 2026-10-19 10:03 UTC再次只读核对，生产仍为同一干净commit，116普通表＋1 virtual＋4 shadow；主文件514,686,976 B、WAL4,161,232 B，最终结构尚未发布。这是更新生产时点，不能与冻结来源的候选容量直接作差。
 
-当前主要差项：搜索产品方式／性能、历史广泛诊断与当前验证范围的准确区分、最终候选发布及生产读回。全文行为变化尚未确认，不能用缩小功能范围或持久正文缓存关闭性能差项。
+当前主要差项：已批准1000字符预览的副本容量／迁移恢复及页面性能验证，最终候选发布及生产读回。Derek已明确批准有界预览例外及默认预览／主动全文检索；完整正文仍不重复长期保存。
 
 ## 需求与证据
 
@@ -142,7 +142,7 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 
 真实只读样本30封同folder、已有完整来源校验的邮件全部重取，12.674秒：fetch9.597、连接1.285、logout0.390、metadata0.476秒。主要成本在上游读取，未按样本线性推算全库。Spec第191行关键列表性能基线尚未满足，连接复用不足以据此关闭差项。
 
-待答复的具体选择：**发件人／主题搜索＋详情按需读正文**，或**保留全文并改后台检索／进度**。两者均涉及产品行为；确认前不删全文、不建长期原文／索引副本，也不把缩小功能范围当成原目标完成。
+此前二选一已被2026-10-19明确批准的折中方案取代：**最多1000字符纯文本预览＋本地默认搜索＋按需详情／主动全文检索**。不再等待旧选项答复；有界预览是已批准的重复内容例外，须单列其容量成本，不改变完整正文及模型输入的来源校验。
 
 - [x] 最终结构／字段方向、严格同输入容量、真实CLI及迁后新事实inverse／reforward。
 - [x] 已完成来源核验及限定20原文退休决定；Email未核实来源保留，退休发布工具有副本证明。
@@ -151,3 +151,12 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 - [ ] 搜索产品方式及性能／页面行为验证；模型历史权重保留偏差已修复并验证，生产清理及只留当前／最新的实际读回待发布。
 - [ ] 最终来源／候选绑定刷新、推送与官方`python -m app.deploy`；执行前完整备份，发布失败使用schema inverse保存迁后新事实。
 - [ ] 生产PID／healthz／queues／Attention／History／最终schema及容量读回，核对无新增失败／卡住／重复发送后才报告生效。
+
+## Approved1000-character preview implementation plan (2026-10-19)
+
+**Goal:** Resolve the search release gap with one bounded preview per existing Email row, local default search and explicit full search. **Architecture:** Reuse class_preview/message_preview, populate from displayed normalized original before body retirement, preserve full source hashes and inverse business facts. **Tech:** SQLite, Python reader/API, existing React EmailList.
+
+- [x] Backend TDD: new preview tests prove1000 Unicode characters, HTML/plain display normalization, a single populated preview, no source calls for ordinary listing/query, and deep-only keyword matching only with full scope. Run `pytest -q tests/test_email_preview.py tests/test_email_classification_reader.py tests/test_email_source_web_api.py` in task temporary paths; existing full-read tests explicitly select full scope.
+- [x] Implement `email_preview.py` bounded extraction/backfill, `persist_scan_result` and `compact_email_message_body` preview writes, paired publish backfill before retirement, Reader default local query and API `search_scope` enum. No new schema field/table, no change to classification/model inputs or external sends.
+- [x] Frontend: extend EmailClassificationListParams with `search_scope`, default preview label and explicit full-search action, query changes return to preview mode, full loading/error UI and ordinary detail unchanged. Existing React tests plus full build.
+- [ ] Root review and one representative production-copy forward/inverse/reforward validate approved preview policy, unchanged results/receipts and capacity; reuse unchanged CLI evidence. Then refresh final source binding, push/integrate and official deploy, read back schema/queues/Attention/History/preview/details and independently VACUUM in quiet window.

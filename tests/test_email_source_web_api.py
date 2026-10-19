@@ -108,12 +108,12 @@ def source_client(catalog, monkeypatch, *, unavailable=False):
     return TestClient(app), opened, closed, constructions
 
 
-def test_default_routes_use_exact_source_for_list_detail_and_body_search(
+def test_explicit_full_routes_use_exact_source_for_list_detail_and_body_search(
     catalog, monkeypatch
 ):
     client, opened, closed, constructions = source_client(catalog, monkeypatch)
     listed = client.get(
-        "/api/console/email/classifications", params={"status": "all", "page_size": 2}
+        "/api/console/email/classifications", params={"search_scope": "full", "status": "all", "page_size": 2}
     )
     assert listed.status_code == 200, listed.text
     assert listed.json()["meta"]["total"] == 6
@@ -124,7 +124,7 @@ def test_default_routes_use_exact_source_for_list_detail_and_body_search(
     assert len(opened) == 1
     searched = client.get(
         "/api/console/email/classifications",
-        params={"status": "all", "page_size": 2, "page": 2, "q": "provider-only"},
+        params={"search_scope": "full", "status": "all", "page_size": 2, "page": 2, "q": "provider-only"},
     )
     assert searched.status_code == 200, searched.text
     assert searched.json()["meta"]["total"] == 6
@@ -136,7 +136,7 @@ def test_default_routes_use_exact_source_for_list_detail_and_body_search(
     assert len(opened) == 3 and closed == opened and len(constructions) == 1
     unsubscribe = client.get(
         "/api/console/email/classifications",
-        params={"status": "unsubscribe", "q": "provider-only"},
+        params={"search_scope": "full", "status": "unsubscribe", "q": "provider-only"},
     )
     assert unsubscribe.status_code == 200, unsubscribe.text
     assert unsubscribe.json()["meta"]["total"] == 1
@@ -150,8 +150,8 @@ def test_default_routes_use_exact_source_for_list_detail_and_body_search(
 @pytest.mark.parametrize(
     "endpoint",
     [
-        "/api/console/email/classifications?status=all",
-        "/api/console/email/classifications?status=all&q=provider-only",
+        "/api/console/email/classifications?status=all&search_scope=full",
+        "/api/console/email/classifications?status=all&q=provider-only&search_scope=full",
         "/api/console/email/classifications/1",
     ],
 )
@@ -341,7 +341,7 @@ def test_audit_console_preview_and_manual_freeze_share_one_source_registry(
         app, headers={"Host": "127.0.0.1:8765"}, client=("127.0.0.1", 50000)
     )
     response = client.get(
-        "/api/console/email/classifications", params={"status": "all", "page_size": 1}
+        "/api/console/email/classifications", params={"search_scope": "full", "status": "all", "page_size": 1}
     )
     assert response.status_code == 200, response.text
     selection = {
@@ -428,3 +428,28 @@ def test_manual_training_request_does_not_run_blocking_sources_on_the_event_loop
     response = TestClient(app).post("/api/console/email/training")
     assert response.status_code == 200, response.text
     assert calls == [1]
+
+
+def test_default_preview_http_needs_no_original_and_full_scope_is_explicit(catalog, monkeypatch):
+    from app.email_preview import populate_email_previews
+
+    store, _ = catalog
+    with store._connect() as db:
+        populate_email_previews(db)
+    client, opened, closed, _ = source_client(catalog, monkeypatch, unavailable=True)
+    response = client.get("/api/console/email/classifications", params={"status": "all", "q": "ALPHA"})
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["total"] == 1
+    assert response.json()["items"][0]["preview"] == "Alpha\n\nBETA"
+    assert "message_text" not in response.json()["items"][0]
+    assert opened == closed == []
+    unsubscribe = client.get("/api/console/email/classifications", params={"status": "unsubscribe", "q": "ALPHA"})
+    assert unsubscribe.status_code == 200
+    assert unsubscribe.json()["meta"]["total"] == 1
+    assert [row["id"] for row in unsubscribe.json()["items"]] == ["1"]
+    assert opened == closed == []
+    full = client.get("/api/console/email/classifications", params={"status": "all", "q": "ALPHA", "search_scope": "full"})
+    assert full.status_code == 502
+    assert full.json()["code"] == "email_original_unavailable"
+    assert len(opened) == len(closed) == 1
+    assert client.get("/api/console/email/classifications", params={"search_scope": "invalid"}).status_code == 422

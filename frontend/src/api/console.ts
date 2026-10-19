@@ -418,6 +418,7 @@ export interface EmailClassificationItem {
 export type EmailClassificationStatus = "all" | "pending_feedback" | "processed" | "unsubscribe";
 export interface EmailClassificationListParams {
   q?: string;
+  search_scope?: "preview" | "full";
   category?: string;
   action_status?: string;
   source?: string;

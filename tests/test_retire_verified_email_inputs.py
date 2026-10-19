@@ -45,7 +45,9 @@ def test_preview_and_apply_keep_live_facts_inclusion_and_repeat_idempotently(bod
     assert applied['body_retired'] == applied['model_inputs_retired'] == 1
     after = _row(body_store)
     assert after['message_normalized_text'] == after['class_model_text'] == ''
-    assert after | {k: before[k] for k in ('message_normalized_text','class_model_text','message_source_reference_json')} == before
+    assert after['class_preview'] == 'complete body'
+    assert after['message_preview'] == ''
+    assert after | {k: before[k] for k in ('message_normalized_text','class_model_text','message_source_reference_json','class_preview','message_preview')} == before
     again = retire_verified_email_inputs(source, body_store.path, apply=True)
     assert again['changed_rows'] == 0
     assert _row(body_store) == after
@@ -69,7 +71,9 @@ def test_new_or_unfinished_live_inputs_are_never_overwritten(body_store, change)
     if change == 'body':
         permitted.add('class_model_text')
     if change in ('model', 'model_blob'):
-        permitted.add('message_normalized_text')
+        permitted.update(('message_normalized_text', 'class_preview', 'message_preview'))
+        assert after['class_preview'] == 'complete body'
+        assert after['message_preview'] == ''
     assert after | {k:before[k] for k in permitted} == before
 
 

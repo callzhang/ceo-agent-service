@@ -16561,5 +16561,54 @@
     "new_test_runs": 0,
     "production_writes": false,
     "remaining_product_decision": "source-backed email search synchronous behavior cannot meet verified latency baseline; previous async choice remains unanswered"
+  },
+  "approved_bounded_email_preview": {
+    "approved_by": "Derek",
+    "date": "2026-10-19",
+    "limit_unicode_characters": 1000,
+    "new_tables": 0,
+    "new_columns": 0,
+    "owner_rule": "class_preview only on classified rows; message_preview only on message-only rows",
+    "body_hash_and_model_input_unchanged": true,
+    "default_scope": "preview; no source reads",
+    "explicit_scope": "full; existing exact source reader and source-error semantics",
+    "red": {
+      "preview_tests_failed": 4,
+      "log": "/tmp/email-preview-red-20261019.log",
+      "retirement_script_failed": 1,
+      "retirement_log": "/tmp/email-preview-retirement-red-20261019.log"
+    },
+    "verification": {
+      "reader_http_body_retirement_initial": {
+        "passed": 80,
+        "expected_changed_preview_assertion_failed": 1,
+        "seconds": 92.81,
+        "log": "/tmp/email-preview-integration-20261019.log"
+      },
+      "scan_retirement_boundaries": {
+        "passed": 11,
+        "seconds": 7.94,
+        "log": "/tmp/email-preview-boundary-20261019.log"
+      },
+      "pagination_unsubscribe_http": {
+        "passed": 8,
+        "seconds": 12.27,
+        "log": "/tmp/email-preview-page-filters-20261019.log"
+      },
+      "final_preview_and_explicit_retirement": {
+        "passed": 16,
+        "seconds": 36.44,
+        "log": "/tmp/email-preview-final-boundaries-20261019.log"
+      },
+      "frontend": {
+        "file": "frontend/src/pages/EmailPage.test.tsx",
+        "passed": 69,
+        "followup_scope_regressions_passed": 2,
+        "build": "tsc and Vite passed before dependency-only followup"
+      }
+    },
+    "independent_review": "Found standalone retirement-tool preview omission; root fixed same-transaction target-derived prefix and duplicate clear. No other concrete defect; exact page IDs and unsubscribe preview cases added. Root frontend diff reviewed.",
+    "production_writes": false,
+    "migration_copy_and_final_capacity": "pending"
   }
 }

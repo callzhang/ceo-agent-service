@@ -126,7 +126,7 @@ def test_search_total_order_page_and_visible_body_match_existing_store(
     store, _ = catalog
     expected = StoredEmailListingOracle(store).list_classifications(status=None, limit=2, offset=offset, q=query)
     assert (
-        reader(catalog).list_classifications(
+        reader(catalog).list_classifications(search_scope="full",
             status=None, limit=2, offset=offset, q=query
         )
         == expected
@@ -140,12 +140,12 @@ def test_filters_and_unsubscribe_eligibility_use_existing_business_rules(catalog
         {"source": "agent"},
         {"action_status": "none"},
     ):
-        assert reader(catalog).list_classifications(
+        assert reader(catalog).list_classifications(search_scope="full",
             status=None, limit=3, offset=0, q="world", **filters
         ) == StoredEmailListingOracle(store).list_classifications(
             status=None, limit=3, offset=0, q="world", **filters
         )
-    assert reader(catalog).list_unsubscribe_classifications(
+    assert reader(catalog).list_unsubscribe_classifications(search_scope="full",
         limit=1, offset=0, q="alpha"
     ) == StoredEmailListingOracle(store).list_unsubscribe_classifications(limit=1, offset=0, q="alpha")
 
@@ -177,12 +177,12 @@ def test_source_missing_does_not_become_empty_body_or_zero_total(catalog):
     with pytest.raises(LookupError, match="original unavailable"):
         EmailClassificationReader(
             store, message_reader=view_reader(unavailable)
-        ).list_classifications(status=None, limit=2, offset=0, q="body")
+        ).list_classifications(search_scope="full", status=None, limit=2, offset=0, q="body")
 
 
 def test_metadata_search_fetches_only_page_bodies(catalog):
     calls = []
-    rows, total = reader(catalog, calls).list_classifications(
+    rows, total = reader(catalog, calls).list_classifications(search_scope="full",
         status=None, limit=1, offset=2, q="sender"
     )
     assert total == 6 and [row["id"] for row in rows] == [4]
@@ -209,7 +209,7 @@ def test_source_io_has_no_write_lock_and_candidate_change_is_explicit(catalog):
     with pytest.raises(LookupError, match="changed"):
         EmailClassificationReader(
             store, message_reader=view_reader(read)
-        ).list_classifications(status=None, limit=2, offset=0, q="body")
+        ).list_classifications(search_scope="full", status=None, limit=2, offset=0, q="body")
 
 
 def test_explicit_status_filter_is_preserved(catalog):
@@ -221,7 +221,7 @@ def test_explicit_status_filter_is_preserved(catalog):
     options = dict(
         status=EmailClassificationStatus.PROCESSED, limit=2, offset=0, q="alpha"
     )
-    assert reader(catalog).list_classifications(
+    assert reader(catalog).list_classifications(search_scope="full",
         **options
     ) == StoredEmailListingOracle(store).list_classifications(**options)
 
@@ -254,7 +254,7 @@ def test_detail_and_page_use_actual_exact_source_view_without_database_body(cata
     accurate = EmailSourceReader(public, source_factory=factory)
     views = EmailClassificationReader(store, message_reader=accurate)
     assert views.get_classification(1) == StoredEmailListingOracle(store).get_classification(1)
-    assert views.list_classifications(
+    assert views.list_classifications(search_scope="full",
         status=None, limit=1, offset=5
     ) == StoredEmailListingOracle(store).list_classifications(status=None, limit=1, offset=5)
     assert len(sessions) == 2 and all(
@@ -282,7 +282,7 @@ def test_search_uses_bounded_account_batches_without_single_source_reads(catalog
         store, message_reader=SimpleNamespace(read_view=single, read_views=batch)
     )
     options = dict(status=None, q="world", limit=2, offset=0)
-    assert view.list_classifications(**options) == StoredEmailListingOracle(store).list_classifications(**options)
+    assert view.list_classifications(search_scope="full", **options) == StoredEmailListingOracle(store).list_classifications(**options)
     assert len(batches) == 1 and sum(map(len, batches)) == 6
 
 
@@ -290,7 +290,7 @@ def test_source_listing_works_without_retired_store_original_interfaces(catalog)
     store, _ = catalog
     assert not hasattr(store, "list_classifications")
     assert not hasattr(store, "list_unsubscribe_classifications")
-    rows, total = reader(catalog).list_classifications(status=None, limit=1, offset=0, q="alpha")
+    rows, total = reader(catalog).list_classifications(search_scope="full", status=None, limit=1, offset=0, q="alpha")
     assert total == 1 and rows[0]["message_text"] == "Alpha\n\nBETA"
 
 
@@ -345,7 +345,7 @@ def test_full_source_scan_batch_is_independent_of_page_size(limit):
 
     store = SimpleNamespace(classification_source_candidates=lambda **kwargs: (candidates, 503))
     view = EmailClassificationReader(store, message_reader=SimpleNamespace(read_views=read_views))
-    rows, total = view.list_classifications(status=None, q='needle', limit=limit, offset=1)
+    rows, total = view.list_classifications(search_scope="full", status=None, q='needle', limit=limit, offset=1)
     assert total == 4
     assert [row['id'] for row in rows] == [446, 4, 1][:limit]
     assert all(row['message_text'] == 'needle' for row in rows)

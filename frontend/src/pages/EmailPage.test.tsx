@@ -30,6 +30,32 @@ it("searches all saved mail via URL while preserving filter and page size",async
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback",{page:1,page_size:20},expect.any(AbortSignal)));
   expect(screen.getByLabelText("URL")).not.toHaveTextContent("q=");
 });
+it("defaults email list search to previews and uses full text only on explicit request",async()=>{
+  const user=userEvent.setup();show("/email?tab=all&q=合同&page=2&page_size=20");
+  await screen.findByRole("button",{name:"打开邮件 邮件1"});
+  expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:2,page_size:20,q:"合同"},expect.any(AbortSignal));
+  expect(screen.getAllByText("生成的摘要不应出现在列表").length).toBeGreaterThan(0);
+  expect(screen.queryByText("原始邮件正文前段 1")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox",{name:"选择邮件 邮件1"}));
+  expect(screen.getByText("已选 1 封")).toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"全文检索"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:20,q:"合同",search_scope:"full"},expect.any(AbortSignal)));
+  expect(screen.getByLabelText("URL")).toHaveTextContent("search_scope=full");
+  expect(screen.queryByText("已选 1 封")).not.toBeInTheDocument();
+  expect(screen.getByRole("searchbox",{name:"搜索邮件"})).toHaveAttribute("placeholder","搜索发件人、主题及完整正文…");
+});
+it("returns to preview scope when the query changes after a full search",async()=>{
+  const user=userEvent.setup();show("/email?tab=all&q=合同&search_scope=full&page=2&page_size=20");
+  await screen.findByRole("button",{name:"打开邮件 邮件1"});
+  expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:2,page_size:20,q:"合同",search_scope:"full"},expect.any(AbortSignal));
+  const fullRequests=()=>api.listEmailClassifications.mock.calls.filter(([,params])=>params.search_scope==="full").length;
+  expect(fullRequests()).toBe(1);
+  const search=screen.getByRole("searchbox",{name:"搜索邮件"});
+  await user.clear(search);await user.type(search,"发票");
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:20,q:"发票"},expect.any(AbortSignal)));
+  expect(fullRequests()).toBe(1);
+  expect(screen.getByLabelText("URL")).not.toHaveTextContent("search_scope=full");
+});
 it("keeps newer typed text after its own debounced URL update",async()=>{
   show("/email?tab=all&page=1&page_size=20&q=old");
   const search=await screen.findByRole("searchbox",{name:"搜索邮件"});
@@ -118,11 +144,11 @@ it("shows a one-line explanation instead of a visible page title", async()=>{
   expect(screen.getByRole("heading",{name:"Email"})).toHaveClass("sr-only");
   expect(screen.queryByText("CEO AGENT CONSOLE")).not.toBeInTheDocument();
 });
-it("renders the original body prefix in the shared row and never uses preview as its body", async()=>{
+it("renders the bounded preview in the shared row and keeps full body in detail", async()=>{
   show();
   const trigger=await screen.findByRole("button",{name:"打开邮件 邮件1"});
-  expect(trigger).toHaveTextContent("原始邮件正文前段 1");
-  expect(trigger).not.toHaveTextContent("生成的摘要不应出现在列表");
+  expect(trigger).toHaveTextContent("生成的摘要不应出现在列表");
+  expect(trigger).not.toHaveTextContent("原始邮件正文前段 1");
 });
 it("confirms the displayed pending suggestion without changing the dropdown",async()=>{
   const user=userEvent.setup();
@@ -142,14 +168,15 @@ it("keeps each row's unsubscribe state through the real list response mapper",as
   expect(result.items[1].unsubscribe_state).toBeNull();
   fetchMock.mockRestore();
 });
-it("maps persisted original text from the unified list response",async()=>{
+it("maps preview text without requiring a full body from the unified list response",async()=>{
   const params: EmailClassificationListParams = { page: 1, page_size: 20 };
   const actual=await vi.importActual<typeof import("../api/console")>("../api/console");
-  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"8423079112545370123",category:"work",classification_source:"agent",status:"pending_feedback",preview:"摘要",message_text:"邮件原文"}],meta:{page:1,page_size:20,total:1,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200,headers:{"Content-Type":"application/json"}}));
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"8423079112545370123",category:"work",classification_source:"agent",status:"pending_feedback",preview:"摘要"}],meta:{page:1,page_size:20,total:1,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200,headers:{"Content-Type":"application/json"}}));
   const result=await actual.listEmailClassifications("all",params);
   expect(fetchMock).toHaveBeenCalledWith("/api/console/email/classifications?status=all&page=1&page_size=20",expect.objectContaining({signal:undefined}));
   expect(result.items[0].id).toBe("8423079112545370123");
-  expect(result.items[0]).toHaveProperty("message_text","邮件原文");
+  expect(result.items[0]).toHaveProperty("preview","摘要");
+  expect(result.items[0].message_text).toBe("");
   expect(result.items[0].category).toBe("work");
   expect(result.items[0].classification_source).toBe("agent");
   fetchMock.mockRestore();

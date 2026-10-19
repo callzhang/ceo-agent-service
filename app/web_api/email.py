@@ -1357,12 +1357,13 @@ def register_email_routes(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = Query(default="", max_length=500),
+        search_scope: Literal["preview", "full"] = Query(default="preview"),
         category: str = Query(default="", max_length=512),
         action_status: str = Query(default="", max_length=20),
         source: str = Query(default="", max_length=16),
     ):
         email_store = require_store()
-        search_params = {"q": q.strip()} if q.strip() else {}
+        search_params = {"q": q.strip(), "search_scope": search_scope}
         if action_status and action_status not in {
             "failed", "failed_retriable", "failed_not_retriable",
             "pending", "done", "skipped", "none",

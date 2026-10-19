@@ -186,7 +186,7 @@ def body_store(tmp_path):
     return store
 
 
-def test_terminal_body_retirement_changes_only_original_and_inline_reference(body_store):
+def test_terminal_body_retirement_preserves_facts_and_one_bounded_preview(body_store):
     from types import SimpleNamespace
 
     store = body_store
@@ -205,7 +205,11 @@ def test_terminal_body_retirement_changes_only_original_and_inline_reference(bod
     assert after["message_normalized_text"] == ""
     ref = json.loads(after["message_source_reference_json"])
     assert ref["sha256"] == sha256(b"complete body").hexdigest()
-    assert after | {key: before[key] for key in ("message_normalized_text", "message_source_reference_json")} == before
+    assert after["class_preview"] == "complete body"
+    assert after["message_preview"] == ""
+    assert after | {key: before[key] for key in (
+        "message_normalized_text", "message_source_reference_json", "class_preview", "message_preview"
+    )} == before
     assert not store.compact_email_message_body(101, source_reader=SimpleNamespace(read=read))
     assert len(reads) == 1
 

@@ -654,6 +654,8 @@ class ActionEmailSchemaRelease:
                 migrate_email_history_schema(db, history_inverse)
                 canonical_inverse = capture_email_canonical_source(db)
                 migrate_email_canonical_schema(db, canonical_inverse)
+                from app.email_preview import populate_email_previews
+                populate_email_previews(db)
                 legacy_owner_inverse = capture_legacy_owner_source(db)
                 migrate_legacy_owner(db, legacy_owner_inverse)
                 final_inverse = migrate_final_actions(db, bindings=self.source_bindings)

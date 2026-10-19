@@ -8529,7 +8529,6 @@ class EmailStore:
         recipients: Sequence[str],
         subject: str,
         normalized_text: str,
-        preview: str,
         attachment_metadata: Sequence[EmailAttachmentMetadata],
         in_reply_to: str,
         references: Sequence[str],
@@ -8560,7 +8559,7 @@ class EmailStore:
             "recipients_json": _json_dump(list(recipients)),
             "subject": subject,
             "normalized_text": normalized_text,
-            "preview": preview,
+            "preview": "",
             "attachment_metadata_json": _json_dump(
                 [item.model_dump(mode="json") for item in attachment_metadata]
             ),
@@ -8803,6 +8802,9 @@ class EmailStore:
     ) -> dict[str, Any]:
         """Atomically persist scan state and advance its folder cursor last."""
 
+        from app.email_preview import email_preview
+
+        preview = email_preview(normalized_text)
         _validate_model_text(model_text)
         agent_result_json = _validated_agent_result_json(classification, agent_result)
         now = self._now()
@@ -8829,7 +8831,6 @@ class EmailStore:
                 recipients=recipients,
                 subject=subject,
                 normalized_text=normalized_text,
-                preview=preview,
                 attachment_metadata=attachment_metadata,
                 in_reply_to=in_reply_to,
                 references=references,
@@ -13174,7 +13175,7 @@ class EmailStore:
         self, *, status: EmailClassificationStatus | None,
         limit: int | None = None, offset: int = 0, category: str = "",
         action_status: str = "", source: str = "", unsubscribe: bool = False,
-        classification_id: int | None = None,
+        classification_id: int | None = None, preview_query: str = "",
     ) -> tuple[list[dict[str, Any]], int]:
         """Existing business eligibility/order without reading either input body."""
         from app.email_canonical_definitions import CLASS_FIELDS
@@ -13194,6 +13195,13 @@ class EmailStore:
                 )
                 where = "classifications.status in (" + ",".join("?" for _ in statuses) + ")" + filters
                 params = (*(item.value for item in statuses), *filter_params)
+            if preview_query:
+                db.create_function("email_casefold", 1, str.casefold, deterministic=True)
+                where = "(" + where + ") and (" + " or ".join(
+                    "instr(email_casefold(coalesce(classifications." + field + ",'')),?)>0"
+                    for field in ("sender", "subject", "preview")
+                ) + ")"
+                params = (*params, preview_query, preview_query, preview_query)
             total = db.execute(
                 f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) as classifications where " + where,
                 params,
@@ -15097,6 +15105,7 @@ class EmailStore:
     def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
         """Retire one completed original with an exact source and no unfinished dependency."""
         from app.email_body_source import locate_original
+        from app.email_preview import email_preview
         from app.run_storage import RUNTIME_ATTEMPT_SQL
 
         eligible = self._completed_email_input_sql() + " and json_type(message_source_reference_json,'$.kind') is null " \
@@ -15119,10 +15128,10 @@ class EmailStore:
             return False
         reference = json.loads(original['message_source_reference_json'] or '{}') | reference
         with self._connect() as db:
-            cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=? "
+            cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=?,class_preview=?,message_preview='' "
                 "where id=? and message_normalized_text=? and message_source_reference_json is ? and message_updated_at is ? "
                 "and class_updated_at is ? and class_current_action_plan_id is ? and " + eligible,
-                (_json_dump(reference), original["id"], original["message_normalized_text"], original['message_source_reference_json'],
+                (_json_dump(reference), email_preview(original["message_normalized_text"]), original["id"], original["message_normalized_text"], original['message_source_reference_json'],
                  original["message_updated_at"], original["class_updated_at"], original["class_current_action_plan_id"]))
             return cursor.rowcount == 1
 

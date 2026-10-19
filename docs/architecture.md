@@ -71,6 +71,8 @@ Emails 把原 classification 与 message 存成一行，公开 ID 仍各自独�
 Console 与执行上下文从准确来源读取完整消息并验证引用版本；body-only 原生字段
 不能冒充 To／Cc，角色标头取真实邮件来源。模型输入、全文搜索及历史批量退休仍按
 主验收清单列明差项，未把局部来源成功当作全量完成。
+Derek于2026-10-19批准每封邮件保留最多1000个Unicode字符的纯文本预览。复用既有字段：classified行只填class_preview并清空message_preview，message-only行只填message_preview；不增加表、字段或完整原文缓存。扫描写入、显式配对迁移（在原文退休前）及两种正文退休入口使用相同预览规则；已退休原文不重建，仅保留既有预览的有界值。完整正文和模型输入的hash／来源、非终态执行与恢复输入不变。
+Console默认列表及搜索只读取本地发件人、主题和预览，使用Unicode casefold连续子串，保留原过滤／total／顺序／分页；列表返回preview，不将片段作为message_text。界面标明范围，普通输入默认预览搜索，显式“全文检索”发送search_scope=full并显示加载状态；不新增后台job、轮询或进度百分比。详情及显式全文查询仍从准确来源读取完整消息，来源失败明确报错。
 Console 全文成员判定按固定50条候选分批、批内按账号读取原始来源，独立于页面limit；这与native exact IMAP的50条上限一致，避免小页面退化成逐封来源会话。匹配仍为Unicode casefold连续子串，准确total／顺序／offset／limit及来源变化检查不变；原文只在请求内使用。会话数下降不等于全库来源延迟验收通过。
 
 两类 Email history 已并入 Actions，保留原二十四字段、公开 TEXT key、可空 key 的

@@ -16,6 +16,7 @@ from app.action_email_schema_release import (
 from app.email_body_source import verify_original
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_store import EmailStore
+from app.email_preview import email_preview
 
 
 def _validate_reference(reference, *, model):
@@ -96,6 +97,8 @@ def retire_verified_email_inputs(source: Path, target: Path, *, apply=False):
                     continue
                 values = {}
                 if retire_body:
+                    values['class_preview'] = email_preview(row['message_normalized_text'])
+                    values['message_preview'] = ''
                     values['message_normalized_text'] = ''
                     current.update(body)
                 if retire_model:

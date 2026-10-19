@@ -37,10 +37,16 @@ class EmailClassificationReader:
         except (LookupError, OSError, ValueError, imaplib.IMAP4.error) as exc:
             raise EmailClassificationReadError("email original unavailable") from exc
 
-    def _list(self, *, q, limit, offset, **filters):
+    def _list(self, *, q, limit, offset, search_scope="preview", **filters):
         if limit <= 0 or offset < 0:
             raise ValueError("classification pagination is invalid")
         query = q.strip().casefold()
+        if search_scope not in ("preview", "full"):
+            raise ValueError("email search scope is invalid")
+        if search_scope == "preview":
+            return self.store.classification_source_candidates(
+                **filters, limit=limit, offset=offset, preview_query=query,
+            )
         selection = dict(
             filters, limit=None if query else limit, offset=0 if query else offset
         )
@@ -96,6 +102,7 @@ class EmailClassificationReader:
         category="",
         action_status="",
         source="",
+        search_scope="preview",
     ):
         return self._list(
             q=q,
@@ -105,11 +112,12 @@ class EmailClassificationReader:
             category=category,
             action_status=action_status,
             source=source,
+            search_scope=search_scope,
         )
 
-    def list_unsubscribe_classifications(self, *, limit: int, offset: int, q=""):
+    def list_unsubscribe_classifications(self, *, limit: int, offset: int, q="", search_scope="preview"):
         return self._list(
-            q=q, limit=limit, offset=offset, status=None, unsubscribe=True
+            q=q, limit=limit, offset=offset, status=None, unsubscribe=True, search_scope=search_scope
         )
 
     def get_classification(self, classification_id: int):

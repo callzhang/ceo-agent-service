@@ -203,3 +203,9 @@ actions 的关联类型是已有业务事实的一行，字段和唯一约束各
 ### Email 单次原文版本引用的实际字段补齐
 
 当前 canonical emails 已有 provider 身份／定位与 message_normalized_text，但缺少原文字节版本的校验元信息。按本 spec 单次来源在拥有记录内联的规则，emails 增加一个可空 message_source_reference_json：仅含完整 SHA-256、UTF8 字节数、原生精确坐标或已核实的 provider 定位及既有正文序列化形式，不含正文。完整准确来源证明后才能将原 message_normalized_text 置空；未证明、pending feedback 或未完成任务／动作依赖仍保留。class_model_text、现有搜索和相似案例语义单独处理，不以此字段替代它们。当前数据逆迁在写事务外取得准确原文字节，按当前引用重新校验；旧 backup 只作为原文字节来源，不能覆盖新增业务行、当前状态或回执。不新建共享 provenance 行或长期兼容容器来承载一个所有者的来源。
+
+### 2026-10-19 confirmed bounded Email preview
+
+Derek approved a maximum1000 Unicode-character plain-text preview as the explicit exception to provenance-only storage. Keep exactly one populated preview in each existing `emails` row: `class_preview` for classified rows, `message_preview` for message-only rows; clear the other preview on classified rows. Reuse these actual fields, no new table or body cache. Preview derives from the same displayed original text, never a model summary; full-body hashes/locators, nonterminal inputs and model feature inputs remain distinct and exact.
+
+Default Console classification/unsubscribe listing searches sender, subject and preview locally, without fetching originals; it returns preview as preview, never as full message_text. Explicit `search_scope=full` uses existing exact source-backed substring search, and detail still reads the full original. UI clearly labels the1000-character search range and exposes an explicit full-search action, rather than triggering full reads on ordinary typing. Full search retains exact total/order/page and errors on incomplete source reads.

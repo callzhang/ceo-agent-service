@@ -37,6 +37,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const pageSize=[20,50,100].includes(rawSize)?rawSize:50;
   const selected=params.get("selected") || "";
   const query=params.get("q") || "";
+  const searchScope=params.get("search_scope")==="full" ? "full" : "preview";
   const categoryFilter=params.get("category") || "";
   const categoryChosen=categoryFilter?categoryFilter.split(",").filter(Boolean):[];
   const actionFilter=ACTION_FILTERS.some(item=>item.value===params.get("action_status"))?params.get("action_status") as string:"";
@@ -78,7 +79,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     inputQueryCommit.current=null;
     setSearchText(query);
   },[query]);
-  useEffect(()=>{setChecked(new Set());setBulkDone(null);setBulkError("");},[status,page,pageSize,query,categoryFilter,actionFilter,sourceFilter]);
+  useEffect(()=>{setChecked(new Set());setBulkDone(null);setBulkError("");},[status,page,pageSize,query,searchScope,categoryFilter,actionFilter,sourceFilter]);
   function applyFilter(key:string,value:string) {
     setParams(previous=>{const next=new URLSearchParams(previous);if(value)next.set(key,value);else next.delete(key);next.set("page","1");next.delete("selected");return next;},{replace:true});
     setClosed("");setExpanded(false);
@@ -86,10 +87,10 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   function clearFilters() {
     setParams(previous=>{const next=new URLSearchParams(previous);["category","action_status","source"].forEach(key=>next.delete(key));next.set("page","1");next.delete("selected");return next;},{replace:true});
   }
-  function applySearch(value:string) {
+  function applySearch(value:string,scope:"preview"|"full"="preview") {
     const nextQuery=value.trim();
     inputQueryCommit.current=nextQuery;
-    setParams(previous=>{const next=new URLSearchParams(previous);if(nextQuery)next.set("q",nextQuery);else next.delete("q");next.set("page","1");next.delete("selected");return next;},{replace:true});
+    setParams(previous=>{const next=new URLSearchParams(previous);if(nextQuery)next.set("q",nextQuery);else next.delete("q");if(nextQuery&&scope==="full")next.set("search_scope","full");else next.delete("search_scope");next.set("page","1");next.delete("selected");return next;},{replace:true});
     setClosed("");setExpanded(false);
   }
   useEffect(()=>{
@@ -103,14 +104,14 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   }
   useEffect(()=>{
     const controller=new AbortController();setLoading(true);setError("");
-    listEmailClassifications(status,{page,page_size:pageSize,...(query.trim()?{q:query.trim()}:{}),...(status==="unsubscribe"?{}:{...(categoryFilter?{category:categoryFilter}:{}),...(actionFilter?{action_status:actionFilter}:{}),...(sourceFilter?{source:sourceFilter}:{})})},controller.signal).then(result=>{
+    listEmailClassifications(status,{page,page_size:pageSize,...(query.trim()?{q:query.trim(),...(searchScope==="full"?{search_scope:"full" as const}:{})}:{}),...(status==="unsubscribe"?{}:{...(categoryFilter?{category:categoryFilter}:{}),...(actionFilter?{action_status:actionFilter}:{}),...(sourceFilter?{source:sourceFilter}:{})})},controller.signal).then(result=>{
       if(controller.signal.aborted)return;
       const last=Math.max(1,Math.ceil(result.meta.total/pageSize));
       if(page>last){navigate(last);return;}
       setRows(result.items);setTotal(result.meta.total);setLoading(false);
     }).catch(reason=>{if(!controller.signal.aborted){setError(errorMessage(reason));setLoading(false);}});
     return ()=>controller.abort();
-  },[status,page,pageSize,revision,query,categoryFilter,actionFilter,sourceFilter]);
+  },[status,page,pageSize,revision,query,searchScope,categoryFilter,actionFilter,sourceFilter]);
   useEffect(()=>{
     // Reading it for a moment is what makes it read; skimming past a row is not.
     if(!open || markedRead.current.has(selected))return;
@@ -192,7 +193,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       <span className="email-pager" role="group" aria-label="页码">{pageWindow(page,Math.max(1,Math.ceil(total/pageSize))).map((entry,index)=>entry===0?<span key={"gap"+index} className="email-pager-gap" aria-hidden="true">…</span>:<button key={entry} type="button" className={`email-pager-page${entry===page?" is-current":""}`} aria-label={`第 ${entry} 页`} aria-current={entry===page?"page":undefined} disabled={saving||loading||entry===page} onClick={()=>navigate(entry)}>{entry}</button>)}</span>
       <span className="email-total">· 共 {total} 封</span>
       <ShellSelect aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size} value={size}>{size} 封/页</option>)}</ShellSelect>
-      {loading&&<span role="status">正在加载邮件…</span>}
+      {loading&&<span role="status">{searchScope==="full"&&query.trim()?"正在全文检索邮件…":"正在加载邮件…"}</span>}
     </nav>
     {status!=="unsubscribe"&&<div className="email-list-filters" role="group" aria-label="邮件筛选">
       <details className="email-multi-filter">
@@ -203,9 +204,11 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       <ShellSelect aria-label="按判定者筛选" value={sourceFilter} disabled={saving||loading} onChange={event=>applyFilter("source",event.target.value)}><option value="">判定者</option>{SOURCE_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect>
       {filtered&&<button type="button" className="compact-button" disabled={saving||loading} onClick={clearFilters}>清除筛选</button>}
     </div>}
-    <form className="email-search" role="search" onSubmit={event=>{event.preventDefault();if(!composing&&!saving)applySearch(searchText);}}>
-      <input type="search" aria-label="搜索邮件" placeholder="搜索发件人、主题、正文…" maxLength={500} value={searchText} disabled={saving} onChange={event=>setSearchText(event.target.value)} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}/>
+    <form className="email-search" role="search" onSubmit={event=>{event.preventDefault();if(!composing&&!saving&&searchText.trim())applySearch(searchText,"full");}}>
+      <input type="search" aria-label="搜索邮件" placeholder={searchScope==="full"?"搜索发件人、主题及完整正文…":"搜索发件人、主题、正文前1000字符…"} maxLength={500} value={searchText} disabled={saving} onChange={event=>{setSearchText(event.target.value);if(searchScope==="full")setParams(previous=>{const next=new URLSearchParams(previous);next.delete("search_scope");next.set("page","1");return next;},{replace:true});}} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}/>
+      <span className="muted">{searchScope==="full"?"当前全文检索：发件人、主题及完整正文":"发件人、主题及正文前1000字符"}</span>
       {searchText&&<button type="button" aria-label="清空搜索" disabled={saving} onClick={()=>{setSearchText("");applySearch("");}}>×</button>}
+      {searchText.trim()&&<button type="submit" aria-label="全文检索" disabled={saving||composing||loading}>{loading&&searchScope==="full"?"全文检索中":"全文检索"}</button>}
     </form></div>
     {status==="unsubscribe"&&<p className="muted">显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。</p>}
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
@@ -226,7 +229,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
         <button type="button" ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading||bulkBusy} className={`email-dense-row${status==="unsubscribe"?" unsubscribe-row":""}`} onClick={()=>{navigate(page,pageSize,item.id);setClosed("");setSaved(false);}}>
         <span className="email-row-controls-space" aria-hidden="true"/>
         <span className="email-row-sender" title={item.sender}>{item.sender || "未提供发件人"}</span>
-        <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.message_text || "未提供正文"}</span></span>
+        <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.preview || "未提供正文预览"}</span></span>
         {status==="unsubscribe"
           ? (() => {const state=unsubscribeStateLabel(item.unsubscribe_state);return <span className={`email-row-category email-unsubscribe-state ${state.tone}`} title={state.reason ? `${state.text}：${state.reason}` : state.text}>{state.text}{state.reason && <small>{state.reason.replace(/。$/,"")}</small>}</span>;})()
           : <span className="email-row-category" title={categoryLabel(item.category)}>{item.status==="pending_feedback"?"建议：":""}{categoryLabel(item.category)}{item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>}
