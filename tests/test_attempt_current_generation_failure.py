@@ -6,6 +6,8 @@ from app.audit_web import handle_rerun_attempt_post
 from app.agent_contracts import ConsumerAgentResult
 from app.external_action_identity import expected_external_action
 from app.store import AgentRole, AutoReplyStore
+from app.task20_definitions import task20_column
+from app.task8_storage import task8_set_parts
 from app.web_api.attempts import build_attempt_detail
 from tests.test_console_attempt_detail_api import (
     _complete_audit_run,
@@ -76,11 +78,12 @@ def _fail_current_task(store, task, *, error):
     # Finalizing a new run reuses the trigger's Attempt row; this fixture must
     # retain that row's original run binding to exercise historical display.
     with store._immediate_write_transaction() as db:
+        parts = task8_set_parts("reply_tasks", {"status": "failed", "error": error})
         changed = db.execute(
-            "update tasks set status='failed', error=? "
-            "where record_type='reply_tasks' and id=? and execution_generation=? "
-            "and status='processing'",
-            (error, task.id, task.execution_generation),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=? "
+            f"and {task20_column('reply_tasks', 'execution_generation')}=? "
+            f"and {task20_column('reply_tasks', 'status')}='processing'",
+            (*parts.parameters, task.id, task.execution_generation),
         )
         assert changed.rowcount == 1
 

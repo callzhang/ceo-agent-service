@@ -322,13 +322,9 @@ def test_legacy_claude_session_resumes_but_malformed_session_is_rejected(tmp_pat
         requested_session_id=None,
         conversation_contract_hash="current-contract",
     ) == "legacy-claude-session"
-    with store._connect() as db:
-        db.execute(
-            "update conversation_runtime_sessions set session_id='--malformed', "
-            "contract_hash='current-contract' where conversation_id=? "
-            "and route_name='claude_api'",
-            (task.conversation_id,),
-        )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "claude_api", "--malformed", "current-contract"
+    )
 
     with pytest.raises(ValueError, match="Claude session_id"):
         process._session_for_route(
@@ -1323,6 +1319,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "label": "Approve",
                 "instruction": "Approve the reviewed option.",
                 "consequence": "The reviewed plan may continue.",
+                "applies_to": "task_class",
                 "plan": {
                     "objective": "Notify the applicant about this instance",
                     "actions": [{
@@ -1340,6 +1337,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "label": "Hold",
                 "instruction": "Hold the reviewed option.",
                 "consequence": "No further action is taken.",
+                "applies_to": "task_class",
                 "terminal_outcome": "skipped",
                 "reason": "This current instance is already resolved",
             },
