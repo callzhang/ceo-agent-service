@@ -201,3 +201,11 @@ Store 定向66项已闭合：同轮65 pass／230.97秒，最后一项旧schedule
 仍需处理10个历史部分schema／启动迁移断言：3个route-session、1个setup-wizard、2个removed-runtime手动converter、1个follow-up draft、3个meeting-memory独立旧表。现有运行时仅接受最终结构或明确支持的完整历史迁移，不能为这些旧fixture添加兼容回退；须对照实际声明与既有显式迁移证据逐项替换或退休后才能关闭整体回归差项。
 
 Route-session三项已按现有合同替换并通过（7.73秒）：两类不完整旧源在启动时明确拒绝，完整dump不变；当前State中的未知contract／原session可重开保留，不能满足指定current contract。没有给运行时恢复旧表回退。剩余历史断言从10降为7（setup1、removed-runtime手动converter2、follow-up1、meeting-memory3）；它们的退休／明确迁移归属仍需闭合。
+
+### Attention full node coverage and remaining startup fixtures (2026-10-19)
+
+Task Attention multisource全156个收集node ID已分段覆盖：1–71、72–76、77–90、91–156分别有71／5／14／66项通过证据；最后两项去除无用连接wrapper后再跑2 pass／11.68秒。不是宣称一次不中断整文件通过。主审核对当前typed写入、完整domain snapshot和精确原文请求供给；session provenance仍由真实reader返回不可用，不能冒充可引用原文。没有运行时修改或真实发送。
+
+其余启动夹具又闭合：不完整setup／follow-up旧源明确拒绝及当前running向导不设finished_at共3 pass／3.31秒；会议memory索引重开修复1项，以及原job引用／无payload正文复制、3个实际lease生成列损坏拒绝共4项通过（10.05秒）。显式历史转换和inverse仍由已有Action delivery release测试验证，不恢复独立旧表或启动时原文清理逻辑。
+
+Store目前只剩2项无生产调用的removed-runtime手动converter测试归属待处理；其余最终集成审查、正文搜索选择／性能和生产发布读回仍开放。本轮未推送／未部署。

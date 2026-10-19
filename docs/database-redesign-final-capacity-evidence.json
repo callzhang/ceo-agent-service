@@ -35161,5 +35161,66 @@
     "seconds": 7.73,
     "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-route-source.log",
     "scope": "Two partial legacy source layouts are rejected with full persisted dump unchanged; current unknown route contract/session survives reopen and cannot satisfy a required current contract. Retires automatic startup backfill/standalone table repair expectations; explicit historical State conversion coverage remains separate. No runtime change."
+  },
+  "attention_multisource_current_20261019": {
+    "collected_nodes": 156,
+    "coverage": "All156 IDs covered by non-overlapping verified passing slices; not a single uninterrupted full-file pass. Root reviewed diff, exact original transient source supplies, current typed mutations and full domain snapshots. No runtime edits.",
+    "slices": [
+      {
+        "ids": "1-71",
+        "passed": 71,
+        "seconds": 423.26,
+        "log": "/tmp/task-attention-multisource-release-final.20261019.log",
+        "next_failure": "ID72 missing fixture source; fixed for next slice."
+      },
+      {
+        "ids": "72-76",
+        "passed": 5,
+        "seconds": 47.26,
+        "log": "/tmp/task-attention-multisource-tail-after71.20261019.log",
+        "next_failure": "ID77 omitted explicit prepared source; fixed for next slice."
+      },
+      {
+        "ids": "77-90",
+        "passed": 14,
+        "seconds": 94.93,
+        "log": "/tmp/task-attention-multisource-tail-after-folded.20261019.log",
+        "next_failure": "ID91 ProjectContext fixture missing explicit report source; fixed for final slice."
+      },
+      {
+        "ids": "91-156",
+        "passed": 66,
+        "seconds": 205.12,
+        "log": "/tmp/task-attention-multisource-tail-verified.20261019.log"
+      }
+    ],
+    "post_cleanup_controls": {
+      "passed": 2,
+      "seconds": 11.68,
+      "log": "/tmp/task-attention-multisource-followups-final.20261019.log"
+    },
+    "real_outbound_sends": 0
+  },
+  "store_partial_source_and_meeting_current_20261019": {
+    "partial_source_controls": {
+      "passed": 3,
+      "seconds": 3.31,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-partial-source.log"
+    },
+    "meeting_controls": [
+      {
+        "passed": 1,
+        "seconds": 9.82,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-meeting-shape.log",
+        "scope": "First lease-index repair case passed; second fixture referenced a DTO field absent from actual model, corrected via actual declared projection."
+      },
+      {
+        "passed": 4,
+        "seconds": 10.05,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-meeting-shape2.log"
+      }
+    ],
+    "scope": "Partial standalone legacy setup/follow-up layouts now explicitly rejected without mutation; actual current setup running event remains unfinished. Meeting-memory current Actions index repair, job-reference/no payload-copy and three malformed lease-field rejection controls. Historical conversion/inverse remains in existing Action delivery release controls. No runtime changes.",
+    "remaining": "Two tests of uncalled removed-runtime manual converter remain; final integration/release and fullbody search choice remain open."
   }
 }

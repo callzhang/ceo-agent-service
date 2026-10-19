@@ -4776,7 +4776,7 @@ def test_schema_manifest_treats_missing_column_as_incomplete(
     assert store._schema_manifest_is_current() is False
 
 
-def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
+def test_partial_legacy_follow_up_source_requires_explicit_migration(
     tmp_path: Path,
 ):
     db_path = tmp_path / "worker.sqlite3"
@@ -4819,23 +4819,7 @@ def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
     finally:
         db.close()
 
-    store = AutoReplyStore(db_path)
-
-    with store._connect() as migrated:
-        columns = {
-            row["name"]
-            for row in migrated.execute(
-                "pragma table_info(follow_up_drafts)"
-            ).fetchall()
-        }
-    assert "updated_at" in columns
-    assert "evidence_check_json" in columns
-    assert "title" in columns
-    assert "description" in columns
-    assert "owners_json" in columns
-    assert "tags_json" in columns
-    assert "participants_json" in columns
-    assert "files_json" in columns
+    assert_store_reopen_rejected_without_mutation(db_path)
 
 
 def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):
@@ -10761,7 +10745,7 @@ def test_setup_wizard_running_event_is_not_finished(tmp_path):
     assert events[0]["finished_at"] == ""
 
 
-def test_setup_wizard_running_event_ignores_legacy_finished_default(tmp_path):
+def test_partial_legacy_setup_event_source_requires_explicit_migration(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
         db.executescript(
@@ -10780,16 +10764,7 @@ def test_setup_wizard_running_event_ignores_legacy_finished_default(tmp_path):
             );
             """
         )
-    store = AutoReplyStore(db_path)
-
-    store.record_setup_wizard_event(
-        step_id="mcp",
-        action_id="setup_mcp",
-        status="running",
-    )
-
-    events = store.list_setup_wizard_events("mcp")
-    assert events[0]["finished_at"] == ""
+    assert_store_reopen_rejected_without_mutation(db_path)
 
 
 def test_setup_wizard_steps_list_has_stable_tie_breaker(tmp_path):
@@ -11672,41 +11647,23 @@ def test_current_runtime_keeps_execution_shape_without_result_cache(tmp_path: Pa
 
 
 
-def test_current_schema_sentinel_migrates_missing_meeting_memory_write_table(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "meeting-memory-write-table.sqlite3"
-    store = AutoReplyStore(db_path)
-
+def test_current_schema_repairs_meeting_memory_lease_index(tmp_path: Path):
+    path = tmp_path / 'meeting-memory-index.sqlite3'
+    store = AutoReplyStore(path)
     with store._connect() as db:
-        db.execute("drop table meeting_memory_write_events")
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-
+        before = [tuple(row) for row in db.execute('select * from actions order by id')]
+        db.execute('drop index idx_actions_td_meeting_lease')
     assert store._schema_is_current() is False
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-
-    with upgraded._connect() as db:
-        table = db.execute(
-            "select name from sqlite_master where type='table' and name=?",
-            ("meeting_memory_write_events",),
-        ).fetchone()
-        version = db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()["value"]
-    assert table is not None
-    assert version == store_module.STORE_SCHEMA_VERSION
-    assert upgraded._schema_is_current() is True
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    with reopened._connect() as db:
+        assert [tuple(row) for row in db.execute('select * from actions order by id')] == before
+        assert db.execute("select tbl_name from sqlite_schema where name='idx_actions_td_meeting_lease'").fetchone()[0] == 'actions'
+        assert not db.execute("select 1 from sqlite_schema where name='meeting_memory_write_events'").fetchone()
+    assert reopened._schema_is_current() is True
 
 
-def test_schema_upgrade_removes_meeting_memory_payload_copies(tmp_path: Path) -> None:
+def test_current_meeting_memory_event_references_delivered_job_without_payload_copy(tmp_path: Path) -> None:
     db_path = tmp_path / "meeting-memory-payload-removal.sqlite3"
     store = AutoReplyStore(db_path)
     job_id = store.upsert_meeting_alignment_job(
@@ -11725,60 +11682,29 @@ def test_schema_upgrade_removes_meeting_memory_payload_copies(tmp_path: Path) ->
     )
     assert store.create_meeting_memory_write_event(job_id) is True
 
+    [event] = store.list_due_meeting_memory_write_events(now='2099-01-01 00:00:00', limit=10)
+    assert event.meeting_job_id == job_id
     with store._connect() as db:
-        db.execute(
-            "update meeting_memory_write_events set payload_json=? where meeting_job_id=?",
-            ('{"data":"delivered conclusion copy"}', job_id),
-        )
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-
-    with upgraded._connect() as db:
-        payload_json = db.execute(
-            "select payload_json from meeting_memory_write_events where meeting_job_id=?",
-            (job_id,),
-        ).fetchone()["payload_json"]
-    assert payload_json == "{}"
-    assert upgraded._schema_is_current() is True
-
-
-def test_schema_upgrade_adds_meeting_memory_processing_lease_fields(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "meeting-memory-lease-fields.sqlite3"
-    store = AutoReplyStore(db_path)
+        assert db.execute(
+            f"select payload_json from ({task_delivery_projection('meeting_memory_write_events')}) where id=?",
+            (event.id,),
+        ).fetchone()[0] == '{}'
+    assert store.get_meeting_alignment_job(job_id).final_message == 'Delivered conclusion'
     with store._connect() as db:
-        db.execute("drop index idx_meeting_memory_write_events_lease")
-        for column in ("lease_owner", "lease_expires_at", "started_at"):
-            db.execute(
-                f"alter table meeting_memory_write_events drop column {column}"
-            )
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-
-    with upgraded._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute("pragma table_info(meeting_memory_write_events)")
-        }
-    assert {"lease_owner", "lease_expires_at", "started_at"} <= columns
-    assert upgraded._schema_is_current() is True
+        assert not db.execute("select 1 from sqlite_schema where name='meeting_memory_write_events'").fetchone()
+    assert store._schema_is_current() is True
 
 
+@pytest.mark.parametrize('column', ['td_lease_owner', 'td_lease_expires_at', 'td_started_at'])
+def test_current_meeting_memory_lease_declaration_rejects_malformed_column(tmp_path: Path, column):
+    path = tmp_path / 'meeting-memory-malformed-lease.sqlite3'
+    store = AutoReplyStore(path)
+    with store._connect() as db:
+        db.execute(f'alter table actions rename column "{column}" to "malformed_{column}"')
+    assert store._schema_is_current() is False
+    assert_store_reopen_rejected_without_mutation(
+        path, expected_error='malformed current Store-first config declaration',
+    )
 
 
 def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
