@@ -13,7 +13,7 @@ from app.action_storage import create_action_schema, email_action_projection
 from tests.test_email_action_storage import _cases, _source_tables
 
 
-def _databases(*, include_skill_config_receipts=False, compact_payload=False):
+def _databases(*, include_skill_config_receipts=False, compact_payload=True):
     source = sqlite3.connect(":memory:")
     target = sqlite3.connect(":memory:")
     for db in (source, target):
@@ -271,7 +271,7 @@ def test_two_connections_allocate_distinct_rowids_and_preserve_updates(isolation
             setup.execute("create table tasks(id integer primary key, record_type text)")
             setup.execute("create table runs(id integer primary key, record_type text)")
             setup.execute("create table email_classifications(id integer primary key)")
-            create_action_schema(setup, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+            create_action_schema(setup, include_reply=True, reply_variant="fresh_memory_fk", include_email=True, compact_payload=True)
             setup.commit()
         barrier = Barrier(2)
 
@@ -398,10 +398,10 @@ def test_email_max_lookup_cost_stays_bounded_as_one_family_grows():
         db.execute("create table tasks(id integer primary key, record_type text)")
         db.execute("create table runs(id integer primary key, record_type text)")
         db.execute("create table email_classifications(id integer primary key)")
-        create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
-        payload = '{"action_identity":null,"decision_json":"{}"}'
-        db.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
-                   ("email_unsubscribe_cancellations", "100000", payload))
+        create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True, compact_payload=True)
+        from app.action_storage import insert_email_action
+        values = {"action_identity": None, "decision_json": "{}"}
+        insert_email_action(db, "email_unsubscribe_cancellations", values, source_rowid=100000)
 
         def measured_max():
             steps = 0
@@ -417,8 +417,8 @@ def test_email_max_lookup_cost_stays_bounded_as_one_family_grows():
             return result, steps
 
         small = measured_max()
-        db.executemany("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
-                       (("email_unsubscribe_cancellations", str(index), payload) for index in range(1, 1001)))
+        for index in range(1, 1001):
+            insert_email_action(db, "email_unsubscribe_cancellations", values, source_rowid=index)
         large = measured_max()
         assert small[0] == large[0] == 100000
         assert large[1] <= small[1] + 50

@@ -34050,6 +34050,56 @@
       "business": 211099,
       "configs": 210589,
       "state": 147933
+    },
+    "readonly_new_old_compare": {
+      "old_schema_sql_bytes": 298557,
+      "new_schema_sql_bytes": 2071263,
+      "old_wall_cpu_seconds": [
+        [
+          0.071231,
+          0.011828
+        ],
+        [
+          0.021947,
+          0.010173
+        ],
+        [
+          0.010168,
+          0.008547
+        ]
+      ],
+      "new_wall_cpu_seconds": [
+        [
+          0.109727,
+          0.062147
+        ],
+        [
+          0.064249,
+          0.05735
+        ],
+        [
+          0.083255,
+          0.058736
+        ]
+      ],
+      "scope": "three independent readonly connections each; same count Tasks + sum(length(schema SQL)) query; different synthetic task counts (old4/new2), no e2e repeat",
+      "interpretation": "~0.05s more CPU for first schema query, insufficient alone to prove 2s startup cause."
+    },
+    "stages": {
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-stages.log",
+      "post_return": 42.963375,
+      "claim_return": 43.626206,
+      "execute_begin": 43.629367,
+      "task_read_end": 44.146167,
+      "events_read_end": 44.358047,
+      "resume_read_end": 44.506148,
+      "attachment_read_end": 44.946435,
+      "runtime_start_begin": 44.948071,
+      "native_attempt_claim_begin": 45.168319,
+      "native_attempt_claim_end": 46.264202,
+      "claim_error": "runtime operation parent does not exist or is not running after failed wait initiates stop cleanup",
+      "seconds": 54.88,
+      "passed": false
     }
   },
   "production_readonly_refresh": {
@@ -34091,5 +34141,48 @@
       "seconds": 14.96,
       "no_further_change": true
     }
+  },
+  "email_direct_dao_fixture_gap": {
+    "red_log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-direct-dao-red.log",
+    "red_failed": 1,
+    "red_seconds": 32.54,
+    "cause": "Fixture migrates only early Actions/Provider, leaving native classifications while current DAO uses canonical emails.",
+    "candidate_change": "Target owned copy now uses actual paired coordinator.publish and genuine EmailStore constructor. Original genuine-old source and identities/watermarks unchanged.",
+    "status": "focused actual migration running",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-direct-final-copy.log"
+  },
+  "final_workbench_connection_reuse": {
+    "commit": "d6d85b647",
+    "minimal_connections_before": 7,
+    "minimal_connections_after": 1,
+    "scope": "one synchronous Workbench execution thread per turn; each operation independent transaction; snapshot and other threads independent",
+    "regression": {
+      "passed": 23,
+      "seconds": 80.54,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-connection-green.log",
+      "original_wait_seconds": 2
+    },
+    "native_connection_controls": {
+      "passed": 9,
+      "seconds": 6.1,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-sqlite-io-controls-green.log"
+    },
+    "independent_review": "no concrete finding; bounded diff read only",
+    "production_deployed": false
+  },
+  "final_email_writes_current_fixture": {
+    "red": "missing _kind in historical object fixture",
+    "scope": "current writer tests use final compact schema; raw query-volume rows use actual typed writer",
+    "passed_unchanged_after_fixture_fix": 12,
+    "seconds": 16.99,
+    "remaining_concurrency_nodes": {
+      "passed": 2,
+      "seconds": 3.32
+    },
+    "logs": [
+      "/tmp/db-redesign-final-guard.3LeMgv/final-email-writes-current.log",
+      "/tmp/db-redesign-final-guard.3LeMgv/final-email-writes-concurrency-green.log"
+    ],
+    "assertion_limits_unchanged": true
   }
 }
