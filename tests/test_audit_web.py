@@ -23,6 +23,7 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL, update_action, insert_task_delivery_action,
     task_delivery_projection, insert_error_action,
 )
+from app.action_error_definitions import error_projection
 from app.task_storage import task_physical_id
 from app.task12_storage import insert_task12
 from app.task20_definitions import task20_projection
@@ -12079,50 +12080,57 @@ def _failed_email_action(
     attempt_count: int,
     next_attempt_at: str,
 ) -> str:
-    """Insert one processed classification and its failed provider action."""
-    EmailStore(store.path)
-    from app.action_storage import insert_action, insert_email_action
-    action_id = f"email-action:{attempt_count}:{next_attempt_at or 'exhausted'}"
-    plan_id = f"email-action-plan:{attempt_count}"
-    with store._connect() as db:
-        db.execute(
-            "insert into email_classifications ("
-            "id, account_id, folder, uidvalidity, uid, rfc_message_id, "
-            "stable_message_identity, sender, subject, category, confidence, "
-            "margin, probabilities_json, model_id, config_version, status, "
-            "classification_source, received_at, current_action_plan_id) "
-            "values (?, 'acct', 'INBOX', 2, 27727, '<mid@example.com>', "
-            "'acct:mid', 'daniela@example.com', 'MorningStar Technical Deepdive', "
-            "'work', 0.9, 0.5, '{}', 'model-1', 'v1', 'processed', "
-            "'model', 'Mon, 08 Sep 2025 12:08:13 +0000', ?)",
-            (9000 + attempt_count, plan_id),
+    """Persist one current processed classification and exhausted/queued failure."""
+    from app.email_classifier_contracts import (
+        EmailAction, EmailCategory, EmailClassification,
+        EmailClassificationStatus, EmailProviderLocator, build_email_action_plan,
+    )
+
+    email_store = EmailStore(store.path)
+    classification_id = 9000 + attempt_count
+    stable_identity = f"acct:attention-{attempt_count}"
+    locator = EmailProviderLocator(
+        account_id="acct", folder="INBOX", uidvalidity=2,
+        uid=27727 + attempt_count,
+    )
+    plan = build_email_action_plan(
+        classification_id=classification_id, account_id="acct",
+        category=EmailCategory.WORK, classification_source="model",
+        confidence=0.9, model_id="model-1", config_version="v1",
+        actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "工作"}},
+        created_at=datetime.fromisoformat("2026-09-16T07:27:13+00:00"),
+    )
+    plan_id = plan.action_plan_id
+    classification = EmailClassification(
+        classification_id=classification_id,
+        stable_message_identity=stable_identity, provider_locator=locator,
+        category=EmailCategory.WORK, confidence=0.9, margin=0.5,
+        probabilities={EmailCategory.WORK: 0.9}, model_id="model-1",
+        config_version="v1", status=EmailClassificationStatus.PROCESSED,
+        classification_source="model", action_plan=plan,
+    )
+    email_store.persist_scan_result(
+        classification, sender="daniela@example.com",
+        subject="MorningStar Technical Deepdive",
+        normalized_text="MorningStar Technical Deepdive body",
+        preview="MorningStar Technical Deepdive", model_text="body",
+        received_at="Mon, 08 Sep 2025 12:08:13 +0000",
+    )
+    action_id = email_store.direct_action_ids_for_plan(plan_id)[0]
+    for number in range(1, attempt_count + 1):
+        email_store.append_action_attempt(
+            action_id=action_id, attempt_number=number, status="failed",
+            provider_operation="READ", provider_target="acct:mid",
+            provider_result_id="", error="provider_read_failed:ImapMessageUnavailable",
+            started_at="2026-09-16T07:27:13+00:00",
+            finished_at="2026-09-16T07:28:28+00:00",
         )
-        insert_email_action(db, "email_action_plans", dict(
-            action_plan_id=plan_id, action_plan_version=1,
-            classification_id=9000 + attempt_count, account_id="acct",
-            category="work", classification_source="model", confidence=0.9,
-            model_id="model-1", config_version="v1", actions_json='["move"]',
-            action_parameters_json="{}", created_at="2026-09-16T07:27:13+00:00",
-        ))
-        insert_email_action(db, "email_actions", dict(
-            action_id=action_id, action_plan_id=plan_id,
-            classification_id=9000 + attempt_count, account_id="acct",
-            action_type="move", parameters_json='{"target_folder":"工作"}',
-            config_version="v1", status="failed", attempt_count=attempt_count,
-            next_attempt_at=next_attempt_at, provider_operation="READ",
-            provider_target="acct:mid",
-            error="provider_read_failed:ImapMessageUnavailable",
-            created_at="2026-09-16T07:27:13+00:00",
-            updated_at="2026-09-16T07:28:28+00:00",
-        ))
-        for number in range(attempt_count):
-            insert_action(db, "email_action_attempts", dict(
-                action_id=action_id, attempt_number=number + 1, status="failed",
-                provider_operation="READ", provider_target="acct:mid",
-                provider_result_id="", error="provider_read_failed",
-                started_at="2026-09-16T07:27:13+00:00",
-                finished_at="2026-09-16T07:28:28+00:00",
-            ))
+    if next_attempt_at:
+        with store._connect() as db:
+            email_store._update_direct_action(
+                db, action_id, {"next_attempt_at": next_attempt_at}
+            )
     return action_id
 
 
@@ -12314,7 +12322,7 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         assert db.execute(
             f"select status from ({task20_projection('reply_tasks')}) where id=?", (old.id,)
         ).fetchone()[0] == "failed"
-        assert db.execute(f"select count(*) from ({audit_web_module.ERROR_SQL}) where resolved_at='' ").fetchone()[0] == 2
+        assert db.execute(f"select count(*) from ({error_projection(unresolved=True)})").fetchone()[0] == 2
 
 
 def test_attention_projects_only_latest_live_task_agent_error(tmp_path: Path):
