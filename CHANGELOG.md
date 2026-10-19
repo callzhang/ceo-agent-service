@@ -7,6 +7,19 @@
 - 日报/周报窗口、目标解析、渲染及 OKR 精确公式进入 Skill；业务要求由 Skill/Audit 判断，系统不再强制 publishable。
 - OKR 报告使用普通 Agent 生命周期，实时读取按成员完成；部署记录并回滚报告配置迁移及新增 Skill 文件。
 
+## 2026-10-19 — Consumer purpose actions and bounded permission retries
+
+- Use ordinary Consumer `action/reason/target/payload/evidence_refs` output, with
+  purpose-specific strict parameters; OA `return` maps to the real `revert_task` action.
+- Bind permission waits to a verified request receipt and persist at most ten
+  subsequent attempts within 72 hours of the original dispatch. Sessions, revisions
+  and restarts cannot reset the budget; waits use exponential backoff.
+- Preserve technical read failures as technical failures, and do not infer applicant
+  fault or automatically return/reject an OA when retries run out.
+- Protocol examples and exact counting/recovery boundaries:
+  [Consumer purpose output](docs/consumer-purpose-output.md). Production publication
+  and test evidence: [validation record](docs/consumer-purpose-actions-validation.md).
+
 ## Fresh message identifier types
 
 - Reject nonstring or blank DingTalk message identifiers when parsing new Consumer
