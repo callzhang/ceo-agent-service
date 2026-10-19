@@ -681,20 +681,52 @@ def _download_dingtalk_oa_comment_attachment(
         raise AgentReadOnlyViolationError("oa_comment_attachment_identity_required")
     if not _task_file_component(file_name) or len(file_name) > 255:
         raise AgentReadOnlyViolationError("oa_comment_attachment_file_name_invalid")
-    material_root.mkdir(parents=True, exist_ok=True)
     is_pdf = Path(file_name).suffix.casefold() == ".pdf"
     max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
     contents = dws.download_oa_process_comment_attachment(
         process_instance_id, file_id,
     )
+    return _materialize_oa_attachment(
+        contents, process_instance_id=process_instance_id, file_id=file_id,
+        file_name=file_name, material_root=material_root,
+        error_prefix="oa_comment_attachment", max_bytes=max_bytes,
+    )
+
+
+def _download_dingtalk_oa_process_attachment(
+    *, dws, process_instance_id: str, file_id: str, file_name: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read an OA form attachment without requiring Drive node permissions."""
+    if not process_instance_id.strip() or not file_id.strip():
+        raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
+    if not _task_file_component(file_name) or len(file_name) > 255:
+        raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
+    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
+    contents = dws.download_oa_process_attachment_via_cli(
+        process_instance_id, file_id, max_bytes=max_bytes,
+    )
+    return _materialize_oa_attachment(
+        contents, process_instance_id=process_instance_id, file_id=file_id,
+        file_name=file_name, material_root=material_root,
+        error_prefix="oa_process_attachment", max_bytes=max_bytes,
+    )
+
+
+def _materialize_oa_attachment(
+    contents: bytes, *, process_instance_id: str, file_id: str,
+    file_name: str, material_root: Path, error_prefix: str, max_bytes: int,
+) -> dict[str, object]:
+    material_root.mkdir(parents=True, exist_ok=True)
     if len(contents) > max_bytes:
-        raise AgentReadOnlyViolationError("oa_comment_attachment_file_too_large")
+        raise AgentReadOnlyViolationError(f"{error_prefix}_file_too_large")
     package_source = BytesIO(contents)
     if zipfile.is_zipfile(package_source):
         with zipfile.ZipFile(package_source) as package:
             if sum(member.file_size for member in package.infolist()) > MAX_SPREADSHEET_BYTES:
                 raise AgentReadOnlyViolationError(
-                    "oa_comment_attachment_expanded_package_too_large"
+                    f"{error_prefix}_expanded_package_too_large"
                 )
     extension = Path(file_name).suffix
     suffix = extension if extension[1:].isalnum() and len(extension) <= 16 else ""
@@ -714,7 +746,7 @@ def _download_dingtalk_oa_comment_attachment(
             "sha256": hashlib.sha256(contents).hexdigest(),
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
-            raise AgentReadOnlyViolationError("oa_comment_attachment_response_too_large")
+            raise AgentReadOnlyViolationError(f"{error_prefix}_response_too_large")
         return result
     except BaseException:
         material_path.unlink()
@@ -1703,6 +1735,7 @@ def build_role_server(
     drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
     drive_material_paths: dict[tuple[str, str, str], Path] = {}
     oa_comment_material_paths: dict[tuple[str, str, str], Path] = {}
+    oa_process_material_paths: dict[tuple[str, str, str], Path] = {}
 
     def read_dingtalk_drive_file(
         node_id: str, space_id: str, file_name: str,
@@ -1757,6 +1790,54 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_drive_file,
         name="read_dingtalk_drive_file",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_process_attachment(
+        process_instance_id: str,
+        file_id: str,
+        file_name: str,
+        page_number: int | None = None,
+    ) -> dict[str, object]:
+        """Read one exact OA form attachment through the process-scoped download.
+
+        Use the process instance and file ID from read_dingtalk_oa, even when
+        generic Drive access is denied. Scanned PDFs return one-based
+        ocr_page_numbers; pass a listed page_number for bounded OCR input.
+        """
+        nonlocal drive_material_directory
+        if not process_instance_id.strip() or not file_id.strip():
+            raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
+        if not _task_file_component(file_name) or len(file_name) > 255:
+            raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+        key = (process_instance_id, file_id, file_name)
+        if page_number is not None:
+            material_path = oa_process_material_paths.get(key)
+            if material_path is None or not material_path.is_file():
+                raise AgentReadOnlyViolationError("oa_process_attachment_page_source_unavailable")
+            if material_path.suffix.casefold() != ".pdf":
+                raise AgentReadOnlyViolationError("oa_process_attachment_page_requires_pdf")
+            with material_path.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            return _pdf_page_ocr_input(
+                material_path, page_number=page_number,
+                source_sha256=source_sha256,
+            )
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        from app.dws_client import DwsClient
+        result = _download_dingtalk_oa_process_attachment(
+            dws=DwsClient(), process_instance_id=process_instance_id,
+            file_id=file_id, file_name=file_name,
+            material_root=Path(drive_material_directory.name),
+        )
+        oa_process_material_paths[key] = Path(str(result["path"]))
+        return result
+
+    bound.add_tool(
+        read_dingtalk_oa_process_attachment,
+        name="read_dingtalk_oa_process_attachment",
         annotations=read,
     )
 
@@ -2265,6 +2346,7 @@ def build_role_server(
         ("read_dingtalk_document_permissions", read_dingtalk_document_permissions),
         ("read_dingtalk_drive_info", read_dingtalk_drive_info),
         ("read_dingtalk_drive_file", read_dingtalk_drive_file),
+        ("read_dingtalk_oa_process_attachment", read_dingtalk_oa_process_attachment),
         ("list_dingtalk_sheets", list_dingtalk_sheets),
         ("read_dingtalk_sheet_info", read_dingtalk_sheet_info),
         ("read_dingtalk_sheet_range", read_dingtalk_sheet_range),

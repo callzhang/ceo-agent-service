@@ -1600,3 +1600,40 @@ handling, and exact source citations to remain correct in both cold and
 continued sessions. A smaller serialized input alone does not pass that gate.
 The separate native Task acceptance-schema candidate remains no-go on its own
 behavioral result above.
+
+## OA process attachment read path: repeated failure root cause (2026-10-19)
+
+Task 405641 produced 217 `dependency_read_unavailable` Consumer runs between
+10:01 and 18:08 on 2026-10-19. Complete native first, middle and last failed
+trajectories show the same two submitted OA form attachments: generic
+`read_dingtalk_drive_info/file` returned `forbidden.accessDenied` or “没有权限访问”,
+while the Agent repeatedly re-read the OA and Skill and did not form an
+approval decision. The error was treated by the service as an external
+dependency wait without a turn limit. This is the observed loop; no generic
+retry-policy change is made here.
+
+The DWS OA-specific read-only `attachment download-url` returned a signed URL
+for each of the same two exact process/file IDs, and the URL returned the
+material bytes. The first Markdown file was 7,300 bytes with 3,414 characters
+of extracted text. The second PDF was 1,412,701 bytes, with six pages requiring
+OCR. The failure layer was therefore missing OA process attachment access in
+the service role tool catalog and stale Skill guidance, not missing applicant
+material or a need to add permission-granting behavior.
+
+Acceptance for this round: Consumer and Audit can read a form attachment by
+exact process instance and file ID through the configured DWS account, without
+generic Drive permission or authorization writes; downloaded material retains
+the existing byte, response, temporary-file and OCR-page bounds. The source
+must still be read before a business decision, and no approval, Audit or retry
+policy changes are included. A fixed test with generic Drive access denied
+failed before the new tool existed and passed afterward; the role and scanned
+PDF cases also passed. The current real files were read through the new helper
+without recording their contents in the repository. Post-deployment tool
+visibility and natural-run business behavior remain to be read back.
+
+Separately, the final approved OA comment for this task returned no comment
+ID and was marked uncertain. Exact provider readback found one matching
+`ADD_REMARK` by process, author, body and post-attempt time. Existing execution
+reconciliation recorded its action as verified without resending, and the
+current comment task closed as done. The OA approval itself remains pending;
+the comment receipt does not prove the underlying project review is complete.
