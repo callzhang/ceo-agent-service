@@ -339,11 +339,6 @@ per-run artifacts or intermediate files into memory merely because they may
 look useful later.
 """.strip()
 AGENT_CAPABILITY_INSTRUCTIONS = """
-Use the role's actual declared tools to read the sources needed for this task.
-Consumer may use its ordinary work tools for documents, artifacts, research,
-analysis and computation. Ordinary work does not require a controlled-action
-proposal merely because a tool writes. Use actual tool results and readback as
-evidence of that work. A summary is not a receipt of a controlled action.
 Use consumer_artifact_write for ordinary local drafts and files, with
 read_task_artifact/list_task_artifacts for this task generation's artifacts.
 consumer_document_write writes a scheduled task artifact to its explicit document target.
@@ -351,14 +346,10 @@ consumer_run_skill_script executes a selected Skill script for deterministic loc
 Codex Consumer can run local code using native command and patch tools in its
 current task workspace. The native workspace sandbox keeps writes in that
 workspace and native temporary directories, and disables command network
-access. Claude has declared read and artifact tools only. Use the actual current runtime catalog; do not invent a
-successful execution result.
-Only the registered reviewed system actions in the supplied action contracts
-are dispatched by system code after whole-candidate approval. Do not invoke
-those actions directly or claim them completed without the System receipt.
-Audit has read tools only. Do not try nested CLI inventory, nested Agents,
+access. Claude has declared read and artifact tools only.
+Do not try nested CLI inventory, nested Agents,
 commands or a different channel to reach an unavailable operation.
-Call direct read MCP tools where available. Use memory_recall for relevant
+Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
@@ -367,20 +358,16 @@ For DingTalk reads in service Consumer/Audit turns, call the declared
 shell; command examples in product Skills describe interactive sessions and
 are not service-role execution instructions. If the matching read tool is not
 declared, report that exact capability as unavailable.
-Preserve concrete provider error codes and source context when a read fails.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
 summary. Do not use this code when a successful read returns no match, evidence
 is incomplete or ambiguous, or a governing rule is missing; those are evidence
 or business-rule outcomes, not infrastructure outages.
-Technical/provider authentication or schema errors are failed, not fabricated
-business questions. An unresolved provider-risk refusal for the current
-intended action remains failed with its original error code and no retry;
-not retrying a refused action does not make the task completed or no_action.
-Audit must return a candidate that incorrectly reports such a refusal as
-no_action. Historical refusal evidence never authorizes a new effect, a new
-action identity, or another channel to evade the refusal.
+An unresolved provider-risk refusal for the current intended action remains
+failed with its original `provider_risk_rejected` code and no retry; it cannot
+become completed or no_action. Historical refusal evidence never authorizes a
+new effect, identity or channel to evade the refusal.
 A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and

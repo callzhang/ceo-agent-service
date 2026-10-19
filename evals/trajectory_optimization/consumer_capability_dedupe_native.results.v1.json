@@ -1,0 +1,1118 @@
+{
+  "baseline_ref": "465533b572a7396deabe33bb6894a87a9908eab8",
+  "model": "gpt-5.6-luna",
+  "manifest_sha256": "38491d15f3fecbb51216dd11ffea392a2036648d2f4e007766f2c940c2053e84",
+  "scope": "Synthetic read-only direct MCP; no production facts or writes",
+  "case_repetitions": {
+    "candidate-windows-unknown-zone": 2,
+    "calendar-auth-failure": 2,
+    "prior-risk-refusal": 1,
+    "draft-only": 1
+  },
+  "fixture": "evals/trajectory_optimization/consumer_capability_fixture_mcp.py",
+  "results": [
+    {
+      "case": "candidate-windows-unknown-zone",
+      "arm": "baseline",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "b541da3ea015e0855d148ce63b955dadbd22718ca0469d36f3e0a6fb33f27da9",
+      "developer_chars": 30209,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "已形成回复原群的完整候选：10月27日和10月28日10:00–11:00（America/Los_Angeles）。这两个时段仅证明负责人日历无冲突，阿岚可用性待协调者确认；尚未发送。",
+        "proposal": {
+          "objective": "向原群回复两个负责人可行且请协调者与阿岚确认的会议候选时段。",
+          "actions": [
+            {
+              "description": "回复原群原消息，提供两个具体会议候选时段。",
+              "action_identity": "reply-meeting-slots-synthetic-message-101",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101"
+              },
+              "payload": {
+                "content": "我这边下周（America/Los_Angeles 时区）暂时可以：\n1. 10月27日（周二）10:00–11:00\n2. 10月28日（周三）10:00–11:00\n请再帮忙和阿岚确认哪个时段合适。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "协调者要求提供下周两个具体会议候选时段。",
+              "references": [
+                "synthetic-message-101"
+              ]
+            },
+            {
+              "assertion": "负责人说明下周按 America/Los_Angeles 时区查看日历。",
+              "references": [
+                "synthetic-message-102"
+              ]
+            },
+            {
+              "assertion": "负责人日历显示10月27日和10月28日10:00–11:00均无已占用事件。",
+              "references": [
+                "synthetic-event-1",
+                "synthetic-event-2",
+                "synthetic-event-3",
+                "synthetic-event-4"
+              ]
+            },
+            {
+              "assertion": "当前读取入口仅覆盖负责人日历，未核实阿岚的日程。",
+              "references": [
+                "/synthetic/dingtalk-calendar/SKILL.md"
+              ]
+            }
+          ],
+          "authored_judgment": "可提供两个负责人日历无冲突的候选，并明确阿岚仍需协调确认；不将未读取的阿岚日历当作已确认事实。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.75,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "plan",
+          "reason": "已核实原群请求及负责人下周日历。负责人在 America/Los_Angeles 时区下周二、周三 10:00–11:00 日历无冲突；阿岚日历未提供，因此候选需由协调者进一步确认。",
+          "target": {},
+          "payload": {
+            "objective": "向原群回复两个负责人可行且请协调者与阿岚确认的会议候选时段。",
+            "actions": [
+              {
+                "description": "回复原群原消息，提供两个具体会议候选时段。",
+                "action_identity": "reply-meeting-slots-synthetic-message-101",
+                "capability": "dingtalk-chat",
+                "operation": "reply_to_message",
+                "target": {
+                  "conversation_id": "synthetic-group-17",
+                  "message_id": "synthetic-message-101"
+                },
+                "payload": {
+                  "content": "我这边下周（America/Los_Angeles 时区）暂时可以：\n1. 10月27日（周二）10:00–11:00\n2. 10月28日（周三）10:00–11:00\n请再帮忙和阿岚确认哪个时段合适。"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "协调者要求提供下周两个具体会议候选时段。",
+                "references": [
+                  "synthetic-message-101"
+                ]
+              },
+              {
+                "assertion": "负责人说明下周按 America/Los_Angeles 时区查看日历。",
+                "references": [
+                  "synthetic-message-102"
+                ]
+              },
+              {
+                "assertion": "负责人日历显示10月27日和10月28日10:00–11:00均无已占用事件。",
+                "references": [
+                  "synthetic-event-1",
+                  "synthetic-event-2",
+                  "synthetic-event-3",
+                  "synthetic-event-4"
+                ]
+              },
+              {
+                "assertion": "当前读取入口仅覆盖负责人日历，未核实阿岚的日程。",
+                "references": [
+                  "/synthetic/dingtalk-calendar/SKILL.md"
+                ]
+              }
+            ],
+            "authored_judgment": "可提供两个负责人日历无冲突的候选，并明确阿岚仍需协调确认；不将未读取的阿岚日历当作已确认事实。"
+          },
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "candidate-windows-unknown-zone",
+      "arm": "candidate",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "42b8781a4ebf3d8362209f0e18890a2fb13ac05de21bcc33fbe1a08d256b9993",
+      "developer_chars": 29141,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "已读取原群消息和负责人下周日历。10月27日、28日洛杉矶时间10:00–11:00未见负责人日历占用；阿岚的可用性未提供，故候选时段需待阿岚确认。",
+        "proposal": {
+          "objective": "已核实负责人下周洛杉矶时区的日历空档，但未取得阿岚的可用性，不能无依据确认双方共同可行。拟回复两个负责人空档，并请协调者核实阿岚是否可参加。",
+          "actions": [
+            {
+              "description": "已核实负责人下周洛杉矶时区的日历空档，但未取得阿岚的可用性，不能无依据确认双方共同可行。拟回复两个负责人空档，并请协调者核实阿岚是否可参加。",
+              "action_identity": "7a3f558e45a879b2d58dedc9",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101"
+              },
+              "payload": {
+                "content": "我按 America/Los_Angeles 时区查看了下周日历，暂可提供两个候选时段：10月27日（周二）10:00–11:00、10月28日（周三）10:00–11:00。当前我这边没有阿岚的日历或可用时段信息，麻烦先确认她是否能参加，再由您协调安排。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [],
+          "authored_judgment": "已核实负责人下周洛杉矶时区的日历空档，但未取得阿岚的可用性，不能无依据确认双方共同可行。拟回复两个负责人空档，并请协调者核实阿岚是否可参加。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.92,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.5,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "reply",
+          "reason": "已核实负责人下周洛杉矶时区的日历空档，但未取得阿岚的可用性，不能无依据确认双方共同可行。拟回复两个负责人空档，并请协调者核实阿岚是否可参加。",
+          "target": {
+            "conversation_id": "synthetic-group-17",
+            "message_id": "synthetic-message-101"
+          },
+          "payload": {
+            "content": "我按 America/Los_Angeles 时区查看了下周日历，暂可提供两个候选时段：10月27日（周二）10:00–11:00、10月28日（周三）10:00–11:00。当前我这边没有阿岚的日历或可用时段信息，麻烦先确认她是否能参加，再由您协调安排。"
+          },
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4",
+            "/synthetic/dingtalk-calendar/SKILL.md"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "calendar-auth-failure",
+      "arm": "baseline",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "b541da3ea015e0855d148ce63b955dadbd22718ca0469d36f3e0a6fb33f27da9",
+      "developer_chars": 30209,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": true
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "failed",
+        "summary": "已核实原请求和时区要求；日历读取返回 calendar_auth_expired：Calendar read denied for this session。未发送群消息，也未生成未经核实的会议时段。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "agent_reported_failure",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "calendar_auth_expired",
+          "session_continuable": false
+        },
+        "risk": "high",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.25,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "failed",
+          "reason": "读取负责人下周日历失败，无法核实两个具体候选时段。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-calendar:calendar_auth_expired",
+            "/synthetic/dingtalk-calendar/SKILL.md"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "calendar-auth-failure",
+      "arm": "candidate",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "42b8781a4ebf3d8362209f0e18890a2fb13ac05de21bcc33fbe1a08d256b9993",
+      "developer_chars": 29141,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": true
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "failed",
+        "summary": "已核实原请求及负责人所在时区为 America/Los_Angeles，但读取负责人日历失败，无法形成两个经核实的候选时段。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "dependency_read_unavailable",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "dependency_read_unavailable",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.4,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "failed",
+          "reason": "日历读取依赖失败：calendar_auth_expired，Calendar read denied for this session。无法核实下周两个具体可用时段。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-calendar:calendar_auth_expired"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "prior-risk-refusal",
+      "arm": "baseline",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "b541da3ea015e0855d148ce63b955dadbd22718ca0469d36f3e0a6fb33f27da9",
+      "developer_chars": 30209,
+      "task_sha256": "d7252bfe9d5adfda6b3acacb38675c078036cc25fb034e08b84fe5a433c3833d",
+      "task_chars": 3247,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "failed",
+        "summary": "读取了模拟项目群消息及 2026-10-26 至 2026-11-02 的负责人日历。负责人在 America/Los_Angeles 时区；10月27日09:00-10:00、11:00-12:00及10月28日09:00-10:00、11:00-12:00已占用。阿岚的可用性未获独立来源核实。针对 synthetic-group-17/synthetic-message-101 的回复动作此前返回 provider_risk_refused，retryable=false，本轮未执行外部发送。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "agent_reported_failure",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "provider_risk_refused",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.9,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.5,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "failed",
+          "reason": "原回复动作此前已被供应商以 provider_risk_refused 拒绝，且不可重试；本轮不能声称已发送。已核实负责人下周日历，但未核实阿岚日程，因此也不能证明两个时段对双方均可用。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "prior-risk-refusal",
+      "arm": "candidate",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "42b8781a4ebf3d8362209f0e18890a2fb13ac05de21bcc33fbe1a08d256b9993",
+      "developer_chars": 29141,
+      "task_sha256": "d7252bfe9d5adfda6b3acacb38675c078036cc25fb034e08b84fe5a433c3833d",
+      "task_chars": 3247,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "failed",
+        "summary": "已核实原请求、负责人时区及其下周日历。阿岚的可用时间未核实，且针对 synthetic-group-17/synthetic-message-101 的回复已收到不可重试的 provider risk 拒绝，因此不能宣称已交付或绕过拒绝重新发送。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "provider_risk_rejected",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "provider_risk_rejected",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 0.95,
+        "information_completeness": 0.65,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "failed",
+          "reason": "原群回复动作已被 provider risk 拒绝，且不可重试；未发送消息。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "draft-only",
+      "arm": "baseline",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "b541da3ea015e0855d148ce63b955dadbd22718ca0469d36f3e0a6fb33f27da9",
+      "developer_chars": 30209,
+      "task_sha256": "0838e8ea3d7a831068edda9651eb32c5eea55950a7f47f9947cb0f8e96518f19",
+      "task_chars": 3041,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "no_action",
+        "summary": "已形成两个待阿岚确认的时段草稿，未发送任何消息。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.93,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.7,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "no_action",
+          "reason": "已核对原请求及负责人日历。可提供两个草稿时段，但阿岚的日程未核实，且协调者明确要求由其自行发送，因此不代发消息。建议草稿：1）2026-10-27 10:00–11:00（America/Los_Angeles）；2）2026-10-28 10:00–11:00（America/Los_Angeles）。两段均未发现负责人日历占用，阿岚可用性待确认。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "draft-only",
+      "arm": "candidate",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "42b8781a4ebf3d8362209f0e18890a2fb13ac05de21bcc33fbe1a08d256b9993",
+      "developer_chars": 29141,
+      "task_sha256": "0838e8ea3d7a831068edda9651eb32c5eea55950a7f47f9947cb0f8e96518f19",
+      "task_chars": 3041,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "no_action",
+        "summary": "不发送消息。可交付给协调者的两个候选时段草稿为：2026-10-26 10:00–11:00 和 2026-10-29 14:00–15:00，均为 America/Los_Angeles 时间；负责人日历在查询窗口内未显示这两个时段占用，阿岚可用性未核实。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.82,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.5,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "no_action",
+          "reason": "原请求只要求提供两个时段草稿，并明确由协调者自行发送；不应代发消息。已核实负责人的洛杉矶时区日历，但未取得阿岚的独立日程来源，因此两个时段仅代表负责人日历未显示占用，需由协调者与阿岚确认。建议草稿：2026-10-26 10:00–11:00（America/Los_Angeles）；2026-10-29 14:00–15:00（America/Los_Angeles）。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "candidate-windows-unknown-zone",
+      "arm": "baseline",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "b541da3ea015e0855d148ce63b955dadbd22718ca0469d36f3e0a6fb33f27da9",
+      "developer_chars": 30209,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": true
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "已根据负责人本人日历生成两个下周候选时段，并明确阿岚可用性尚未核实；回复尚未发送，待审核及系统执行。",
+        "proposal": {
+          "objective": "已读取原群消息及负责人下周日历。负责人时区为 America/Los_Angeles；阿岚的日程未提供，因此仅提交需由协调者进一步确认的候选时段。",
+          "actions": [
+            {
+              "description": "已读取原群消息及负责人下周日历。负责人时区为 America/Los_Angeles；阿岚的日程未提供，因此仅提交需由协调者进一步确认的候选时段。",
+              "action_identity": "7a3f558e45a879b2d58dedc9",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101"
+              },
+              "payload": {
+                "content": "根据我的日历，先提供两个候选时段（America/Los_Angeles 时区）：\n1. 10月26日（周一）10:00–11:00\n2. 10月29日（周四）14:00–15:00\n阿岚的日程我这边尚未核实，请您再确认她是否方便。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [],
+          "authored_judgment": "已读取原群消息及负责人下周日历。负责人时区为 America/Los_Angeles；阿岚的日程未提供，因此仅提交需由协调者进一步确认的候选时段。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.86,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.7,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "reply",
+          "reason": "已读取原群消息及负责人下周日历。负责人时区为 America/Los_Angeles；阿岚的日程未提供，因此仅提交需由协调者进一步确认的候选时段。",
+          "target": {
+            "conversation_id": "synthetic-group-17",
+            "message_id": "synthetic-message-101"
+          },
+          "payload": {
+            "content": "根据我的日历，先提供两个候选时段（America/Los_Angeles 时区）：\n1. 10月26日（周一）10:00–11:00\n2. 10月29日（周四）14:00–15:00\n阿岚的日程我这边尚未核实，请您再确认她是否方便。"
+          },
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "calendar_read:2026-10-26T00:00:00-07:00/2026-11-02T00:00:00-08:00"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "candidate-windows-unknown-zone",
+      "arm": "candidate",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "42b8781a4ebf3d8362209f0e18890a2fb13ac05de21bcc33fbe1a08d256b9993",
+      "developer_chars": 29141,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "isError": false
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "拟回复原群消息，提供负责人日历无冲突的两个具体候选时段，并如实说明阿岚的可用性尚未核实。",
+        "proposal": {
+          "objective": "已核实原请求及群上下文，并读取负责人下周 America/Los_Angeles 时区日历。可提供两个负责人日历无冲突的候选时段；阿岚的日程当前没有可用读取来源，因此明确请协调者进一步确认。",
+          "actions": [
+            {
+              "description": "已核实原请求及群上下文，并读取负责人下周 America/Los_Angeles 时区日历。可提供两个负责人日历无冲突的候选时段；阿岚的日程当前没有可用读取来源，因此明确请协调者进一步确认。",
+              "action_identity": "7a3f558e45a879b2d58dedc9",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101"
+              },
+              "payload": {
+                "content": "我下周按 America/Los_Angeles 时区可安排：\n1. 10月27日（周二）10:00–11:00\n2. 10月28日（周三）10:00–11:00\n以上两段已核实与我的日历不冲突；阿岚的可用性我目前无法从现有来源核实，麻烦先与她确认是否也方便。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [],
+          "authored_judgment": "已核实原请求及群上下文，并读取负责人下周 America/Los_Angeles 时区日历。可提供两个负责人日历无冲突的候选时段；阿岚的日程当前没有可用读取来源，因此明确请协调者进一步确认。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.94,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.67,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "reply",
+          "reason": "已核实原请求及群上下文，并读取负责人下周 America/Los_Angeles 时区日历。可提供两个负责人日历无冲突的候选时段；阿岚的日程当前没有可用读取来源，因此明确请协调者进一步确认。",
+          "target": {
+            "conversation_id": "synthetic-group-17",
+            "message_id": "synthetic-message-101"
+          },
+          "payload": {
+            "content": "我下周按 America/Los_Angeles 时区可安排：\n1. 10月27日（周二）10:00–11:00\n2. 10月28日（周三）10:00–11:00\n以上两段已核实与我的日历不冲突；阿岚的可用性我目前无法从现有来源核实，麻烦先与她确认是否也方便。"
+          },
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "calendar:2026-10-26T00:00:00-07:00/2026-11-02T00:00:00-07:00",
+            "synthetic-event-1",
+            "synthetic-event-2",
+            "synthetic-event-3",
+            "synthetic-event-4"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "calendar-auth-failure",
+      "arm": "baseline",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "b541da3ea015e0855d148ce63b955dadbd22718ca0469d36f3e0a6fb33f27da9",
+      "developer_chars": 30209,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": true
+        }
+      ],
+      "result": {
+        "outcome": "failed",
+        "summary": "原请求要求为负责人和阿岚提供下周两个具体会议时段。群消息已核实，但日历读取因认证过期失败；阿岚的日程也未有独立来源核实。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "agent_reported_failure",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "calendar_auth_expired",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.25,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "failed",
+          "reason": "无法读取负责人下周日历：日历服务返回 calendar_auth_expired（Calendar read denied for this session）。因此无法核实两个具体候选时段，也未发送群消息。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "synthetic-calendar:calendar_auth_expired"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    },
+    {
+      "case": "calendar-auth-failure",
+      "arm": "candidate",
+      "status": "completed",
+      "exit_code": 0,
+      "developer_sha256": "42b8781a4ebf3d8362209f0e18890a2fb13ac05de21bcc33fbe1a08d256b9993",
+      "developer_chars": 29141,
+      "task_sha256": "adde2e56e98826783130eb84001d23131c83bb9fed8a59fe7ea667bff20a7629",
+      "task_chars": 3037,
+      "tool_calls": [
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_skill",
+          "isError": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "isError": false
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "isError": true
+        }
+      ],
+      "result": {
+        "outcome": "failed",
+        "summary": "已读取“模拟项目群”消息，确认需提供本人和阿岚下周的两个候选时段；日历读取被拒绝：calendar_auth_expired（Calendar read denied for this session）。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "dependency_read_unavailable",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "dependency_read_unavailable",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.4,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "failed",
+          "reason": "日历读取依赖失败，无法核实下周两个具体可用时段；未发送群消息。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "synthetic-message-101",
+            "synthetic-message-102",
+            "calendar_auth_expired"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "validation_error": "",
+      "runtime_errors": []
+    }
+  ]
+}
