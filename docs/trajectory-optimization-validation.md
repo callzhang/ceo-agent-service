@@ -1601,6 +1601,39 @@ continued sessions. A smaller serialized input alone does not pass that gate.
 The separate native Task acceptance-schema candidate remains no-go on its own
 behavioral result above.
 
+### Cross-turn omission gate: previous input is not a durable evidence store (2026-10-19)
+
+The candidate considered here was to omit exact historical semantic-context rows
+from a later Task input when the same shared native session had received them
+earlier. Its acceptance condition is stronger than a shorter input: every later
+turn, including cold start and after native compaction, must still be able to
+inspect the exact source version and excerpt needed for formal Task creation,
+existing-Task updates, Project decisions, duplicate suppression, and citations.
+If that evidence path is absent, there is no reason to run a model comparison or
+change retrieval.
+
+I re-read the complete saved native session
+`01a14fbe-74e2-7102-bee5-baa8aa7de92f` rather than inferring continuity
+from its session ID. It has 11 submitted Task inputs for nine distinct Work Item
+payloads. Ten of those inputs are followed by a native `compacted` event; nine
+of the ten adjacent Task-input pairs have such an event between the two inputs.
+The first seven inputs are the post-PR #128 sample quantified above. The
+session's compaction record establishes a history replacement, not a promise
+that every prior `source_documents` row, version and exact citation span remains
+available in the next model window. The shared session therefore cannot serve
+as the sole evidence store for a delta-only next input.
+
+This candidate fails the evidence-availability precondition and is **no-go**.
+No historical row was removed, no extra prompt rule or fallback was added, and
+no runtime code, test or model route changed. Existing fixed business-case
+results were not rerun because there is no changed candidate to validate; a
+model's success on one continuation would not establish exact access across
+these compaction boundaries. A future narrower input requires a durable,
+source-versioned on-demand read path available to the Task Agent, then the
+fixed cold/continued decision and citation comparison stated above. This
+finding does not reject relevance-based retrieval in general; it rejects
+reliance on earlier session input as the evidence transport.
+
 ## OA process attachment read path: repeated failure root cause (2026-10-19)
 
 Task 405641 produced 217 `dependency_read_unavailable` Consumer runs between
