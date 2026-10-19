@@ -3361,6 +3361,10 @@ validation, the native output schema, and the one-correction budget are unchange
 The same-session result correction now submits the bounded validation errors and
 brief preservation instructions, rather than replaying a generic catalogue of
 Project, Task, Attention and source rules. A runtime-path rejection receives its
-path rule only for that error. The initial Work Tracking Skill, strict result
-validation, native schema, routes and correction budget are unchanged. Fixed-case
-evidence and limits are in `docs/task-result-repair-prompt-validation.md`.
+path rule only for that error. Acceptance polarity and target-signal transition
+violations are reported at `task_decisions[i].acceptance_polarity` or
+`task_decisions[i].acceptance_target_signal_id`, so correction feedback identifies
+the exact field; the transition and evidence requirements are unchanged. The
+initial Work Tracking Skill, strict result validation, native schema, routes and
+correction budget are unchanged. Fixed-case evidence and limits are in
+`docs/task-result-repair-prompt-validation.md`.

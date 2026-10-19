@@ -1,7 +1,14 @@
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic.fields import FieldInfo
 
 from app.decision_quality import (
@@ -612,8 +619,15 @@ class TaskDecision(StrictTaskModel):
         description="Describe this deliverable or the existing Task's actual scope/content update; do not split additions into duplicate Tasks.",
     )
     formal_basis: FormalTaskBasis | None = None
-    acceptance_polarity: Literal["accepted", "declined", "ambiguous"] | None = None
-    acceptance_target_signal_id: int | None = Field(default=None, gt=0)
+    acceptance_polarity: Literal["accepted", "declined", "ambiguous"] | None = Field(
+        default=None,
+        validate_default=True,
+    )
+    acceptance_target_signal_id: int | None = Field(
+        default=None,
+        gt=0,
+        validate_default=True,
+    )
     status: Literal["open", "waiting", "done", "cancelled"] | None = None
     business_relevance: Literal["unknown", "not_relevant", "relevant"] | None = None
     owner_user_id: str = ""
@@ -698,6 +712,38 @@ class TaskDecision(StrictTaskModel):
         le=1.0,
         description="How complete the evidence needed for this decision is.",
     )
+
+    @field_validator("acceptance_polarity")
+    @classmethod
+    def validate_acceptance_polarity_transition(
+        cls,
+        value: Literal["accepted", "declined", "ambiguous"] | None,
+        info: ValidationInfo,
+    ) -> Literal["accepted", "declined", "ambiguous"] | None:
+        transition = info.data.get("transition")
+        if transition == "apply_acceptance" and value != "accepted":
+            raise ValueError("apply_acceptance requires explicit accepted polarity")
+        if value is not None and transition != "apply_acceptance":
+            raise ValueError("acceptance polarity requires apply_acceptance transition")
+        return value
+
+    @field_validator("acceptance_target_signal_id")
+    @classmethod
+    def validate_acceptance_target_transition(
+        cls,
+        value: int | None,
+        info: ValidationInfo,
+    ) -> int | None:
+        transition = info.data.get("transition")
+        if transition == "apply_acceptance" and value is None:
+            raise ValueError(
+                "apply_acceptance requires an explicitly cited assignment signal"
+            )
+        if value is not None and transition != "apply_acceptance":
+            raise ValueError(
+                "acceptance target signal requires apply_acceptance transition"
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_transition_shape(self) -> "TaskDecision":
@@ -811,30 +857,6 @@ class TaskDecision(StrictTaskModel):
                 )
         if self.transition != "merge_identity" and self.identity_proposal is not None:
             raise ValueError("identity proposal requires merge_identity transition")
-        if (
-            self.transition == "apply_acceptance"
-            and self.acceptance_polarity != "accepted"
-        ):
-            raise ValueError("apply_acceptance requires explicit accepted polarity")
-        if (
-            self.transition == "apply_acceptance"
-            and self.acceptance_target_signal_id is None
-        ):
-            raise ValueError(
-                "apply_acceptance requires an explicitly cited assignment signal"
-            )
-        if (
-            self.acceptance_polarity is not None
-            and self.transition != "apply_acceptance"
-        ):
-            raise ValueError("acceptance polarity requires apply_acceptance transition")
-        if (
-            self.acceptance_target_signal_id is not None
-            and self.transition != "apply_acceptance"
-        ):
-            raise ValueError(
-                "acceptance target signal requires apply_acceptance transition"
-            )
         return self
 
     def decision_quality(self) -> DecisionQualityResult:
