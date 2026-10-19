@@ -1629,7 +1629,8 @@ policy changes are included. A fixed test with generic Drive access denied
 failed before the new tool existed and passed afterward; the role and scanned
 PDF cases also passed. The current real files were read through the new helper
 without recording their contents in the repository. Post-deployment tool
-visibility and natural-run business behavior remain to be read back.
+visibility was read back after deployment; a future natural OA review still
+needs to show the Agent uses this tool and makes a correct business decision.
 
 Separately, the final approved OA comment for this task returned no comment
 ID and was marked uncertain. Exact provider readback found one matching
@@ -1637,3 +1638,19 @@ ID and was marked uncertain. Exact provider readback found one matching
 reconciliation recorded its action as verified without resending, and the
 current comment task closed as done. The OA approval itself remains pending;
 the comment receipt does not prove the underlying project review is complete.
+
+The scoped release was merged into `main` and deployed with the approved Skill
+publication: 67 focused tests passed before release; the release preflight
+matched all 16 source/installed file digests, six managed bindings and five
+scheduled references. A follow-up regression found duplicate registration of
+the new read tool in the native role server; it failed before the correction
+and 34 focused role/material tests passed after merging the correction with
+current `main`. Production commit `223788a2` includes both fixes. Live
+Consumer/Audit tool catalogs contain `read_dingtalk_oa_process_attachment`
+once; the installed OA Skill SHA-256 is
+`4efbf60a185d533293382d4d9e8bbfec26799ce96a6c92bf2d15402b2734236f`.
+Service PID 8796 reported healthy with zero system-health violations,
+processing queue zero, Attention count four without task 405641, and History
+HTTP 200. The exact task and execution read back as `done`, with its action
+attempt verified. This proves release and receipt reconciliation, not a
+subsequent real project approval.
