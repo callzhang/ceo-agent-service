@@ -92,76 +92,108 @@ class DingTalkMessageHandler:
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
         task, prepared = self._prepared(action, candidate)
-        if prepared is None:
-            return ActionOutcome("failed", {"reason": "reviewed_message_preparation_mismatch"})
-        receipt = self.store.get_outbound_postfix_receipt("dingtalk", prepared.delivery_key)
+        if task is None:
+            return ActionOutcome("failed", {"reason": "reply_task_missing"})
+        body = action.payload.get("content", action.payload.get("text", action.payload.get("reply_text")))
+        if not isinstance(body, str) or not body:
+            return ActionOutcome("failed", {"reason": "reviewed_message_body_missing"})
+        delivery_key = prepared.delivery_key if prepared is not None else agent_message_delivery_key(
+            business_object_key=task.business_object_key,
+            action_identity=(
+                action.action_identity + ":" + str(candidate["option_key"])
+                if candidate.get("selection_id") is not None else action.action_identity
+            ),
+            execution_generation=task.execution_generation,
+            proposal_revision=candidate["proposal_revision"],
+        )
+        receipt = self.store.get_outbound_postfix_receipt("dingtalk", delivery_key)
         if receipt is not None:
             return self._verified(receipt)
-        if action.operation != "reply_to_message":
-            target = action.target
-            conversation_id = target.get("conversation_id")
-            user_id = target.get("user_id")
-            open_id = target.get("open_dingtalk_id")
-            if action.operation == "send_direct_message":
-                conversation_id = None
-            if conversation_id:
-                user_id = None
-                open_id = None
-            elif user_id:
-                open_id = None
+        if action.operation == "reply_to_message":
+            if prepared is None:
+                return ActionOutcome("failed", {"reason": "reviewed_message_preparation_mismatch"})
             conversation = DingTalkConversation(
-                open_conversation_id=conversation_id or "", title=task.conversation_title,
-                single_chat=not bool(conversation_id), unread_point=0,
-                direct_user_id=user_id or "", direct_open_dingtalk_id=open_id or "",
+                open_conversation_id=task.conversation_id, title=task.conversation_title,
+                single_chat=task.single_chat, unread_point=0,
             )
-            boundary = datetime.fromisoformat(candidate["action_attempt"]["created_at"])
-            if boundary.tzinfo is None:
-                # Old second-precision rows cannot establish the dispatch instant.
-                return None
-            receipt = self.dws.reconcile_message_send(
-                conversation, prepared.final_body, not_before=boundary,
-            )
+            try:
+                trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+            except ValueError:
+                if (task.input_compacted is not True
+                        or not isinstance(task.trigger_message_id, str)
+                        or not task.trigger_message_id
+                        or not isinstance(task.trigger_sender, str)
+                        or not task.trigger_sender
+                        or not isinstance(task.trigger_create_time, str)
+                        or not task.trigger_create_time):
+                    return ActionOutcome("uncertain", {"reason": "compacted_trigger_metadata_unavailable"})
+                trigger = self.dws.read_message_by_id(conversation, task.trigger_message_id)
+                trigger_sender_user_id = getattr(task, "trigger_sender_user_id", "")
+                if (trigger is None
+                        or trigger.open_message_id != task.trigger_message_id
+                        or trigger.open_conversation_id != task.conversation_id
+                        or trigger.sender_name != task.trigger_sender
+                        or trigger.create_time != task.trigger_create_time
+                        or (trigger_sender_user_id
+                            and trigger.sender_user_id != trigger_sender_user_id)):
+                    return ActionOutcome("uncertain", {"reason": "compacted_trigger_readback_mismatch"})
+            receipt = self.dws.reconcile_reply_to_trigger(conversation, trigger, prepared.final_body)
             if receipt is None:
                 return None
             result = self._verified(receipt)
             if result.status == "verified":
                 self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
             return result
+        target = action.target
+        conversation_id = target.get("conversation_id")
+        user_id = target.get("user_id")
+        open_id = target.get("open_dingtalk_id")
+        if action.operation == "send_group_message":
+            user_id = None
+            open_id = None
+        elif action.operation == "send_direct_message":
+            conversation_id = None
+        elif action.operation == "send_message":
+            if conversation_id != task.conversation_id:
+                return ActionOutcome("failed", {"reason": "message_reconciliation_target_not_bound_to_task"})
+            if task.single_chat and not (user_id or open_id):
+                user_id = getattr(task, "trigger_sender_user_id", "") or None
+                open_id = getattr(task, "trigger_sender_open_dingtalk_id", "") or None
+        if conversation_id:
+            user_id = None
+            open_id = None
+        elif user_id:
+            open_id = None
         conversation = DingTalkConversation(
-            open_conversation_id=task.conversation_id, title=task.conversation_title,
-            single_chat=task.single_chat, unread_point=0,
+            open_conversation_id=conversation_id or "",
+            title=task.conversation_title,
+            single_chat=(
+                task.single_chat if action.operation == "send_message"
+                else action.operation == "send_direct_message"
+            ),
+            unread_point=0, direct_user_id=user_id or "",
+            direct_open_dingtalk_id=open_id or "",
         )
-        try:
-            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        except ValueError:
-            # Settled reply tasks may have compacted their original input. The
-            # compacted marker means the JSON is a provenance envelope, not a
-            # DingTalkMessage. Rebuild only from an exact provider readback and
-            # metadata retained on the task; never infer a trigger from a body.
-            if (task.input_compacted is not True
-                    or not isinstance(task.trigger_message_id, str)
-                    or not task.trigger_message_id
-                    or not isinstance(task.trigger_sender, str)
-                    or not task.trigger_sender
-                    or not isinstance(task.trigger_create_time, str)
-                    or not task.trigger_create_time):
-                return ActionOutcome("uncertain", {"reason": "compacted_trigger_metadata_unavailable"})
-            trigger = self.dws.read_message_by_id(conversation, task.trigger_message_id)
-            trigger_sender_user_id = getattr(task, "trigger_sender_user_id", "")
-            if (trigger is None
-                    or trigger.open_message_id != task.trigger_message_id
-                    or trigger.open_conversation_id != task.conversation_id
-                    or trigger.sender_name != task.trigger_sender
-                    or trigger.create_time != task.trigger_create_time
-                    or (trigger_sender_user_id
-                        and trigger.sender_user_id != trigger_sender_user_id)):
-                return ActionOutcome("uncertain", {"reason": "compacted_trigger_readback_mismatch"})
-        receipt = self.dws.reconcile_reply_to_trigger(conversation, trigger, prepared.final_body)
+        boundary = datetime.fromisoformat(candidate["action_attempt"]["created_at"])
+        if boundary.tzinfo is None:
+            return None
+        receipt = self.dws.reconcile_message_send(conversation, body, not_before=boundary)
         if receipt is None:
             return None
         result = self._verified(receipt)
         if result.status == "verified":
-            self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
+            if prepared is not None:
+                self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
+            return result
+        verification = result.provider_result.get("verification")
+        if (result.status == "failed" and isinstance(verification, dict)
+                and verification.get("reason") == "complete_readback_no_exact_match"
+                and verification.get("readback_verification", {}).get("completeWindowReadback") is True):
+            prior_attempt = candidate.get("action_attempt") or {}
+            prior_result = json.loads(prior_attempt.get("result_json") or "{}")
+            if (prepared is None
+                    and prior_result.get("reason") == "reviewed_message_preparation_mismatch"):
+                return ActionOutcome("confirmed_no_effect", result.provider_result)
         return result
 
 

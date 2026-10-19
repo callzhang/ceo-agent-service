@@ -280,6 +280,34 @@ class SystemExecutor:
                 result = self._failure("completed_action_content_conflict", "A completed action has different approved content", completed)
                 self.store.finish_candidate_execution(execution_id, self.owner, "failed", result)
                 return result
+            prior_attempt_reader = getattr(self.store, "get_prior_candidate_action_attempt", None)
+            prior_attempt = prior_attempt_reader(action_key, execution_id) if callable(prior_attempt_reader) else None
+            if prior_attempt is not None and prior_attempt.get("status") == "failed":
+                prior_result = json.loads(prior_attempt.get("result_json") or "{}")
+                if prior_result.get("reason") == "reviewed_message_preparation_mismatch":
+                    try:
+                        reconciliation = handler.reconcile(
+                            action, action_key=action_key,
+                            candidate={**row, "action_attempt": prior_attempt},
+                        )
+                    except Exception as exc:
+                        reconciliation = None
+                        reconciliation_error = type(exc).__name__
+                    else:
+                        reconciliation_error = ""
+                    if reconciliation is None or reconciliation.status not in ("verified", "confirmed_no_effect"):
+                        result = self._failure(
+                            "external_action_reconciliation_incomplete",
+                            "Provider readback did not establish the prior message outcome",
+                            completed, retryable=True,
+                            source_code=reconciliation_error,
+                        )
+                        self.store.finish_candidate_execution(execution_id, self.owner, "failed", result)
+                        return result
+                    self.store.record_prior_candidate_action_reconciliation(
+                        execution_id, self.owner, index, action_key,
+                        reconciliation.status, reconciliation.provider_result,
+                    )
             attempt = self.store.begin_candidate_action(execution_id, self.owner, index, action_key)
             if attempt["status"] == "verified":
                 self._project_completed_message(action, action_key, row, current_task)
