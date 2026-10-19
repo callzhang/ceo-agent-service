@@ -117,7 +117,7 @@ Console列表／详情、任务完整线程、任务创建／恢复已使用准�
 - [x] 同一输入容量对照、完整副本迁移、迁后新增事实inverse／reforward、原生CLI五分支及合并后新增真实任务。
 - [x] 本轮有界来源补验、956 owner案例冷重建、来源未查实原文保留、最新副本容量独立核对。
 - [x] 真Chrome Workbench两项检查：隔离数据库／非执行替身，2 pass、106.23秒；前端tsc／vite构建通过。既有Python Workbench端到端启动差项已以同线程连接复用修复；与执行器／连接控制共23项通过，2秒阈值保留。
-- [ ] 更广Python回归全部差项闭合。前轮28 failed／60 passed／87 skipped、303.41秒；历史delivery四文件90 pass、bootstrap2 pass修正后，新轮发现Email history／error组件旧夹具问题；error整文件13 pass／655.94秒，Email history整文件7 pass／489.25秒；其余历史postfix110、receipt22、通用Actions68、reply发布26、follow-up5项已分别通过，反馈／runtime router／代际与终态关联／配置存储已补齐定向验证；worker既有恢复组11项及追加协议分支12项、配置存储75项、代际终态70项、配置集成／任务详情追加11项均已通过；Attention三个受影响节点已通过，Workbench启动差项已闭合；task-delivery和后续诊断回归差项仍在核对。已通过且未变的大批量历史用例复用原证据，不重复堆叠运行。
+- [ ] 更广Python回归全部差项闭合。前轮28 failed／60 passed／87 skipped、303.41秒；历史delivery四文件90 pass、bootstrap2 pass修正后，新轮发现Email history／error组件旧夹具问题；error整文件13 pass／655.94秒，Email history整文件7 pass／489.25秒；其余历史postfix110、receipt22、通用Actions68、reply发布26、follow-up5项已分别通过，反馈／runtime router／代际与终态关联／配置存储已补齐定向验证；worker既有恢复组11项及追加协议分支12项、配置存储75项、代际终态70项、配置集成／任务详情追加11项均已通过；Attention三个受影响节点已通过，Workbench启动差项已闭合；task-delivery已闭合11个观察到的失败，54项当前轻量控制通过；后续诊断回归差项仍在核对。已通过且未变的大批量历史用例复用原证据，不重复堆叠运行。
 - [x] 邮件输入／URL同步时序问题：确定性回归复现后已修复，原逐字输入／最终请求断言保留；主审独立3项通过，Email＋Scheduled定向107项通过。降低并发后完整前端46文件734 pass／2 skipped，433.57秒，超时阈值不变；主审tsc／vite构建通过。
 - [ ] 正文搜索产品取舍／性能边界处理，不能据局部来源读回视为全库可用。
 - [ ] 最终稳定候选集成审查、远端增量核对、提交／推送、既有deploy发布，以及生产PID／health／queues／Attention／History／实际schema和容量读回。
@@ -133,3 +133,5 @@ Workbench 执行线程原先每个 Store 操作重新打开连接；最小执行
 邮件 DAO 的 whole-publish 夹具代表补验：reply 1项通过（429.08秒），unsubscribe 2项通过（439.57秒）；不代表两个整文件已全通过。Direct 的新只读模板复制初轮使用 deep copy，遇到模型内部 frozen mappingproxy；已独立复现并改用既有 JSON 序列化往返，夹具整体复验待完成。Validator 当前对象定位及旧夹具异常预期仍在收尾。旧 task-delivery 诊断11 failed／55 passed不计作当前通过；修正后的历史四族两变体控制2项通过（92.48秒），配对代表仍在运行。当前批次排空前不再追加整库迁移，也不延长超时。
 
 最终 schema 的元数据拒绝／不修复验证整文件39项通过（377.06秒），历史Email迁移新增事实／类型／ROWID四项通过（8.74秒）。Direct／Validator六个定向差项已分别4项与2项通过；反馈对照只排除旧getter的正文展示字段，并明确断言当前getter不返回它们，原有业务状态、修订、CAS和ledger校验保留。随后对冻结测试源码作合并确认，尚未据局部结果宣告广泛回归完成。
+
+冻结源码的 Direct／Validator 合并确认：23 passed／7 deselected，359.50秒。Task delivery 观察到的11个失败均已有定向闭合：剩余5个真实配对／逆迁控制通过（841.08秒），最终helper／空库／allocator等54项轻量控制通过（17.37秒）；不宣称新跑完整文件。此前已通过且本次未变的paired error／feedback证据复用，后续更广诊断仍需逐组闭合。

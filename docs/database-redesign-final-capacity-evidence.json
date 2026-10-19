@@ -34213,10 +34213,10 @@
     "scope": "fixture full real publish and real EmailStore; native source oracle untouched; other nodes not yet revalidated"
   },
   "final_pending_fixture_closure": {
-    "direct": "Focused current controls closed; stable combined confirmation pending.",
-    "validators": "Focused six failures closed with 4+2 passing controls; stable combined confirmation pending.",
+    "direct": "Closed stable combined 23 tests, including Direct and selected Validator controls.",
+    "validators": "Selected controls closed in stable combined 23; seven reply/unsubscribe/source-installer controls not part of this group.",
     "metadata": "Closed: 39 tests passed; exact existing early refusal and no repair retained.",
-    "task_delivery": "Prior 11 failed /55 passed diagnostic preceded latest fixture fixes; corrected historical 4-family two-variant control 2 passed/92.48 seconds. Paired representatives still running.",
+    "task_delivery": "All 11 observed failures closed with focused proofs; 54 final lightweight controls pass; no entire-file rerun.",
     "broad": "Long-running diagnostic started before latest changes, results require failure-by-failure closure; do not count as final stable candidate proof.",
     "resource_policy": "No additional migration jobs until current pending jobs drain; keep existing timeouts."
   },
@@ -34268,6 +34268,34 @@
       "scope": "exact business feedback/CAS/replay/ledgers; explicit metadata-only getter assertions; historical body presentation belongs to Console source reader per existing contract"
     },
     "runtime_changes": false,
-    "stable_combined_confirmation": "pending; keep test source unchanged during inspect-based native oracles"
+    "stable_combined_confirmation": {
+      "passed": 23,
+      "deselected": 7,
+      "seconds": 359.5,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-stable-combined.log",
+      "source_unchanged_during_run": true
+    }
+  },
+  "final_task_delivery_current_fixture_closure": {
+    "initial_observed_failures": 11,
+    "observed_failures_closed": true,
+    "historical_four_family_roundtrip": {
+      "passed": 2,
+      "seconds": 92.48
+    },
+    "actual_paired_writer": "passed in prior focused pair; stale constructor expectation was the other node failure",
+    "remaining_five_paired_controls": {
+      "passed": 5,
+      "seconds": 841.08,
+      "scope": "post-followup actual/fresh; new-delivery fresh; JSON transport actual/fresh"
+    },
+    "current_lightweight_controls": {
+      "passed": 54,
+      "deselected": 12,
+      "seconds": 17.37,
+      "scope": "blank/constructor/source/schema/set-parts/allocator/TEMP/SQL_FULL/parent error order/cascade"
+    },
+    "scope_note": "No claim of fresh entire-file pass; previously passing paired errors/feedback controls not repeated. Current full target inventory asserted exactly; all observed failures separately closed.",
+    "runtime_changes": false
   }
 }

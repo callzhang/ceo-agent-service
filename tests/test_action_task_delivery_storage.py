@@ -14,10 +14,126 @@ from app.action_error_storage import SOURCE_TABLE_SQL as ERROR_SOURCE_TABLE_SQL,
 from app.action_error_definitions import error_projection
 from app.action_feedback_storage import SOURCE_SQL as FEEDBACK_SOURCE_SQL, SOURCE_INDEX_SQL as FEEDBACK_SOURCE_INDEX_SQL
 from app.action_feedback_definitions import feedback_projection
+from app.action_task_delivery_definitions import TASK_DELIVERY_PARENTS
 import test_followup_sync_schema_release as followup_tests
 
 SOURCE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/"
                      "2026-10-17-task-delivery-source-metadata.json").read_text())
+
+
+def _insert_task_delivery_text(db, kind, values, *, ignore=False):
+    """Write through the frozen object-payload Actions layout used by these tests."""
+    action_storage._task_delivery_fields(kind, values)
+    parent, parent_column, expected_parent = TASK_DELIVERY_PARENTS[kind]
+    identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
+    if identity == "job_id" and action_storage._source_bound_null(values.get(identity)):
+        raise ValueError("claim insert requires explicit non-NULL job_id")
+
+    def operation():
+        action_storage._email_lock(db, tuple(values.values()))
+        auto_id = identity != "job_id" and action_storage._source_bound_null(values.get(identity))
+        high = action_storage._autoincrement_high_water(db, kind) if auto_id else 0
+        if auto_id and high == 2**63 - 1:
+            parent_id = values.get(parent)
+            if db.execute(
+                "select 1 from main.tasks where id=? and record_type<>? limit 1",
+                (parent_id, expected_parent),
+            ).fetchone():
+                # Let the frozen table's own BEFORE trigger preserve native
+                # wrong-parent error order ahead of allocator exhaustion.
+                db.execute(
+                    f"insert into actions(record_type,legacy_key,payload_json,{parent_column}) "
+                    "values(?,?,?,?)",
+                    (kind, str(high), "{}", parent_id),
+                )
+            action_storage._raise_autoincrement_full()
+        # Keep production validation/defaults/allocator/payload construction,
+        # then translate the resulting vector into the historical object row.
+        columns, arguments = action_storage.task_delivery_insert_parts(db, kind, values)
+        packed = db.execute("select json(?)", (arguments[2],)).fetchone()[0]
+        layout = action_storage._action_layout(kind)
+        vector = json.loads(packed)
+        payload = json.dumps(dict(zip(layout.fields, vector, strict=True)),
+                             ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        cursor = db.execute(
+            f"insert {'or ignore ' if ignore else ''}into actions(record_type,legacy_key,payload_json,{parent_column}) "
+            "values(?,?,?,?) returning cast(legacy_key as integer)",
+            (kind, str(arguments[1]), payload, arguments[3]),
+        )
+        row = cursor.fetchone()
+        cursor.fetchall()
+        return action_storage.ActionWriteResult(row[0] if row else None, cursor.rowcount)
+
+    return action_storage._email_unit(db, "action_task_delivery_insert", operation)
+
+
+def _task_delivery_set_parts_text(kind, values, *, update_sql=None, update_parameters=()):
+    action_storage._task_delivery_fields(kind, values)
+    expressions = {} if update_sql is None else update_sql
+    action_storage._task_delivery_fields(kind, expressions)
+    if not values and not expressions:
+        raise ValueError("task delivery update requires fields")
+    if set(values) & set(expressions):
+        raise ValueError("duplicate task delivery update field")
+    parent, target, _ = TASK_DELIVERY_PARENTS[kind]
+    identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
+    if identity in expressions or parent in expressions:
+        raise ValueError("task delivery structural SQL update is unsupported")
+    assignments, arguments, paths = [], [], []
+    if identity in values:
+        assignments.append("legacy_key=?")
+        arguments.append(str(action_storage._native_integer_primary_key(values[identity], update=True)))
+        if parent == identity:
+            assignments.append(target + "=?")
+            arguments.append(values[identity])
+    if parent != identity and parent in values:
+        assignments.append(target + "=?")
+        arguments.append(values[parent])
+    for field, value in values.items():
+        if field not in (identity, parent):
+            paths.extend(("$." + field, json.dumps(action_storage._encoded_native_sqlite_value(value),
+                                                     ensure_ascii=False, allow_nan=False, separators=(",", ":"))))
+    payload_updates = ["?,json(?)" for _ in range(len(paths) // 2)]
+    payload_updates.extend(repr("$." + field) + ",json(ceo_native_json(" + expression + "))"
+                           for field, expression in expressions.items())
+    if payload_updates:
+        assignments.append("payload_json=json_set(payload_json," + ",".join(payload_updates) + ")")
+        arguments.extend(paths)
+        arguments.extend(update_parameters)
+    return ",".join(assignments), tuple(arguments)
+
+
+def _update_task_delivery_text(db, kind, public_id, values, *, where_sql="", parameters=()):
+    action_storage._task_delivery_fields(kind, values)
+
+    def operation():
+        action_storage._email_lock(db, (*values.values(), public_id, *parameters))
+        predicate = "record_type=? and " + action_storage._EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
+        identity_args = [kind, public_id]
+        identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
+        if where_sql:
+            projection = action_storage.task_delivery_projection(
+                kind, source_variant="actual" if action_storage._reply_variant_for(db) == "actual_no_memory_fk" else "fresh",
+            )
+            predicate += (" and cast(legacy_key as integer) in "
+                          f"(select {identity} from ({projection}) where {identity}=? and ({where_sql}))")
+            identity_args.extend((public_id, *parameters))
+        if identity in values and db.execute(
+            "select 1 from actions where " + predicate + " limit 1", identity_args,
+        ).fetchone() is None:
+            return db.execute("update actions set legacy_key=legacy_key where 0")
+        assignment, arguments = _task_delivery_set_parts_text(kind, values)
+        return db.execute("update actions set " + assignment + " where " + predicate,
+                          (*arguments, *identity_args))
+
+    return action_storage._email_unit(db, "action_task_delivery_update", operation)
+
+
+@pytest.fixture
+def _frozen_task_delivery_text_writer(monkeypatch):
+    monkeypatch.setattr(action_storage, "insert_task_delivery_action", _insert_task_delivery_text)
+    monkeypatch.setattr(action_storage, "task_delivery_set_parts", _task_delivery_set_parts_text)
+    monkeypatch.setattr(action_storage, "update_task_delivery_action", _update_task_delivery_text)
 
 
 @pytest.fixture(params=("actual", "fresh_candidate"))
@@ -25,6 +141,15 @@ def delivery_paired_source(tmp_path, request):
     path = followup_tests.paired_source.__wrapped__(tmp_path, request)
     variant = "actual" if request.param == "actual" else "fresh"
     with closing(sqlite3.connect(path)) as db:
+        # The paired base fixture now includes these names; this test owns the
+        # frozen task-delivery declarations and installs them from SOURCE.
+        for kind in (*SOURCE[variant], "errors", "feedback_events", "feedback_processing_transitions"):
+            existing = db.execute(
+                "select 1 from sqlite_schema where type='table' and name=?", (kind,)
+            ).fetchone()
+            if existing:
+                assert db.execute(f'select count(*) from "{kind}"').fetchone()[0] == 0, kind
+            db.execute(f'drop table if exists "{kind}"')
         for definition in SOURCE[variant].values():
             for obj in sorted(definition["objects"], key=lambda item: item[0] != "table"):
                 if obj[3]:
@@ -98,21 +223,14 @@ def test_post_followup_release_four_family_conversion(delivery_paired_source):
     release.apply()
     with closing(sqlite3.connect(delivery_paired_source)) as db:
         source = release.source_schema["task_delivery"]
-        assert action_storage.validated_reply_variant(
-            db, include_email=True, include_followup_sync=True,
-            include_business_sync=True, include_skill_config_receipts=True,
-            include_task_delivery=True,
-            include_errors=True,
-            include_feedback=True,
-        ) == source["reply_variant"]
-        assert action_storage.action_schema_is_current(
-            db, include_reply=True, reply_variant=source["reply_variant"],
-            include_email=True, include_followup_sync=True,
-            include_business_sync=True, include_skill_config_receipts=True,
-            include_task_delivery=True,
-            include_errors=True,
-            include_feedback=True,
-        )
+        from app.current_database_schema import FINAL_ACTION_OPTIONS
+        matching_variants = [
+            variant for variant in action_storage.REPLY_VARIANTS
+            if action_storage.action_schema_is_current(
+                db, reply_variant=variant, **FINAL_ACTION_OPTIONS,
+            )
+        ]
+        assert matching_variants == [source["reply_variant"]]
         assert not db.execute(
             "select 1 from sqlite_schema where type='table' and name in "
             "('meeting_alignment_delivery_claims','meeting_memory_write_events',"
@@ -188,6 +306,7 @@ def test_paired_feedback_current_public_writes_inverse_and_reforward(delivery_pa
     store.busy_timeout_seconds = 30
     store.busy_timeout_milliseconds = 30000
     store._read_snapshot_connection = ContextVar("feedback_paired_snapshot", default=None)
+    store._reused_connection = ContextVar("feedback_paired_reused", default=None)
     store.upsert_feedback_event(key="feedback-new", feedback_token="token-new",
                                 rating="5", rating_label="excellent")
     store.create_feedback_processing_batch(["feedback-new"], batch_id="batch-new")
@@ -354,14 +473,14 @@ def test_json_transport_inverse_round_trips_config_triggers_and_new_facts(
                ("wechat_deliveries", 61))
 
 
-def test_fresh_task_delivery_conversion_failure_does_not_publish_current(tmp_path, monkeypatch):
-    from app import store as store_module
+def test_fresh_final_schema_failure_does_not_publish_current(tmp_path, monkeypatch):
+    from app import current_database_schema, store as store_module
 
     path = tmp_path / "fresh.sqlite3"
-    def fail_conversion(_db, _source):
+    def fail_conversion(*_args, **_kwargs):
         raise RuntimeError("conversion interrupted")
 
-    monkeypatch.setattr(store_module, "migrate_task_delivery_schema", fail_conversion)
+    monkeypatch.setattr(current_database_schema, "create_current_database_schema", fail_conversion)
     with pytest.raises(RuntimeError, match="conversion interrupted"):
         store_module.AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
@@ -371,15 +490,16 @@ def test_fresh_task_delivery_conversion_failure_does_not_publish_current(tmp_pat
             "'task_memory_write_events','wechat_deliveries')"
         ).fetchall() == []
         assert db.execute(
-            "select 1 from state where record_type='service_state' "
-            "and legacy_key='store_schema_version'"
+            "select 1 from sqlite_schema where type='table' and name='state'"
         ).fetchone() is None
 
 
 @pytest.mark.parametrize("first", ("store", "email"))
-def test_fresh_paired_constructors_publish_only_twenty_eight_tables(tmp_path, first):
+def test_fresh_paired_constructors_publish_final_inventory(tmp_path, first):
     from app.store import AutoReplyStore
     from app.email_store import EmailStore
+    from app.current_database_schema import FINAL_ACTION_OPTIONS
+    from app.action_storage import action_schema_is_current
 
     path = tmp_path / "fresh.sqlite3"
     constructors = {
@@ -390,17 +510,15 @@ def test_fresh_paired_constructors_publish_only_twenty_eight_tables(tmp_path, fi
     constructors["email" if first == "store" else "store"](path)
     store = AutoReplyStore(path)
     with store._connect() as db:
-        assert db.execute(
-            "select count(*) from sqlite_schema where type='table' "
-            "and name not like 'sqlite_%'"
-        ).fetchone()[0] == 28
-        assert not db.execute(
-            "select name from sqlite_schema where type='table' and name in "
-            "('meeting_alignment_delivery_claims','meeting_memory_write_events',"
-            "'task_memory_write_events','wechat_deliveries','errors',"
-            "'feedback_events','feedback_processing_transitions',"
-            "'feedback_iteration_decision_items')"
-        ).fetchall()
+        assert {row[0] for row in db.execute(
+            "select name from sqlite_schema where type='table' and name not like 'sqlite_%'"
+        )} == {
+            "tasks", "runs", "actions", "business", "emails", "provenance",
+            "configs", "provider_state", "schedules", "state", "email_schema_migrations",
+        }
+        assert action_schema_is_current(
+            db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS,
+        )
         assert store._schema_manifest_is_current_in_connection(
             db, include_run_snapshots=True,
         )
@@ -431,6 +549,7 @@ def test_task_delivery_schema_has_four_typed_kinds_and_source_constraints(varian
 
 
 @pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_task_delivery_set_parts_uses_original_row_values_and_statement_clock(variant):
     from app.task8_storage import register_task8_functions
 
@@ -467,6 +586,7 @@ def test_task_delivery_set_parts_uses_original_row_values_and_statement_clock(va
 
 
 @pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_wechat_allocator_uses_main_sequence_with_unrelated_temp_autoincrement(variant):
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("create table tasks(id integer primary key,record_type text not null)")
@@ -510,6 +630,7 @@ def test_wechat_allocator_uses_main_sequence_with_unrelated_temp_autoincrement(v
 
 
 @pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_unmatched_wechat_update_does_not_evaluate_invalid_primary_key(variant):
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("create table tasks(id integer primary key,record_type text not null)")
@@ -529,6 +650,7 @@ def test_unmatched_wechat_update_does_not_evaluate_invalid_primary_key(variant):
 
 @pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
 @pytest.mark.parametrize("job_id", (None, "absent"))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_claim_writer_requires_explicit_non_null_job_id(variant, job_id):
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("create table tasks(id integer primary key,record_type text not null)")
@@ -550,6 +672,7 @@ def test_claim_writer_requires_explicit_non_null_job_id(variant, job_id):
         assert db.execute("select count(*) from actions where record_type='meeting_alignment_delivery_claims'").fetchone() == (0,)
 
 
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_fresh_task_delivery_rejects_unowned_reply_attempt_reference_for_all_kinds():
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("create table tasks(id integer primary key,record_type text not null)")
@@ -591,6 +714,7 @@ def test_fresh_task_delivery_rejects_unowned_reply_attempt_reference_for_all_kin
                            "target_id": "t", "reply_text": "text"}),
 ))
 @pytest.mark.parametrize("explicit_transaction", (False, True))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_auto_id_full_preserves_source_and_target_caller_transaction(
     variant, kind, values, explicit_transaction,
 ):
@@ -653,6 +777,7 @@ def test_auto_id_full_preserves_source_and_target_caller_transaction(
 ))
 @pytest.mark.parametrize("ignore", (False, True))
 @pytest.mark.parametrize("temp_shadow", (False, True))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_wrong_parent_kind_precedes_full_auto_id_as_in_source(
     variant, kind, values, parent, ignore, temp_shadow,
 ):
@@ -754,6 +879,7 @@ def test_source_capture_requires_exact_actual_or_fresh_declaration():
         assert tuple(db.execute("select type,name,sql from sqlite_schema order by type,name")) == unchanged
 
 
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
 def test_task_delivery_parent_kind_and_claim_cascade():
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=on")
@@ -791,8 +917,12 @@ def test_task_delivery_parent_kind_and_claim_cascade():
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh"))
-def test_four_families_round_trip_current_facts_and_allocator(variant):
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
+def test_four_families_round_trip_current_facts_and_allocator(variant, monkeypatch):
+    import historical_action_text_fixture
     from app import action_task_delivery_storage as delivery
+
+    historical_action_text_fixture.install(monkeypatch)
 
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=off")
