@@ -8934,11 +8934,12 @@ def test_worker_attention_includes_oa_pending_node_stalled_over_one_hour(
         business_object_key="oa:stale-process:task-1",
     )
     with store._connect() as db:
+        parts = task8_set_parts('reply_tasks', {'updated_at': '2000-01-01 00:00:00'})
         db.execute(
-            "update tasks set updated_at='2000-01-01 00:00:00' "
-            "where record_type='reply_tasks' and id=?",
-            (task.id,),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task.id),
         )
+    assert store.get_reply_task(task.id).updated_at == '2000-01-01 00:00:00'
     store.set_daily_scan_state(
         "oa_pending",
         "2026-10-19T02:00:00+00:00",
