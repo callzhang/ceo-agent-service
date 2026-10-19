@@ -305,6 +305,7 @@ processQueryKey、重复 UUID 接受及泛化的 finished 均不是投递证明�
 不完整或存在冲突的读回保持未知；读回找不到消息也不能单独授权重发。
 对于严格完整、无失败的群聊窗口，零个精确匹配必须记为投递核验失败，并停止旧候选；不完整窗口或多个匹配继续保持 uncertain。任何后续消息都须生成新候选并经 Audit。
 原生回复在投递未定时保存已接受的 provider 回执，冷恢复只重查同一任务，不再次发消息。
+Consumer 在 Audit 前为可执行的钉钉聊天消息准备服务尾缀后的完整正文，并按任务、动作、代次和候选版本持久化。准备目标与执行器一致：回复要求会话和原消息 ID；显式群发要求会话；直接发送要求稳定收件人 ID；通用发送可以使用会话 ID。执行器只发送与审核候选正文完全相同的已准备内容。
 已显式纠正为未知的历史回执仍保留已接受效果，System 只能核对它，不能复用为 verified 或重发。
 历史修正通过显式小批量维护完成，保留原始 provider 结果、之前的核验结论和状态；不改写 Agent
 运行或历史 Attempt。当前任务的失败状态优先于历史 completed 展示。未知投递使用技术失败／
@@ -500,7 +501,7 @@ migration key 任务在启动时原地转换为命令形式，
 启用状态，包括从未被编辑过的 version 1 任务。默认的名称与 Cron 与负责人本机的现行任务一致。Lark
 不创建默认 seed；其余已有任务的用户修改不会被 seed 覆盖。
 
-另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML；目标存在但仅含空白段落骨架时，也用上期完整 JSONML 作渲染基底，同时保留目标存在状态及当前 revision 的写入守卫，并向 Agent 返回实际基底标题。其他已有目标仍使用其完整 JSONML。上一期周会如改期至上一报告周内的其他日期，仅在存在唯一精确标准标题时读取最近日期的文档，后缀草稿不作为基底。Skill validator 在渲染前核对 renderer 所需字段。为避免上期文档的完整 JSONML 截断工具回传，服务将通过检查的目标正文保留在当前 Consumer turn，仅向 Agent 返回完整七节草稿、元数据和 `render_id`；任务绑定写入通过该 ID 提交原始渲染正文，并沿用目标存在状态及 revision 守卫。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
+另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML；目标存在但仅含空白段落骨架时，也用上期完整 JSONML 作渲染基底，同时保留目标存在状态及当前 revision 的写入守卫，并向 Agent 返回实际基底标题。其他已有目标仍使用其完整 JSONML。上一期周会如改期至上一报告周内的其他日期，仅在存在唯一精确标准标题时读取最近日期的文档，后缀草稿不作为基底。Skill validator 在渲染前核对 renderer 所需字段；服务要求当前报告存在匹配的 `publishable: true` 校验结果后才允许渲染。新校验会清除旧渲染绑定，失败或报告内容变更时旧 `render_id` 不能用于写入。为避免上期文档的完整 JSONML 截断工具回传，服务将通过检查的目标正文保留在当前 Consumer turn，仅向 Agent 返回完整七节草稿、元数据和 `render_id`；任务绑定写入通过该 ID 提交原始渲染正文，并沿用目标存在状态及 revision 守卫。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
 
 ### Runtime-managed Skill 生命周期
 
@@ -1571,7 +1572,7 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取支持的图片、PDF、文本或表格内容；`read_dingtalk_oa_comment_attachment` 按流程实例 ID、评论附件 ID 和文件名，通过 OA Premium 评论附件接口读取精确的评论附件；`read_dingtalk_oa_comment_image` 则读取 OA 记录 `images[]` 返回的钉钉图片 URL，供没有 file ID 的评论截图进入相同 OCR 流程。图片 URL 读取仅允许 HTTPS `static.dingtalk.com/media/`，不跟随重定向、限制响应体大小和读取时长；所有下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中。扫描图片和无文本层的 PDF 返回精确来源的 base64、MIME、页码及 SHA-256，Consumer/Audit 使用原生 MCP `ai_services.ocr_document` 识别并保留页码、置信度和警告；不使用本地 OCR 脚本。后台 Consumer/Audit 命令只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，以便角色在既有工具范围内直接调用已配置服务；全局审批策略不变，其他 MCP 工具不增加自动授权。`ai_services` 通过后台服务 MCP 清单按名称和 URL 连接，OAuth 沿用 Codex 原生配置，不增加 token 代理。下载权限/权益失败、输入超过工具响应上限、MCP 失败或 OCR 为空时返回技术阻塞，不能解释为申请人未提供材料。进程退出时清理临时文件。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
+后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取支持的图片、PDF、文本或表格内容；`read_dingtalk_oa_process_attachment` 按当前审批实例和表单附件 ID 经 DWS 的 OA 附件下载地址读取正文，不要求通用钉盘节点权限；`read_dingtalk_oa_comment_attachment` 按流程实例 ID、评论附件 ID 和文件名，通过 OA Premium 评论附件接口读取精确的评论附件；`read_dingtalk_oa_comment_image` 则读取 OA 记录 `images[]` 返回的钉钉图片 URL，供没有 file ID 的评论截图进入相同 OCR 流程。图片 URL 读取仅允许 HTTPS `static.dingtalk.com/media/`，不跟随重定向、限制响应体大小和读取时长；所有下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中。扫描图片和无文本层的 PDF 返回精确来源的 base64、MIME、页码及 SHA-256，Consumer/Audit 使用原生 MCP `ai_services.ocr_document` 识别并保留页码、置信度和警告；不使用本地 OCR 脚本。后台 Consumer/Audit 命令只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，以便角色在既有工具范围内直接调用已配置服务；全局审批策略不变，其他 MCP 工具不增加自动授权。`ai_services` 通过后台服务 MCP 清单按名称和 URL 连接，OAuth 沿用 Codex 原生配置，不增加 token 代理。下载权限/权益失败、输入超过工具响应上限、MCP 失败或 OCR 为空时返回技术阻塞，不能解释为申请人未提供材料。进程退出时清理临时文件。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
 
 Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由 Consumer 在 `durable_memories` 提出、系统写入，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
@@ -1797,7 +1798,7 @@ DingTalk 原始发送方法或 WeChat IPC runner。Email 不属于该文本发�
 
 Consumer/Audit 的完整 Application Result Contract 各在 Developer 的“应用结果合同”段注入一次。Task context 只渲染当前事实、阶段、候选与反馈，继续保留显式自定义 Audit Rules；不再次复制通用结果合同。Audit 的旧 Role Boundary 与应用结果合同完全相同，合并为同一段。输出 wire schema、业务合同内容、会话绑定与路由不变；Settings 使用同一装配函数显示该来源与顺序，历史输入按原保存内容展示。
 
-周报的 `validate_weekly_report` 和 `render_weekly_report` 使用 `app/weekly_report_contracts.py` 中的原生工具参数结构。Agent 可从工具 schema 查询现有报告字段与嵌套容器类型；格式不符时 SDK 在执行前返回字段路径错误。结构声明不注入 prompt；额外字段完整保留，缺失业务章节和发布要求仍由安装的周报 Skill 校验，不转换对象映射为数组，也不修改候选内容。
+周报的 `validate_weekly_report` 和 `render_weekly_report` 使用 `app/weekly_report_contracts.py` 中的原生工具参数结构。Agent 可从工具 schema 查询现有报告字段与嵌套容器类型；格式不符时 SDK 在执行前返回字段路径错误。结构声明不注入 prompt；额外字段完整保留，缺失业务章节和发布要求仍由安装的周报 Skill 校验，不转换对象映射为数组，也不修改候选内容。服务将 `publishable: true` 绑定到通过稳定 JSON 摘要识别的报告，只有相同报告可以渲染；每次重新校验会废止旧渲染，`publishable: false` 后不能渲染或使用旧 `render_id` 写入。
 
 Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的提示、工具调用、输出和
 结果。SQLite 只保存恢复所需的最小状态：

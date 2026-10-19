@@ -684,20 +684,52 @@ def _download_dingtalk_oa_comment_attachment(
         raise AgentReadOnlyViolationError("oa_comment_attachment_identity_required")
     if not _task_file_component(file_name) or len(file_name) > 255:
         raise AgentReadOnlyViolationError("oa_comment_attachment_file_name_invalid")
-    material_root.mkdir(parents=True, exist_ok=True)
     is_pdf = Path(file_name).suffix.casefold() == ".pdf"
     max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
     contents = dws.download_oa_process_comment_attachment(
         process_instance_id, file_id,
     )
+    return _materialize_oa_attachment(
+        contents, process_instance_id=process_instance_id, file_id=file_id,
+        file_name=file_name, material_root=material_root,
+        error_prefix="oa_comment_attachment", max_bytes=max_bytes,
+    )
+
+
+def _download_dingtalk_oa_process_attachment(
+    *, dws, process_instance_id: str, file_id: str, file_name: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read an OA form attachment without requiring Drive node permissions."""
+    if not process_instance_id.strip() or not file_id.strip():
+        raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
+    if not _task_file_component(file_name) or len(file_name) > 255:
+        raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
+    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
+    contents = dws.download_oa_process_attachment_via_cli(
+        process_instance_id, file_id, max_bytes=max_bytes,
+    )
+    return _materialize_oa_attachment(
+        contents, process_instance_id=process_instance_id, file_id=file_id,
+        file_name=file_name, material_root=material_root,
+        error_prefix="oa_process_attachment", max_bytes=max_bytes,
+    )
+
+
+def _materialize_oa_attachment(
+    contents: bytes, *, process_instance_id: str, file_id: str,
+    file_name: str, material_root: Path, error_prefix: str, max_bytes: int,
+) -> dict[str, object]:
+    material_root.mkdir(parents=True, exist_ok=True)
     if len(contents) > max_bytes:
-        raise AgentReadOnlyViolationError("oa_comment_attachment_file_too_large")
+        raise AgentReadOnlyViolationError(f"{error_prefix}_file_too_large")
     package_source = BytesIO(contents)
     if zipfile.is_zipfile(package_source):
         with zipfile.ZipFile(package_source) as package:
             if sum(member.file_size for member in package.infolist()) > MAX_SPREADSHEET_BYTES:
                 raise AgentReadOnlyViolationError(
-                    "oa_comment_attachment_expanded_package_too_large"
+                    f"{error_prefix}_expanded_package_too_large"
                 )
     extension = Path(file_name).suffix
     suffix = extension if extension[1:].isalnum() and len(extension) <= 16 else ""
@@ -717,7 +749,7 @@ def _download_dingtalk_oa_comment_attachment(
             "sha256": hashlib.sha256(contents).hexdigest(),
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
-            raise AgentReadOnlyViolationError("oa_comment_attachment_response_too_large")
+            raise AgentReadOnlyViolationError(f"{error_prefix}_response_too_large")
         return result
     except BaseException:
         material_path.unlink()
@@ -1706,6 +1738,7 @@ def build_role_server(
     drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
     drive_material_paths: dict[tuple[str, str, str], Path] = {}
     oa_comment_material_paths: dict[tuple[str, str, str], Path] = {}
+    oa_process_material_paths: dict[tuple[str, str, str], Path] = {}
 
     def read_dingtalk_drive_file(
         node_id: str, space_id: str, file_name: str,
@@ -1760,6 +1793,54 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_drive_file,
         name="read_dingtalk_drive_file",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_process_attachment(
+        process_instance_id: str,
+        file_id: str,
+        file_name: str,
+        page_number: int | None = None,
+    ) -> dict[str, object]:
+        """Read one exact OA form attachment through the process-scoped download.
+
+        Use the process instance and file ID from read_dingtalk_oa, even when
+        generic Drive access is denied. Scanned PDFs return one-based
+        ocr_page_numbers; pass a listed page_number for bounded OCR input.
+        """
+        nonlocal drive_material_directory
+        if not process_instance_id.strip() or not file_id.strip():
+            raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
+        if not _task_file_component(file_name) or len(file_name) > 255:
+            raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+        key = (process_instance_id, file_id, file_name)
+        if page_number is not None:
+            material_path = oa_process_material_paths.get(key)
+            if material_path is None or not material_path.is_file():
+                raise AgentReadOnlyViolationError("oa_process_attachment_page_source_unavailable")
+            if material_path.suffix.casefold() != ".pdf":
+                raise AgentReadOnlyViolationError("oa_process_attachment_page_requires_pdf")
+            with material_path.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            return _pdf_page_ocr_input(
+                material_path, page_number=page_number,
+                source_sha256=source_sha256,
+            )
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        from app.dws_client import DwsClient
+        result = _download_dingtalk_oa_process_attachment(
+            dws=DwsClient(), process_instance_id=process_instance_id,
+            file_id=file_id, file_name=file_name,
+            material_root=Path(drive_material_directory.name),
+        )
+        oa_process_material_paths[key] = Path(str(result["path"]))
+        return result
+
+    bound.add_tool(
+        read_dingtalk_oa_process_attachment,
+        name="read_dingtalk_oa_process_attachment",
         annotations=read,
     )
 
@@ -2210,6 +2291,7 @@ def build_role_server(
 
     weekly_materials_snapshot: dict[str, object] | None = None
     weekly_render_binding: dict[str, object] | None = None
+    weekly_validation_report_digest: str | None = None
 
     def daily_report_facts() -> dict[str, object]:
         """Read the fixed service facts for this scheduled daily report."""
@@ -2328,20 +2410,39 @@ def build_role_server(
             manifest: WeeklyReportManifest, report: WeeklyReport, previous_issues: list[dict],
         ) -> dict[str, object]:
             """Validate a scheduled CEO weekly report using its installed Skill."""
+            nonlocal weekly_render_binding, weekly_validation_report_digest
             _store, _run, kind = _bound_report(db_path, task_id)
             if kind != "weekly":
                 raise AgentReadOnlyViolationError("weekly_report_task_required")
-            return _weekly_skill_module("validate_run").validate_run(
+            weekly_render_binding = None
+            weekly_validation_report_digest = None
+            result = _weekly_skill_module("validate_run").validate_run(
                 manifest, report, previous_issues
             )
+            if isinstance(result, dict) and result.get("publishable") is True:
+                report_bytes = json.dumps(
+                    report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                weekly_validation_report_digest = hashlib.sha256(report_bytes).hexdigest()
+            return result
 
         def render_weekly_report(report: WeeklyReport) -> dict[str, object]:
             """Render against the service-resolved current or previous meeting document."""
-            nonlocal weekly_render_binding
+            nonlocal weekly_render_binding, weekly_validation_report_digest
             from app.dws_client import DwsClient
             _store, _run, kind = _bound_report(db_path, task_id)
             if kind != "weekly":
                 raise AgentReadOnlyViolationError("weekly_report_task_required")
+            report_bytes = json.dumps(
+                report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            report_digest = hashlib.sha256(report_bytes).hexdigest()
+            if weekly_validation_report_digest is None:
+                raise ValueError("weekly report requires successful validation before render")
+            if report_digest != weekly_validation_report_digest:
+                weekly_validation_report_digest = None
+                weekly_render_binding = None
+                raise ValueError("weekly report must match the successfully validated report")
             renderer = _weekly_skill_module("render_dingtalk_jsonml")
             checker = _weekly_skill_module("jsonml_check")
             dws = DwsClient()
@@ -2373,6 +2474,7 @@ def build_role_server(
                 "render_id": render_id,
                 "content": target_content,
             }
+            weekly_validation_report_digest = None
             return {
                 "draft": draft,
                 "native_parse": native_parse,

@@ -51,16 +51,7 @@ OA 操作使用从当前源对象核实的字符串 `process_instance_id`、`tas
 1. **先审阅，后动作。** 同意和拒绝属于审批决策动作，必须先读完材料、确认当前 `RUNNING` 任务属于当前授权审批人、拿到当前 `taskId` 后才执行。若用户明确说“批了/同意/拒绝”，按用户确认执行；若当前任务或定时任务已明确授权自动处理，只有下文的材料、规则和动作门槛均满足时才可执行。业务 Skill 的判断标准缺失或互相冲突、且本单恰好取决于它时转 `needs_human`；动作本身一律按下文完整决策表，不要由 Skill 臆造审批结论。
 2. **所有可访问材料必须读完。** 包括审批详情、审批流水、审批附言/评论、附件、链接文档、PDF、合同、报销凭证、面试记录、试用期考核标准、交接文档等。
 3. **通过的前提是所有实质文件都已审阅完成，并且有相应标准/依据文档。** 只要审批中的附件、链接、PDF、合同、面试记录、试用期标准、BRD、工时评估、制度依据、预算依据等任一实质材料未读到、未读完或缺少标准文档，不得建议或执行同意。
-4. **判定“读不到”之前必须核对当前执行环境实际提供的附件读取能力。** `dws oa approval attachment download-url` 和 `authorize-download` 目前对审批附件一律返回 `business error: success=false`（2026-09-17 实测 dws v1.0.62，trace 21030ead17896766012171561e0a32、2101eeef17896765225684156e0b16），**这两个失败不构成“工具未读到”的理由**。在有权限的交互式会话中，可用路径是先做预览授权再走钉盘下载，预览授权同时打开钉盘读取权限：
-
-   ```bash
-   dws oa approval attachment authorize-preview --instance-id <processInstanceId> --file-ids <fileId> --with-comment-attachment --format json   # 返回 spaceId
-   dws drive +info --space-id <spaceId> --node <fileId> --format json
-   dws drive +download --space-id <spaceId> --node <fileId> --output <工作目录内的相对路径> --format json
-   ```
-
-   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径；该工具会对支持的图片附件及扫描 PDF 自动调用已配置的 Stardust OCR，并返回抽取文本、来源摘要及可用的置信度/警告，不需再从角色内部启动另一套 OCR 命令。OCR 或解析失败是审阅端技术读取故障，应保留待办并排查或协调权限，不得归责申请人、当作未交材料或作为拒绝理由；不得未经授权切换到其他 OCR 服务。若此附件是决定性材料且没有其他已授权的只读正文来源，按技术能力不可用如实报告并保留待办，不能声称已经读完，也不能把技术阻塞伪装成申请人未交材料或请 Derek 作业务判断。
-   2026-09-17 长沙银行 POC 的 checklist 曾被两次判为“读不到”，实际按此路径 10,549 字节正常下载读全。
+4. **判定“读不到”之前先用当前角色可用的只读入口。** 审批表单中的附件用 `read_dingtalk_oa_process_attachment(process_instance_id, file_id, file_name)` 按当前流程和表单中的准确文件 ID 读取；通用钉盘 `drive +info/download` 的权限拒绝不能代替 OA 附件读取结果。评论中的附件用 `read_dingtalk_oa_comment_attachment`。普通已授权钉盘节点才用 `read_dingtalk_drive_file`。这些工具返回受限正文、来源摘要和扫描件的 OCR 页码；需 OCR 时按工具返回的精确来源调用已配置的 `ai_services.ocr_document`，保留页码、置信度和警告。Consumer/Audit 不调用会改变授权状态的 `authorize-preview`、shell 或任意 DWS 命令。读取、解析或 OCR 确实失败时，记录技术阻塞并保留待办，不归责申请人，也不声称已读完。
 
 5. **缺材料和读不到是两回事，处理完全不同（Derek, 2026-09-23）。** 两者都不得通过，不得用“同意后补”替代审批前审阅。
    - **缺材料**＝申请人确实没交：必填字段为空、没有附件、表单没有给出要求的文件。这是申请人的缺口，按决策表**退回**。

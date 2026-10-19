@@ -2600,6 +2600,27 @@ class DwsClient:
             config_path=config_path,
         )
 
+    def download_oa_process_attachment_via_cli(
+        self, process_instance_id: str, file_id: str, *, max_bytes: int
+    ) -> bytes:
+        """Read an OA form attachment using the configured DWS account."""
+        if not process_instance_id.strip() or not file_id.strip() or max_bytes <= 0:
+            raise ValueError("OA attachment identity or size limit is invalid")
+        response = self.run_json([
+            self.dws_bin, "oa", "approval", "attachment", "download-url",
+            "--instance-id", process_instance_id, "--file-id", file_id,
+            "--format", "json",
+        ])
+        data = response.get("data") if isinstance(response, dict) else None
+        download_uri = data.get("downloadUri") if isinstance(data, dict) else None
+        if not isinstance(download_uri, str) or not download_uri:
+            raise DwsError("DingTalk OA attachment response did not include downloadUri")
+        with urlopen(download_uri, timeout=max(self.timeout_seconds, 90)) as stream:
+            contents = stream.read(max_bytes + 1)
+        if len(contents) > max_bytes:
+            raise ValueError("oa_process_attachment_file_too_large")
+        return contents
+
     def download_oa_process_comment_attachment(
         self,
         process_instance_id: str,

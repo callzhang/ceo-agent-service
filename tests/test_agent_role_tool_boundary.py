@@ -110,6 +110,8 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     assert "consumer_artifact_write" not in audit_tools
     assert "read_task_artifact" in consumer_tools + audit_tools
     assert "list_task_artifacts" in consumer_tools + audit_tools
+    assert "read_dingtalk_oa_process_attachment" in consumer_tools
+    assert "read_dingtalk_oa_process_attachment" in audit_tools
     assert "send_approved_dingtalk_message" not in consumer_tools + audit_tools
     assert "unsubscribe_email" not in consumer_tools + audit_tools
 
@@ -176,6 +178,9 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     ].description
     assert "premium OA comment attachment" in audit_catalogue[
         "read_dingtalk_oa_comment_attachment"
+    ].description
+    assert "OA form attachment" in audit_catalogue[
+        "read_dingtalk_oa_process_attachment"
     ].description
     assert "ocr_page_numbers" in audit_catalogue[
         "read_dingtalk_oa_comment_attachment"

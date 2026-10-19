@@ -1600,3 +1600,90 @@ handling, and exact source citations to remain correct in both cold and
 continued sessions. A smaller serialized input alone does not pass that gate.
 The separate native Task acceptance-schema candidate remains no-go on its own
 behavioral result above.
+
+### Cross-turn omission gate: previous input is not a durable evidence store (2026-10-19)
+
+The candidate considered here was to omit exact historical semantic-context rows
+from a later Task input when the same shared native session had received them
+earlier. Its acceptance condition is stronger than a shorter input: every later
+turn, including cold start and after native compaction, must still be able to
+inspect the exact source version and excerpt needed for formal Task creation,
+existing-Task updates, Project decisions, duplicate suppression, and citations.
+If that evidence path is absent, there is no reason to run a model comparison or
+change retrieval.
+
+I re-read the complete saved native session
+`01a14fbe-74e2-7102-bee5-baa8aa7de92f` rather than inferring continuity
+from its session ID. It has 11 submitted Task inputs for nine distinct Work Item
+payloads. Ten of those inputs are followed by a native `compacted` event; nine
+of the ten adjacent Task-input pairs have such an event between the two inputs.
+The first seven inputs are the post-PR #128 sample quantified above. The
+session's compaction record establishes a history replacement, not a promise
+that every prior `source_documents` row, version and exact citation span remains
+available in the next model window. The shared session therefore cannot serve
+as the sole evidence store for a delta-only next input.
+
+This candidate fails the evidence-availability precondition and is **no-go**.
+No historical row was removed, no extra prompt rule or fallback was added, and
+no runtime code, test or model route changed. Existing fixed business-case
+results were not rerun because there is no changed candidate to validate; a
+model's success on one continuation would not establish exact access across
+these compaction boundaries. A future narrower input requires a durable,
+source-versioned on-demand read path available to the Task Agent, then the
+fixed cold/continued decision and citation comparison stated above. This
+finding does not reject relevance-based retrieval in general; it rejects
+reliance on earlier session input as the evidence transport.
+
+## OA process attachment read path: repeated failure root cause (2026-10-19)
+
+Task 405641 produced 217 `dependency_read_unavailable` Consumer runs between
+10:01 and 18:08 on 2026-10-19. Complete native first, middle and last failed
+trajectories show the same two submitted OA form attachments: generic
+`read_dingtalk_drive_info/file` returned `forbidden.accessDenied` or “没有权限访问”,
+while the Agent repeatedly re-read the OA and Skill and did not form an
+approval decision. The error was treated by the service as an external
+dependency wait without a turn limit. This is the observed loop; no generic
+retry-policy change is made here.
+
+The DWS OA-specific read-only `attachment download-url` returned a signed URL
+for each of the same two exact process/file IDs, and the URL returned the
+material bytes. The first Markdown file was 7,300 bytes with 3,414 characters
+of extracted text. The second PDF was 1,412,701 bytes, with six pages requiring
+OCR. The failure layer was therefore missing OA process attachment access in
+the service role tool catalog and stale Skill guidance, not missing applicant
+material or a need to add permission-granting behavior.
+
+Acceptance for this round: Consumer and Audit can read a form attachment by
+exact process instance and file ID through the configured DWS account, without
+generic Drive permission or authorization writes; downloaded material retains
+the existing byte, response, temporary-file and OCR-page bounds. The source
+must still be read before a business decision, and no approval, Audit or retry
+policy changes are included. A fixed test with generic Drive access denied
+failed before the new tool existed and passed afterward; the role and scanned
+PDF cases also passed. The current real files were read through the new helper
+without recording their contents in the repository. Post-deployment tool
+visibility was read back after deployment; a future natural OA review still
+needs to show the Agent uses this tool and makes a correct business decision.
+
+Separately, the final approved OA comment for this task returned no comment
+ID and was marked uncertain. Exact provider readback found one matching
+`ADD_REMARK` by process, author, body and post-attempt time. Existing execution
+reconciliation recorded its action as verified without resending, and the
+current comment task closed as done. The OA approval itself remains pending;
+the comment receipt does not prove the underlying project review is complete.
+
+The scoped release was merged into `main` and deployed with the approved Skill
+publication: 67 focused tests passed before release; the release preflight
+matched all 16 source/installed file digests, six managed bindings and five
+scheduled references. A follow-up regression found duplicate registration of
+the new read tool in the native role server; it failed before the correction
+and 34 focused role/material tests passed after merging the correction with
+current `main`. Production commit `223788a2` includes both fixes. Live
+Consumer/Audit tool catalogs contain `read_dingtalk_oa_process_attachment`
+once; the installed OA Skill SHA-256 is
+`4efbf60a185d533293382d4d9e8bbfec26799ce96a6c92bf2d15402b2734236f`.
+Service PID 8796 reported healthy with zero system-health violations,
+processing queue zero, Attention count four without task 405641, and History
+HTTP 200. The exact task and execution read back as `done`, with its action
+attempt verified. This proves release and receipt reconciliation, not a
+subsequent real project approval.
