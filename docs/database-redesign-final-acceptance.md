@@ -189,3 +189,7 @@ History整文件当前33项通过，包含真实dangling Run／Task来源、最�
 ### Store current fixture closure (2026-10-19)
 
 Store 定向66项已闭合：同轮65 pass／230.97秒，最后一项旧scheduled_tasks写入经当前schedules writer修正后1 pass／3.78秒。Task8／Task12、Business、Actions、State和Schedules均通过实际当前写入接口造夹具；保留公开与物理ID边界、原恢复／回执／租约／事务断言。原生会话搜索仍验证实际native检索与内存索引，只接受当前元数据API，额外证明持久正文／向量参数不再可写。仅改测试；不是整个Store模块通过。旧诊断中另31个未修改测试函数正在核对当前证据，未将其计为已闭合。
+
+### Worker exact diagnostic closure (2026-10-19)
+
+历史29个worker失败node ID与本轮收集集合完全相等；最终29 pass／392 deselected、313.32秒。修正当前Task8写入及其raw连接codec注册、Task12 OA读投影，以及默认needs_human替身的当前task-class选项格式；主审确认所有原测试assert AST未变。仅测试替身，无运行时修改和真实发送。这替代此前11＋12项不能证明覆盖准确29节点的笼统证据。

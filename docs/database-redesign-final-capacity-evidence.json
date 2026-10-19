@@ -35105,5 +35105,13 @@
     "scope": "Current Task8/Task12/Business/Actions/State/Schedules fixture writes, public projections and native session metadata-only API. Original lifecycle/receipt/lease/recovery assertions retained. Not a full Store-module pass. Unmodified historical diagnostic gaps are being matched separately.",
     "runtime_changes": false,
     "real_outbound_sends": 0
+  },
+  "worker_exact_historical_gap_closure_20261019": {
+    "passed": 29,
+    "deselected": 392,
+    "seconds": 313.32,
+    "log": "/tmp/worker-29-fixture-final.log",
+    "exact_node_set_matches_historical_failed_set": true,
+    "scope": "Exact29 historical worker failures. Current Task8 codec/writes and Task12 OA projection fixtures; generic fake needs_human result uses current task-class options. Original assertion AST unchanged (root checked); no runtime edits or real outbound sends."
   }
 }
