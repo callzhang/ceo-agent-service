@@ -49,9 +49,9 @@
     {
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
       "target": "skills/ceo-document-review/SKILL.md",
-      "old_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "old_sha256": "14e9c4f2d3f6254c6c2893480edf5059296eee605aa7e8f3c65f01419d8c05d1",
       "new_sha256": "14e9c4f2d3f6254c6c2893480edf5059296eee605aa7e8f3c65f01419d8c05d1",
-      "old_managed_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f"
+      "old_managed_sha256": "14e9c4f2d3f6254c6c2893480edf5059296eee605aa7e8f3c65f01419d8c05d1"
     },
     {
       "source": "ci/shared-skills/ceo-mail-review/SKILL.md",
@@ -76,7 +76,7 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "4efbf60a185d533293382d4d9e8bbfec26799ce96a6c92bf2d15402b2734236f",
+      "old_sha256": "66dfb8ddfc9720992233d2ccd2f845a0299c1280199ca5cd7e8708405ac3a54f",
       "new_sha256": "66dfb8ddfc9720992233d2ccd2f845a0299c1280199ca5cd7e8708405ac3a54f"
     },
     {
