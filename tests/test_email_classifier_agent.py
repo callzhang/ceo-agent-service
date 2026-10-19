@@ -142,6 +142,8 @@ def test_routed_backend_binds_exact_url_and_persists_only_digest_reference():
     [factory] = command_factories
     assert "AgentClassificationWireResult" in factory.developer_instructions
     assert "do not return or rewrite its URL" in factory.developer_instructions
+    assert factory.inlined_skill_names == ("ceo-email-classifier",)
+    assert factory.project_doc_max_bytes == 0
 
 
 def test_agent_result_accepts_exact_allowed_category_and_strict_bool() -> None:
