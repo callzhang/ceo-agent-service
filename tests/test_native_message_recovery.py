@@ -143,10 +143,10 @@ def test_native_missing_receipt_never_resends_and_respects_readback_completeness
         assert reopened.get_outbound_postfix_receipt('dingtalk', key) is None
         assert client.sends == 1
         return
-    # Direct-message history is not a complete window; absence remains
-    # uncertain, and the old candidate must not dispatch again.
+    # The direct-message provider window is complete, so its zero-match result
+    # fails the old candidate. A later call cannot reclaim that failed candidate.
     assert recovered.outcome == 'failed'
-    assert recovered.error.code == 'external_action_uncertain'
+    assert recovered.error.code == 'execution_claim_unavailable'
     assert client.sends == 1
 
 
@@ -218,6 +218,70 @@ def test_incomplete_group_send_readback_does_not_confirm_absence(monkeypatch):
             conversation, 'Exact body',
             not_before=datetime(2026, 10, 5, 11, 0, 0, 123000, tzinfo=UTC),
         )
+
+
+def test_direct_send_reconciliation_uses_complete_provider_window(monkeypatch):
+    from app.dingtalk_models import DingTalkConversation
+
+    client = DwsClient()
+    boundary = datetime(2026, 10, 19, 11, 0, 0, tzinfo=UTC)
+    commands = []
+
+    def read(command):
+        commands.append(command)
+        start = command[command.index("--start") + 1]
+        end = command[command.index("--end") + 1]
+        return {
+            "contractVersion": "im.message-list.v1", "queryRange": {
+                "startTime": start, "endTime": end, "order": "asc",
+            }, "messages": [], "count": 0, "complete": True,
+            "partial": False, "hasMore": False, "truncated": False,
+            "failedCount": 0, "failures": [], "pagesFetched": 1,
+        }
+
+    monkeypatch.setattr(client, "run_json", read)
+    conversation = DingTalkConversation(
+        open_conversation_id="direct-cid", title="Hu", single_chat=True,
+        unread_point=0, direct_user_id="exact-user",
+    )
+
+    receipt = client.reconcile_message_send(
+        conversation, "Exact approved text", not_before=boundary,
+    )
+
+    assert commands[0][commands[0].index("--user") + 1] == "exact-user"
+    assert "--page-all" in commands[0]
+    assert receipt["readbackVerification"]["completeWindowReadback"] is True
+    assert client.verify_message_send_result(receipt)["reason"] == "complete_readback_no_exact_match"
+
+
+def test_direct_send_reconciliation_confirms_unique_provider_readback(monkeypatch):
+    from datetime import timedelta
+
+    from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+
+    client = DwsClient()
+    boundary = datetime(2026, 10, 19, 11, 0, 0, tzinfo=UTC)
+    message = DingTalkMessage(
+        open_conversation_id="direct-cid", open_message_id="sent-message",
+        conversation_title="Hu", single_chat=True, sender_name="Principal",
+        sender_user_id="principal", create_time=(boundary + timedelta(seconds=1)).isoformat(),
+        content="Exact approved text",
+    )
+    monkeypatch.setattr(client, "get_current_user_id", lambda: "principal")
+    monkeypatch.setattr(client, "read_complete_message_window", lambda *args: [message])
+    conversation = DingTalkConversation(
+        open_conversation_id="direct-cid", title="Hu", single_chat=True,
+        unread_point=0, direct_user_id="exact-user",
+    )
+
+    receipt = client.reconcile_message_send(
+        conversation, "Exact approved text", not_before=boundary,
+    )
+
+    assert receipt["success"] is True
+    assert receipt["result"]["openMessageId"] == "sent-message"
+    assert client.verify_message_send_result(receipt)["state"] == "sent"
 
 
 @pytest.mark.parametrize('capability,operation,target,expected_path', [

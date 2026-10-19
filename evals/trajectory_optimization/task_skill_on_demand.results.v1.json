@@ -1,0 +1,74 @@
+{
+  "case_source": "task_schema_titles.release.cases.v1.json",
+  "date": "2026-10-19",
+  "route": "codex_oauth",
+  "environment": "anonymous owned Store, read-only native sandbox, business MCP and web disabled",
+  "arms": {
+    "full": {
+      "session_id": "01a155da-80f2-7fb3-956b-b82ba66ce272",
+      "cold_prompt_chars": 39293,
+      "risk_prompt_chars": 37911,
+      "cold_counts": [1, 0, 0],
+      "risk_counts": [1, 1, 1],
+      "source_citations": 9,
+      "invalid_source_citations": 0,
+      "native_service_input_equal": true,
+      "attempts_valid_and_completed": true
+    },
+    "on_demand": {
+      "session_id": "01a155da-d2ce-74a2-9da5-cfe67ffcb552",
+      "cold_prompt_chars": 14764,
+      "risk_prompt_chars": 13367,
+      "cold_counts": [1, 0, 0],
+      "risk_counts": [1, 1, 1],
+      "source_citations": 9,
+      "invalid_source_citations": 0,
+      "native_service_input_equal": true,
+      "attempts_valid_and_completed": true,
+      "cold_read_full_skill": true,
+      "same_version_resume_reused_prior_read": true
+    }
+  },
+  "changed_version_probe": {
+    "session_id": "01a155d8-81de-7f83-9f8d-e4aab0ba7475",
+    "change": "append one anonymous non-rule marker to the owned Skill copy between turns",
+    "resume_rechecked_sha256_and_reread_full_skill": true,
+    "risk_counts": [1, 1, 1]
+  },
+  "claude_oauth_read_probe": {
+    "model": "sonnet",
+    "environment": "anonymous copied Skill in owned /tmp directory, restricted Read-only tool set, MCP disabled",
+    "source_sha256": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+    "read_calls": 1,
+    "read_tool_return_chars": 26231,
+    "read_tool_return_included_first_and_last_lines": true,
+    "read_tool_return_truncated": false,
+    "terminal_is_error": false,
+    "limit": "Proves native Claude can read the selected local file, not full Task business behavior on Claude."
+  },
+  "post_route_variant_recheck": {
+    "reason": "Friday prompt is now constructed separately instead of replacing text in a completed Task prompt",
+    "full_arm_cold_smoke": {
+      "session_id": "01a155f0-d952-7c32-a5f6-68af2b35c561",
+      "prompt_chars": 39293,
+      "counts": [1, 0, 0],
+      "attempt_completed": true
+    },
+    "on_demand_cold_and_risk": {
+      "session_id": "01a155ef-ef6e-7ef3-b499-edff4d292a4d",
+      "prompt_chars": [14764, 13815],
+      "counts": [[1, 0, 0], [1, 1, 1]],
+      "source_excerpts": [10, 15],
+      "invalid_source_excerpts": [0, 0],
+      "native_service_input_equal": true,
+      "attempts_completed": true,
+      "cold_read_full_skill": true,
+      "same_version_resume_reused_prior_read": true,
+      "sqlite_quick_check": "ok"
+    }
+  },
+  "limits": [
+    "Prompt character savings do not measure billed tokens or latency.",
+    "The fixed runs did not force native compaction or exercise a natural production Task."
+  ]
+}

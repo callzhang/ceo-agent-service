@@ -2086,16 +2086,37 @@ class DwsClient:
         self, conversation_id: str, start: str, end: str,
     ) -> list[DingTalkMessage]:
         """Read and validate every message in one bounded group window."""
-        if not conversation_id.strip() or not start.strip() or not end.strip():
-            raise ValueError("group conversation and message window are required")
+        conversation = DingTalkConversation(
+            open_conversation_id=conversation_id, title="", single_chat=False,
+            unread_point=0,
+        )
+        return self.read_complete_message_window(conversation, start, end)
+
+    def read_complete_message_window(
+        self, conversation: DingTalkConversation, start: str, end: str,
+    ) -> list[DingTalkMessage]:
+        """Read every message in a bounded group or direct-chat window."""
+        if not start.strip() or not end.strip():
+            raise ValueError("message window is required")
+        if conversation.single_chat:
+            if conversation.direct_user_id:
+                target_args = ["--user", conversation.direct_user_id]
+            elif conversation.direct_open_dingtalk_id:
+                target_args = ["--open-dingtalk-id", conversation.direct_open_dingtalk_id]
+            else:
+                raise ValueError("direct chat identity and message window are required")
+        else:
+            if not conversation.open_conversation_id.strip():
+                raise ValueError("group conversation and message window are required")
+            target_args = ["--group", conversation.open_conversation_id]
         payload = self.run_json([
-            self.dws_bin, "chat", "+chat-messages", "--group", conversation_id,
+            self.dws_bin, "chat", "+chat-messages", *target_args,
             "--start", start, "--end", end, "--order", "asc", "--page-all",
             "--page-limit", "50", "--max-items", "1000", "--no-reactions",
             "--format", "json",
         ])
         if not isinstance(payload, dict):
-            raise DwsError("native group message window is not an object")
+            raise DwsError("native message window is not an object")
         messages = payload.get("messages")
         if (
             payload.get("contractVersion") != "im.message-list.v1"
@@ -2110,7 +2131,7 @@ class DwsClient:
             or not isinstance(messages, list)
             or payload.get("count") != len(messages)
         ):
-            raise DwsError("native group message window is incomplete or inconsistent")
+            raise DwsError("native message window is incomplete or inconsistent")
         query_range = payload.get("queryRange")
         if (
             not isinstance(query_range, dict)
@@ -2120,8 +2141,11 @@ class DwsClient:
             or self._datetime_string_to_epoch_ms(str(query_range.get("endTime") or ""))
                 != self._datetime_string_to_epoch_ms(end)
         ):
-            raise DwsError("native group message window has no ordered query range")
-        return self.parse_messages(payload, conversation_title="", single_chat=False)
+            raise DwsError("native message window has no ordered query range")
+        return self.parse_messages(
+            payload, conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
+        )
 
     def read_unread_messages(
         self, conversation: DingTalkConversation
@@ -3576,49 +3600,21 @@ class DwsClient:
     def reconcile_message_send(
         self, conversation: DingTalkConversation, text: str, *, not_before: datetime,
     ) -> dict[str, Any] | None:
-        """Read back an exact group send from a complete window; partial reads stay unknown."""
-        if not conversation.single_chat and conversation.open_conversation_id:
-            start = not_before.astimezone().isoformat(timespec="seconds")
-            end = datetime.now().astimezone().isoformat(timespec="seconds")
-            messages = self.read_complete_group_messages_in_window(
+        """Reconcile one outgoing message using a complete provider readback window."""
+        if (conversation.single_chat and not (conversation.direct_user_id or conversation.direct_open_dingtalk_id)):
+            conversation = self._with_single_chat_direct_target(conversation)
+        start = not_before.astimezone().isoformat(timespec="seconds")
+        end = datetime.now().astimezone().isoformat(timespec="seconds")
+        messages = (
+            self.read_complete_message_window(conversation, start, end)
+            if conversation.single_chat else
+            self.read_complete_group_messages_in_window(
                 conversation.open_conversation_id, start, end,
             )
-            boundary_ms = int(not_before.timestamp() * 1000)
-            matches = [
-                message for message in messages
-                if message.open_conversation_id == conversation.open_conversation_id
-                and message.content == text
-                and self._datetime_string_to_epoch_ms(message.create_time) >= boundary_ms
-                and not message.is_recalled()
-                and self.is_current_user_message(message)
-            ]
-            if not matches:
-                expected_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-                return {
-                    "success": False,
-                    "errorCode": "complete_readback_no_exact_match",
-                    "readbackVerification": {
-                        "contractVersion": "dingtalk.complete-message-window.v1",
-                        "state": "not_found",
-                        "conversationId": conversation.open_conversation_id,
-                        "windowStart": start,
-                        "windowEnd": end,
-                        "expectedBodySha256": expected_digest,
-                        "exactMatchCount": 0,
-                        "completeWindowReadback": True,
-                    },
-                }
-            if len(matches) != 1:
-                return None
-            message = matches[0]
-            return {
-                "success": True,
-                "result": {"openMessageId": message.open_message_id},
-                "readback": message.model_dump(mode="json"),
-            }
+        )
         boundary_ms = int(not_before.timestamp() * 1000)
         matches = [
-            message for message in self.read_recent_messages(conversation)
+            message for message in messages
             if (not conversation.open_conversation_id
                 or message.open_conversation_id == conversation.open_conversation_id)
             and message.content == text
@@ -3626,13 +3622,47 @@ class DwsClient:
             and not message.is_recalled()
             and self.is_current_user_message(message)
         ]
+        if not matches:
+            expected_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            conversation_id = conversation.open_conversation_id or (
+                conversation.direct_user_id or conversation.direct_open_dingtalk_id
+            )
+            return {
+                "success": False,
+                "errorCode": "complete_readback_no_exact_match",
+                "readbackVerification": {
+                    "contractVersion": "dingtalk.complete-message-window.v1",
+                    "state": "not_found",
+                    "conversationId": conversation_id,
+                    "windowStart": start,
+                    "windowEnd": end,
+                    "expectedBodySha256": expected_digest,
+                    "exactMatchCount": 0,
+                    "completeWindowReadback": True,
+                },
+            }
         if len(matches) != 1:
             return None
         message = matches[0]
+        body_digest = hashlib.sha256(message.content.encode("utf-8")).hexdigest()
+        expected_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         return {
             "success": True,
             "result": {"openMessageId": message.open_message_id},
             "readback": message.model_dump(mode="json"),
+            "readbackVerification": {
+                "contractVersion": "dingtalk.complete-message-window.v1",
+                "state": "matched",
+                "messageId": message.open_message_id,
+                "conversationId": message.open_conversation_id,
+                "senderUserId": message.sender_user_id,
+                "senderOpenDingTalkId": message.sender_open_dingtalk_id,
+                "bodySha256": body_digest,
+                "expectedBodySha256": expected_digest,
+                "exactMatchCount": 1,
+                "completeWindowReadback": True,
+                "recalled": False,
+            },
         }
 
     def verify_message_send_result(
@@ -3693,6 +3723,35 @@ class DwsClient:
         if not open_task_id:
             readback = send_result.get("readbackVerification")
             message = send_result.get("readback")
+            if (
+                send_result.get("success") is True
+                and isinstance(readback, dict)
+                and readback.get("contractVersion") == "dingtalk.complete-message-window.v1"
+                and readback.get("state") == "matched"
+                and readback.get("exactMatchCount") == 1
+                and readback.get("completeWindowReadback") is True
+                and readback.get("recalled") is False
+                and isinstance(message, dict)
+                and isinstance(readback.get("messageId"), str)
+                and bool(readback["messageId"].strip())
+                and result.get("openMessageId") == readback["messageId"]
+                and message.get("open_message_id") == readback["messageId"]
+                and message.get("open_conversation_id") == readback.get("conversationId")
+                and (message.get("sender_user_id") == readback.get("senderUserId")
+                     or (isinstance(readback.get("senderOpenDingTalkId"), str)
+                         and bool(readback["senderOpenDingTalkId"].strip())
+                         and message.get("sender_open_dingtalk_id") == readback["senderOpenDingTalkId"]))
+                and isinstance(message.get("content"), str)
+                and isinstance(readback.get("bodySha256"), str)
+                and isinstance(readback.get("expectedBodySha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", readback["bodySha256"])
+                and readback.get("bodySha256") == readback.get("expectedBodySha256")
+                and hashlib.sha256(message["content"].encode("utf-8")).hexdigest() == readback["bodySha256"]
+            ):
+                return {
+                    "state": "sent", "open_task_id": "", "status_result": {},
+                    "readback": readback,
+                }
             if isinstance(readback, dict) and isinstance(message, dict):
                 message_id = result.get("openMessageId")
                 def valid_digest(value: object) -> bool:

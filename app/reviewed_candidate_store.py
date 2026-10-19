@@ -464,6 +464,101 @@ class ReviewedCandidateStoreMixin:
             })
             return dict(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (inserted.lastrowid,)).fetchone())
 
+    def get_prior_candidate_action_attempt(
+        self, external_action_key: str, execution_id: int,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) "
+                "where external_action_key=? and execution_id<>? order by id desc limit 1",
+                (external_action_key, execution_id),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def record_prior_candidate_action_reconciliation(
+        self, execution_id: int, owner: str, action_index: int,
+        external_action_key: str, status: str, result: Any,
+    ) -> dict[str, Any]:
+        if status not in ("verified", "confirmed_no_effect"):
+            raise ValueError("invalid prior action reconciliation")
+        result_json = _json(result)
+        with self._immediate_write_transaction() as db:
+            execution = self._leased_execution(db, execution_id, owner)
+            candidate = self._candidate_context(db, execution["candidate_id"])
+            prior = db.execute(
+                f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) "
+                "where external_action_key=? and execution_id<>? order by id desc limit 1",
+                (external_action_key, execution_id),
+            ).fetchone()
+            if prior is None or prior["status"] not in ("failed", "uncertain", "dispatched"):
+                raise ValueError("prior action is not reconcilable")
+            prior_result = json.loads(prior["result_json"] or "{}")
+            if prior_result.get("reason") != "reviewed_message_preparation_mismatch":
+                raise ValueError("prior action failure is outside this reconciliation")
+            prior_execution = db.execute(
+                f"select * from ({CANDIDATE_EXECUTION_SQL}) where id=?",
+                (prior["execution_id"],),
+            ).fetchone()
+            prior_candidate = self._candidate_context(db, prior_execution["candidate_id"])
+            if prior_candidate["business_object_key"] != candidate["business_object_key"]:
+                raise ValueError("prior action belongs to another business object")
+            prior_data = json.loads(prior_candidate["candidate_json"])
+            prior_selection = db.execute(
+                f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
+                (prior_execution["selection_id"],),
+            ).fetchone() if prior_execution["selection_id"] else None
+            prior_plan = (json.loads(prior_selection["branch_json"]).get("plan")
+                          if prior_selection else prior_data.get("proposal"))
+            prior_actions = prior_plan.get("actions", []) if isinstance(prior_plan, dict) else []
+            if prior["action_index"] >= len(prior_actions):
+                raise ValueError("prior action is outside its approved plan")
+            prior_action = prior_actions[prior["action_index"]]
+            data = json.loads(candidate["candidate_json"])
+            selection = db.execute(
+                f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
+                (execution["selection_id"],),
+            ).fetchone() if execution["selection_id"] else None
+            plan = json.loads(selection["branch_json"]).get("plan") if selection else data.get("proposal")
+            actions = plan.get("actions", []) if isinstance(plan, dict) else []
+            if action_index >= len(actions):
+                raise ValueError("action index outside approved plan")
+            action = actions[action_index]
+            if (prior_action.get("action_identity") != action.get("action_identity")
+                    or prior_action.get("operation") != action.get("operation")
+                    or prior_action.get("target") != action.get("target")):
+                raise ValueError("prior action identity differs from the current approved action")
+            if status == "verified":
+                target_json = _json(action.get("target", {}))
+                provider_json = result_json
+                result_digest = hashlib.sha256(provider_json.encode()).hexdigest()
+                insert_action(db, "external_action_results", {
+                    "external_action_key": external_action_key,
+                    "business_object_key": candidate["business_object_key"],
+                    "action_identity": action["action_identity"],
+                    "operation": action["operation"],
+                    "target_identifiers_json": target_json,
+                    "provider_result_json": provider_json,
+                    "result_digest": result_digest,
+                    "first_agent_run_id": candidate["consumer_run_id"],
+                }, ignore=True)
+                saved = db.execute(
+                    f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+                    (external_action_key,),
+                ).fetchone()
+                if (saved["business_object_key"] != candidate["business_object_key"]
+                        or saved["action_identity"] != action["action_identity"]
+                        or saved["operation"] != action["operation"]
+                        or saved["target_identifiers_json"] != target_json):
+                    raise ValueError("conflicting external action result")
+            update_action(db, "candidate_action_attempts", prior["id"], {
+                "status": status, "result_json": result_json,
+                "updated_at": _db_timestamp(db),
+            })
+            return dict(db.execute(
+                f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?",
+                (prior["id"],),
+            ).fetchone())
+
     def record_candidate_action_outcome(self, execution_id: int, owner: str, action_index: int, status: str, result: Any) -> dict[str, Any]:
         if status not in ("verified","confirmed_no_effect","uncertain","failed"):
             raise ValueError("invalid action outcome")
