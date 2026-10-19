@@ -35113,5 +35113,47 @@
     "log": "/tmp/worker-29-fixture-final.log",
     "exact_node_set_matches_historical_failed_set": true,
     "scope": "Exact29 historical worker failures. Current Task8 codec/writes and Task12 OA projection fixtures; generic fake needs_human result uses current task-class options. Original assertion AST unchanged (root checked); no runtime edits or real outbound sends."
+  },
+  "store_current_remaining_contracts_20261019": {
+    "diagnostic": {
+      "failed": 25,
+      "passed": 10,
+      "seconds": 218.99,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/store-api-original-remaining.log"
+    },
+    "subsequent_controls": [
+      {
+        "passed": 6,
+        "seconds": 22.74,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-state-tail2.log",
+        "scope": "Six first controls pass; seventh atomic-project fixture still old table, closed separately."
+      },
+      {
+        "passed": 1,
+        "seconds": 12.02,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-project-atomic.log"
+      },
+      {
+        "passed": 3,
+        "seconds": 13.84,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-rejection-review.log"
+      },
+      {
+        "passed": 2,
+        "seconds": 41.11,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-index-memory.log"
+      },
+      {
+        "passed": 2,
+        "seconds": 25.75,
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-object-repair.log"
+      }
+    ],
+    "source13_readback": {
+      "path": "/private/tmp/store-api-original-remaining/test_source13_workbench_lease_0/source13-workbench.sqlite3",
+      "scope": "Original source13 migration and cold Store open completed in diagnostic before stale final query failed. Root read-only current Task20 projection confirms original-owner / 2026-10-13 00:00:00 and current idx_task20_published_17. Test final assertions adapted; no duplicate full historical migration rerun claimed."
+    },
+    "remaining": "Ten legacy partial-schema/startup migration expectations: three route-session, one setup-wizard, two removed-runtime manual converter, one follow-up-draft, three meeting-memory standalone-table cases. Distinguish retired startup layout expectations from supported explicit migration before retirement/replacement. Not a whole-module pass.",
+    "runtime_changes": false
   }
 }

@@ -33,7 +33,8 @@ from app.state_definitions import state_projection
 from app.business_storage import insert_business
 from app.business_candidate_storage import insert_business_candidate
 from app.business_candidate_definitions import candidate_projection
-from app.action_storage import insert_task_delivery_action
+from app.action_storage import insert_task_delivery_action, task_delivery_set_parts
+from app.action_task_delivery_definitions import task_delivery_projection
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -1978,35 +1979,27 @@ def test_current_schema_rejects_legacy_task_run_table_without_mutation(tmp_path:
     assert_store_reopen_rejected_without_mutation(path)
 
 
-def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Path):
-    db_path = tmp_path / "legacy-runtime-parent-tables.sqlite3"
+def test_current_schema_repairs_missing_runtime_parent_indexes(tmp_path: Path):
+    db_path = tmp_path / "current-runtime-parent-indexes.sqlite3"
     store = AutoReplyStore(db_path)
     with store._connect() as db:
-        db.execute("drop index idx_weekly_okr_analysis_jobs_identity")
-        db.execute("drop index idx_wechat_memory_import_jobs_status")
-        db.execute("drop table wechat_memory_import_jobs")
+        before = [tuple(row) for row in db.execute('select * from tasks order by id')]
+        db.execute("drop index idx_task20_published_13")
+        db.execute("drop index idx_task20_native_17")
     assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
     reopened = AutoReplyStore(db_path)
     with reopened._connect() as db:
-        tables = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            ).fetchall()
-        }
-        assert "weekly_okr_analysis_jobs" not in tables
-        assert "wechat_memory_import_jobs" in tables
-        weekly_index = db.execute(
-            "select tbl_name from sqlite_master where type='index' "
-            "and name='idx_weekly_okr_analysis_jobs_identity'"
+        assert [tuple(row) for row in db.execute('select * from tasks order by id')] == before
+        for name in ('idx_task20_published_13', 'idx_task20_native_17'):
+            assert db.execute(
+                "select tbl_name from sqlite_schema where type='index' and name=?", (name,),
+            ).fetchone()['tbl_name'] == 'tasks'
+        assert not db.execute(
+            "select 1 from sqlite_schema where type='table' and name in "
+            "('weekly_okr_analysis_jobs','wechat_memory_import_jobs')"
         ).fetchone()
-        assert weekly_index["tbl_name"] == "tasks"
-        assert db.execute(
-            "select tbl_name from sqlite_master where type='index' "
-            "and name='idx_wechat_memory_import_jobs_status'"
-        ).fetchone()["tbl_name"] == "wechat_memory_import_jobs"
+    assert reopened._schema_is_current() is True
 
 
 def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
@@ -4555,6 +4548,10 @@ def test_set_service_state_retries_a_transient_write_lock(
             if connect_attempts == 1:
 
                 class WriteLockedConnection:
+                    @property
+                    def in_transaction(self):
+                        return db.in_transaction
+
                     def execute(self, sql, parameters=()):
                         if sql.lstrip().lower().startswith("begin immediate"):
                             return db.execute(sql, parameters)
@@ -4607,27 +4604,32 @@ def test_store_skips_schema_work_when_another_process_finished_it(
     AutoReplyStore(db_path)
 
 
-def test_store_repairs_missing_required_table_despite_current_schema_version(
-    tmp_path: Path,
-):
+def test_store_repairs_missing_action_index_without_recreating_retired_table(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
-    AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute("drop table follow_up_send_attempts")
+    store = AutoReplyStore(db_path)
+    store.record_error('cid', 'message', 'test', 'retained')
+    with store._connect() as db:
+        before = [tuple(row) for row in db.execute('select * from actions order by id')]
+        db.execute("drop index idx_actions_sync_follow_up_send_attempts_0")
+    assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    AutoReplyStore(db_path)
-
-    with sqlite3.connect(db_path) as db:
+    reopened = AutoReplyStore(db_path)
+    with reopened._connect() as db:
+        assert [tuple(row) for row in db.execute('select * from actions order by id')] == before
         assert db.execute(
-            "select 1 from sqlite_master "
-            "where type='table' and name='follow_up_send_attempts'"
-        ).fetchone() == (1,)
+            "select tbl_name from sqlite_schema where type='index' "
+            "and name='idx_actions_sync_follow_up_send_attempts_0'"
+        ).fetchone()['tbl_name'] == 'actions'
+        assert not db.execute(
+            "select 1 from sqlite_schema where type='table' and name='follow_up_send_attempts'"
+        ).fetchone()
+    assert reopened._schema_is_current() is True
 
 
 def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path, published_source) -> None:
     from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
-    from app.task_storage import WORKBENCH_TURN_SQL
+    from app.task20_definitions import task20_projection
+    WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
 
     db_path = tmp_path / "source13-workbench.sqlite3"
     with empty_source13(db_path, published_source) as db:
@@ -4638,9 +4640,9 @@ def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path:
     advance_source17_to_current_store(db_path, published_source)
     AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
-        columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
+        columns = {column[0] for column in db.execute(f"select * from ({WORKBENCH_TURN_SQL}) limit 0").description}
         recovery_index = db.execute(
-            "select 1 from sqlite_master where type='index' and name='idx_workbench_turns_recovery'"
+            "select 1 from sqlite_master where type='index' and name='idx_task20_published_17'"
         ).fetchone()
         lease = db.execute(f"select lease_owner,lease_expires_at from ({WORKBENCH_TURN_SQL}) where id='turn'").fetchone()
     assert {"lease_owner", "lease_expires_at"} <= columns
@@ -5005,19 +5007,15 @@ def test_codex_session_lock_replaces_stale_lock(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     assert store.acquire_codex_session_lock("cid-1", "okr:1") is True
-    with store._connect() as db:
-        db.execute(
-            """
-            update codex_session_locks
-            set locked_at=datetime('now', '-21 minutes')
-            where conversation_id='cid-1'
-            """
-        )
+    with store._immediate_write_transaction() as db:
+        locked_at = db.execute("select datetime('now', '-21 minutes')").fetchone()[0]
+        update_state_rows(db, 'codex_session_locks', {'locked_at': locked_at},
+                          where_sql="conversation_id=?", parameters=('cid-1',))
 
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         rows = db.execute(
-            "select owner from codex_session_locks where conversation_id='cid-1'"
+            f"select owner from ({state_projection('codex_session_locks')}) where conversation_id='cid-1'"
         ).fetchall()
     assert [row["owner"] for row in rows] == ["reply:msg-1"]
 
@@ -5035,23 +5033,19 @@ def test_codex_session_lock_renewal_requires_current_owner(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     assert store.acquire_codex_session_lock("cid-1", "consumer:1") is True
-    with store._connect() as db:
-        db.execute(
-            "update codex_session_locks "
-            "set locked_at=datetime('now', '-19 minutes') "
-            "where conversation_id='cid-1'"
-        )
+    with store._immediate_write_transaction() as db:
+        locked_at = db.execute("select datetime('now', '-19 minutes')").fetchone()[0]
+        update_state_rows(db, 'codex_session_locks', {'locked_at': locked_at},
+                          where_sql="conversation_id=?", parameters=('cid-1',))
 
     assert store.renew_codex_session_lock("cid-1", "other") is False
     assert store.renew_codex_session_lock("cid-1", "consumer:1") is True
     assert store.acquire_codex_session_lock("cid-1", "other") is False
 
-    with store._connect() as db:
-        db.execute(
-            "update codex_session_locks "
-            "set locked_at=datetime('now', '-21 minutes') "
-            "where conversation_id='cid-1'"
-        )
+    with store._immediate_write_transaction() as db:
+        locked_at = db.execute("select datetime('now', '-21 minutes')").fetchone()[0]
+        update_state_rows(db, 'codex_session_locks', {'locked_at': locked_at},
+                          where_sql="conversation_id=?", parameters=('cid-1',))
     assert store.renew_codex_session_lock("cid-1", "consumer:1") is False
 
 
@@ -5526,9 +5520,9 @@ def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
     )
     with store._connect() as db:
         db.executescript(
-            """
+            f"""
             create trigger reject_review_rerun before update on tasks
-            when new.record_type='reply_tasks' and new.manual_rerun_attempt_id > 0
+            when new.record_type='reply_tasks' and new.{task20_column('reply_tasks', 'manual_rerun_attempt_id')} > 0
             begin
                 select raise(abort, 'forced review rerun failure');
             end;
@@ -6317,7 +6311,9 @@ def test_current_source_with_retired_native_event_body_is_rejected_without_mutat
         db.execute(inventory["tables"]["agent_run_events"]["sql"])
         db.execute("insert into agent_run_events(agent_run_id,sequence,event_json) values(1,1,?)",
                    (json.dumps({"type": "item.started", "call_id": "legacy-1"}),))
-    assert_store_reopen_rejected_without_mutation(path)
+    assert_store_reopen_rejected_without_mutation(
+        path, expected_error="malformed current Store-first config declaration",
+    )
 
 
 
@@ -9498,7 +9494,7 @@ def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
         "idx_actions_reply_current_trigger",
         "idx_actions_reply_run_recovery",
         "idx_actions_sent_history",
-        "idx_work_summary_inputs_updated",
+        "idx_task20_published_8",
     } <= index_names
     assert not any("scan process_attempts" in detail.lower() for detail in plan)
     assert not any("scan sent" in detail.lower() for detail in plan)
@@ -10848,8 +10844,8 @@ def test_setup_wizard_steps_list_has_stable_tie_breaker(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_setup_wizard_step(step_id="mcp", status="done", summary="ok")
     store.upsert_setup_wizard_step(step_id="preflight", status="done", summary="ok")
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        db.execute("update setup_wizard_steps set updated_at='2026-06-12 12:00:00'")
+    with store._immediate_write_transaction() as db:
+        update_state_rows(db, 'setup_wizard_steps', {'updated_at': '2026-06-12 12:00:00'})
 
     rows = store.list_setup_wizard_steps()
 
@@ -11606,15 +11602,15 @@ def test_terminal_work_input_compacts_atomically_with_adopted_project(tmp_path: 
     assert store.get_work_summary_input(input_id).payload_json == payload
     with pytest.raises(RuntimeError, match="rollback"):
         with store.task_agent_domain_apply_transaction() as db:
-            db.execute("insert into work_projects(title, goal) values('adopted', '')")
+            insert_business(db, 'work_project', {'title': 'adopted', 'goal': ''})
             store.mark_work_summary_input_done(claimed.id, _db=db)
             raise RuntimeError("rollback")
     assert store.get_work_summary_input(input_id).payload_json == payload
     with store._connect() as db:
-        assert db.execute("select count(*) from work_projects").fetchone()[0] == 0
+        assert db.execute("select count(*) from business where record_type='work_project'").fetchone()[0] == 0
 
     with store.task_agent_domain_apply_transaction() as db:
-        db.execute("insert into work_projects(title, goal) values('adopted', '')")
+        insert_business(db, 'work_project', {'title': 'adopted', 'goal': ''})
         store.mark_work_summary_input_done(claimed.id, _db=db)
     done = store.get_work_summary_input(input_id)
     assert done.status == "done"
@@ -11623,7 +11619,7 @@ def test_terminal_work_input_compacts_atomically_with_adopted_project(tmp_path: 
     assert done.body_sha256 == hashlib.sha256(payload.encode()).hexdigest()
     assert done.body_bytes == len(payload.encode())
     with store._connect() as db:
-        assert db.execute("select count(*) from work_projects").fetchone()[0] == 1
+        assert db.execute("select count(*) from business where record_type='work_project'").fetchone()[0] == 1
 
     duplicate = store.enqueue_work_summary_input("local_file", "file#v1", '{"summary":"later"}')
     assert duplicate == input_id
@@ -11654,7 +11650,7 @@ def test_work_input_provenance_schema_is_checked_on_store_reopen(tmp_path: Path)
     store = AutoReplyStore(path)
     store.enqueue_work_summary_input("local_file", "source", "{}")
     with store._connect() as db:
-        db.execute("alter table tasks rename column body_compacted to malformed_body_compacted")
+        db.execute("alter table tasks rename column work_summary_inputs__body_compacted to malformed_body_compacted")
     assert store._schema_is_current() is False
     assert_store_reopen_rejected_without_mutation(path)
 
@@ -11707,7 +11703,9 @@ def test_current_source_with_retired_result_body_is_rejected_without_erasing_pay
         db.execute(inventory["tables"]["agent_runs"]["sql"])
         db.execute("insert into agent_runs(reply_task_id,execution_generation,role,status,final_result_json) values(1,'original','consumer','completed',?)",
                    (json.dumps({"type": "item.completed", "call_id": "kept"}),))
-    assert_store_reopen_rejected_without_mutation(path)
+    assert_store_reopen_rejected_without_mutation(
+        path, expected_error="malformed current Store-first config declaration",
+    )
 
 
 
@@ -12035,15 +12033,15 @@ def test_supersede_obsolete_meeting_memory_runtime_attempts_after_requeue(
     assert store.create_meeting_memory_write_event(job_id) is True
     with store._connect() as db:
         event = db.execute(
-            "select id, execution_generation from meeting_memory_write_events "
+            f"select id, execution_generation from ({task_delivery_projection('meeting_memory_write_events')}) "
             "where meeting_job_id=?",
             (job_id,),
         ).fetchone()
-        db.execute(
-            "update meeting_memory_write_events set execution_generation='old-generation' "
-            "where id=?",
-            (event["id"],),
+        parts, parameters = task_delivery_set_parts(
+            'meeting_memory_write_events', {'execution_generation': 'old-generation'},
         )
+        db.execute(f"update actions set {parts} where record_type='meeting_memory_write_events' "
+                   "and cast(legacy_key as integer)=?", (*parameters, event['id']))
     assert event is not None
     stale_key = f"meeting_memory_write_event:{event['id']}:old-generation"
     claimed_event = store.claim_due_meeting_memory_write_events(
@@ -12934,11 +12932,9 @@ def test_the_stale_reset_also_closes_what_it_orphans(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "stale-leaving.sqlite3")
     input_id, run_id, attempt = _input_with_live_run(store)
     with store._connect() as db:
-        db.execute(
-            "update tasks set updated_at=datetime('now','-3600 seconds') "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (input_id,),
-        )
+        _update_current_task8(db, 'work_summary_inputs', {},
+                              update_sql={'updated_at': "datetime('now','-3600 seconds')"},
+                              where_sql='and cast(legacy_key as integer)=?', parameters=(input_id,))
 
     assert store.reset_stale_processing_work_summary_inputs(1200) == 1
 

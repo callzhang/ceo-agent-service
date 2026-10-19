@@ -193,3 +193,9 @@ Store 定向66项已闭合：同轮65 pass／230.97秒，最后一项旧schedule
 ### Worker exact diagnostic closure (2026-10-19)
 
 历史29个worker失败node ID与本轮收集集合完全相等；最终29 pass／392 deselected、313.32秒。修正当前Task8写入及其raw连接codec注册、Task12 OA读投影，以及默认needs_human替身的当前task-class选项格式；主审确认所有原测试assert AST未变。仅测试替身，无运行时修改和真实发送。这替代此前11＋12项不能证明覆盖准确29节点的笼统证据。
+
+### Store remaining historical contracts (2026-10-19)
+
+旧失败清单剩余31函数实际展开35节点，当前诊断10 pass／25 fail、218.99秒；没有把旧夹具错误归为生产缺陷。随后当前夹具14项通过（6＋1＋3＋2＋2）：State事务／锁／排序、Task输入schema与失效运行、业务采纳和输入压缩的同事务回滚、审查rerun回滚、准确schema拒绝及完整dump不变、History当前索引、会议memory旧代次、Task／Action缺失索引重开修复及行保留。仅测试更新，无运行时修改。Source13真实正迁及Store重开先前已完成；主审在同一副本用当前Task20投影读回原lease及当前恢复索引，避免重复历史正迁；这不记作重跑整项pytest通过。
+
+仍需处理10个历史部分schema／启动迁移断言：3个route-session、1个setup-wizard、2个removed-runtime手动converter、1个follow-up draft、3个meeting-memory独立旧表。现有运行时仅接受最终结构或明确支持的完整历史迁移，不能为这些旧fixture添加兼容回退；须对照实际声明与既有显式迁移证据逐项替换或退休后才能关闭整体回归差项。
