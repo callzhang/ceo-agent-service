@@ -42,5 +42,15 @@
 
 ## 发布回读
 
-待填写合并提交、部署记录、正式 PID、健康与队列、Attention、History，以及是否出现
-发布后的自然 Meeting Agent 运行。
+PR #158 合并为 `4939d7b8463405e5287cf5992e6a406d76409e9e`。正式部署使用
+`python -m app.deploy` 等待在途工作归零后，把生产 checkout 从 `26e50f8d`
+前进到该提交；生产源码确认共享说明位于候选列表前。新 PID `548` 存活，
+`/healthz` 返回 `ok`；复查时 13 个队列处理项 0、在途 0，dispatcher
+无运行或到期未处理项，系统健康违规 0。Attention 仍为 4 条部署前记录，
+失败项总数仍为 9，History 返回 HTTP 200。最近一条真实 Meeting Agent
+仍为部署前的 attempt `380933`，所以尚无发布后的自然会议结果可核对。
+
+PR 的 GitHub Quality 在 `npm run lint:local` 阶段因
+`tests/test_agent_role_tool_boundary.py` 中未使用的 `AgentReadOnlyViolationError`
+import 失败；该行已存在于本 PR 基线且不在本次差异内。此项是已记录的仓库基线缺口，
+不代替本轮定向测试与匿名行为对照。
