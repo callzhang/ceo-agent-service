@@ -440,7 +440,7 @@ def test_max_rowid_uses_native_overflow_allocator(variant):
      "email_unsubscribe_write_in_flight"),
 ))
 def test_account_blockers_use_current_typed_action_predicate_fixture(kind, status, error):
-    old_email, current = _databases(include_skill_config_receipts=True)
+    old_email, current = _databases(include_skill_config_receipts=True, compact_payload=True)
     with closing(old_email), closing(current):
         create_schedules_schema(current)
         create_configs_schema(current)

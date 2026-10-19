@@ -13,7 +13,7 @@ from app.action_storage import create_action_schema, email_action_projection
 from tests.test_email_action_storage import _cases, _source_tables
 
 
-def _databases(*, include_skill_config_receipts=False):
+def _databases(*, include_skill_config_receipts=False, compact_payload=False):
     source = sqlite3.connect(":memory:")
     target = sqlite3.connect(":memory:")
     for db in (source, target):
@@ -37,9 +37,10 @@ def _databases(*, include_skill_config_receipts=False):
             target.execute(business[name]["sql"])
         create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk",
                              include_email=True, include_followup_sync=True,
-                             include_skill_config_receipts=True)
+                             include_skill_config_receipts=True, compact_payload=compact_payload)
     else:
-        create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+        create_action_schema(target, include_reply=True, reply_variant="fresh_memory_fk", include_email=True,
+                             compact_payload=compact_payload)
     return source, target
 
 
