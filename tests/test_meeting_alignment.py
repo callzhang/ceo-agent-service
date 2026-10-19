@@ -2249,6 +2249,7 @@ def test_recurring_group_candidate_requires_sent_history_and_live_roster(tmp_pat
     assert "verified_recurring_group" not in candidates[0]
     assert candidates[0]["prior_sent_count"] == 2
     assert candidates[0]["member_precision"] == "3/4"
+    assert "audience_verification_required" not in candidates[0]
 
 
 def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_path):

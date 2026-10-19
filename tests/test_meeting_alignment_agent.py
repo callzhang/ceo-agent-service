@@ -522,6 +522,28 @@ def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
     assert "候选群中含非授权受众" in prompt
 
 
+def test_candidate_audience_instruction_is_shared_once_without_changing_empty_case():
+    candidates = [
+        {"conversation_id": "cid-project", "member_open_dingtalk_ids": ["open-a"]},
+        {"conversation_id": "cid-other", "member_open_dingtalk_ids": ["open-b"]},
+    ]
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile",
+        group_candidates=candidates,
+    )
+    empty_prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile",
+        group_candidates=[],
+    )
+
+    assert prompt.count("Before selecting effects, verify live full relevant discussion") == 1
+    assert '"conversation_id":"cid-project"' in prompt
+    assert '"conversation_id":"cid-other"' in prompt
+    assert '"member_open_dingtalk_ids":["open-a"]' in prompt
+    assert '"member_open_dingtalk_ids":["open-b"]' in prompt
+    assert "Before selecting effects, verify live full relevant discussion" not in empty_prompt
+
+
 def test_prompt_requires_a_summary_even_for_candidate_interviews():
     prompt = build_meeting_alignment_prompt(
         source(participant_count=2), work_profile="", work_profile_source="profile"
