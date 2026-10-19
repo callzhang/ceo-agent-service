@@ -34213,9 +34213,9 @@
     "scope": "fixture full real publish and real EmailStore; native source oracle untouched; other nodes not yet revalidated"
   },
   "final_pending_fixture_closure": {
-    "direct": "Whole-publish source proven separately; new immutable per-session templates give each test separate source/target backup. Initial run loaded deepcopy clone and failed on frozen mappingproxy. JSON roundtrip clone independently reproduced equal; corrected fixture full-file proof pending. Existing run still draining, not counted green.",
-    "validators": "Initial selected 6 nodes errored in inherited deepcopy fixture; 666.52 seconds. Final schema object selectors corrected (trg_emails_*); no runtime changes, rerun pending.",
-    "metadata": "Observed early pair guard rejects exact damaged final declaration via base IntegrityError, not later EmailPersistenceCorruption. Test-only final metadata/options/selector corrections pending focused run; old genuine source oracle unchanged.",
+    "direct": "Focused current controls closed; stable combined confirmation pending.",
+    "validators": "Focused six failures closed with 4+2 passing controls; stable combined confirmation pending.",
+    "metadata": "Closed: 39 tests passed; exact existing early refusal and no repair retained.",
     "task_delivery": "Prior 11 failed /55 passed diagnostic preceded latest fixture fixes; corrected historical 4-family two-variant control 2 passed/92.48 seconds. Paired representatives still running.",
     "broad": "Long-running diagnostic started before latest changes, results require failure-by-failure closure; do not count as final stable candidate proof.",
     "resource_policy": "No additional migration jobs until current pending jobs drain; keep existing timeouts."
@@ -34246,5 +34246,28 @@
     },
     "scope": "both constructors reject exact damaged final declaration with exact IntegrityError/message; no repair and before/after fingerprints unchanged; both cached/uncached and row validation modes; genuine0441 historical exception contract unchanged; existing shared-index repair retained",
     "runtime_changes": false
+  },
+  "final_direct_validator_focused_closure": {
+    "initial_combined": {
+      "passed": 17,
+      "failed": 6,
+      "deselected": 7,
+      "seconds": 470.11,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-direct-validator-current-green.log"
+    },
+    "four_corrected_controls": {
+      "passed": 4,
+      "seconds_group": 258.67,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-six-closures-vv.log",
+      "scope": "CAS typed fixture; canonical classification filter; final both-variant manifest plus existing ledger"
+    },
+    "two_remaining_feedback_controls": {
+      "passed": 2,
+      "seconds": 178.03,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-feedback-metadata-current.log",
+      "scope": "exact business feedback/CAS/replay/ledgers; explicit metadata-only getter assertions; historical body presentation belongs to Console source reader per existing contract"
+    },
+    "runtime_changes": false,
+    "stable_combined_confirmation": "pending; keep test source unchanged during inspect-based native oracles"
   }
 }

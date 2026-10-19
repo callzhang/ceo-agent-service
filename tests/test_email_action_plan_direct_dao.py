@@ -1,4 +1,4 @@
-"""Partial unselected group4B; explicit converted fixtures are not default parity."""
+"""Direct Email DAO parity after migrating genuine old facts to the final schema."""
 
 from contextlib import closing
 import sqlite3
@@ -11,7 +11,7 @@ from tests.test_email_action_writes import _databases
 
 
 def test_operation_conflict_target_ignores_only_existing_plan_type():
-    source, target = _databases()
+    source, target = _databases(compact_payload=True)
     with closing(source), closing(target):
         for db in (source, target):
             values = _cases()["email_action_plans"]
@@ -63,9 +63,8 @@ def test_operation_conflict_target_ignores_only_existing_plan_type():
             assert appended.rowcount == 1 and appended.lastrowid == 2
 
 
-@pytest.fixture
-def converted_pair(tmp_path, request):
-    """Seed genuine archived code, then convert an owned copy explicitly."""
+def _genuine_old_source(tmp_path, request):
+    """Seed exact archived-code facts without preparing an unused target."""
     import io
     import json
     import os
@@ -74,13 +73,7 @@ def converted_pair(tmp_path, request):
     import sys
     import tarfile
 
-    from app.action_email_storage import migrate_email_action_schema
-    from app.provider_state_schema_release import (
-        apply_provider_state_migration,
-        capture_provider_state_source,
-    )
     from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
-    from app.email_store import EmailStore
     from tests.test_email_store import _classification
 
     old = tmp_path / "published-old"
@@ -153,25 +146,61 @@ print(json.dumps(s.direct_action_ids_for_plan(c.action_plan.action_plan_id)))
         )
         db.execute("delete from email_action_attempts where id=700")
         db.commit()
+    return classification, json.loads(result.stdout), source, old
+
+
+def _build_converted_pair(tmp_path, request):
+    from pathlib import Path
+    import subprocess
+
+    from app.store_schema_release import prepare_database_schema_release
+    from app.email_store import EmailStore
+
+    classification, source_ids, source, old = _genuine_old_source(tmp_path, request)
     target = tmp_path / "target.sqlite3"
     with (
         closing(sqlite3.connect(source)) as original,
         closing(sqlite3.connect(target)) as db,
     ):
         original.backup(db)
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        provider_source = capture_provider_state_source(db)
-        migrate_email_action_schema(db)
-        apply_provider_state_migration(db, provider_source)
-        db.commit()
-    # Scope this converted-copy test to DAO methods; paired constructor and
-    # marker validation are covered by the release tests.
-    store = object.__new__(EmailStore)
-    store.path = target
-    store.training_run_id = None
+    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], target)
+    try:
+        release.publish()
+    except subprocess.CalledProcessError as error:
+        error.add_note(error.stderr or "paired child returned no stderr")
+        raise
+    store = EmailStore(target)
     store._now = lambda: "2026-10-14T10:00:00+00:00"
-    return store, classification, json.loads(result.stdout), source, old
+    return store, classification, source_ids, source, old
+
+
+@pytest.fixture(scope="session")
+def _converted_templates(pytestconfig):
+    # Imported fixture definitions share the session's immutable templates.
+    # Templates never reach a DAO caller; each test gets independent files.
+    # pytest imports this fixture under both bare and tests.* module names.
+    return vars(pytestconfig).setdefault("_ceo_email_direct_templates", {})
+
+
+@pytest.fixture
+def converted_pair(tmp_path, request):
+    from pathlib import Path
+    from app.email_store import EmailStore
+
+    templates = request.getfixturevalue("_converted_templates")
+    variant = getattr(request, "param", "")
+    if variant not in templates:
+        template_path = request.getfixturevalue("tmp_path_factory").mktemp("direct-template")
+        templates[variant] = _build_converted_pair(template_path, request)
+    template_store, classification, source_ids, template_source, old = templates[variant]
+    target = tmp_path / "target.sqlite3"
+    source = tmp_path / "source.sqlite3"
+    for original_path, copied_path in ((template_store.path, target), (template_source, source)):
+        with closing(sqlite3.connect(original_path)) as original, closing(sqlite3.connect(copied_path)) as copied:
+            original.backup(copied)
+    store = EmailStore(target)
+    store._now = lambda: "2026-10-14T10:00:00+00:00"
+    return store, type(classification).model_validate_json(classification.model_dump_json()), list(source_ids), source, Path(old)
 
 
 def test_real_direct_plan_read_uses_public_action_ids_on_explicit_converted_copy(
@@ -403,12 +432,18 @@ def _feedback_and_plan_conflicts(store, classification):
         expected_current_action_plan_id=applied.resulting_action_plan_id,
         created_at=when,
     )
+    # The native getter also joined body presentation. Final runtime identity
+    # reads are metadata-only; the Console source reader owns original content.
+    classification_state = {
+        key: value for key, value in store.get_classification(12).items()
+        if key not in ("message_text", "cc")
+    }
     return dict(
         conflicts=conflicts,
         applied=applied,
         replay=replay,
         correction=correction,
-        classification=store.get_classification(12),
+        classification=classification_state,
         direct_ids=store.direct_action_ids_for_plan(plan.action_plan_id),
     )
 
@@ -421,6 +456,7 @@ def test_plan_idempotence_feedback_null_prior_replay_and_cas_match_genuine_old(
         _feedback_and_plan_conflicts(converted_pair[0], converted_pair[1])
     )
     assert actual == expected
+    assert {"message_text", "cc"}.isdisjoint(converted_pair[0].get_classification(12))
     assert len(actual["conflicts"]) == 5
     assert actual["applied"]["applied"] and not actual["replay"]["applied"]
 
@@ -634,9 +670,14 @@ def _cas_failure(store, classification, target=False):
     first = store.claim_next_direct_action(claimed_at="2026-10-14T10:00:00+00:00")
     with store._connect() as db:
         if target:
-            db.execute("""create trigger fixture_action_cas_change after insert on actions
+            from app.action_storage import _action_layout
+
+            assignments = _action_layout("email_actions").assignments_sql(
+                "payload_json", {"status": "json_quote('pending')", "attempt_count": "json_quote(1)"}
+            )
+            db.execute(f"""create trigger fixture_action_cas_change after insert on actions
                 when new.record_type='email_action_attempts'
-                begin update actions set payload_json=json_set(payload_json,'$.status','pending','$.attempt_count',1)
+                begin update actions set payload_json={assignments}
                 where record_type='email_actions' and email_action_id=new.email_action_id; end""")
         else:
             db.execute("""create trigger fixture_action_cas_change after insert on email_action_attempts
@@ -677,7 +718,6 @@ def test_completion_rechecks_cas_after_insert_and_rolls_back_entire_transaction(
 def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
     converted_pair, tmp_path,
 ):
-    import json
     from app.email_store import EmailStore
     from tests.test_email_store import _persist_scan, _task2_account_values
 
@@ -712,18 +752,12 @@ def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
     before, before_steps, plans = measure()
     assert any("idx_actions_email_email_actions" in str(plan) for plan in plans)
     with store._connect() as db:
-        db.executemany(
-            "insert into actions(record_type,legacy_key,payload_json) values('email_unsubscribe_cancellations',?,?)",
-            [
-                (
-                    str(i),
-                    json.dumps(
-                        {"action_identity": f"unrelated-{i}", "decision_json": "{}"}
-                    ),
-                )
-                for i in range(1, 3001)
-            ],
-        )
+        for i in range(1, 3001):
+            insert_email_action(
+                db, "email_unsubscribe_cancellations",
+                {"action_identity": f"unrelated-{i}", "decision_json": "{}"},
+                source_rowid=i,
+            )
     after, after_steps, after_plans = measure()
     assert before == after
     assert any("idx_actions_email_email_actions" in str(plan) for plan in after_plans)
@@ -767,7 +801,12 @@ def _retired_current_poll(store, classification):
     )
 
 
-def _classification_filter_results(store, classification):
+def _classification_filter_results(store, classification, target=False):
+    if target:
+        from app.email_store import EMAIL_CLASSIFICATION_SQL
+        classifications = "(" + EMAIL_CLASSIFICATION_SQL + ")"
+    else:
+        classifications = "email_classifications"
     results = {}
     for status in (
         "none",
@@ -782,7 +821,7 @@ def _classification_filter_results(store, classification):
         )
         with store._connect() as db:
             rows = db.execute(
-                "select classifications.id from email_classifications as classifications where 1=1"
+                f"select classifications.id from {classifications} as classifications where 1=1"
                 + where
                 + " order by classifications.id",
                 args,
@@ -795,7 +834,7 @@ def test_classification_filter_sql_uses_same_current_plan_membership_as_old(
     converted_pair,
 ):
     expected = _genuine_old_result(converted_pair, _classification_filter_results)
-    actual = _classification_filter_results(converted_pair[0], converted_pair[1])
+    actual = _classification_filter_results(converted_pair[0], converted_pair[1], target=True)
     assert actual == expected
 
 
