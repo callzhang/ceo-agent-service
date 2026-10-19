@@ -1757,9 +1757,14 @@ Pydantic-valid business-alignment decisions and selected the same group, but
 only the full-prompt arm passed the fixture's assigned-owner mention check.
 
 The candidate therefore fails the predeclared business gate and is **no-go**.
-One paired sample does not prove that schema removal caused the mention change;
-model variance is still possible. It does prove that native structural validity
-alone cannot authorize this deletion under the current fixed-case standard.
+One paired sample did not prove that schema removal caused the mention change;
+model variance was still possible. A second same-case pair reproduced the
+specific difference: the full arm mentioned only the assigned metric owner,
+while the native-only arm mentioned both that owner and another participant.
+Both remained Pydantic-valid, chose the same group and marked the topic aligned.
+These two pairs do not estimate population-level reliability, but native
+structural validity alone cannot authorize this deletion under the current
+fixed-case standard.
 No runtime, prompt, Skill, route, delivery code or setting was changed or
 deployed. A later candidate needs to resolve exact-owner behavior on fixed
 repeats before reconsidering this reduction.
