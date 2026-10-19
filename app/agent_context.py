@@ -415,10 +415,9 @@ class AuditTurnContext:
                     (
                         "Service-recorded scheduled work receipts (Consumer tool output; metadata only)\n"
                         + _json(self.scheduled_work_receipts)
-                        + "\nThese values come from the exact completed Consumer parent run. "
-                        "They identify a returned document readback, not whether the report content or its claims are correct. "
-                        "No matching Consumer document readback was captured when this list is empty. "
-                        "Review the candidate against its source facts."
+                        + "\nFrom completed Consumer runs in this task and execution generation, including prior feedback revisions. "
+                        "Each identifies a returned readback, not report validity; an empty list means none was captured. "
+                        "Review source facts independently."
                     ,)
                     if self.task.channel == "scheduled" else ()
                 ),
