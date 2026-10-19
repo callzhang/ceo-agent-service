@@ -68,11 +68,16 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const lock=useRef(false);
   const markedRead=useRef(new Set<string>());
   const rowRefs=useRef(new Map<string,HTMLButtonElement>());
+  const inputQueryCommit=useRef<string|null>(null);
   const open=!!selected && closed!==selected;
   const options=[...configurableCategories(configs).filter(item=>item.enabled),{category_key:"junk",display_name:"垃圾（Trash）"}];
   const offered=(key?:string|null)=>!!key && options.some(option=>option.category_key===key);
   const label=(key?:string|null)=>key ? (configs.find(item=>item.category_key===key)?.display_name || key) : "未分类（留在收件箱）";
-  useEffect(()=>{setSearchText(query);},[query]);
+  useEffect(()=>{
+    if(inputQueryCommit.current===query){inputQueryCommit.current=null;return;}
+    inputQueryCommit.current=null;
+    setSearchText(query);
+  },[query]);
   useEffect(()=>{setChecked(new Set());setBulkDone(null);setBulkError("");},[status,page,pageSize,query,categoryFilter,actionFilter,sourceFilter]);
   function applyFilter(key:string,value:string) {
     setParams(previous=>{const next=new URLSearchParams(previous);if(value)next.set(key,value);else next.delete(key);next.set("page","1");next.delete("selected");return next;},{replace:true});
@@ -82,7 +87,9 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     setParams(previous=>{const next=new URLSearchParams(previous);["category","action_status","source"].forEach(key=>next.delete(key));next.set("page","1");next.delete("selected");return next;},{replace:true});
   }
   function applySearch(value:string) {
-    setParams(previous=>{const next=new URLSearchParams(previous);if(value.trim())next.set("q",value.trim());else next.delete("q");next.set("page","1");next.delete("selected");return next;},{replace:true});
+    const nextQuery=value.trim();
+    inputQueryCommit.current=nextQuery;
+    setParams(previous=>{const next=new URLSearchParams(previous);if(nextQuery)next.set("q",nextQuery);else next.delete("q");next.set("page","1");next.delete("selected");return next;},{replace:true});
     setClosed("");setExpanded(false);
   }
   useEffect(()=>{

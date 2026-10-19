@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
 const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailProcessingProgress", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory", "markEmailRead"].map(key => [key, vi.fn()])));
@@ -14,10 +14,12 @@ const gateConfig = {micro_f1_min:.95, category_precision_min:.95, category_valid
 const candidateRow = {model_id:"model-v2", status:"candidate", trained_at:"2026-09-01T12:00:00Z", metrics:null, evaluation:null, split_counts:{train:4,validation:2,test:1}, end_to_end_latency_ms:null};
 function learning(overrides = {}) { return {runtime, promotion_gate:{config:gateConfig, promotion_eligible:true, checks:[]}, mode_transitions:[], models:[], staged_models:[candidateRow], registry_issues:[], pending_examples:2, ...overrides}; }
 function Location() {return <output aria-label="URL">{useLocation().search}</output>;}
+function ExternalQueryNavigation() {const navigate=useNavigate();return <><button onClick={()=>navigate("/email?tab=all&q=external")}>External query</button><button onClick={()=>navigate(-1)}>Back</button><button onClick={()=>navigate(1)}>Forward</button></>;}
 function show(path = "/email") {return render(<MemoryRouter initialEntries={[path]}><Location/><EmailPage/></MemoryRouter>);}
 function deferred<T>() {let resolve!: (value:T)=>void; let reject!: (error:Error)=>void; const promise=new Promise<T>((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 it("searches all saved mail via URL while preserving filter and page size",async()=>{
-  const user=userEvent.setup();show("/email?tab=all&page=2&page_size=20&q=old");
+  const user=userEvent.setup();
+  show("/email?tab=all&page=2&page_size=20&q=old");
   const search=await screen.findByRole("searchbox",{name:"搜索邮件"});
   expect(search).toHaveValue("old");
   await user.clear(search);await user.type(search,"合同");
@@ -27,6 +29,38 @@ it("searches all saved mail via URL while preserving filter and page size",async
   await user.click(screen.getByRole("button",{name:"清空搜索"}));
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback",{page:1,page_size:20},expect.any(AbortSignal)));
   expect(screen.getByLabelText("URL")).not.toHaveTextContent("q=");
+});
+it("keeps newer typed text after its own debounced URL update",async()=>{
+  show("/email?tab=all&page=1&page_size=20&q=old");
+  const search=await screen.findByRole("searchbox",{name:"搜索邮件"});
+  vi.useFakeTimers();
+  try {
+    await act(async()=>{
+      fireEvent.change(search,{target:{value:"合"}});
+      await vi.advanceTimersByTimeAsync(300);
+      fireEvent.change(search,{target:{value:"合同"}});
+    });
+    await act(async()=>{await vi.advanceTimersByTimeAsync(300);});
+    expect(search).toHaveValue("合同");
+    expect(screen.getByLabelText("URL")).toHaveTextContent("q=%E5%90%88%E5%90%8C");
+    expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:20,q:"合同"},expect.any(AbortSignal));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("syncs search text from external URL navigation and browser back",async()=>{
+  const user=userEvent.setup();
+  render(<MemoryRouter initialEntries={["/email?tab=all&q=original"]}><ExternalQueryNavigation/><Location/><EmailPage/></MemoryRouter>);
+  const search=await screen.findByRole("searchbox",{name:"搜索邮件"});
+  expect(search).toHaveValue("original");
+  await user.click(screen.getByRole("button",{name:"External query"}));
+  await waitFor(()=>expect(search).toHaveValue("external"));
+  await user.click(screen.getByRole("button",{name:"Back"}));
+  await waitFor(()=>expect(search).toHaveValue("original"));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,q:"original"},expect.any(AbortSignal)));
+  await user.click(screen.getByRole("button",{name:"Forward"}));
+  await waitFor(()=>expect(search).toHaveValue("external"));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,q:"external"},expect.any(AbortSignal)));
 });
 it("waits for Chinese composition and distinguishes empty search results from errors",async()=>{
   show("/email?q=initial");
@@ -44,6 +78,7 @@ it("waits for Chinese composition and distinguishes empty search results from er
   expect(await screen.findByRole("alert")).toHaveTextContent("搜索读取失败");
   expect(screen.queryByText("未找到匹配邮件")).not.toBeInTheDocument();
 });
+
 beforeEach(() => {
   vi.resetAllMocks();
   api.markEmailRead.mockResolvedValue(true);

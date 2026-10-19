@@ -4096,6 +4096,10 @@ Email listing implementations are now test-only; input/cache lifecycle still
 requires completion.
 
 
+Email list search preserves newer locally typed text when its own debounced
+query update reaches the URL. External query navigation and browser back/forward
+continue to synchronize the input from the URL.
+
 The final candidate no longer exposes Store.list_classifications,
 Store.list_unsubscribe_classifications or the stored-body SQL search helper.
 HTTP list/detail/search already use EmailClassificationReader and exact external
