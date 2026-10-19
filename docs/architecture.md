@@ -419,13 +419,15 @@ scheduled_tasks
   -> reply_attempt / agent_runs / provider facts
 ```
 
-Scheduled Agent Audit also receives a compact service projection of any completed
-`consumer_document_write` return from its exact Consumer parent run. The projection
-contains the returned document identity and a digest and byte count of the
-returned readback object; it omits the report body itself. An empty list means
-no matching return was captured for that parent. This establishes what the
-service tool returned, not whether the document or its claims are correct. The
-behavior is shared by scheduled Agent tasks and does not change Audit's review standard.
+Scheduled Agent Audit also receives compact service projections of completed
+`consumer_document_write` returns from completed Consumer runs in the exact
+scheduled task execution generation, including earlier revisions after Audit
+feedback. Each projection contains the returned document identity and a digest
+and byte count of the returned readback object; it omits the report body itself.
+An empty list means no matching return was captured in that generation. This
+establishes what the service tool returned, not whether the document or its
+claims are correct. The behavior is shared by scheduled Agent tasks and does
+not change Audit's review standard.
 
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是
@@ -495,7 +497,7 @@ migration key 任务在启动时原地转换为命令形式，
 启用状态，包括从未被编辑过的 version 1 任务。默认的名称与 Cron 与负责人本机的现行任务一致。Lark
 不创建默认 seed；其余已有任务的用户修改不会被 seed 覆盖。
 
-另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML，并将当前目标的存在状态与 revision 绑定到后续写入；Skill validator 在渲染前核对 renderer 所需字段。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
+另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML；目标存在但仅含空白段落骨架时，也用上期完整 JSONML 作渲染基底，同时保留目标存在状态及当前 revision 的写入守卫，并向 Agent 返回实际基底标题。其他已有目标仍使用其完整 JSONML。上一期周会如改期至上一报告周内的其他日期，仅在存在唯一精确标准标题时读取最近日期的文档，后缀草稿不作为基底。Skill validator 在渲染前核对 renderer 所需字段。为避免上期文档的完整 JSONML 截断工具回传，服务将通过检查的目标正文保留在当前 Consumer turn，仅向 Agent 返回完整七节草稿、元数据和 `render_id`；任务绑定写入通过该 ID 提交原始渲染正文，并沿用目标存在状态及 revision 守卫。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
 
 ### Runtime-managed Skill 生命周期
 
@@ -1569,7 +1571,7 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取支持的图片、PDF、文本或表格内容；`read_dingtalk_oa_comment_attachment` 按流程实例 ID、评论附件 ID 和文件名，通过 OA Premium 评论附件接口读取精确的评论附件。两者下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中。扫描图片和无文本层的 PDF 返回精确来源的 base64、MIME、页码及 SHA-256，Consumer/Audit 使用原生 MCP `ai_services.ocr_document` 识别并保留页码、置信度和警告；不使用本地 OCR 脚本。后台 Consumer/Audit 命令只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，以便角色在既有工具范围内直接调用已配置服务；全局审批策略不变，其他 MCP 工具不增加自动授权。`ai_services` 通过后台服务 MCP 清单按名称和 URL 连接，OAuth 沿用 Codex 原生配置，不增加 token 代理。下载权限/权益失败、输入超过工具响应上限、MCP 失败或 OCR 为空时返回技术阻塞，不能解释为申请人未提供材料。进程退出时清理临时文件。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
+后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取支持的图片、PDF、文本或表格内容；`read_dingtalk_oa_comment_attachment` 按流程实例 ID、评论附件 ID 和文件名，通过 OA Premium 评论附件接口读取精确的评论附件；`read_dingtalk_oa_comment_image` 则读取 OA 记录 `images[]` 返回的钉钉图片 URL，供没有 file ID 的评论截图进入相同 OCR 流程。图片 URL 读取仅允许 HTTPS `static.dingtalk.com/media/`，不跟随重定向、限制响应体大小和读取时长；所有下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中。扫描图片和无文本层的 PDF 返回精确来源的 base64、MIME、页码及 SHA-256，Consumer/Audit 使用原生 MCP `ai_services.ocr_document` 识别并保留页码、置信度和警告；不使用本地 OCR 脚本。后台 Consumer/Audit 命令只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，以便角色在既有工具范围内直接调用已配置服务；全局审批策略不变，其他 MCP 工具不增加自动授权。`ai_services` 通过后台服务 MCP 清单按名称和 URL 连接，OAuth 沿用 Codex 原生配置，不增加 token 代理。下载权限/权益失败、输入超过工具响应上限、MCP 失败或 OCR 为空时返回技术阻塞，不能解释为申请人未提供材料。进程退出时清理临时文件。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
 
 Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由 Consumer 在 `durable_memories` 提出、系统写入，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
@@ -2391,7 +2393,7 @@ OA Attention keeps process instances present in the latest successful pending sc
 
 The scheduled OA Consumer prompt names the available operation and business Skills and directs the Agent to use their rules and the generic OA action table. Business thresholds and case-routing policy live in the selected Skills. Startup migrates only the exact known stale OA prompt; later administrator edits remain untouched.
 
-Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files.
+Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files. Document search exposes its existing page-size limit of 1–20 in the native tool schema and retains the same service-side guard.
 
 
 ### 第五期A：候选与执行存储合并

@@ -23,11 +23,15 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote
+from typing import Annotated
+from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from pydantic_core import to_json
@@ -74,6 +78,7 @@ MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 MAX_PDF_PAGES = 100
 MAX_OCR_AGENT_INPUT_BYTES = 700 * 1024
+MAX_OA_COMMENT_IMAGE_BYTES = 20 * 1024 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -713,6 +718,93 @@ def _download_dingtalk_oa_comment_attachment(
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
             raise AgentReadOnlyViolationError("oa_comment_attachment_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
+
+
+def _download_dingtalk_oa_comment_image(
+    *,
+    process_instance_id: str,
+    image_url: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read one exact DingTalk OA comment image URL into bounded OCR input."""
+    if not process_instance_id.strip():
+        raise AgentReadOnlyViolationError("oa_comment_image_identity_required")
+    try:
+        parsed = urlsplit(image_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise AgentReadOnlyViolationError("oa_comment_image_url_invalid") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "static.dingtalk.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.fragment
+        or not parsed.path.startswith("/media/")
+    ):
+        raise AgentReadOnlyViolationError("oa_comment_image_url_invalid")
+
+    class RejectRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    material_root.mkdir(parents=True, exist_ok=True)
+    request = Request(image_url, headers={"User-Agent": "ceo-agent-service"})
+    try:
+        with build_opener(RejectRedirects()).open(request, timeout=15) as response:
+            if response.status != 200:
+                raise AgentReadOnlyViolationError(
+                    f"oa_comment_image_http_{response.status}"
+                )
+            if urlsplit(response.geturl()).hostname != "static.dingtalk.com":
+                raise AgentReadOnlyViolationError("oa_comment_image_origin_changed")
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            if not content_type.startswith("image/"):
+                raise AgentReadOnlyViolationError("oa_comment_image_content_type_invalid")
+            declared_size = response.headers.get("Content-Length")
+            if declared_size:
+                try:
+                    declared_bytes = int(declared_size)
+                except ValueError as exc:
+                    raise AgentReadOnlyViolationError(
+                        "oa_comment_image_content_length_invalid"
+                    ) from exc
+                if declared_bytes > MAX_OA_COMMENT_IMAGE_BYTES:
+                    raise AgentReadOnlyViolationError("oa_comment_image_file_too_large")
+            contents = response.read(MAX_OA_COMMENT_IMAGE_BYTES + 1)
+    except HTTPError as exc:
+        raise AgentReadOnlyViolationError(
+            f"oa_comment_image_http_{exc.code}"
+        ) from exc
+    except OSError as exc:
+        raise AgentReadOnlyViolationError("oa_comment_image_download_failed") from exc
+    if len(contents) > MAX_OA_COMMENT_IMAGE_BYTES:
+        raise AgentReadOnlyViolationError("oa_comment_image_file_too_large")
+
+    suffix = mimetypes.guess_extension(content_type) or ".img"
+    digest = hashlib.sha256(contents).hexdigest()
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=digest[:12] + "-", suffix=suffix,
+        dir=material_root, delete=False,
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    try:
+        extracted = read_text_file(str(material_path))
+        result = {
+            "process_instance_id": process_instance_id,
+            "image_url": image_url,
+            "file_name": material_path.name,
+            **extracted,
+            "sha256": digest,
+        }
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError("oa_comment_image_response_too_large")
         return result
     except BaseException:
         material_path.unlink()
@@ -1464,6 +1556,43 @@ def _write_bound_report_document(
     return receipt
 
 
+def _weekly_report_jsonml_is_blank(document: object) -> bool:
+    """Recognize only an empty DingTalk paragraph skeleton as a blank report."""
+    if not isinstance(document, list) or len(document) < 3 or document[0] != "root":
+        return False
+
+    def blank_node(node: object) -> bool:
+        if not isinstance(node, list) or len(node) < 2:
+            return False
+        tag, attributes = node[0], node[1]
+        if tag == "p":
+            if not isinstance(attributes, dict):
+                return False
+        elif tag == "span":
+            if (
+                not isinstance(attributes, dict)
+                or attributes.get("data-type") not in {"text", "leaf"}
+            ):
+                return False
+        else:
+            return False
+        for child in node[2:]:
+            if isinstance(child, str):
+                if child.strip():
+                    return False
+            elif isinstance(child, list):
+                if not blank_node(child):
+                    return False
+            else:
+                return False
+        return True
+
+    for child in document[2:]:
+        if not blank_node(child):
+            return False
+    return True
+
+
 def _weekly_report_render_source(
     run, dws, materials: dict[str, object] | None = None,
 ):
@@ -1481,6 +1610,7 @@ def _weekly_report_render_source(
     target_exists = target["exists"]
     source = target if target_exists else documents["previous"]
     source_node_id = source.get("node_id")
+    source_title = source.get("title")
     if not source.get("exists") or not isinstance(source_node_id, str) or not source_node_id:
         raise ValueError("weekly report render source document is unavailable")
 
@@ -1511,7 +1641,45 @@ def _weekly_report_render_source(
             raise ValueError("weekly report target revision is unavailable") from exc
         if revision < 0 or str(revision) != str(raw_revision):
             raise ValueError("weekly report target revision is invalid")
-    return before, target_exists, revision, target["title"]
+        if _weekly_report_jsonml_is_blank(before):
+            previous = documents["previous"]
+            previous_node_id = previous.get("node_id")
+            if (
+                not previous.get("exists")
+                or not isinstance(previous_node_id, str)
+                or not previous_node_id
+            ):
+                raise ValueError(
+                    "blank weekly report target has no previous meeting document"
+                )
+            source_title = previous.get("title")
+            previous_payload = dws.fetch_report_document_full(previous_node_id)
+            previous_content = previous_payload.get("content")
+            if (
+                previous_payload.get("complete") is not True
+                or not isinstance(previous_content, dict)
+                or previous_content.get("success") is not True
+                or previous_content.get("nodeId") != previous_node_id
+            ):
+                raise ValueError(
+                    "previous weekly report render source document is unavailable"
+                )
+            previous_jsonml = previous_content.get("jsonml")
+            try:
+                before = (
+                    json.loads(previous_jsonml)
+                    if isinstance(previous_jsonml, str)
+                    else previous_jsonml
+                )
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "previous weekly report render source JSONML is invalid"
+                ) from exc
+            if not isinstance(before, list) or len(before) < 3 or before[0] != "root":
+                raise ValueError(
+                    "previous weekly report render source must be a complete JSONML document"
+                )
+    return before, target_exists, revision, target["title"], source_title
 
 
 def build_role_server(
@@ -1651,6 +1819,36 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_oa_comment_attachment,
         name="read_dingtalk_oa_comment_attachment",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_comment_image(
+        process_instance_id: str,
+        image_url: str,
+    ) -> dict[str, object]:
+        """Read one image URL returned by read_dingtalk_oa_records for OCR.
+
+        Use this when an OA operation-record comment exposes an image URL
+        instead of a file_id. The fetch is limited to DingTalk's media origin,
+        does not follow redirects, and returns bounded OCR input and a digest.
+        The image remains only for this MCP process lifetime. Read failures are
+        technical evidence gaps, never evidence that material is missing.
+        """
+        nonlocal drive_material_directory
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(
+                prefix="oa-review-"
+            )
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_oa_comment_image(
+            process_instance_id=process_instance_id,
+            image_url=image_url,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_oa_comment_image,
+        name="read_dingtalk_oa_comment_image",
         annotations=read,
     )
 
@@ -1889,7 +2087,9 @@ def build_role_server(
         profiles = DwsClient().search_user_profiles(query)
         return {"users": [item.model_dump(mode="json") for item in profiles]}
 
-    def search_dingtalk_documents(query: str, page_size: int = 10) -> dict[str, object]:
+    def search_dingtalk_documents(
+        query: str, page_size: Annotated[int, Field(ge=1, le=20)] = 10,
+    ) -> dict[str, object]:
         """Find DingTalk documents by title before reading an exact node."""
         from app.dws_client import DwsClient
         if not query.strip() or type(page_size) is not int or not 1 <= page_size <= 20:
@@ -2145,7 +2345,7 @@ def build_role_server(
             renderer = _weekly_skill_module("render_dingtalk_jsonml")
             checker = _weekly_skill_module("jsonml_check")
             dws = DwsClient()
-            before, target_exists, expected_revision, target_title = (
+            before, target_exists, expected_revision, target_title, render_source_title = (
                 _weekly_report_render_source(
                     _run, dws,
                     weekly_materials_snapshot,
@@ -2166,20 +2366,26 @@ def build_role_server(
             native_parse = dws.validate_report_jsonml(target_content)
             if target_exists and expected_revision is None:
                 raise ValueError("weekly report target revision is unavailable")
+            render_id = hashlib.sha256(target_content.encode("utf-8")).hexdigest()
             weekly_render_binding = {
                 "expected_revision": expected_revision,
                 "target_exists": target_exists,
+                "render_id": render_id,
+                "content": target_content,
             }
             return {
-                "target_after": target_after,
                 "draft": draft,
                 "native_parse": native_parse,
                 "target_exists": target_exists,
                 "target_title": target_title,
+                "render_source_title": render_source_title,
                 "expected_revision": expected_revision,
+                "render_id": render_id,
             }
 
-        def consumer_document_write(content: str) -> dict[str, object]:
+        def consumer_document_write(
+            content: str | None = None, render_id: str | None = None,
+        ) -> dict[str, object]:
             """Publish this scheduled CEO report to its service-resolved document."""
             nonlocal weekly_render_binding
             if artifact_generation is None:
@@ -2191,7 +2397,16 @@ def build_role_server(
             if kind == "weekly":
                 if weekly_render_binding is None:
                     raise ValueError("weekly report must be rendered before write")
+                if (
+                    not isinstance(render_id, str)
+                    or render_id != weekly_render_binding["render_id"]
+                    or content is not None
+                ):
+                    raise ValueError("weekly report write must use the current render_id")
+                content = str(weekly_render_binding["content"])
                 expected_revision = weekly_render_binding["expected_revision"]
+            elif not isinstance(content, str) or render_id is not None:
+                raise ValueError("document content is required for this report task")
             receipt = _write_bound_report_document(
                 db_path=db_path, task_id=task_id, content=content,
                 expected_revision=expected_revision,

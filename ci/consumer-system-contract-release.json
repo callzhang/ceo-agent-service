@@ -4,20 +4,20 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
-      "old_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
-      "new_sha256": "6c510f3af2aa955008bcbbacc076c93956d7f6d5ee641c99fff09800159adb0c",
-      "old_managed_sha256": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09"
+      "old_sha256": "7481847ea3f488906f38bafc8549acb363e162daf96a7066889c27015cffe832",
+      "new_sha256": "0668fa0d76e0a97c059a078501cbae62d7a45fecc1fd8808a57494f7267813c8",
+      "old_managed_sha256": "7481847ea3f488906f38bafc8549acb363e162daf96a7066889c27015cffe832"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
       "target": "skills/ceo-weekly-report/scripts/report_contract.py",
-      "old_sha256": "5cdf29f49100c8149683b5fe4e09717f702e59f496cdfb17bb90d44ab8b27886",
+      "old_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a",
       "new_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
       "target": "skills/ceo-weekly-report/scripts/validate_run.py",
-      "old_sha256": "e2fb2e4d20443121c7041bbdc5a7a43694e4dd5ffc46bbc5008abfdf23f9f82e",
+      "old_sha256": "4c81e3de54a191655da8c899e2c50464108828a4be769014743f837b976bd6b5",
       "new_sha256": "4c81e3de54a191655da8c899e2c50464108828a4be769014743f837b976bd6b5"
     },
     {

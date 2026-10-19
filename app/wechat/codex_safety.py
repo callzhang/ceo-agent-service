@@ -55,6 +55,7 @@ AGENT_CLI_READ_TOOLS = (
     "list_dingtalk_pending_oa",
     "read_dingtalk_oa_records",
     "read_dingtalk_oa_comment_attachment",
+    "read_dingtalk_oa_comment_image",
     "read_dingtalk_oa_tasks",
     "read_dingtalk_oa_revert_activities",
     "read_dingtalk_calendar_event",

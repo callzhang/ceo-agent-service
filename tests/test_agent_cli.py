@@ -21,6 +21,50 @@ from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
 
 
+def test_document_search_native_tool_declares_existing_page_size_limit():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "search_dingtalk_documents"
+    )
+    page_size = tool.parameters["properties"]["page_size"]
+    assert page_size["minimum"] == 1
+    assert page_size["maximum"] == 20
+    assert tool.fn_metadata.arg_model.model_validate({"query": "example"}).page_size == 10
+    assert tool.fn_metadata.arg_model.model_validate(
+        {"query": "example", "page_size": 20}
+    ).page_size == 20
+    for invalid in (0, 50, 100):
+        with pytest.raises(ValidationError) as error:
+            tool.fn_metadata.arg_model.model_validate(
+                {"query": "example", "page_size": invalid}
+            )
+        assert ("page_size",) in [entry["loc"] for entry in error.value.errors()]
+
+
+def test_document_search_native_call_preserves_valid_queries_and_rejects_oversize_before_provider(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeDws:
+        def search_documents(self, query, page_size):
+            calls.append((query, page_size))
+            return []
+
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "search_dingtalk_documents"
+    )
+    assert asyncio.run(tool.run({"query": "example"})) == {"documents": []}
+    assert asyncio.run(tool.run({"query": "example", "page_size": 20})) == {
+        "documents": []
+    }
+    for invalid in (50, 100):
+        with pytest.raises(ToolError) as error:
+            asyncio.run(tool.run({"query": "example", "page_size": invalid}))
+        assert isinstance(error.value.__cause__, ValidationError)
+    assert calls == [("example", 10), ("example", 20)]
+
+
 def test_weekly_report_tool_declares_metric_array_and_rejects_object_mapping():
     tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
     arguments = {"manifest": {}, "report": {"company_metrics": {"orders": {"current": "无数据"}}}, "previous_issues": []}
@@ -74,7 +118,7 @@ def test_weekly_report_render_and_write_use_service_bound_snapshot_schema():
     render = server._tool_manager.get_tool("render_weekly_report")
     write = server._tool_manager.get_tool("consumer_document_write")
     assert set(render.fn_metadata.arg_model.model_fields) == {"report"}
-    assert set(write.fn_metadata.arg_model.model_fields) == {"content"}
+    assert set(write.fn_metadata.arg_model.model_fields) == {"content", "render_id"}
 
 
 def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
@@ -93,7 +137,7 @@ def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
 
     write = server._tool_manager.get_tool("consumer_document_write").fn
     with pytest.raises(ValueError, match="must be rendered before write"):
-        write(content='["root", {}]')
+        write(render_id="missing")
     assert writes == []
 
 
@@ -144,7 +188,7 @@ def test_weekly_report_render_source_uses_complete_bound_document(
             }
 
     dws = Dws()
-    before, actual_exists, revision, title = agent_cli._weekly_report_render_source(
+    before, actual_exists, revision, title, source_title = agent_cli._weekly_report_render_source(
         type("Run", (), {"scheduled_for": object()})(), dws
     )
     assert dws.requested == [expected_source]
@@ -152,14 +196,20 @@ def test_weekly_report_render_source_uses_complete_bound_document(
     assert actual_exists is target_exists
     assert revision == expected_revision
     assert title == "target meeting"
+    assert source_title == ("target meeting" if target_exists else "previous meeting")
 
 
 @pytest.mark.parametrize(
-    ("target_exists", "expected_source", "expected_revision"),
-    [(True, "target-node", 42), (False, "previous-node", None)],
+    ("target_exists", "target_blank", "expected_source", "expected_revision", "render_source_title"),
+    [
+        (True, False, "target-node", 42, "target meeting"),
+        (True, True, "previous-node", 42, "previous meeting"),
+        (False, False, "previous-node", None, "previous meeting"),
+    ],
 )
 def test_weekly_report_render_and_write_bind_source_revision_and_content(
-    monkeypatch, tmp_path, target_exists, expected_source, expected_revision,
+    monkeypatch, tmp_path, target_exists, target_blank, expected_source,
+    expected_revision, render_source_title,
 ):
     import types
     import app.dws_client as dws_module
@@ -183,17 +233,24 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
     monkeypatch.setattr(materials_module, "weekly_window", lambda _run_at: "window")
 
     class Dws:
-        requested = None
+        def __init__(self):
+            self.requested = []
 
         def fetch_report_document_full(self, node_id):
-            self.requested = node_id
+            self.requested.append(node_id)
+            jsonml = (
+                ["root", {}, ["p", {}, ["span", {"data-type": "text"},
+                                           ["span", {"data-type": "leaf"}, ""]]]]
+                if target_blank and node_id == "target-node"
+                else ["root", {}, ["h1", {}, "Heading"]]
+            )
             return {
                 "complete": True,
                 "content": {
                     "success": True,
                     "nodeId": node_id,
                     "revision": "42",
-                    "jsonml": json.dumps(["root", {}, ["h1", {}, "Heading"]]),
+                    "jsonml": json.dumps(jsonml),
                 },
             }
 
@@ -230,16 +287,24 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
         "consumer", task_id=1, db_path=tmp_path / "db.sqlite", execution_generation="generation"
     )
     rendered = server._tool_manager.get_tool("render_weekly_report").fn(report={})
-    assert dws.requested == expected_source
+    assert dws.requested == (
+        ["target-node", "previous-node"] if target_blank else [expected_source]
+    )
     assert rendered["target_exists"] is target_exists
     assert rendered["target_title"] == "target meeting"
+    assert rendered["render_source_title"] == render_source_title
     assert rendered["expected_revision"] == expected_revision
-    content = json.dumps(["root", {}, ["h1", {}, "Agent final"]], ensure_ascii=False)
+    assert "target_after" not in rendered
+    assert len(rendered["render_id"]) == 64
+    rendered_content = json.dumps(rendered_jsonml, ensure_ascii=False)
     write = server._tool_manager.get_tool("consumer_document_write").fn
-    write(content=content)
+    with pytest.raises(ValueError, match="must use the current render_id"):
+        write(render_id="stale-render")
+    assert writes == []
+    write(render_id=rendered["render_id"])
     assert writes[0]["expected_revision"] == expected_revision
     assert writes[0]["expected_target_exists"] is target_exists
-    assert writes[0]["content"] == content
+    assert writes[0]["content"] == rendered_content
 
 
 @pytest.mark.parametrize(
@@ -1286,3 +1351,53 @@ def test_oa_revert_task_passes_write_review():
     assert descriptor is not None
     assert descriptor.command_path == "oa approval revert-task"
     assert agent_cli._is_registered_native_write(descriptor)
+
+
+def test_weekly_report_blank_existing_target_uses_previous_document_as_render_base():
+    blank = [
+        "root", {},
+        ["p", {}, ["span", {"data-type": "text"},
+                    ["span", {"data-type": "leaf"}, ""]]],
+    ]
+    previous = ["root", {}, ["h1", {}, "重点问题及待办跟踪"]]
+    documents = {
+        "target": {
+            "title": "2026年10月26日管理层周会",
+            "exists": True,
+            "node_id": "blank-target-node",
+        },
+        "previous": {
+            "title": "2026年10月18日管理层周会",
+            "exists": True,
+            "node_id": "previous-meeting-node",
+        },
+    }
+
+    class Dws:
+        def __init__(self):
+            self.requested = []
+
+        def fetch_report_document_full(self, node_id):
+            self.requested.append(node_id)
+            body = blank if node_id == "blank-target-node" else previous
+            return {
+                "complete": True,
+                "content": {
+                    "success": True,
+                    "nodeId": node_id,
+                    "revision": "0" if node_id == "blank-target-node" else "12",
+                    "jsonml": json.dumps(body, ensure_ascii=False),
+                },
+            }
+
+    dws = Dws()
+    before, target_exists, revision, title, source_title = agent_cli._weekly_report_render_source(
+        object(), dws, {"documents": documents},
+    )
+
+    assert dws.requested == ["blank-target-node", "previous-meeting-node"]
+    assert before == previous
+    assert target_exists is True
+    assert revision == 0
+    assert title == documents["target"]["title"]
+    assert source_title == documents["previous"]["title"]

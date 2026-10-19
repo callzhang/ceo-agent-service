@@ -67,7 +67,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "7481847ea3f488906f38bafc8549acb363e162daf96a7066889c27015cffe832",
     }
 
 

@@ -818,4 +818,6 @@ def test_scheduled_audit_context_shows_empty_receipt_boundary():
 
     assert "Service-recorded scheduled work receipts" in rendered
     assert "[]" in rendered
-    assert "No matching Consumer document readback was captured" in rendered
+    assert "completed Consumer runs in this task and execution generation" in rendered
+    assert "exact completed Consumer parent run" not in rendered
+    assert "an empty list means none was captured" in rendered

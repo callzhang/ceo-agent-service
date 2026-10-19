@@ -378,9 +378,21 @@ class AgentOrchestrator:
                 else:
                     consumer_parent = self._validate_audit_parent(task, state)
                     if task.channel == "scheduled":
-                        consumer_parent = self.store.get_agent_run(
-                            consumer_parent.id, load_events=True
-                        ) or consumer_parent
+                        generation_runs = self.store.list_agent_runs_for_task_generation(
+                            task.id, task.execution_generation
+                        )
+                        scheduled_work_receipts = []
+                        for consumer_run in generation_runs:
+                            if consumer_run.role is not AgentRole.CONSUMER:
+                                continue
+                            event_run = self.store.get_agent_run(
+                                consumer_run.id, load_events=True
+                            ) or consumer_run
+                            scheduled_work_receipts.extend(
+                                _scheduled_consumer_work_receipts(task, event_run)
+                            )
+                    else:
+                        scheduled_work_receipts = ()
                     previous_review = (
                         self.store.get_candidate_review_for_audit_run(consumer_parent.parent_agent_run_id)
                         if consumer_parent.parent_agent_run_id else None
@@ -398,7 +410,7 @@ class AgentOrchestrator:
                             candidate=state.candidate,
                             candidate_digest=state.candidate_digest,
                             audit_rules="",
-                            scheduled_work_receipts=_scheduled_consumer_work_receipts(task, consumer_parent),
+                            scheduled_work_receipts=tuple(scheduled_work_receipts),
                             previous_revision_review=(
                                 previous_result if previous_result is not None
                                 and previous_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT)
