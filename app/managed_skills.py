@@ -135,6 +135,7 @@ REPOSITORY_MANAGED_SKILL_NAMES = (
     MINUTES_SYNC_SKILL_NAME,
     WEEKLY_REPORT_SKILL_NAME,
     DAILY_REPORT_SKILL_NAME,
+    "ceo-weekly-okr-report",
 )
 
 # Skills the service depends on that live only in the runtime tree: they have no
@@ -190,6 +191,7 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
         (MINUTES_SYNC_SKILL_NAME, load_runtime_skill(MINUTES_SYNC_SKILL_NAME)),
         (WEEKLY_REPORT_SKILL_NAME, load_runtime_skill(WEEKLY_REPORT_SKILL_NAME)),
         (DAILY_REPORT_SKILL_NAME, load_runtime_skill(DAILY_REPORT_SKILL_NAME)),
+        ("ceo-weekly-okr-report", load_runtime_skill("ceo-weekly-okr-report")),
     )
 
 
