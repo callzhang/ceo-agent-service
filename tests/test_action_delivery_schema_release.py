@@ -1,4 +1,7 @@
-"""Paired Store17/18 publication against frozen sent delivery sources."""
+"""Paired Store17/18 publication against frozen sent delivery sources.
+
+The imported ``target_db`` provides historical TEXT DML only for this boundary.
+"""
 # ruff: noqa: F811
 
 from contextlib import closing

@@ -18586,7 +18586,7 @@
     },
     "scope": "same12000actualstoredrows,samecompleteActionsCHECK/gencolDDL,noindicesortriggers,transactionrolledback; notfullmigrationtiming"
   },
-  "latest_evidence_status": "Final bounded history audit completed with unproved inputs preserved; owned copyVACUUM457007104B, 956 owner features/labels exact (152 reference-backed),100.618s. New upstream increment merged, focused181+corrected4pass. Broader Python regression still running with new failures; frontend dependencies installed and tests/build running. No push/deploy; overall release not accepted.",
+  "latest_evidence_status": "Owned-copy source audit, capacity and inverse evidence unchanged. Historical delivery fixture group90pass and bootstrap2pass; new broader Python regression running. Frontend build passed; Email search test review still open. No push/deploy; overall release not accepted.",
   "raw_copy_batch_real_pair": {
     "scope": "actualexistingpairedpublicationwithsource116,currentTasks_kind+vectors;Actionsstillobject;nativevariablelimitrawcopybatching",
     "candidate": "/tmp/redesign-native-batch-pair-ceykva9s/target.sqlite3",
@@ -33855,12 +33855,34 @@
     "production_checkout_readback": "2246d5184de62a4f629967fc0effbdb2b6504d10"
   },
   "final_regression_after_fixture_closure": {
-    "status": "running_failures_observed",
+    "status": "terminal_failed",
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-after-fixtures.log",
     "session": 35413,
     "pid": 54829,
     "temp_root": "/private/tmp/final-redesign-regression.vEWKT0",
     "command": "nice -n10 python -m pytest -q -n6 --maxschedchunk=2 --maxfail=6 -k excluding_two_already_passed_large_history_cases",
-    "production_writes": false
+    "production_writes": false,
+    "failed": 28,
+    "passed": 60,
+    "skipped": 87,
+    "seconds": 303.41,
+    "exit_code": 2
+  },
+  "historical_delivery_fixture_closure": {
+    "scope": "Test-only historical TEXT Actions DML; current runtime writers unchanged. Four migration boundary files; not final compact writer acceptance.",
+    "passed": 90,
+    "seconds": 12.09,
+    "root_review": "Compared generic insert/update semantics and scoped monkeypatch against current action_storage; no assertions removed.",
+    "bootstrap": {
+      "passed": 2,
+      "seconds": 8.28,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-delivery-bootstrap.log"
+    }
+  },
+  "final_regression_after_delivery_fixture_closure": {
+    "status": "running",
+    "session": 32167,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-after-delivery-fixtures.log",
+    "scope": "Parallel broader Python regression, excluding two previously passed unchanged large backfill cases; verbose node IDs; maxfail6."
   }
 }
