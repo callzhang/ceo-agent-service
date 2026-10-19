@@ -170,6 +170,7 @@ def test_expired_cache_is_refreshed_headlessly(monkeypatch):
     calls = []
 
     monkeypatch.setattr(module.browser, "_read_cache", lambda: None)
+    monkeypatch.setattr(module, "_validate_captured_headers", lambda headers: headers)
     monkeypatch.setattr(
         module,
         "_capture_stable_headless_headers",
@@ -198,6 +199,7 @@ def test_valid_cache_skips_browser_refresh(monkeypatch):
     cached = {"Authorization": "Bearer cached"}
 
     monkeypatch.setattr(module.browser, "_read_cache", lambda: cached)
+    monkeypatch.setattr(module, "_validate_captured_headers", lambda headers: headers)
     monkeypatch.setattr(
         module,
         "_capture_stable_headless_headers",
@@ -207,6 +209,36 @@ def test_valid_cache_skips_browser_refresh(monkeypatch):
     assert module._get_headless_headers() == cached
 
 
+def test_expired_cached_headers_are_refreshed_through_existing_chrome_login(
+    monkeypatch,
+):
+    module = load_module()
+    expired = {"Authorization": "expired"}
+    refreshed = {"Authorization": "refreshed"}
+    cache_reads = iter([expired, expired])
+    browser_calls = []
+    writes = []
+
+    monkeypatch.setattr(module.browser, "_read_cache", lambda: next(cache_reads))
+
+    def validate(headers):
+        if headers == expired:
+            raise RuntimeError("expired cache")
+        return headers
+
+    monkeypatch.setattr(module, "_validate_captured_headers", validate)
+    monkeypatch.setattr(
+        module,
+        "_capture_stable_headless_headers",
+        lambda: browser_calls.append("started") or refreshed,
+    )
+    monkeypatch.setattr(module.browser, "_write_cache", writes.append)
+
+    assert module._get_headless_headers() == refreshed
+    assert browser_calls == ["started"]
+    assert writes == [refreshed]
+
+
 def test_waiting_caller_rechecks_cache_after_acquiring_refresh_lock(monkeypatch):
     module = load_module()
     refreshed = {"Authorization": "Bearer refreshed-by-first-caller"}
@@ -214,6 +246,7 @@ def test_waiting_caller_rechecks_cache_after_acquiring_refresh_lock(monkeypatch)
     lock_entries = []
 
     monkeypatch.setattr(module.browser, "_read_cache", lambda: next(cache_reads))
+    monkeypatch.setattr(module, "_validate_captured_headers", lambda headers: headers)
 
     @contextmanager
     def refresh_lock():
