@@ -1,61 +1,71 @@
 # Database redesign: final acceptance
 
-本文件是最终结构、容量、恢复和发布的唯一主验收入口。详细实验、失败记录和必要证据路径统一保留在 `database-redesign-final-capacity-evidence.json`，不以早期中间版本结果代替当前验收。
+唯一主验收入口。对应 [设计 spec](superpowers/specs/2026-10-11-database-redesign-design.md)；原始结果及边界保留在 [证据记录](database-redesign-final-capacity-evidence.json)。旧诊断、局部通过、副本通过和生产生效分别记录。
 
 ## 当前结论
 
-候选已实现 **10 张核心表＋1 张已有迁移账本**；同一不可变生产输入、两侧均 VACUUM：**490,651,648 → 473,292,800 B**，净减少 **17,358,848 B（16.5546875 MiB，3.538%）**。最新历史来源补验后的演练副本为 **457,007,104 B**；它包含额外任务记录及原文退休，不能作为纯结构收益。
+**候选已实现10张核心表＋1张已有账本；未推送、未部署、整体未完成。** 最新功能提交 `8faae621c` 修正仅被历史切换记录引用的模型权重保留；`a2589d733` 解耦全文搜索批次与页面大小；main 的原生 MCP 审查回执修正已通过 `b859e78ce` 合入。当前 Store 整文件450项、来源读取／HTTP四文件85项通过；其余既有回归证据见下表，不声称整仓测试全绿。
 
-**未推送、未部署、整体尚未验收通过。** 最新只读核验（2026-10-19 07:52 UTC）的生产代码为 `508287cf73243f289bbdfcf167d37ad484831d50`，工作区干净。候选已通过merge9725e4199保留并合入其在78e8c4474之后的9条main提交；后续main增量也已通过b859e78ce合入（见末尾最新证据）；CLI／context／OA／周报／发布契约六文件180项通过（81.17秒），定时Consumer整文件38项通过（94.87秒），包含新Audit跨修订回执；History整文件33项（66.20秒）、Signal／业务语义整文件444项（176.96秒）通过；更广差项映射和正文搜索仍开放。迁移后新增数据逆迁已补验：最新生产 `78e8c4474` 冷启动读回原生任务、业务结果和回执保持一致（1739.245秒）。
+2026-10-19 09:21 UTC，在真实生产路径只读执行同一发布 coordinator，6.794秒通过：源 Store `2026-10-13.5`／Email51，目标 Store `2026-10-14.1`／Email52，231来源版本全部准备成功。生产 checkout `aa18a59858a477c3e446560fa956fbe13e26136a` 干净。未调用 publish 或生产 Store 构造器；该结果不等于迁移已上线。
 
-## 最终目标表及实际字段去向
+当前主要差项：搜索产品方式／性能、历史回归证据的准确映射及Task Agent上层当前用例收尾、最终候选发布及生产读回。全文行为变化尚未确认，不能用缩小功能范围或持久正文缓存关闭性能差项。
 
-| 表 | 实际职责 | 当前边界 |
+## 需求与证据
+
+| 目标 | 当前证据 | 边界／剩余事项 |
 | --- | --- | --- |
-| tasks | 20 类已有任务、队列、当前及 claimed 输入版本 | 保留任务身份、必要输入和执行状态；不重复存 trajectory |
-| runs | 执行、provider attempt、调度 occurrence 与恢复状态 | 原生 session／记录范围作为轨迹入口 |
-| actions | 61 类已有方案、审查、修订、事实、动作、尝试、步骤及执行回执 | 原公开 ID、类型、关系、唯一性保留；使用紧凑 JSONB 槽位 |
-| business | Project、Task、Attention 等业务对象 | 保留已采用事实；来源原文退休不删除业务对象 |
-| emails | canonical 邮件与当前分类 | message_source_reference_json 内联单次原文的准确定位／完整 hash／字节数；原文退休与模型输入生命周期仍需整体验收 |
-| provenance | 真实共享来源的身份、版本、定位及校验信息 | 无正文；单次来源直接内联 Signal，共享时使用真实 FK |
-| configs | 已有配置与共享版本 | 不新建兼容中间表 |
-| provider_state | provider 当前邮件事实、同步身份与水位 | 逐封邮件事实与账号配置不同，不能整体删除 |
-| schedules | 定时配置与安排 | 关联已有 runs occurrence |
-| state | 已有高频状态、水位和工具回执 | 延期回执存既有 service_state 命名空间，不增表 |
-| email_schema_migrations | 已有 Email schema 账本 | 非核心业务表，保留现有迁移机制 |
+| 原生 trajectory 是过程正文唯一来源 | session／准确记录范围／内容路径／完整hash定位；DB过程事件、审查调用及envelope副本退休 | 原生不可用明确显示不可用；不回写原文到trajectory |
+| 约10张核心表，字段来自实际业务 | 下表、字段清单及当前有限声明；正常空库直接最终结构，无旧表／view写入兼容层 | 字段映射不能以物理表数代替 |
+| 同数据、同VACUUM条件缩小结构 | 490,651,648→473,292,800 B，净减17,358,848 B／3.538% | 固定229来源／956 Signal／9,402邮件；不混入后续退休或新任务收益 |
+| 新任务完整执行及恢复 | 五分支13次真实CLI／4次替身发送；合并后另1原生任务 | 0真实发送；不是每个任务都单独整库逆迁 |
+| 迁后新增数据可回退 | 新Task／Run／结果／回执经inverse→旧代码冷开→真实child再正迁→新代码冷开一致 | 不用旧备份覆盖当前业务事实；已知源FK finding保持，无新增 |
+| 发布闭环 | 新增main已合入；最新真实生产只读预检通过 | 搜索方式及性能未关闭；未推送／deploy／生产最终读回 |
 
-最终目标为 **10 张核心表 + 1 张已有迁移账本**。正常空库直接创建最终声明，不再先建 116 张旧表。完整物理控制和完整配对副本均实际达到该表清单；仅物理表数达标不足以证明全部生命周期完成。
+## 最终表、字段与退休清单
 
-原 1,611 字段方向清单已按实际最终声明校正 53 项：49 个 Email 公共字段映射到真实 canonical 列，明确正文／模型输入的条件退休引用；原正文容器 id／created_at 退休，来源 identity 与 Signal 的旧文档 FK 改为实际内联／共享 provenance 关系。共享 FK 的准确生成列为 actions.ba_task_signals_provenance_id，已对当前副本 table_xinfo／FK 核验；不新增字段。其余 typed payload 的物理槽位以 storage_payload／各域有限声明为准，CSV 的 payload.<原字段> 是业务字段含义，不是 JSON 对象存储格式。
+| 表 | 实际职责及必须保留 |
+| --- | --- |
+| tasks | 20类已有任务、队列、当前／claimed输入版本；身份、状态、原公开与物理ID关系 |
+| runs | 执行、provider attempt、调度occurrence、恢复及原生session／记录范围；共11种已有类型 |
+| actions | 61类已有方案、审查、修订、动作、尝试、步骤、事实与回执；关系、唯一性、公开ID及原事务语义 |
+| business | Project、Task、Attention等业务对象及已采用事实 |
+| emails | canonical邮件／当前分类；账号及稳定身份、必要状态、当前计划、业务结果与来源引用 |
+| provenance | 真实共享来源身份、版本、locator、hash／字节数；无正文；单次来源直接内联 |
+| configs | 既有账号／分类／Skill／路由配置与必要共享版本metadata；无训练全集 |
+| provider_state | provider当前逐封邮件事实、同步身份／水位；不是大体积账号配置 |
+| schedules | 定时配置、安排及既有run关联 |
+| state | 既有状态、水位、lease和工具回执；延期回执沿用service_state命名空间 |
+| email_schema_migrations | 既有迁移账本，非核心业务表 |
 
-| 现有字段／结构 | 最终去向或删除 | 必须保持 |
-| --- | --- | --- |
-| business_source_documents.body | 退休正文容器；不搬进 Actions、provenance、缓存或 trajectory | 精确来源版本、原生／上游定位、hash、字节数 |
-| business_source_documents.identity_key | 单次来源内联 Signal；共享来源 provenance.identity_key | 版本按完整身份和原文字节区分，不只按链接合并 |
-| business_source_documents.id、created_at | 退休容器别名和时间；不新增长期别名字段 | Signal 自己的公开 ID 与创建时间保留 |
-| Signal.source_document_id | 删除；改为直接来源定位或共享 provenance_id FK | 证据角色、任务／项目关系和 Signal 身份 |
-| 原正文唯一索引及不可变触发器 | 随正文表删除；保留最终来源唯一性及必要 FK 约束 | 未放开任意来源或重复身份 |
-| context_json、evidence 引语、结果正文 | 以内容语义区分原文复制与业务事实 | 不整体清空 context，不以事实名义复制原文 |
-| work_projects.memory_context_json | 已批准退休，当前运行无读写 | 其他业务字段保留 |
-| reply_task_deferral_receipts | 原 19 字段映射到 State 的 service_state：key 为表名前缀加原 id，value 保存其余 18 字段 | request_id 幂等、单任务 paused 条件、原公开整数 ID 和全部回执值；现有 BEGIN IMMEDIATE 内完成检查和写入 |
+Tasks／Actions仅存稳定整数 `_kind` 和按真实字段声明排序的JSONB值向量；`record_type` 为只读生成名称。原SQL类型、负零／BLOB、ROWID／水位、公开ID、FK、CAS、claim／lease和约束顺序保持；历史TEXT声明仅用于显式来源迁移／inverse，不是运行时fallback。此前容量增长来自对象JSON的重复字段名及类型；此表示修订已包含完整索引成本验证。
 
-延期工具运行时只读写最终 State。显式迁移接受准确旧 DDL 并退休旧表；当前数据逆迁会恢复原工具表及迁移后新回执。该历史 DDL 仅供明确迁移和恢复，不是运行时回退。既有资格、授权、备份、暂停和恢复语义没有改变。已知外部依赖在复制前拒绝。
+字段方向清单共1,611项，已按最终声明校正53项（49个Email公共字段及来源容器／引用）。清单位于 [总字段映射](superpowers/specs/2026-10-11-database-redesign-field-map.csv)及各阶段addendum；准确物理槽位以当前有限声明为准，CSV `payload.<原字段>` 不是对象JSON格式。共享来源FK实际为 `actions.ba_task_signals_provenance_id`。
 
-## 来源核验与原文退休
+| 退休结构／字段 | 最终处理 |
+| --- | --- |
+| business_source_documents正文及容器id／created_at | 删除容器；Signal身份保留；单次locator内联、真实共享版本用provenance FK |
+| Signal.source_document_id及旧正文索引／触发器 | 来源关系改为内联／共享provenance，保留准确来源版本与原唯一性／FK |
+| Agent过程事件、审查调用正文、final_result／envelope、派生搜索正文 | 只读原生范围；采用的业务结果、执行状态和回执继续保留 |
+| 独立codex_session_search_index／FTS／shadow | metadata归runs；既有检索从原生文件构造有界内存corpus，原评分不变 |
+| work_projects.memory_context_json | 停止复制query／memories；goal／facts／current_state等业务事实保留 |
+| 终态任务输入重复正文、meeting／OKR来源快照 | 准确来源验证后退休，保留身份／hash／bytes／版本；来源缺口不伪造 |
+| reply_task_deferral_receipts | 19字段映射既有State：公开id进入key、其余18字段进入value；request_id幂等、paused条件及原事务不变 |
 
-初始220个业务来源版本：23原生 trajectory、172听记、4周报、1 Console事实、20份已授权原文不可用。新增9版本沿实际 work_summary_input → task_agent_run → 已完成 runtime attempt 找到并准确读回；合计229来源版本、956 Signal绑定。定位清单 `database-redesign-final-trajectory-locators.json` 只含定位和校验信息。限定20版本、489,023字节的退休依据为 `superpowers/specs/2026-10-18-provenance-original-retirement-decision.json`，不扩大至其他未查实内容。
+## 原文、训练与模型保留
 
-运行时按原生session／文件／记录／内容路径与完整hash定位；原生确实不可用后才使用真实上游。单次来源内联，真实共享版本使用provenance FK；不保存正文DAO、trajectory副本、长期正文缓存或FTS副本。逆迁只从已有verified backup或准确原生／上游来源恢复字节，不覆盖当前业务事实。
+冻结来源对照：初始220版本（23 native、172听记、4周报、1 Console事实、20授权不可用原文），新增9版本沿summary input→task run→completed runtime attempt准确找到；229版本／956 Signal。定位清单只含坐标及校验。最新生产预检另有2版本，共231；不将该增量混入固定容量对照。
 
-Email正文和模型输入分别证明，写入既有 `message_source_reference_json`；仅已完成且无活跃处理的输入可退休，按身份、完整原字节、业务状态做CAS。正常完成／恢复入口已接入，保留状态、分类、训练纳入标记、业务结果与回执。模型输入有其原有规范化语义，不能用可读正文直接代替；来源完整hash／字节数必须相等。
+限定20版本、489,023 UTF-8字节按 [已确认退休决定](superpowers/specs/2026-10-18-provenance-original-retirement-decision.json)移除，只保留定位／身份／hash／字节、业务事实和回执，并显示原文不可用。不得扩展到其他未核实原文，也不另存归档副本。
 
-历史最终补验：3,387候选、3,008.415秒，新增退休3,107正文／2,457模型输入。200错误为112 timeout、84 Message-ID缺失或歧义、4 UID不可用；52次成功读取仍不能证明任一原输入。未证明原文均保留，timeout不等于原文确实不存在。合并前次与已有pilot后，共7,424正文引用／5,501模型引用；仍保留1,853份正文（7,053,406 B）、3,902份模型输入（8,480,437 B）。不宣称全部原文移出。
+Email正文与model input分别按实际序列化、完整hash／字节证明；单次引用内联既有 `message_source_reference_json`。仅完成且无分类／回复／邮箱动作／dispatch活跃依赖时CAS退休；完成／恢复入口已接入。未知来源保留原文，模型输入不能用可读正文替代。
 
-来源补验逐字段证明其他物理数据／schema／水位不变，quick_check=ok，FK仅原基线。历史引用发布工具 `scripts/retire_verified_email_inputs.py` 已有9项测试及实际副本预览／应用证明；目标仅导入仍匹配当前事实的定位，不复制副本业务行。**尚未应用到生产。**
+历史补验3,387候选、3,008.415秒，新增退休3,107正文／2,457模型输入；200错误（112 timeout、84 Message-ID缺失／歧义、4 UID不可用）及52次不能证明输入的读取未冒充成功。合计7,424正文引用／5,501模型引用；仍保留1,853正文7,053,406 B、3,902模型输入8,480,437 B。`scripts/retire_verified_email_inputs.py` 有9项及实际副本preview／apply证明；只发布仍匹配的来源引用，不复制副本业务行；尚未应用生产。
 
-## 同口径容量
+956 owner案例身份唯一，混合输入冷重建特征／标签与原副本逐项一致（152引用＋804保留，100.618秒）；正常训练使用既有最新selected文件或准确来源，标签目录不无意义读取正文。外部selected／folder各最新一份的read_snapshot、schema及digest已核对，无活跃pin。2026-10-18外部产物只读核验有三份权重：当前54,726,153 B、最新candidate54,710,702 B、历史模型8,905,681 B。2026-10-19重新核对，实际active.json／previous.json均不存在，online当前为0930模型，0919模型仅因历史切换记录被清理策略保留；此前“fallback manifest引用”的描述不成立。已移除history-only权重保护，切换事实／回执原字节保持，实际manifest依赖及训练活动保护不变。经典／embedding两种历史制品回归先失败，修复后registry整文件43 pass／1.60秒。生产旧权重尚未删除；发布后的实际清理及读回仍待完成。
 
-固定输入为116张普通源表、229来源版本、956 Signal、9,402邮件；无合成新增行，两侧均VACUUM。
+## 同口径容量与剩余占用
+
+固定输入116普通表、229来源版本、956 Signal、9,402邮件，无合成新增行；两端均VACUUM。
 
 | 字节 | 原116表 | 最终结构 |
 | --- | ---: | ---: |
@@ -65,9 +75,9 @@ Email正文和模型输入分别证明，写入既有 `message_source_reference_
 | 空闲页 | 0 | 0 |
 | 总量 | **490651648** | **473292800** |
 
-结构净减少17,358,848 B；索引增加14,315,520 B已计入。此前合表增大的主因是重复JSON对象字段名和类型；Tasks／Actions采用固定字段顺序JSONB值向量、单份稳定整数 `_kind`，`record_type` 为只读生成名称。顺序和类型码属于显式schema声明，不新增业务字段、任意键或新旧格式回退。
+净减17,358,848 B／16.5546875 MiB／3.538%；索引增加14,315,520 B已计入。不得以删除更多历史解释纯结构收益。
 
-历史输入退休后的最新演练副本（9,403邮件，含新增原生CLI任务）457,007,104 B，schema2,146,304 B、freelist0：
+后续完成额外来源退休并含新CLI任务的演练副本：9,403邮件，457,007,104 B，schema2,146,304 B、free0；这是混合阶段结果，不是生产实测或同口径结构收益。
 
 | 表 | 表页B | 索引B | 行数 |
 | --- | ---: | ---: | ---: |
@@ -83,153 +93,57 @@ Email正文和模型输入分别证明，写入既有 `message_source_reference_
 | state | 6561792 | 2396160 | 23596 |
 | tasks | 42471424 | 9424896 | 36251 |
 
-另有SQLite内部sqlite_sequence一页4096 B／51行。此表不是生产容量或纯结构对照。
+另sqlite_sequence一页4096 B／51行。2026-10-19 07:52生产只读旧结构测量512,962,560 B／WAL4,152,992 B，不代表此刻大小，也不替代固定输入对照。
 
-## 业务链和当前数据恢复
+## 完整业务链和当前事实inverse
 
-完整生产副本已通过实际coordinator／child正迁、正常Store／EmailStore冷启动；迁移后新增external_action_result、effect_intent、execution_receipt并按当前事实逆迁、真实child再正迁。保留原公开身份、SQLite类型、旧回执及新增字段，不回退成旧备份。quick_check=ok；原库已有runs190042→tasks/fkid1保留，无新FK finding。
+完整生产副本实际coordinator／child正迁、Store／EmailStore冷启动通过。迁后新增external_action_result／effect_intent／execution_receipt及Task／Run，经当前数据inverse、旧代码冷开、真实child再正迁、新代码冷开一致；645.788秒。后来补验旧代码78e8c4474冷启动读回1739.245秒；review_candidate／audit_review／execution／result／sent_reply／reply_attempt全部公开字段、SQLite类型和值匹配。旧代码更新不涉及存储声明的部分不重复整库往返；最终发布仍需按当时HEAD核对。
 
-| 真实Codex CLI分支 | 原生调用 | 替身发送 | 结果 |
+| 真实CLI分支 | 调用 | 替身发送 | 证明 |
 | --- | ---: | ---: | --- |
-| approve | 2 | 1 | 执行、审查、业务Attempt／结果／回执、冷重开 |
-| revision | 4 | 1 | 审查退回、修订、再次审查与结算 |
+| approve | 2 | 1 | 执行→审查→Attempt／业务结果／回执→冷重开 |
+| revision | 4 | 1 | 审查退回→修订→再次审查→结算 |
 | no_action | 2 | 0 | 完整无发送终态 |
 | technical_retry | 3 | 1 | CLI启动失败后恢复 |
 | settlement_recovery | 2 | 1 | 结算中断恢复，不重复模型或发送 |
 
-五分支共13次真实CLI、4次内存替身发送、0真实发送；与整库往返为相同物理声明上的独立副本，不声称五任务各做整库逆迁。合并后另有真实任务5715333616543262：done／executed，执行与审查、业务Attempt／结果／发送回执各一份，替身dispatch／readback已核验，旧11表事实不变，冷重开不重执行。
+合计13次真实CLI／4次内存替身／0真实发送，与整库往返为相同物理声明上的独立副本。合并后任务5715333616543262另经真实执行／审查：done／executed，业务Attempt／结果／回执各一份，dispatch／readback已核验；冷重开不重执行。quick_check=ok，源已有runs190042→tasks/fkid1保持，无新FK finding。既有外部训练文件按原完整hash供旧代码读取，不放宽恢复规则、不重复计原文退休。
 
-新增独立正文／模型输入来源证明后的最新完整往返：9,403邮件及新任务／结果／回执，经inverse、生产旧代码2246d5184冷启动、真实child再正迁、新代码冷启动，**645.788秒通过**。初轮漏带两份既有外部训练文件导致child退出，按原read_snapshot与完整hash补齐后复验；没有放宽运行逻辑。最初已恢复46正文／38模型输入，后续重复inverse不得再次计数。延期工具新回执、幂等、暂停／恢复及当前事实逆迁另有聚焦证据。
+## 当前验证与准确边界
 
-## 来源消费者与性能边界
-
-正常训练使用既有最新selected文件或准确来源；标签目录、未选训练来源、已分类身份查询不再无意义地读取原文。保留当前可运行模型、必要前版／候选及每类最新训练输入；外部文件read_snapshot校验已完成，无多余权重或活跃pin。
-
-owner案例全部956个身份唯一，冷重建特征和标签与原始副本逐项相同。当前152引用输入＋804保留输入的混合读取耗时100.618秒；不是全退休性能。相同秒内改标签通过已有字段／完整输入hash的临时digest识别，不增持久缓存、字段或排序规则。
-
-Console列表／详情、任务完整线程、任务创建／恢复已使用准确来源读取；IMAP批量FETCH复用账号lease、每组至多50，保持完整selected text/HTML、UID／代际／身份和搬移语义，不下载附件。真实样本与scalar结果相同，但较大scalar对照超时，**没有证明整体加速倍数**。
-
-**正文全文搜索仍是开放取舍。** 当前保留原Unicode casefold连续子串、准确total／顺序／分页；来源缺失显式报错，不能以部分结果冒充完整搜索。实际all范围9,287行，搜索“合同”约9,261行需读来源；真实9来源小案例27.58秒。不是可据聚焦正确性宣称已解决的全库同步搜索性能。已提问是否仅保留元数据搜索；尚无明确答复，不默默取消正文搜索、不引入持久正文副本。
-
-## 回归状态与尚未完成项
-
-- [x] 最终结构／字段去向／删除清单，10核心表＋账本，正常空库直接最终声明，无旧表／view兼容别名。
-- [x] 同一输入容量对照、完整副本迁移、迁后新增事实inverse／reforward、原生CLI五分支及合并后新增真实任务。
-- [x] 本轮有界来源补验、956 owner案例冷重建、来源未查实原文保留、最新副本容量独立核对。
-- [x] 真Chrome Workbench两项检查：隔离数据库／非执行替身，2 pass、106.23秒；前端tsc／vite构建通过。既有Python Workbench端到端启动差项已以同线程连接复用修复；与执行器／连接控制共23项通过，2秒阈值保留。
-- [ ] 更广Python回归全部差项闭合。前轮28 failed／60 passed／87 skipped、303.41秒；历史delivery四文件90 pass、bootstrap2 pass修正后，新轮发现Email history／error组件旧夹具问题；error整文件13 pass／655.94秒，Email history整文件7 pass／489.25秒；其余历史postfix110、receipt22、通用Actions68、reply发布26、follow-up5项已分别通过，反馈／runtime router／代际与终态关联／配置存储已补齐定向验证；worker既有恢复组11项及追加协议分支12项、配置存储75项、代际终态70项、配置集成／任务详情追加11项均已通过；Attention三个受影响节点已通过，Workbench启动差项已闭合；task-delivery已闭合11个观察到的失败，54项当前轻量控制通过；后续诊断回归差项仍在核对。已通过且未变的大批量历史用例复用原证据，不重复堆叠运行。
-- [x] 邮件输入／URL同步时序问题：确定性回归复现后已修复，原逐字输入／最终请求断言保留；主审独立3项通过，Email＋Scheduled定向107项通过。降低并发后完整前端46文件734 pass／2 skipped，433.57秒，超时阈值不变；主审tsc／vite构建通过。
-- [ ] 正文搜索产品取舍／性能边界处理，不能据局部来源读回视为全库可用。
-- [ ] 最终稳定候选集成审查、远端增量核对、提交／推送、既有deploy发布，以及生产PID／health／queues／Attention／History／实际schema和容量读回。
-
-当前Store目标2026-10-14.1、Email目标52；52是schema版本号。真实生产路径readonly release preflight曾通过旧Store2026-10-13.5／Email51到目标配对准备（229来源版本），未运行生产publish／constructor。最终发布仍须重查当前生产增量，不能把该预检或副本通过写成已上线。
-
-## 最终回归补验
-
-运行时修正与纯测试夹具分开验收；既有证明只在代码或疑点变化时补跑。全部详细日志及原始／当前结果在唯一 evidence JSON 中，不把旧失败日志当作当前状态。
-
-| 真实运行时差项 | 当前验证 |
+| 验证组 | 最新有效证据 |
 | --- | --- |
-| Workbench 同线程 turn 连接复用 | 7次打开降至1次；操作事务、其他线程和只读快照独立；原2秒阈值保留，23项通过／80.54秒，9项连接控制通过／6.10秒；独立只读复核未发现具体问题 |
-| 真正旧版2773d6f4 fresh schema profile | 6项声明／逆迁控制通过／48.29秒，真实child直接动作对照通过／217.46秒；新增事实逆迁、旧版重开及再正迁通过／680.66秒 |
-| 审查退订链路的数值身份查找 | 原2000条无关输入使500 VM步上限中断；使用现有数值身份表达式及部分索引谓词后，原no-SCAN／<500限制与25项身份投影控制共27项通过／26.02秒；DDL、索引、字段、NULL语义不变，独立复核未发现具体问题 |
-| 只读Task检查工具 | 最终schema上复现旧投影读取`t.source_type`失败，改为当前Store投影后整文件12项通过／26.31秒；原completed状态、公开／物理身份差异、私有正文不泄露、缺失／无效原生决定、连接关闭后读取以及准确业务回执断言保留。只读URI和文件字节不变检查通过 |
-| 离线Task回放调用方 | 退休业务表／输入平铺字段访问改为最终投影及Task8 CAS；完整业务快照包含共享Actions关系与Provenance，来源版本按identity_key计数。来源仅在同一案例临时传递，精确hash／字节／身份校验，缺失仍不可验证。root冻结源码整文件27项通过／73.35秒；CLI先选择code-root再导入App的独立子进程回归另1项通过／1.27秒（外部PYTHONPATH干扰可复现原失败，未创建数据库）；独立复核发现的seeded task来源传递缺口已修正并补回归，复核未发现剩余具体问题 |
+| Store存储API／schema／状态恢复 | 整文件450 pass／260.05秒，3worker，冻结源码；含原115历史失败当前合同映射 |
+| Task Attention multisource | 156收集ID按1–71／72–76／77–90／91–156分段71／5／14／66 pass；去除无用wrapper后2项再pass；非一次不中断整文件 |
+| worker恢复／触发 | 原29失败ID集合与当前收集完全一致，29 pass／313.32秒；原assert AST未变 |
+| 微信发送模式／Task建议 | 整文件33 pass／55.19秒、17 pass／28.93秒；FakeSender、精确PreparedSources，0真实发送 |
+| Signal／业务语义 | 整文件444 pass／176.96秒；正文只在请求内，持久Fact身份／hash／bytes／共享／不可变／失败原子性保持 |
+| History／失败History | 整文件33 pass／66.20秒；失败10项追加19.41秒；同失败副本完整API269k→59k VM步，原100k预算不变 |
+| Scheduled Consumer／最新native增量 | 整文件38 pass／94.87秒；合入main后native trajectory整文件10 pass／7.61秒，McpToolCall回执归一化 |
+| 来源读取及HTTP／搜索批次 | 四文件85 pass／48.58秒；页面1／2／25同503源完整total／顺序／page，批量≤50，原502 HTTP fake已支持UID-set |
+| 回复Attempt紧凑存储 | `tests/test_reply_attempt_action_storage.py` 177 pass／6既有skip／10.62秒；原值／类型／默认／分配器／事务／字段拒绝 |
+| Follow-up／sync | 当前写入原表对照62 pass／25.74秒；历史TEXT inverse26 pass／202.02秒；新事实／ROWID／水位保留 |
+| Task delivery及历史postfix | 原11观察失败定向闭合，54轻量＋5配对／inverse＋2历史四族；postfix两个TEXT模块110 pass／63.70秒。准确文件映射在证据中，不改称新整文件通过 |
+| 发送回执历史存储 | frozen十二类型TEXT组件整文件27 pass／0.24秒；沿用历史DML adapter，全部原assert AST一致；不冒充最终运行时证明 |
+| TODO同步派发／Project证据重放 | 整文件19 pass／7.03秒、28 pass／26.72秒；派发仅显式选择当前vector夹具，原lease／retry／receipt／atomicity断言保持，重放模块无需修改 |
+| Task Agent上层 | 当前247收集节点：冻结前缀174 pass／88.87秒、相对日期单项1 pass、尾段56 pass／16 fail／69.80秒；剩余16项按准确原文prepared source及退休表投影修正，尚未闭合；无当前运行时缺陷结论 |
+| 其他迁移／调用方 | 既有Configs39、Email元数据39、dispatcher74、路由63、回放27＋子进程1、只读Inspector12、检索35、Project评估25、Workbench manifest20、回复输入12、状态摘要9等证据按原范围复用；不把scoped结果改为整文件通过 |
+| 前端及浏览器 | 46文件734 pass／2既有skip；tsc／vite通过；真实Chrome隔离Workbench2项106.23秒；原2秒启动预算下连接复用23项＋9连接控制通过 |
 
-State 更新索引补验：完成租约原需111175 VM步，其中 UPDATE 53695步；按现有数值身份索引定位后，State整文件及dispatcher ledger共153项通过／28.28秒，原100000步上限不变。无DDL／索引新增或裁剪策略变更，独立只读复核未发现具体问题。
+旧广泛诊断17,217 pass／1,899 fail／118 skip／58 error是持续修改中的失败收集，非稳定候选通过／失败数。按当前模块、精确node或明确退休／替换合同映射；尚未找到匹配的项目继续登记，不重复已经足够的全量回归。Source13旧schema真实正迁先前已完成，原lease经当前投影在同副本准确读回；后续Store整文件亦通过。
 
-最新生产代码78e8c4474的恢复补验：独立副本逆迁后冷启动成功，原生任务5715333616543262及其run／attempt／结果／回执保持一致，quick_check=ok，FK仅原基线；1739.245秒，0生产写入／0真实发送／0本次模型调用。当前候选也已冷读最终副本并逐项匹配原native业务快照。另对review_candidate、audit_review、execution、external_action_result、sent_reply、reply_attempt各1行比较全部公开字段、SQLite值类型和完整值，最终副本与逆迁后旧代码读回完全相等；证据只存字段数及hash。此前完整inverse／实际child再正迁证据沿用，不重复计原文退休。
+## 搜索性能与发布差项
 
-最近生产只读测量（2026-10-19 07:52 UTC）：主文件512,962,560 B、WAL4,152,992 B、SHM32,768 B，仍是Store2026-10-13.5／Email51。sqlite_schema共121张表：116普通表、1张FTS虚拟表及4张影子表；名称集合与固定源一致。该生产增量测量不替代前文同输入容量对照。
+全文仍为Unicode casefold连续子串、准确total／顺序／分页；来源缺失或变化明确报错。50条来源批次独立于页面limit：同一最终DAO9,402候选中搜索“合同”需9,376原文判定；页面25的502账号会话降至269，页面1原9,376亦降至269。此为操作数，不能当作网络性能证明。
 
-| 夹具／调用方验证组 | 当前证据与准确范围 |
-| --- | --- |
-| 配置组件发布 | 整文件39项通过／102.49秒；历史TEXT源及新增Skill／Actions事实使用68a137490原生写入器，声明、类型、身份及逆迁断言保留 |
-| Email bootstrap／故障／并发／拒绝异常元数据 | 主agent冻结源码17项通过／41.98秒，包含精确store_schema_version绑定参数；真实child故障8项通过／1348.81秒；其余8项coordinator／binding／receipt／updater全部通过／2388.87秒，运行期间源码及断言冻结 |
-| Email 元数据及历史DML | 元数据整文件39项通过／377.06秒；历史迁移新增事实／ROWID／类型4项通过／8.74秒 |
-| Direct／Validator | 冻结源码合并23项通过、7未选入／359.50秒；reply代表1项／429.08秒、unsubscribe代表2项／439.57秒，不宣称两个DAO整文件已通过 |
-| Task delivery | 11个观察到的失败均定向闭合；54项当前轻量控制／17.37秒、5项配对／逆迁控制／841.08秒、2项历史四族控制／92.48秒；未重复跑整文件，未变error／feedback配对证明沿用 |
-| Email Store | 50个观察到的失败映射当前名称／参数，合并52项通过／145.43秒；准确当前State check及Configs type／check声明3项追加通过／10.99秒；独立动态核验当前constructor确实消费5类metadata标识，旧FK-enum路径仅作helper测试，当前共享FK声明破坏拒绝另有覆盖 |
-| Email worker | 17个观察到的失败通过／64.89秒；准确current_input_id及精确单行写入的12项追加通过／43.81秒；生命周期、隐私、回执及scanner回滚断言保留，未跑整文件 |
-| Consumer dispatcher | 整文件74项通过／343.94秒，闭合20个观察到的失败；真实数据库State投影列读回单项随后通过／4.13秒。领取、续租、fencing、10005条历史lease裁剪和原2秒唤醒断言保留 |
-| 钉钉历史投递恢复 | 19+6+2项定向通过（后两组116.90／45.40秒），4个未变节点沿用先前证明；两项uncertain回执明确测试已有System Executor读回入口，生产上游回执反馈修订策略未改；发送1次、恢复只读1次，不宣称新跑整文件31项 |
-| Follow-up／sync | 当前紧凑写入与真实原表对照整文件62项通过／25.74秒；历史TEXT逆迁整文件26项通过／202.02秒，仅两项用例绑定原生写入器，新增事实、ROWID、水位、逆迁及再正迁断言保留 |
-| CLI产物／探测旧失败复核 | 六个观察到的artifact失败节点及一个probe按当前代码全部通过：代表1项／2.19秒、其余5项／5.00秒、probe1项／3.35秒；未改源码，未把旧诊断失败当成新缺陷 |
-| 路由执行 | 整文件63项通过／176.38秒，结果来自固定源码工具会话38306；root复核差异及静态检查。当前Task8夹具保留原公开ID，原生trajectory行范围、取消、回退与重试断言保留，未触发真实模型／provider |
-| Workbench结构完整性与退休边界 | 整文件20项通过／13.73秒；使用真实Task20 index／trigger和当前验证器，保留大小写字面量变更拒绝、缺失辅助对象修复及来源混合／未知标记拒绝。含非空旧confirmation的源应明确拒绝：真实preparer边界完整fingerprint不变，原执行回执与waiting_confirmation行保留；不把已取消功能的数据悄悄清空来获得迁移成功 |
-| 历史source13配套声明与孤儿Run | 测试助手原先混合actual／fresh Config及Actions配套声明。改用已有冻结SQL构造一致的Config／State／follow-up／delivery／feedback配套结构，业务输入行／ROWID／水位不替换；3项主审通过／53.66秒，含真实配对迁移后Run2298→公开job4908且物理4908仍为reply_tasks，新孤儿拒绝及9父表／15子表完整指纹。独立只读复核无具体发现；不宣称其他历史夹具整文件通过 |
-| 当前Signal来源及分配器 | Store方法整文件13项通过／3.76秒，两种物理变体；新增观察来源与memory_provenance的完整身份隔离／reference-only不可读，以及空Signal族已有watermark83后公开ID84且物理ID不同。只保存hash／字节／定位，无正文；空旧表整库迁移水位仍不以当前writer测试代替 |
-| Business保留字段约束／结构 | 202项通过、264项未选入／122.15秒；仅改测试夹具使用当前Business／Actions／Sync写入器和投影，非空白检查（含Unicode空白）、周围空白保留、准确公开字段集合及完整schema校验原断言保留。另51项FK／悬空引用拒绝／唯一性／列表及默认值通过／26.23秒：通过实际生成列核验最终FK端点，原业务值、排序／EQP及事件断言保留。另44项当前约束组通过／37.17秒（Signal参数未选）；独立19个业务索引要求恢复后，单项加强复验通过／1.56秒，并实删Actions索引验证有效manifest会拒绝，再rollback恢复。Signal正文／容器历史契约和其他未选节点仍待处理，不宣称整文件通过 |
-| Task外层读取当前结构 | 公开ID、dispatcher领取／释放、状态／Attention和codec／终态provenance4项主审通过／8.86秒；伪造旧版本标记8变体与未知标记2项通过／9.96秒。保留两种旧标记和全部mixed拒绝／只读断言；旧11.3 publication投影与当前Store投影分别核验，历史publication／scheduled-source6项通过／3.29秒；20个实际节点分别有定向证据，未宣称一次整文件运行 |
-| 输入压缩与终态精简 | 整文件5项通过／2.07秒；使用当前Task8写入和Task20投影，原TEXT／BLOB codec、bounded batch、无损／幂等、公开1/2/3身份及终态原文hash／字节和正文清除断言保留，无运行时改动 |
-| Task检索及来源准备 | 整文件35项通过／155.47秒；所有需要验证的原文（包括同词面的无关任务）通过精确来源绑定提供给临时reader，避免选择性缺失原文改变formal／unverified分桶。原排名、同来源超出limit、bounded proof、无关任务排除、正文不重复注入及历史证据断言保留；未改检索算法／运行时 |
-| Project评估业务断言 | 整文件25项通过／68.79秒；精确原文只经PreparedSources临时传递，关系注入及读回使用最终Actions投影。错误owner／项目归属／成员数量与身份／来源版本、意外对外意图和业务回执的原断言保留；无运行时修改／真实模型或provider调用 |
-| 会议／OKR外层读取 | 两整文件11项通过／33.05秒；公开／物理身份、租约、代际、错误、终态和Attention断言保留，历史orphan来源声明问题已用完整一致的旧版配套声明关闭：主审3项通过／53.66秒（历史孤儿读回、新孤儿拒绝、准确原始Business声明）；原11项与新增3项范围分别记录 |
-| 回复执行记录存储 | 原始源表与当前compact writer逐项对照整文件177项通过／6项原有skip，主agent冻结源码复跑10.62秒；默认值、SQLite类型、外键、ROWID分配器、失败事务范围及未知／退休字段拒绝断言保留；TEXT历史声明单独按两种真实变体核验 |
-| 回复输入引用 | 整文件12项通过／21.89秒；真实父子FK、父任务不存输入正文、领取后当前输入变化仍读取原版本、终态正文退休、刷新／手动重跑及Skill冻结材料均保留原断言；只更新物理读回和当前公开投影 |
-| 状态摘要投影 | 最终真实schema整文件9项通过／6.21秒；旧夹具中原始schema已禁止的Email状态／NULL业务key改为显式拒绝验证，再以合法状态保持原统计、重试、业务指针及latest error断言。单SQL聚合不变，EQP确认Actions按kind索引访问并索引查找canonical Emails；未修改运行时 |
-| 冷启动及查询成本 | Runs11六种constructor顺序及修复／拒绝控制整文件8项通过／40.26秒，精确断言最终11表集合；状态attempt整文件3项通过／64.02秒、quality gate整文件22项通过／10.60秒，原VM及聚合读取上限不变 |
-| 失败History | 整文件10项通过／36.44秒，保留当前OA状态、失败过滤、准确total和分页断言 |
-| 会议任务及回执 | 15个观察到的失败定向闭合；公开投影严格模型及副本重开回执2项追加通过／36.49秒。故障注入使用实际Actions字段，原锁、token、事务回滚及provider失败断言保留；未宣称整文件通过 |
+真实只读样本30封同folder、已有完整来源校验的邮件全部重取，12.674秒：fetch9.597、连接1.285、logout0.390、metadata0.476秒。主要成本在上游读取，未按样本线性推算全库。Spec第191行关键列表性能基线尚未满足，连接复用不足以据此关闭差项。
 
-此前已通过且未变的postfix、receipt、generic Actions、reply发布、反馈、路由／worker恢复、代际终态、前端与浏览器证据沿用。更广诊断已结束：17,217 passed、1,899 failed、118 skipped、58 errors，15,786.36秒（4 workers）。这是实现与夹具持续修正期间的旧失败收集，不是稳定候选验收；部分失败已由本表后续冻结源码定向结果覆盖，其余仍须逐项登记闭合。不得把该诊断原始失败数当成当前未修复数，也不得把17,217通过当作最终版本整体通过。
+待答复的具体选择：**发件人／主题搜索＋详情按需读正文**，或**保留全文并改后台检索／进度**。两者均涉及产品行为；确认前不删全文、不建长期原文／索引副本，也不把缩小功能范围当成原目标完成。
 
-当前History性能缺陷已定位并修正：未请求Email的分支构建原先仍重复校验Email／State manifest。原实际API269,000步，修正后对同一失败测试数据库的完整API实测59,000步（480总数／20行），低于原100,000限制；整文件随后33项通过（66.20秒），两处原100,000步预算及全部分页／过滤／状态断言保留。
-
-定时Consumer新结构整文件38项通过；失败History10项追加通过（19.41秒）。项目Context整文件12项通过（12.14秒）。已退休无运行时调用者的旧Attention→Project证据推导函数；当前迁移保留既有证据，不根据卡片关系生成新证据。历史推导函数测试不作为当前迁移支持范围。
-
-Signal／业务语义整文件444项通过（176.96秒），已将输入DTO与持久Fact分开验证：原文只用于临时PreparedSources，持久化核验准确identity／hash／字节数、共享provenance、不可变约束及重复失败不留部分状态。旧正文表／FK及手动调用退休推导函数的历史测试明确退休，未伪装为当前兼容路径。History来源选择、退休推导函数和Scheduled夹具的有界独立只读审查未发现具体问题；不代表整体发布验收通过。
-
-History整文件当前33项通过，包含真实dangling Run／Task来源、最终JSONB槽位损坏及生成列99999998读回，避免用错误JSON路径的空操作冒充故障注入；公开／物理Task身份、过滤、总数、页面及原查询成本边界均保留。
-
-旧诊断后续证据盘点明确的优先补验范围：test_store.py（旧115节点）、test_task_attention_multisource.py（旧42）、wechat/test_send_mode.py（旧27）、test_task_suggestions.py（旧16）。这些数字只是旧诊断中尚未找到匹配后续闭合证据的节点，不能当作当前运行缺陷数；worker旧29节点已有部分后续证明，准确映射仍待核对。已开始有界、无真实发送的代表测试及当前／退休契约核对。
-
-剩余差项后续闭合：微信发送模式整文件33项通过（55.19秒），只移除退休表夹具写入，额外核验当前创建API已保存准确prepared final body；confirm／auto／批准／拒绝／恢复断言和替身sender全部保留。Task建议整文件17项通过（28.93秒），准确职责／风险原文只通过临时PreparedSources提供，身份／事务／provenance及TODO负向断言保留。旧盘点的对应27／16节点不再列为无后续证据范围。存储API与多来源Attention仍在核对，不宣称整体完成。
-
-### Store current fixture closure (2026-10-19)
-
-Store 定向66项已闭合：同轮65 pass／230.97秒，最后一项旧scheduled_tasks写入经当前schedules writer修正后1 pass／3.78秒。Task8／Task12、Business、Actions、State和Schedules均通过实际当前写入接口造夹具；保留公开与物理ID边界、原恢复／回执／租约／事务断言。原生会话搜索仍验证实际native检索与内存索引，只接受当前元数据API，额外证明持久正文／向量参数不再可写。仅改测试；不是整个Store模块通过。旧诊断中另31个未修改测试函数正在核对当前证据，未将其计为已闭合。
-
-### Worker exact diagnostic closure (2026-10-19)
-
-历史29个worker失败node ID与本轮收集集合完全相等；最终29 pass／392 deselected、313.32秒。修正当前Task8写入及其raw连接codec注册、Task12 OA读投影，以及默认needs_human替身的当前task-class选项格式；主审确认所有原测试assert AST未变。仅测试替身，无运行时修改和真实发送。这替代此前11＋12项不能证明覆盖准确29节点的笼统证据。
-
-### Store remaining historical contracts (2026-10-19)
-
-旧失败清单剩余31函数实际展开35节点，当前诊断10 pass／25 fail、218.99秒；没有把旧夹具错误归为生产缺陷。随后当前夹具14项通过（6＋1＋3＋2＋2）：State事务／锁／排序、Task输入schema与失效运行、业务采纳和输入压缩的同事务回滚、审查rerun回滚、准确schema拒绝及完整dump不变、History当前索引、会议memory旧代次、Task／Action缺失索引重开修复及行保留。仅测试更新，无运行时修改。Source13真实正迁及Store重开先前已完成；主审在同一副本用当前Task20投影读回原lease及当前恢复索引，避免重复历史正迁；这不记作重跑整项pytest通过。
-
-仍需处理10个历史部分schema／启动迁移断言：3个route-session、1个setup-wizard、2个removed-runtime手动converter、1个follow-up draft、3个meeting-memory独立旧表。现有运行时仅接受最终结构或明确支持的完整历史迁移，不能为这些旧fixture添加兼容回退；须对照实际声明与既有显式迁移证据逐项替换或退休后才能关闭整体回归差项。
-
-Route-session三项已按现有合同替换并通过（7.73秒）：两类不完整旧源在启动时明确拒绝，完整dump不变；当前State中的未知contract／原session可重开保留，不能满足指定current contract。没有给运行时恢复旧表回退。剩余历史断言从10降为7（setup1、removed-runtime手动converter2、follow-up1、meeting-memory3）；它们的退休／明确迁移归属仍需闭合。
-
-### Attention full node coverage and remaining startup fixtures (2026-10-19)
-
-Task Attention multisource全156个收集node ID已分段覆盖：1–71、72–76、77–90、91–156分别有71／5／14／66项通过证据；最后两项去除无用连接wrapper后再跑2 pass／11.68秒。不是宣称一次不中断整文件通过。主审核对当前typed写入、完整domain snapshot和精确原文请求供给；session provenance仍由真实reader返回不可用，不能冒充可引用原文。没有运行时修改或真实发送。
-
-其余启动夹具又闭合：不完整setup／follow-up旧源明确拒绝及当前running向导不设finished_at共3 pass／3.31秒；会议memory索引重开修复1项，以及原job引用／无payload正文复制、3个实际lease生成列损坏拒绝共4项通过（10.05秒）。显式历史转换和inverse仍由已有Action delivery release测试验证，不恢复独立旧表或启动时原文清理逻辑。
-
-Store目前只剩2项无生产调用的removed-runtime手动converter测试归属待处理；其余最终集成审查、正文搜索选择／性能和生产发布读回仍开放。本轮未推送／未部署。
-
-Removed-runtime最后2项通过（6.83秒）：保留实际存在的手动converter测试合同，明确显式调用后再重开；不再声称启动会自动调用。原有回执、新增历史回执以及强制失败的表／State／新attempt回滚断言保留；生产无调用，本轮无运行时修改。当前Store整文件已冻结，正在3worker定向验证；尚不记作通过。独立只读审查本轮测试差异，未发现具体断言弱化或来源错配。
-
-发布增量复核：生产已前进到aa18a59858a477c3e446560fa956fbe13e26136a且checkout干净；main新增ab77d8cb9／aa18a5985／00afce57f，包含native MCP audit receipt归一化及文档。当前Store测试结束后再合入并验证；该生产版本并非最终schema上线。本文件前述508287cf7是较早读取记录，不代表此刻生产HEAD。
-
-### Latest frozen verification and release preflight (2026-10-19 09:21 UTC)
-
-Store整文件450 pass／260.05秒（3worker），本轮Store原115个历史诊断失败的当前合同与夹具归属已闭合；不等于重跑整个仓库。新main三个提交已合入b859e78ce，认领记录冲突保留双方；实际native trajectory模块整文件10 pass／7.61秒，存储／迁移实现未改。当前tracked工作树干净；未跟踪过程提案脚本未纳入提交。
-
-主审在真实生产路径只读调用同一发布coordinator，6.794秒通过：Store2026-10-13.5／Email51 → 目标2026-10-14.1／Email52，231来源版本全部准备成功；未调用publish、未构造生产Store、无生产写入。较早229来源的纯结构容量对照仍是同一冻结输入的结果，不能把231来源预检冒充新一轮同口径容量或生产迁移。生产代码已核验aa18a5985、干净；最终结构仍未部署。
-
-当前待决项是正文全文搜索：不保存正文副本时，准确全库匹配必须读取原始来源；聚焦正确性已证明，全库性能尚未通过。已再次提供保留全文／仅元数据两种产品选择，未收到答复前保留原全文功能，不默默删功能或持久化正文缓存。其余发布工作为最终来源／候选绑定、提交推送与官方deploy，以及生产schema／容量／PID／health／queues／Attention／History读回；这些尚未执行，不能宣布整体完成。
-
-### Fulltext page-batch defect closed (2026-10-19)
-
-全文扫描批次原先直接使用页面limit，页面1条时503候选产生503来源会话，确定性RED复现；现改为固定50条候选／批内按账号，页面limit只控制最终结果。来源／HTTP对照4文件85 pass／48.58秒；Unicode匹配、total／排序／分页、缺失和变化错误断言保留，无schema／缓存／来源落盘。HTTP fake同步支持实际UID-set返回；此前未查询列表本身就因fake把逗号UID当单一身份而502，此误差已修正，原响应字段和身份断言保留。独立只读审查无具体问题。
-
-当前真实DAO在同一最终副本输出9,402候选，查询“合同”仍需9,376原文成员判定；旧页面25产生502账号会话，固定50产生269，页面1旧值9,376也降至269。此为准确操作数，不是实际网络延迟；历史9,287候选计数来自更早数据边界，不混算。全库正文搜索性能／产品取舍仍开放，未部署。存储与迁移实现未改，复用既有同口径容量和逆迁证据。
-
-### Actual source-read bottleneck and pending product decision (2026-10-19)
-
-只读读取同一observed folder中30封已有完整来源校验的邮件，全部重取并通过引用校验，耗时12.674秒：原文fetch9.597、认证连接1.285、logout0.390、metadata0.476秒。没有provider／生产写入或真实发送，没有保存正文。此为有界真实计时，不线性推算全库耗时；证明连接数优化有价值，但连接复用不足以据此关闭全库即时搜索性能差项。
-
-Spec第191行要求关键列表／claim达到基线，正文移除后的全库源读取尚未满足即时搜索边界；没有擅自降低验收要求。已将选择具体化为“发件人／主题搜索，详情按需读正文”或“保留全文，改后台检索并显示进度”。这是待确认的产品行为变化；未得到答复前不实现任一种、不删全文、不添加索引／正文副本。其余既有结构、450 Store、156 Attention、29 worker、真实CLI和当前数据inverse证据继续有效。候选最新功能提交a2589d733，仍未推送／部署。
+- [x] 最终结构／字段方向、严格同输入容量、真实CLI及迁后新事实inverse／reforward。
+- [x] 已完成来源核验及限定20原文退休决定；Email未核实来源保留，退休发布工具有副本证明。
+- [x] 上述当前回归及关键独立只读审查；后续增量按实际影响补验，不重跑无变化部分。
+- [ ] 历史诊断证据准确映射收尾，不能凭文件名未出现就重跑已有语义证明，也不能凭组名就宣布其他文件通过。
+- [ ] 搜索产品方式及性能／页面行为验证；模型历史权重保留偏差已修复并验证，生产清理及只留当前／最新的实际读回待发布。
+- [ ] 最终来源／候选绑定刷新、推送与官方`python -m app.deploy`；执行前完整备份，发布失败使用schema inverse保存迁后新事实。
+- [ ] 生产PID／healthz／queues／Attention／History／最终schema及容量读回，核对无新增失败／卡住／重复发送后才报告生效。
