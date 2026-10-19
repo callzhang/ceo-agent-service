@@ -1,6 +1,4 @@
 from __future__ import annotations
-from app.run_storage import SCHEDULED_RUN_SQL
-
 from collections import deque
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -37,7 +35,10 @@ from app.dispatcher.adapters import (
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import DwsError
 from app.skill_files import SkillDocument
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL, SCHEDULED_RUN_SQL
+from app.state_definitions import state_projection
+from app.task8_storage import task8_set_parts
+from app.task_storage import task_id_expression
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 
@@ -166,10 +167,7 @@ def command_task_run(store):
 
 
 def error_rows(store):
-    with store._connect() as db:
-        return [dict(row) for row in db.execute(
-            "select conversation_id, message_id, kind, detail from errors order by id"
-        ).fetchall()]
+    return [row.model_dump() for row in reversed(store.list_errors())]
 
 
 def audit(outcome, revision, digest):
@@ -397,10 +395,11 @@ def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path)
 
     with store._connect() as db:
         visible = db.execute(
-            "select runs.dispatch_status from tasks "
-            f"join ({SCHEDULED_RUN_SQL}) runs on runs.execution_kind='reply_task' "
-            "and runs.execution_id=tasks.legacy_key "
-            "where tasks.record_type='reply_tasks' and tasks.channel='scheduled'"
+            "select runs.dispatch_status from "
+            f"({REPLY_TASK_SQL}) tasks join ({SCHEDULED_RUN_SQL}) runs "
+            "on runs.execution_kind='reply_task' "
+            "and runs.execution_id=cast(tasks.id as text) "
+            "where tasks.channel='scheduled'"
         ).fetchall()
     assert visible and {row["dispatch_status"] for row in visible} == {"dispatched"}
 
@@ -425,10 +424,10 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     assert persisted.dispatch_status == "pending" and persisted.execution_id == ""
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from tasks where record_type='reply_tasks' and channel='scheduled'"
+            f"select count(*) from ({REPLY_TASK_SQL}) where channel='scheduled'"
         ).fetchone()[0] == 0
         ledger = db.execute(
-            "select terminal_at from dispatcher_claim_leases "
+            f"select terminal_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='scheduled' and source_id=?", (str(run.id),)
         ).fetchone()
     assert ledger["terminal_at"] == ""
@@ -763,9 +762,14 @@ def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path)
         {"name": "managed-check", "content": ""}
     )
     with store._immediate_write_transaction() as db:
+        parts = task8_set_parts("reply_task_inputs", {
+            "trigger_message_json": json.dumps(trigger),
+        })
         db.execute(
-            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-            (json.dumps(trigger), task_id),
+            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
+            "and id=(select current_input_id from tasks where record_type='reply_tasks' "
+            f"and id={task_id_expression('reply_tasks', '?')})",
+            (*parts.parameters, task_id),
         )
     store.claim_reply_task(task_id)
     read = build_role_server(
@@ -785,9 +789,14 @@ def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):
     store, run, options = fixture(tmp_path)
     task_id = int(dispatch(store, run, options).execution_id)
     with store._immediate_write_transaction() as db:
+        parts = task8_set_parts("reply_task_inputs", {
+            "trigger_message_json": '{"schema":"old_context"}',
+        })
         db.execute(
-            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-            ("{\"schema\":\"old_context\"}", task_id),
+            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
+            "and id=(select current_input_id from tasks where record_type='reply_tasks' "
+            f"and id={task_id_expression('reply_tasks', '?')})",
+            (*parts.parameters, task_id),
         )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -855,7 +864,7 @@ def test_execution_availability_loss_is_skipped_without_agent_run(tmp_path, loss
     assert store.list_errors()
     with store._connect() as db:
         ledger = db.execute(
-            "select terminal_at from dispatcher_claim_leases "
+            f"select terminal_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='scheduled_execution' and source_id=?",
             (str(task_id),),
         ).fetchone()
