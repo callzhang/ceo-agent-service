@@ -34624,5 +34624,39 @@
       "docs/superpowers/specs/2026-10-13-database-redesign-email-actions-source.json",
       "docs/superpowers/specs/2026-10-11-database-redesign-schema-baseline.json"
     ]
+  },
+  "final_routed_execution_fixture": {
+    "passed": 63,
+    "seconds": 176.38,
+    "runtime_changes": false,
+    "evidence": "Agent exact exec session38306 terminal output; no redirected log",
+    "command": "nice -n 10 pytest -q --maxfail=1 tests/test_routed_codex_execution.py",
+    "root_review": "Full test diff reviewed, current public identity trigger checked, Ruff/diff clean",
+    "preserved": [
+      "public task IDs",
+      "native transcript line ranges",
+      "cancellation",
+      "route fallback",
+      "model and retry assertions"
+    ],
+    "real_model_and_provider_calls": 0
+  },
+  "final_meeting_okr_outer_reader_fixtures": {
+    "passed": 11,
+    "seconds": 33.05,
+    "runtime_changes": false,
+    "files": [
+      "tests/test_meeting_storage_outer_readers.py",
+      "tests/test_okr_weekly_storage_readers.py"
+    ],
+    "preserved": [
+      "public vs physical IDs",
+      "lease and stale generation",
+      "terminal/error state",
+      "quality and Attention",
+      "runtime parent references"
+    ],
+    "excluded": "Known historical meeting orphan unsupported Config source declaration not included or claimed closed",
+    "root_review": "Full diffs reviewed; original assertions retained; agent actual terminal evidence, no redirected log"
   }
 }

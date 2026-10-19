@@ -32,7 +32,8 @@ from app.claude_runtime_adapter import CLAUDE_MAX_TURNS_PER_INVOCATION
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
-from app.task_storage import insert_task, task_id_expression
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task_storage import task_id_expression
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
 
@@ -153,29 +154,36 @@ class FakeAdapter:
 
 def seed_structured_parent(store: AutoReplyStore, request_id: int = 12) -> str:
     with store._connect() as db:
-        insert_task(db, "okr_review_requests", {
-            "legacy_key": request_id, "conversation_id": f"cid-{request_id}",
+        values = {
+            "legacy_key": str(request_id), "conversation_id": f"cid-{request_id}",
             "conversation_title": "title", "trigger_message_id": f"msg-{request_id}",
             "trigger_sender": "sender", "trigger_text": "text", "period_label": "period",
             "period_start": "start", "period_end": "end", "status": "processing",
-        })
+        }
+        parts = task8_insert_parts("okr_review_requests", values)
+        db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
     return str(request_id)
 
 
 def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
     generation = f"generation-{task_id}"
     with store._connect() as db:
-        parent_id = insert_task(db, "reply_tasks", {
-            "id": task_id, "legacy_key": task_id,
+        parent_values = {
             "conversation_id": f"wechat-{task_id}",
             "conversation_title": "WeChat", "single_chat": 1,
             "trigger_message_id": f"message-{task_id}",
             "trigger_create_time": "2026-08-20 10:00:00", "trigger_sender": "sender",
             "execution_generation": generation, "input_version": 1,
             "claimed_input_version": 1, "status": "processing",
-        }).lastrowid
+        }
+        parent_parts = task8_insert_parts("reply_tasks", parent_values)
+        parent_cursor = db.execute(
+            f"insert into tasks (id,{parent_parts.columns}) values (?,{parent_parts.values})",
+            (task_id, *parent_parts.parameters),
+        )
+        parent_id = int(parent_cursor.lastrowid)
         provenance = store._reply_input_provenance("hello", "{}")
-        cursor = insert_task(db, "reply_task_inputs", {
+        input_values = {
             "parent_id": parent_id, "channel": "dingtalk",
             "conversation_id": f"wechat-{task_id}", "conversation_title": "WeChat",
             "single_chat": 1, "trigger_message_id": f"message-{task_id}",
@@ -184,11 +192,21 @@ def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
             "business_object_key": "",
             "input_revision_key": f"fixture-{task_id}",
             "input_provenance_json": provenance, "input_compacted": 0,
-        })
+        }
+        input_parts = task8_insert_parts("reply_task_inputs", input_values)
+        cursor = db.execute(
+            f"insert into tasks ({input_parts.columns}) values ({input_parts.values})",
+            input_parts.parameters,
+        )
         input_id = int(cursor.lastrowid)
+        pointer_set = task8_set_parts(
+            "reply_tasks", {}, structural_sql={
+                "current_input_id": "?", "claimed_input_id": "?",
+            }, structural_parameters=(input_id, input_id),
+        )
         db.execute(
-            "update tasks set current_input_id=?, claimed_input_id=? where record_type='reply_tasks' and id=?",
-            (input_id, input_id, parent_id),
+            f"update tasks set {pointer_set.sql} where record_type='reply_tasks' and id=?",
+            (*pointer_set.parameters, parent_id),
         )
     claim = store.claim_agent_run(
         task_id,
@@ -1926,9 +1944,10 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
         )
 
     with store._connect() as db:
+        failed_set = task8_set_parts("okr_review_requests", {"status": "failed"})
         db.execute(
-            f"update tasks set status='failed' where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
-            (12,),
+            f"update tasks set {failed_set.sql} where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
+            (*failed_set.parameters, 12),
         )
     with pytest.raises(ValueError, match="parent"):
         RoutedCodexExecution(
