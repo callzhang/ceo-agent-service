@@ -6769,5 +6769,28 @@
     ]
   },
   "managed_temporary_root_removed": true,
-  "elapsed_seconds": 26.48
+  "elapsed_seconds": 26.48,
+  "fresh_published_source": {
+    "commit": "2773d6f4",
+    "source": "Genuine archived AutoReplyStore + EmailStore, then existing Email Actions conversion rewrites external triggers; no source row normalization.",
+    "hashes": {
+      "email_classifications": "e351befd931221744005b76b46878e0a763e09834571353947e62e282c29835b",
+      "email_messages": "fabd6faabc74e471e88523b42262229d99f3acd624d22cd23d4ea128375114b1"
+    },
+    "scope": "References existing exact declarations: no duplicated DDL or body data."
+  },
+  "declaration_profiles": {
+    "actual": {
+      "email_classifications": "actual",
+      "email_messages": "actual"
+    },
+    "fresh": {
+      "email_classifications": "fresh",
+      "email_messages": "fresh"
+    },
+    "fresh_published": {
+      "email_classifications": "actual",
+      "email_messages": "fresh"
+    }
+  }
 }

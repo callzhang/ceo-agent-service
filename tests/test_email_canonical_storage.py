@@ -372,12 +372,15 @@ def test_unknown_dependency_is_refused_before_conversion(tmp_path, current13, sc
 @pytest.mark.parametrize("profile,variant", (
     ("actual", "actual_no_memory_fk"), ("fresh", "fresh_memory_fk"),
     ("actual", "fresh_memory_fk"), ("fresh", "actual_no_memory_fk"),
+    ("fresh_published", "fresh_memory_fk"),
 ))
 def test_exact_dual_source_profiles_roundtrip(tmp_path, current13, profile, variant):
     capsule = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/"
                           "2026-10-17-email-canonical-current13-source.json").read_text())
-    declarations = capsule[("actual" if profile == "actual" else "fresh")
-                           + "_native_declarations"]
+    declarations = {
+        kind: capsule[declared_profile + "_native_declarations"][kind]
+        for kind, declared_profile in capsule["declaration_profiles"][profile].items()
+    }
     with _db(tmp_path, current13) as db:
         if (profile, variant) != ("fresh", "fresh_memory_fk"):
             db.execute("drop table actions")

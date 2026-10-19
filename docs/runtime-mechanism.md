@@ -90,6 +90,10 @@ State 合并十五种保留状态；延期／恢复回执使用既有 service_st
 配对迁移捕获精确 actual/fresh 源声明及必要水位，在调用方拥有的 FK-off 事务内转换；
 保留既有 source-profile、外部 FK/view/trigger 和 TEMP shadow 检查。大型重建使用
 事务内 SQLite TEMP staging 和 SQL 值／类型核对，不归档 Python 行快照。
+Email canonical 阶段还精确识别已发布原生空库的 `fresh_published` 声明组合：
+classification 使用既有 actual 声明，message 使用既有 fresh 声明。该组合由真实
+旧构造器及原 Actions 转换读回确认，按完整声明 hash 识别；不做 SQL 格式归一化，
+未知组合仍拒绝。逆迁保存并恢复本次实际捕获的完整声明。
 Tasks 在 State 之后转换，Config FK 翻译先于 Runs 扩展；inverse 按依赖逆序从当前
 事实重建。原来源表只在转换事务中暂存，最终 schema predicate 不允许旧容器残留。
 

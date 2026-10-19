@@ -26,6 +26,12 @@ SOURCE_HASHES = {
         "email_classifications": "0159086d74319a7773bb71a7c8cac614ce2b83e7d54c9c7e08618a8cd5b25a33",
         "email_messages": "fabd6faabc74e471e88523b42262229d99f3acd624d22cd23d4ea128375114b1",
     },
+    # Published native fresh constructors use the same classification trigger
+    # declarations as the actual database, paired with the fresh message DDL.
+    "fresh_published": {
+        "email_classifications": "e351befd931221744005b76b46878e0a763e09834571353947e62e282c29835b",
+        "email_messages": "fabd6faabc74e471e88523b42262229d99f3acd624d22cd23d4ea128375114b1",
+    },
 }
 ACTION_HASHES = {
     "actual_no_memory_fk": "9b02487d85dab8e2bfef6be1fe61cd1833d7ed73df1e00202fc83b4d09566658",
