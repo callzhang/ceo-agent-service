@@ -34,5 +34,15 @@ Developer 段和任务段哈希分别保持不变。剩余 User 内容属于 CLI
 
 ## 发布回读
 
-待填写合并提交、部署记录、正式 PID、健康与队列、Attention、History，以及是否出现
-发布后的自然邮件分类。
+PR #155 合并为 `26e50f8d8b1c091aba46171399bbc85925168dc7`。正式部署使用
+`python -m app.deploy` 等待在途工作归零后，把生产 checkout 从 `51781f1c`
+前进到该提交；生产源码回读确认分类器调用点设置 `project_doc_max_bytes=0`。
+新 PID `90276` 存活，`/healthz` 返回 `ok`；状态接口有 13 个队列、处理项 0、
+在途计数 0、系统健康违规 0。Attention 为 4 条，更新时间都早于本次部署；
+History 返回 HTTP 200。回读时最近一条真实邮件分类仍是部署前的 attempt
+`382562`，因此还没有生产自然邮件的行为结果可核对。
+
+PR 的 GitHub Quality 在 `npm run lint:local` 阶段失败，原因是
+`tests/test_agent_role_tool_boundary.py` 中未使用的 `AgentReadOnlyViolationError`
+import；相同行已存在于本 PR 的基线 `origin/main`，不在本次差异内。
+这项检查结果记录为仓库基线缺口，不替代上述定向测试和匿名行为对照。
