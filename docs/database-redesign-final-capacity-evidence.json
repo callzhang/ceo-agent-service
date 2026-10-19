@@ -34839,5 +34839,32 @@
     ],
     "root_review": "Full diff and actual writer/source-binding flow reviewed; no runtime/schema/provider/model changes",
     "scope_limit": "Final writer consumes existing watermark; this does not independently prove empty old Signal table watermark transfer through full schema migration"
+  },
+  "final_source13_coherent_companion_and_orphan_controls": {
+    "first_red": {
+      "cause": "Mixed Config profile from archived fresh account and independent actual scheduling declarations",
+      "seconds": 15.55,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-meeting-orphan-red.log"
+    },
+    "diagnosis": "Historical fixture assembled actual reply/Email with fresh companion followup/delivery/feedback objects and generic State SQL; exact migration correctly rejected each mismatch. No production/runtime relaxation.",
+    "fixture_correction": [
+      "Existing actual account capture before old Email constructor",
+      "Captured native service_state table and actual schedule index creation order",
+      "Actual paired followup/delivery/feedback schema objects instead of auxiliary fresh owners; auxiliary contributes definitions only, no rows",
+      "Native source manifest has9parents:8core fingerprints plus separately frozen service bugfix; all15children fullhash retained"
+    ],
+    "root_frozen_result": {
+      "passed": 3,
+      "seconds": 53.66,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-meeting-orphan-source-root.log"
+    },
+    "nodes": [
+      "Historical orphan Run2298 projects public job4908 after actual paired child migration, physical Task4908 remains reply_tasks",
+      "New orphan Run insertion still rejects",
+      "Complete fresh Business native companion declarations verified exactly"
+    ],
+    "review": "Independent readonly diff review found no concrete issue; no source seed rows/ROWIDs/waters replaced or auxiliary rows copied; Ruff/diffclean",
+    "scope_limit": "Only named controls passed; remaining Workbench manifest/current-literal nodes and other historical fixture callers not claimed as full-file success"
   }
 }

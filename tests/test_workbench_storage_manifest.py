@@ -14,7 +14,8 @@ def test_source13_auxiliary_copy_preserves_fresh_business_declarations(
 ):
     from app.action_reply_storage import _fingerprint
     from app.business_schema_release import (
-        PARENT_HASHES, SOURCE_CHILD_FULL_HASHES, SOURCE_PARENTS,
+        CORE_SOURCE_PARENTS, PARENT_HASHES, SOURCE_CHILD_FULL_HASHES, SOURCE_PARENTS,
+        SERVICE_BUGFIX_SOURCE, SERVICE_BUGFIX_SOURCE_FINGERPRINT,
         capture_business_source,
     )
 
@@ -23,9 +24,11 @@ def test_source13_auxiliary_copy_preserves_fresh_business_declarations(
     ) as db:
         captured = capture_business_source(db)
         assert captured["variant"] == "fresh"
-        assert len(captured["parents"]) == 4
+        assert len(captured["parents"]) == 9
+        assert set(captured["parents"]) == set(SOURCE_PARENTS.values())
         assert len(captured["children"]) == 15
-        assert tuple(_fingerprint(captured["parents"][name]) for name in SOURCE_PARENTS.values()) == PARENT_HASHES["fresh"]
+        assert tuple(_fingerprint(captured["parents"][name]) for name in CORE_SOURCE_PARENTS.values()) == PARENT_HASHES["fresh"]
+        assert _fingerprint(captured["parents"][SERVICE_BUGFIX_SOURCE]) == SERVICE_BUGFIX_SOURCE_FINGERPRINT
         assert _fingerprint(captured["children"]) == SOURCE_CHILD_FULL_HASHES["fresh"]
 
 

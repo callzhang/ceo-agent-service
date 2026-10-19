@@ -20,17 +20,24 @@ CHILDREN = ("workbench_attachments", "workbench_artifacts", "workbench_confirmat
 
 
 def source_database(path):
+    from tests.configs_source_fixtures import capture
+
     db = sqlite3.connect(path)
     for state in SOURCE["tables"].values():
         for kind, _, sql in state["objects"]:
             if kind == "table":
                 db.execute(sql)
-    for state in SOURCE["tables"].values():
-        for kind, _, sql in state["objects"]:
+    for name, state in SOURCE["tables"].items():
+        # The object capture is name-sorted. SQLite reports newest indexes
+        # first; restore the actual Config profile's schedule index order.
+        objects = reversed(state["objects"]) if name == "scheduled_tasks" else state["objects"]
+        for kind, _, sql in objects:
             if kind != "table" and sql:
                 db.execute(sql)
+    # Companion State declarations must also be genuine. The original row's
+    # key, value and timestamp stay unchanged under the frozen native shape.
+    db.execute(capture()["fresh"]["tables"]["service_state"]["sql"])
     db.executescript("""
-        create table service_state(key text primary key,value text,updated_at text);
         insert into service_state values('store_schema_version','2026-10-11.3','source time');
         insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled)
             values(7,'schedule','prompt','* * * * *','UTC','route',1);
@@ -148,6 +155,15 @@ def full_source_database(path, auxiliary_path, published_source):
     """Independent source13 scope plus archived Store and Email declarations."""
     from app.store import _INITIALIZED_STORE_PATHS
 
+    # The captured source13 scheduling declarations belong to the actual
+    # profile. Start its companion account table from the same frozen profile,
+    # before the archived constructor fills the remaining Email declarations.
+    # A fresh account table plus actual schedules is not a historical schema.
+    from tests.configs_source_fixtures import capture
+
+    with sqlite3.connect(path) as source:
+        source.execute(capture()["actual"]["tables"]["email_accounts"]["sql"])
+
     subprocess.run(
         [sys.executable, "-c", "from pathlib import Path; from app.email_store import EmailStore; import sys; EmailStore(Path(sys.argv[1]))", str(path)],
         cwd=published_source,
@@ -162,11 +178,22 @@ def full_source_database(path, auxiliary_path, published_source):
     )
     with sqlite3.connect(auxiliary_path) as auxiliary:
         objects = auxiliary.execute(
-            "select type,name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,rowid"
+            "select type,name,tbl_name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,rowid"
         ).fetchall()
+    # The source13 reply and Email declarations below are actual-profile.
+    # Their companion follow-up declarations must be the paired actual set,
+    # rather than fresh tables from the auxiliary constructor. Only schema
+    # objects are copied from that database; there are no rows to replace.
+    followup_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-14-database-redesign-followup-sync-source.json').read_text())['actual']['tables']
+    paired_action_sources = {
+        **json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-17-task-delivery-source-metadata.json').read_text())['actual'],
+        **{name: state['declaration'] for name, state in json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-17-feedback-actions-source-metadata.json').read_text())['actual'].items()},
+    }
     db = source_database(path)
     names = {row[0] for row in db.execute("select name from sqlite_master")}
-    for kind, name, sql in objects:
+    for kind, name, owner, sql in objects:
+        if owner in followup_source or owner in paired_action_sources:
+            continue
         if (
             name not in names
             and not name.startswith("sqlite_")
@@ -184,6 +211,23 @@ def full_source_database(path, auxiliary_path, published_source):
                 f"on {table}" in sql.lower() or f'on "{table}"' in sql.lower()
                 for table in SOURCE["tables"]
             ):
+                db.execute(sql)
+    for state in followup_source.values():
+        db.execute(state['sql'])
+    for state in followup_source.values():
+        for obj in (*reversed(state['indexes']), *state['triggers']):
+            if obj['sql']:
+                db.execute(obj['sql'])
+    for state in paired_action_sources.values():
+        db.execute(next(sql for kind, _, _, sql in state['objects'] if kind == 'table'))
+    for state in paired_action_sources.values():
+        objects_by_name = {name: sql for _, name, _, sql in state['objects']}
+        for index in reversed(state['indexes']):
+            sql = objects_by_name.get(index['list'][1])
+            if sql:
+                db.execute(sql)
+        for kind, _, _, sql in state['objects']:
+            if kind == 'trigger':
                 db.execute(sql)
     claims = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-14-database-redesign-email-actions-published-source.json").read_text())["tables"]["email_unsubscribe_claims"]["declaration"]
     assert db.execute("select count(*) from email_unsubscribe_claims").fetchone() == (0,)
