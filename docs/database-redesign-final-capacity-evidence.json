@@ -34570,5 +34570,20 @@
     ],
     "source_and_assertions_frozen": true,
     "production_writes": 0
+  },
+  "final_reply_input_reference": {
+    "passed": 12,
+    "seconds": 21.89,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-reply-input-ref.log",
+    "runtime_changes": false,
+    "scope": [
+      "real input foreign keys",
+      "parent excludes input content fields and values",
+      "claimed input preserved across current revision changes",
+      "terminal input retirement",
+      "append refresh and manual rerun",
+      "frozen Skill material"
+    ],
+    "fixture_changes": "Numeric public key predicate, actual compact parent payload and current public input projection"
   }
 }
