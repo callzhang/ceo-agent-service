@@ -14,7 +14,8 @@ from app.dingtalk_delivery_repair import (
     collect_native_chat_readback,
     native_reply_text_matches,
 )
-from app.action_storage import delete_action, update_action
+from app.action_storage import delete_action, update_action, insert_error_action, REPLY_ATTEMPT_COMMON_SQL
+from app.task8_storage import task8_set_parts
 from app.run_storage import AGENT_RUN_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_agent_orchestrator import ScriptedAudit, ScriptedConsumer, candidate, task_and_context
@@ -86,7 +87,8 @@ def test_restart_recovery_cannot_complete_unverified_recorded_delivery(tmp_path,
     with pytest.raises(ValueError, match="not recorded"):
         store.resolve_reconciled_failed_reply_task(task.id, external_action_key=receipt["external_action_key"])
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
         db.execute("update runs set status='failed',structured_error_json=? where record_type='agent_runs' "
                    f"and id=(select max(id) from ({AGENT_RUN_SQL}) where reply_task_id=?)",
                    ('{"code":"later_failure"}', task.id))
@@ -98,7 +100,8 @@ def test_restart_recovery_keeps_confirmed_recorded_delivery(tmp_path):
     store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
     assert apply_delivery_reverification(store, proof(receipt, "sent"))
     with store._connect() as db:
-        db.execute("update tasks set status='failed' where record_type='reply_tasks' and id=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"status": "failed"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
     assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
     assert store.get_reply_task(task.id).status == "done"
 
@@ -224,11 +227,10 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
     with store._immediate_write_transaction() as db:
         if mutation == "permission":
             attempt = db.execute(
-                "select legacy_key from actions where record_type='reply_attempts' "
-                "and json_extract(payload_json,'$.agent_run_id')=?",
+                f"select id from ({REPLY_ATTEMPT_COMMON_SQL}) where agent_run_id=?",
                 (receipt["first_agent_run_id"],),
             ).fetchone()
-            update_action(db, "reply_attempts", int(attempt["legacy_key"]), {
+            update_action(db, "reply_attempts", int(attempt["id"]), {
                 "permission_action": "approve",
             })
         else:
@@ -344,9 +346,11 @@ def test_old_completion_projections_cannot_override_current_delivery_error(tmp_p
         trigger_message_id=task.trigger_message_id, trigger_sender="", trigger_text="",
         action="reply", sensitivity_kind="", send_status="completed", channel=task.channel)
     with store._connect() as db:
-        db.execute("insert into errors(conversation_id,message_id,kind,detail,resolved_at,resolution) "
-                   "values (?,?,'reply_task_already_settled','','2026-10-13','old completion')",
-                   (task.conversation_id, task.trigger_message_id))
+        insert_error_action(db, {
+            "conversation_id": task.conversation_id, "message_id": task.trigger_message_id,
+            "kind": "reply_task_already_settled", "detail": "",
+            "resolved_at": "2026-10-13", "resolution": "old completion",
+        })
     assert apply_delivery_reverification(store, proof(receipt, state))
     recovery = (store.reconcile_unresolved_reply_tasks_with_terminal_attempts
                 if source == "terminal_attempt" else store.reconcile_unresolved_reply_tasks_with_settlement_evidence)
@@ -389,10 +393,15 @@ def test_reverification_keeps_original_provider_and_previous_verifier(tmp_path, 
     assert all(run.status == "completed" for run in store.list_agent_runs_for_task_generation(task.id, task.execution_generation, load_events=False))
 
 
-def test_uncertain_historical_receipt_is_reconciled_without_dispatch(tmp_path):
+def test_executor_reconciles_uncertain_historical_receipt_without_dispatch(tmp_path):
     store, task, context, driver, handler, receipt, _execution = historical_receipt(tmp_path)
     apply_delivery_reverification(store, proof(receipt, "ambiguous"))
-    result = driver.process(task, context, refresh_context=lambda: context)
+    # Orchestration sends uncertain messages to a receipt-feedback revision.
+    # Exercise the persisted executor reconciliation boundary directly here.
+    reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
+    result = driver.system_executor.execute(
+        task, reviewed["id"], reviewed["review_id"], context=context,
+    )
     assert result.error.code == "external_action_uncertain"
     assert (handler.sends, handler.reads) == (1, 1)
 
@@ -406,12 +415,17 @@ def test_reverification_rejects_other_task_without_mutation(tmp_path):
     assert store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"] == receipt["provider_result_json"]
 
 
-def test_corrected_uncertain_receipt_can_later_complete_from_readback(tmp_path):
+def test_executor_completes_corrected_uncertain_receipt_from_readback(tmp_path):
     store, task, context, driver, handler, receipt, _execution = historical_receipt(tmp_path)
     apply_delivery_reverification(store, proof(receipt, "ambiguous"))
     handler.confirmed = True
-    result = driver.process(task, context, refresh_context=lambda: context)
-    assert result.status == "executed"
+    # Orchestration sends uncertain messages to a receipt-feedback revision.
+    # Exercise the persisted executor reconciliation boundary directly here.
+    reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
+    result = driver.system_executor.execute(
+        task, reviewed["id"], reviewed["review_id"], context=context,
+    )
+    assert result.outcome == "executed"
     assert (handler.sends, handler.reads) == (1, 1)
     saved = json.loads(store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"])
     assert saved["verification"]["state"] == "sent"

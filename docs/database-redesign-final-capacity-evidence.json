@@ -34329,5 +34329,30 @@
     "scope": "Current atomic blank construction, precise store_schema_version marker write, rollback/retry four boundaries each Store and Email, opposite-order concurrency, shared repair and malformed metadata refusal",
     "runtime_changes": false,
     "excluded": "paired fault8/updater/coordinator/binding/receipt cases remain separately pending"
+  },
+  "final_dingtalk_delivery_repair": {
+    "runtime_changes": false,
+    "root_causes": [
+      "retired Tasks status/error fixture writes and object-key Action lookup",
+      "retired errors fixture insertion replaced with native insert_error_action",
+      "two preexisting orchestration assumptions conflict with unchanged production receipt-feedback revision; tests explicitly exercise existing persisted executor readback boundary"
+    ],
+    "verification": [
+      {
+        "result": "19 passed before later test fixture RED",
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/final-dingtalk-repair-green.log"
+      },
+      {
+        "result": "6 passed, 25 deselected in 116.90s",
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/final-dingtalk-repair-last.log"
+      },
+      {
+        "result": "2 passed, 29 deselected in 45.40s",
+        "log": "/tmp/db-redesign-final-guard.3LeMgv/final-dingtalk-repair-executor.log"
+      }
+    ],
+    "unchanged_proof": "four untouched late-file nodes passed earlier broad diagnostic; not rerun",
+    "scope": "27 focused passing nodes across groups, not one fresh full-file pass; no sends beyond in-memory handler",
+    "production_receipt_feedback_reference": "unchanged app/agent_orchestrator.py upstream 5d45bcbf4 and docs/runtime-mechanism.md receipt followup contract"
   }
 }
