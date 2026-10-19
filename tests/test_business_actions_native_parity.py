@@ -1,5 +1,6 @@
 """Current Business Actions selection and genuine deployed-source public parity."""
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.action_business_definitions import BUSINESS_ACTION_KINDS
+from app.action_email_definitions import EMAIL_NUMERIC_SCOPE
 from app.action_business_storage import (
     copy_business_action_date_evidence, insert_business_action,
     upsert_business_action_anchor_link,
@@ -123,7 +125,10 @@ def test_current_public_business_fixture_matches_genuine_deployed_native_ids(tmp
         "relation_rowid": 1, "anchor_link_id": 2,
     }
     signal = store.get_business_task_signal(actual["signal_id"])
-    assert signal.evidence_text == "Synthetic local-copy migration proof native-actions-dry"
+    body = "Synthetic local-copy migration proof native-actions-dry"
+    assert signal.source.body_sha256 == hashlib.sha256(body.encode()).hexdigest()
+    assert signal.source.body_utf8_bytes == len(body.encode())
+    assert not hasattr(signal, "evidence_text")
     assert signal.source_ref == "copy-proof-meeting:native-actions-dry"
     assert {item.signal_id for item in store.list_business_project_evidence(actual["project_id"])} == {1}
     assert {item.task_id for item in store.list_business_attention_tasks(actual["attention_item_id"])} == {1}
@@ -138,20 +143,24 @@ def test_selected_source_task_and_attention_lookups_use_selective_indexes(tmp_pa
     store = AutoReplyStore(path)
     EmailStore(path)
     with store.business_task_transaction() as db:
-        document = db.execute(
-            "insert into business_source_documents(identity_key,body) values('index-fixture','Source')"
-        ).lastrowid
         anchor = insert_business(db, "anchor", {
             "anchor_type": "project", "anchor_ref": "index-fixture", "title": "Index fixture",
         }).lastrowid
+        shared_signal_ids = []
         for number in range(1, 1001):
             insert_business(db, "task", {
                 "id": number, "title": f"Index task {number}", "stage": "candidate",
             })
-            signal = insert_business_action(db, "business_task_signals", {
-                "source_type": "meeting", "source_ref": f"meeting:{number}",
-                "source_document_id": document, "dedupe_key": f"index-signal:{number}",
-            }).lastrowid
+            signal = store.create_business_task_signal_in_transaction(
+                source_type="meeting",
+                source_ref=("meeting:shared" if number in (777, 778) else f"meeting:{number}"),
+                source_time=("2026-10-17T18:00:00+00:00" if number in (777, 778) else ""),
+                evidence_text=("Shared source body" if number in (777, 778) else f"Index source {number}"),
+                dedupe_key=f"index-signal:{number}",
+                _db=db,
+            )
+            if number in (777, 778):
+                shared_signal_ids.append(signal)
             if number == 1:
                 attention = store.create_business_attention_item_in_transaction(
                     stable_key="index-fixture", category="decision", title="Index fixture",
@@ -166,9 +175,23 @@ def test_selected_source_task_and_attention_lookups_use_selective_indexes(tmp_pa
                 "attention_item_id": attention, "task_id": number,
             })
         db.execute("analyze")
+        from app.provenance_storage import signals_for_source
+        statements = []
+        db.set_trace_callback(statements.append)
+        found_signal_ids = signals_for_source(
+            db, source_type="meeting", source_ref="meeting:shared",
+            source_time="2026-10-17T18:00:00+00:00",
+        )
+        db.set_trace_callback(None)
+        assert set(found_signal_ids) == set(shared_signal_ids)
+        source_query = next(sql for sql in statements
+                            if sql.lstrip().lower().startswith("select a.business_signal_public_id"))
+        plan = " ".join(str(row[3]) for row in db.execute("explain query plan " + source_query))
+        assert "idx_actions_signal_inline_source" in plan
+        assert "idx_provenance_source" in plan
+        assert "idx_actions_signal_shared" in plan
+        assert "USE TEMP B-TREE" not in plan
         for kind, clause, parameters in (
-            ("business_task_signals", "source_type=? and source_ref=?",
-             ("meeting", "meeting:777")),
             ("business_task_evidence", "task_id=?", (777,)),
             ("business_attention_tasks", "task_id=?", (777,)),
         ):
@@ -179,7 +202,7 @@ def test_selected_source_task_and_attention_lookups_use_selective_indexes(tmp_pa
             assert "USE TEMP B-TREE" not in plan
 
 
-def test_fresh_store_email_selects_thirteen_table_business_action_graph(tmp_path):
+def test_fresh_store_email_selects_eleven_table_business_action_graph(tmp_path):
     path = tmp_path / "current.sqlite3"
     AutoReplyStore(path)
     EmailStore(path)
@@ -188,7 +211,7 @@ def test_fresh_store_email_selects_thirteen_table_business_action_graph(tmp_path
     with sqlite3.connect(path) as db:
         tables = {row[0] for row in db.execute(
             "select name from sqlite_schema where type='table' and name not like 'sqlite_%'")}
-        assert len(tables) == 13
+        assert len(tables) == 11
         assert not tables.intersection(BUSINESS_ACTION_KINDS)
         signal_fks = [row for row in db.execute("pragma foreign_key_list(business)")
                       if row[3] in ("attention_item_evidence_signal_id",
@@ -198,7 +221,7 @@ def test_fresh_store_email_selects_thirteen_table_business_action_graph(tmp_path
         assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_fresh_email_then_store_selects_same_thirteen_table_graph(tmp_path):
+def test_fresh_email_then_store_selects_same_eleven_table_graph(tmp_path):
     path = tmp_path / "email-first.sqlite3"
     EmailStore(path)
     AutoReplyStore(path)
@@ -206,7 +229,7 @@ def test_fresh_email_then_store_selects_same_thirteen_table_graph(tmp_path):
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         assert db.execute("select count(*) from sqlite_schema where type='table' "
-                          "and name not like 'sqlite_%'").fetchone()[0] == 13
+                          "and name not like 'sqlite_%'").fetchone()[0] == 11
         assert not db.execute("select 1 from sqlite_schema where type='table' and name in ("
                               + ",".join("?" for _ in BUSINESS_ACTION_KINDS) + ")",
                               BUSINESS_ACTION_KINDS).fetchall()
@@ -215,15 +238,13 @@ def test_fresh_email_then_store_selects_same_thirteen_table_graph(tmp_path):
 
 def test_composite_key_conflict_does_not_suppress_unrelated_constraint(tmp_path):
     path = tmp_path / "component.sqlite3"
-    AutoReplyStore(path)
+    store = AutoReplyStore(path)
     EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("pragma foreign_keys=on")
-        db.execute("insert into business_source_documents(identity_key,body) values('key','body')")
-        signal = insert_business_action(db, "business_task_signals", {
-            "source_type": "meeting", "source_ref": "meeting:1", "source_document_id": 1,
-            "dedupe_key": "signal:1",
-        }).lastrowid
+    with store.business_task_transaction() as db:
+        signal = store.create_business_task_signal_in_transaction(
+            source_type="meeting", source_ref="meeting:1", evidence_text="body",
+            dedupe_key="signal:1", _db=db,
+        )
         assert signal == 1
         task = insert_business(db, "task", {"title": "Task", "stage": "candidate"}).lastrowid
         values = {"task_id": task, "signal_id": signal, "evidence_role": "discovery"}
@@ -240,15 +261,13 @@ def test_composite_key_conflict_does_not_suppress_unrelated_constraint(tmp_path)
 
 def test_date_copy_is_one_statement_and_keeps_blob_and_created_at(tmp_path):
     path = tmp_path / "component.sqlite3"
-    AutoReplyStore(path)
+    store = AutoReplyStore(path)
     EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("pragma foreign_keys=on")
-        db.execute("insert into business_source_documents(identity_key,body) values('key','body')")
-        signal = insert_business_action(db, "business_task_signals", {
-            "source_type": "meeting", "source_ref": "meeting:1", "source_document_id": 1,
-            "dedupe_key": "signal:1",
-        }).lastrowid
+    with store.business_task_transaction() as db:
+        signal = store.create_business_task_signal_in_transaction(
+            source_type="meeting", source_ref="meeting:1", evidence_text="body",
+            dedupe_key="signal:1", _db=db,
+        )
         source = insert_business(db, "task", {"title": "Source", "stage": "candidate"}).lastrowid
         target = insert_business(db, "task", {"title": "Target", "stage": "candidate"}).lastrowid
         insert_business_action(db, "business_task_date_evidence", {
@@ -261,21 +280,20 @@ def test_date_copy_is_one_statement_and_keeps_blob_and_created_at(tmp_path):
         assert copy_business_action_date_evidence(db, source_task_id=source,
                                                   target_task_id=target) == 0
         projection = business_action_projection("business_task_date_evidence")
-        rows = db.execute(f"select task_id,raw_phrase,created_at from ({projection}) order by id").fetchall()
+        rows = [tuple(row) for row in db.execute(
+            f"select task_id,raw_phrase,created_at from ({projection}) order by id")]
         assert rows == [(source, b"Friday", "2026-10-17 12:00:00"),
                         (target, b"Friday", "2026-10-17 12:00:00")]
 
 
 def test_date_copy_keeps_duplicate_source_facts_and_aborts_all_rows_on_late_failure(tmp_path):
     path = tmp_path / "date-copies.sqlite3"
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("pragma foreign_keys=on")
-        db.execute("insert into business_source_documents(identity_key,body) values('source','body')")
-        signal = insert_business_action(db, "business_task_signals", {
-            "source_type": "meeting", "source_ref": "meeting:1",
-            "source_document_id": 1, "dedupe_key": "signal:1",
-        }).lastrowid
+    store = AutoReplyStore(path)
+    with store.business_task_transaction() as db:
+        signal = store.create_business_task_signal_in_transaction(
+            source_type="meeting", source_ref="meeting:1", evidence_text="body",
+            dedupe_key="signal:1", _db=db,
+        )
         source = insert_business(db, "task", {"title": "Source", "stage": "candidate"}).lastrowid
         target = insert_business(db, "task", {"title": "Target", "stage": "candidate"}).lastrowid
         duplicate = {"task_id": source, "date_type": "next_check_at",
@@ -293,7 +311,7 @@ def test_date_copy_keeps_duplicate_source_facts_and_aborts_all_rows_on_late_fail
             **duplicate, "raw_phrase": "late"})
         db.execute("create trigger abort_late_date_copy before insert on actions "
                    "when new.record_type='business_task_date_evidence' and "
-                   "json_extract(new.payload_json,'$.raw_phrase')='late' "
+                   "new.ba_task_date_evidence_raw_phrase='late' "
                    "begin select raise(abort,'late date'); end")
         with pytest.raises(sqlite3.IntegrityError, match="late date"):
             copy_business_action_date_evidence(db, source_task_id=source,
@@ -328,14 +346,11 @@ def test_date_copy_crossing_native_auto_limit_has_same_failure_and_atomicity(tmp
                )"""
     native_path = tmp_path / "native.sqlite3"
     target_path = tmp_path / "target.sqlite3"
-    import app.store as store_module
-    from app.action_business_storage import capture_business_action_source, migrate_business_action_schema
-    with monkeypatch.context() as patch:
-        patch.setattr(store_module, "migrate_business_action_schema",
-                      lambda db, metadata: metadata)
-        patch.setattr(AutoReplyStore, "_schema_manifest_is_current_in_connection",
-                      lambda self, db, *, include_run_snapshots: True)
-        AutoReplyStore(native_path)
+    from tests.test_action_business_storage import _current25_source_store
+
+    # This frozen pre-edit source is the native SQL oracle. The separate
+    # candidate is built through the real final paired constructors below.
+    _current25_source_store(native_path)
     with sqlite3.connect(native_path) as db:
         db.execute("insert into business_source_documents(identity_key,body) values('source','body')")
         db.execute("insert into business_task_signals(source_type,source_ref,source_document_id,dedupe_key) "
@@ -349,8 +364,24 @@ def test_date_copy_crossing_native_auto_limit_has_same_failure_and_atomicity(tmp
                        (source,"next_check_at","2026-10-18",phrase,signal,"human"))
         db.execute("update sqlite_sequence set seq=? where name='business_task_date_evidence'",
                    (2**63 - 2,))
-    with sqlite3.connect(native_path) as src, sqlite3.connect(target_path) as dst:
-        src.backup(dst)
+    candidate = AutoReplyStore(target_path)
+    EmailStore(target_path)
+    candidate_source = candidate.create_business_task(title="Source", stage="candidate")
+    candidate_target = candidate.create_business_task(title="Target", stage="candidate")
+    candidate_signal = candidate.create_business_task_signal(
+        source_type="meeting", source_ref="meeting:1", evidence_text="body",
+        dedupe_key="signal:1",
+    )
+    with candidate.business_task_transaction() as db:
+        for phrase in ("Friday", "Saturday"):
+            candidate.create_business_task_date_evidence_in_transaction(
+                task_id=candidate_source, date_type="next_check_at", value_at="2026-10-18",
+                raw_phrase=phrase, source_signal_id=candidate_signal, actor_kind="human", _db=db,
+            )
+    assert (candidate_source, candidate_target, candidate_signal) == (source, target, signal)
+    with candidate._connect() as db:
+        db.execute("update sqlite_sequence set seq=? where name='actions:business_task_date_evidence'",
+                   (2**63 - 2,))
     with sqlite3.connect(native_path) as db:
         db.execute("begin")
         with pytest.raises(sqlite3.DatabaseError) as native_error:
@@ -359,19 +390,17 @@ def test_date_copy_crossing_native_auto_limit_has_same_failure_and_atomicity(tmp
             "select count(*) from business_task_date_evidence where task_id=?", (target,)).fetchone()[0]
         native_in_transaction = db.in_transaction
         native_water = db.execute("select seq from sqlite_sequence where name='business_task_date_evidence'").fetchone()[0]
-    with sqlite3.connect(target_path) as db:
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin")
-        migrate_business_action_schema(db, capture_business_action_source(db))
-        db.commit()
-        db.execute("pragma foreign_keys=on")
+    with candidate._connect() as db:
         db.execute("begin")
         with pytest.raises(sqlite3.DatabaseError) as target_error:
             copy_business_action_date_evidence(db, source_task_id=source,
                                                target_task_id=target)
-        projection = business_action_projection("business_task_date_evidence")
+        from app.action_storage import ACTION_RECORD_TYPES, _action_path
         target_rows = db.execute(
-            f"select count(*) from ({projection}) where task_id=?", (target,)).fetchone()[0]
+            "select count(*) from actions where _kind=? and jsonb_extract(payload_json,?)=?",
+            (ACTION_RECORD_TYPES.code("business_task_date_evidence"),
+             _action_path("business_task_date_evidence", "task_id"), target),
+        ).fetchone()[0]
         target_in_transaction = db.in_transaction
         target_water = db.execute("select seq from sqlite_sequence where name='actions:business_task_date_evidence'").fetchone()[0]
         db.rollback()
@@ -381,15 +410,13 @@ def test_date_copy_crossing_native_auto_limit_has_same_failure_and_atomicity(tmp
 
 def test_anchor_link_upsert_keeps_public_id_and_created_at(tmp_path):
     path = tmp_path / "component.sqlite3"
-    AutoReplyStore(path)
+    store = AutoReplyStore(path)
     EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("pragma foreign_keys=on")
-        db.execute("insert into business_source_documents(identity_key,body) values('key','body')")
-        signal = insert_business_action(db, "business_task_signals", {
-            "source_type": "meeting", "source_ref": "meeting:1", "source_document_id": 1,
-            "dedupe_key": "signal:1",
-        }).lastrowid
+    with store.business_task_transaction() as db:
+        signal = store.create_business_task_signal_in_transaction(
+            source_type="meeting", source_ref="meeting:1", evidence_text="body",
+            dedupe_key="signal:1", _db=db,
+        )
         task = insert_business(db, "task", {"title": "Task", "stage": "candidate"}).lastrowid
         anchor = insert_business(db, "anchor", {"anchor_type": "project",
                                                  "anchor_ref": "anchor:1", "title": "Anchor"}).lastrowid
@@ -448,8 +475,11 @@ def test_selected_signal_and_date_observations_keep_values_and_are_immutable(tmp
             date_type="next_check_at", value_at="",
             raw_phrase="下周，日期未定", actor_kind="human", _db=db,
         )
-    assert store.get_business_task_signal(signal).evidence_text == "  Exact source body\n"
-    assert store.get_business_task_signal(signal).context_json == '{"source":true}'
+    signal_fact = store.get_business_task_signal(signal)
+    assert signal_fact.source.body_sha256 == hashlib.sha256("  Exact source body\n".encode()).hexdigest()
+    assert signal_fact.source.body_utf8_bytes == len("  Exact source body\n".encode())
+    assert not hasattr(signal_fact, "evidence_text")
+    assert signal_fact.context_json == '{"source":true}'
     assert store.list_business_task_date_evidence(task_id=task)[0].raw_phrase == "下周，日期未定"
     with store._connect() as db:
         for kind, public_id in (("business_task_signals", signal),
@@ -466,7 +496,7 @@ def test_selected_signal_and_date_observations_keep_values_and_are_immutable(tmp
 
 
 def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
-    """Query the actual current13 DDL and the allocator's executed SQL."""
+    """Query the actual current 11-table DDL and the allocator's executed SQL."""
     from app.action_business_storage import _next_source_rowid
     from app.action_business_definitions import BUSINESS_ACTION_AUTO
 
@@ -475,7 +505,7 @@ def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
     EmailStore(path)
     with store._connect() as db:
         assert db.execute("select count(*) from sqlite_schema where type='table' "
-                          "and name not like 'sqlite_%'").fetchone()[0] == 13
+                          "and name not like 'sqlite_%'").fetchone()[0] == 11
         assert db.execute("select 1 from sqlite_schema where name='idx_actions_public_id'").fetchone()
         statements = []
         db.set_trace_callback(statements.append)
@@ -491,8 +521,14 @@ def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
 
         indexed_plan(allocator_sql)
         for kind in BUSINESS_ACTION_KINDS:
-            projection = business_action_projection(
-                kind, include_rowid=True, public_id_index=True)
+            if kind == "business_task_signals":
+                projection = ("select cast(a.legacy_key as integer) as _source_rowid, "
+                              "cast(a.legacy_key as integer) as id from actions a "
+                              "where a.record_type='business_task_signals' and "
+                              + EMAIL_NUMERIC_SCOPE)
+            else:
+                projection = business_action_projection(
+                    kind, include_rowid=True, public_id_index=True)
             indexed_plan(f"select _source_rowid from ({projection}) where _source_rowid=?", (1,))
             indexed_plan(f"select _source_rowid from ({projection}) order by _source_rowid limit 5")
             if kind in BUSINESS_ACTION_AUTO:

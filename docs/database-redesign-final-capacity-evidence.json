@@ -32409,7 +32409,7 @@
     "finding": null
   },
   "final_parallel_regression": {
-    "status": "terminated_failed_fixture_triage_in_progress",
+    "status": "initial31_observed_failures_resolved_by_focused_evidence_not_full_suite_green",
     "command": "nice -n10 python -m pytest -q -n6 --maxfail=8",
     "pid": 24191,
     "session": 51230,
@@ -32474,6 +32474,40 @@
     "scope": "historical TEXT migration intermediate native parity, inverse/reforward and current-data DML fixtures; not final compact writer proof",
     "runtime_or_schema_changed": false,
     "assertions_removed": false,
+    "production_writes": false
+  },
+  "final_cli_scheduler_e2e_regression": {
+    "first_fixture_pass": {
+      "passed": 280,
+      "failed": 8,
+      "seconds": 855.93,
+      "two_large_history_cases_executed": true
+    },
+    "corrected_other_cases": {
+      "passed": 315,
+      "failed": 1,
+      "seconds": 209.77,
+      "two_unchanged_large_history_cases_excluded": true
+    },
+    "final_remaining_e2e": {
+      "passed": 1,
+      "seconds": 29.4,
+      "reason": "retired POST route has405 under combined Console catch-all; OpenAPI absent and stream/stop/timeline exact"
+    },
+    "single_full_suite_pass_claimed": false,
+    "real_sends": 0,
+    "production_writes": false
+  },
+  "final_compact_business_native_parity": {
+    "passed": 11,
+    "seconds": 48.61,
+    "unhinted_actual_projection_followup": {
+      "passed": 1,
+      "seconds": 35.94
+    },
+    "final_real_constructors": true,
+    "native_sqlite_full_comparison": true,
+    "runtime_or_schema_changes": false,
     "production_writes": false
   }
 }

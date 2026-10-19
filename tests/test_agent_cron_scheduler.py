@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.action_error_definitions import error_projection
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -767,7 +769,7 @@ def test_command_task_with_unregistered_command_is_skipped_into_attention(
     assert run.skip_or_error_reason == SERVICE_COMMAND_UNAVAILABLE
     assert wakes == []
     with store._connect() as db:
-        rows = db.execute("select kind, detail from errors").fetchall()
+        rows = db.execute(f"select kind, detail from ({error_projection()})").fetchall()
     assert [row["kind"] for row in rows] == [SERVICE_COMMAND_UNAVAILABLE]
     assert "service_command_not_registered" in rows[0]["detail"]
 
