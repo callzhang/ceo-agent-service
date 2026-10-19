@@ -56,6 +56,84 @@ def test_store_rejects_changed_source_binding_before_insertion(db, binding):
     assert db.execute("select count(*) from actions").fetchone()[0] == 0
 
 
+def test_store_keeps_observed_and_reference_only_source_types_distinct_and_body_free(db, binding):
+    from app.business_source_reader import UnavailableSource, SourceUnavailableReason
+    from app.task_source_documents import source_document_key
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    db.row_factory = sqlite3.Row
+    common = {name: getattr(binding, name) for name in (
+        "source_ref", "source_time", "conversation_id", "author_user_id", "author_name",
+        "author_kind",
+    )}
+    body = "source α"
+    observed = replace(
+        binding, source_type="dingtalk_chat", provider_locator_json=None,
+        identity_key=source_document_key(
+            source_type="dingtalk_chat", **common, evidence_text=body,
+        ),
+    )
+    cited = replace(
+        binding, source_type="memory_provenance", provider_locator_json=None,
+        identity_key=source_document_key(
+            source_type="memory_provenance", **common, evidence_text=body,
+        ),
+    )
+    observed_id = store.create_business_task_signal_in_transaction(
+        **signal_input(observed), source_binding=observed,
+        dedupe_key="observed", _db=db,
+    )
+    cited_id = store.create_business_task_signal_in_transaction(
+        **signal_input(cited), source_binding=cited,
+        dedupe_key="cited", _db=db,
+    )
+
+    assert observed_id != cited_id
+    observed_fact = store.get_business_task_signal_in_transaction(
+        signal_id=observed_id, _db=db,
+    )
+    cited_fact = store.get_business_task_signal_in_transaction(
+        signal_id=cited_id, _db=db,
+    )
+    assert observed_fact.source == observed
+    assert cited_fact.source == cited
+    assert observed_fact.source.identity_key != cited_fact.source.identity_key
+    reading = store.business_source_reader().resolve(cited_fact.source)
+    assert isinstance(reading, UnavailableSource)
+    assert reading.reason is SourceUnavailableReason.REFERENCE_ONLY
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert all(body not in row[0] for row in db.execute(
+        "select json(payload_json) from actions where record_type='business_task_signals'"
+    ))
+
+
+def test_store_empty_signal_allocator_preserves_existing_source_watermark(db, binding):
+    from app.action_email_storage import _set_sequence
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    db.row_factory = sqlite3.Row
+    assert db.execute(
+        "select count(*) from actions where record_type='business_task_signals'"
+    ).fetchone()[0] == 0
+    _set_sequence(db, "actions:business_task_signals", 83)
+    public_id = store.create_business_task_signal_in_transaction(
+        **signal_input(binding), source_binding=binding,
+        dedupe_key="after-empty-source-water", _db=db,
+    )
+    assert public_id == 84
+    physical_id = db.execute(
+        "select id from actions where record_type='business_task_signals' and business_signal_public_id=?",
+        (public_id,),
+    ).fetchone()[0]
+    assert physical_id != public_id
+    assert db.execute(
+        "select seq from sqlite_sequence where name='actions:business_task_signals'"
+    ).fetchone()[0] == public_id
+    assert "source α" not in db.execute(
+        "select json(payload_json) from actions where id=?", (physical_id,),
+    ).fetchone()[0]
+
+
 def test_semantic_service_carries_exact_binding_and_deduplicates(db, binding):
     from app.task_semantic_service import SourceSignal, TaskSemanticService
     store = AutoReplyStore.__new__(AutoReplyStore)

@@ -34826,5 +34826,18 @@
       "log": "/tmp/db-redesign-final-guard.3LeMgv/task-semantic-current-constraints-red3.log"
     },
     "root_review": "Full diff reviewed, requested Signal public ID asserted in fixture, original dangling-reference CHECK/FK and business event oracles retained; no runtime/schema changes"
+  },
+  "final_signal_reference_and_empty_allocator_controls": {
+    "file": "tests/test_store_signal_provenance.py",
+    "passed": 13,
+    "seconds": 3.76,
+    "variants": 2,
+    "new_properties": [
+      "Observed and reference-only source types with otherwise identical source facts remain distinct; reference-only read is explicitly unavailable",
+      "Empty final Signal family existing alias watermark83 yields public84 with different physical Actions ID",
+      "No source body persisted in Actions payloads; actual Store transaction API used"
+    ],
+    "root_review": "Full diff and actual writer/source-binding flow reviewed; no runtime/schema/provider/model changes",
+    "scope_limit": "Final writer consumes existing watermark; this does not independently prove empty old Signal table watermark transfer through full schema migration"
   }
 }
