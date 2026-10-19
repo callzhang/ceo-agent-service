@@ -681,6 +681,11 @@ all runs on the page, avoiding one SQLite connection and query per run.
 Attempt detail loads the selected run's native event and result references in
 SQLite, closes the connection, then reads and parses the native transcript files.
 Slow or large local transcripts therefore do not keep a SQLite connection open.
+The complete event-evidence projection uses the same protocol normalization as
+the detail reader: native Codex `McpToolCall` items become `mcp_tool_call` while
+retaining their call ID and result. This lets the existing scheduled Consumer
+document-receipt projection recognize native evidence; it does not approve an
+Audit result, replay a write, or alter task state.
 Generalized attempts without an `agent_run_id` remain outside this index and
 keep their existing workload-key indexes.
 
