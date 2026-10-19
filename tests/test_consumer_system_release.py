@@ -992,3 +992,22 @@ def test_release_new_binding_preserves_sparse_existing_load_orders(tmp_path):
     assert next(b for b in updated if b.skill_id == skill.id).load_order == max(b.load_order for b in store.list_runtime_skill_bindings(sparse.id)) + 1
     publication.rollback()
     assert not path.exists()
+
+
+def test_release_drains_legacy_snapshot_even_after_current_task_reconfiguration(tmp_path):
+    from datetime import UTC, datetime
+    root, skills, rules, manifest, old, _ = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, _, task_id = _store_with_refs(db, old)
+    run = store.create_scheduled_task_run(
+        task_id, trigger_kind="manual", scheduled_for=datetime(2026, 10, 19, tzinfo=UTC)
+    )
+    current = store.get_scheduled_task(task_id)
+    store.update_scheduled_task(task_id, expected_version=current.version,
+                                prompt="Different ordinary task", skill_refs=())
+    with pytest.raises(ValueError, match=f"drain.*scheduled run {run.id}"):
+        prepare_consumer_system_contracts(
+            root=root, database_path=db, operation_id="snapshot-drain",
+            skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+        )
+    assert not (root / "data/consumer-system-releases/snapshot-drain").exists()

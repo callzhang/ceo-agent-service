@@ -514,7 +514,7 @@ migration key 任务在启动时原地转换为命令形式，
 
 OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
 
-发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
+发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束；核查未完成执行的原始快照，不依赖当前任务仍保留旧命令或 Skill 引用。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
 
 ### Runtime-managed Skill 生命周期
 

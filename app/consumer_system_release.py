@@ -18,7 +18,7 @@ from app.managed_skills import (
     RUNTIME_EDIT_SOURCE,
     RuntimeSkillBinding,
 )
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, REPLY_TASK_SQL, SCHEDULED_RUN_SQL
 
 
 MANAGED_NAMES = (
@@ -533,29 +533,25 @@ def prepare_consumer_system_contracts(
         bound[skill.name] = binding
     if set(bound) != {name for name in MANAGED_NAMES if old_by_name[name] is not None}:
         raise ValueError("Consumer system runtime configuration lacks a managed Skill")
-    for task in store.list_scheduled_tasks():
-        if task.command != "weekly-okr-report" and not any(
-            ref.skill_name in {"ceo-weekly-report", "ceo-daily-report"} for ref in task.skill_refs
+    # The current task may already have been edited; only the saved run snapshot
+    # describes the entrypoints an interrupted execution will resume with.
+    with store._connect() as db:
+        active_runs = db.execute(
+            f"select scheduled.id from ({SCHEDULED_RUN_SQL}) scheduled "
+            "where scheduled.dispatch_status='pending' or "
+            "(scheduled.execution_kind='reply_task' and scheduled.execution_id in "
+            f"(select cast(id as text) from ({REPLY_TASK_SQL}) "
+            "where channel='scheduled' and status in ('pending','processing')))"
+        ).fetchall()
+    for row in active_runs:
+        run = store.get_scheduled_task_run(row["id"])
+        if run.snapshot.command == "weekly-okr-report" or any(
+            ref.skill_name in {"ceo-weekly-report", "ceo-daily-report"}
+            for ref in run.snapshot.skill_refs
         ):
-            continue
-        for run in store.list_scheduled_task_runs(task.id):
-            named = run.snapshot.command == "weekly-okr-report" or any(
-                ref.skill_name in {"ceo-weekly-report", "ceo-daily-report"}
-                for ref in run.snapshot.skill_refs
+            raise ValueError(
+                f"report execution must drain before migration: scheduled run {run.id}"
             )
-            if not named:
-                continue
-            execution = (
-                store.get_reply_task(int(run.execution_id))
-                if run.execution_kind == "reply_task" and run.execution_id
-                else None
-            )
-            if run.dispatch_status == "pending" or (
-                execution is not None and execution.status in {"pending", "processing"}
-            ):
-                raise ValueError(
-                    f"report execution must drain before migration: scheduled run {run.id}"
-                )
     original_task_refs = {}
     original_task_versions = {}
     for task in store.list_scheduled_tasks():
