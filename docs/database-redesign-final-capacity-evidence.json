@@ -34919,5 +34919,15 @@
     "atomicity": "Spy invokes real schema preparer after legitimate archived predecessor steps, captures all schema/row/sequence fingerprint immediately at actual release boundary and asserts unchanged in finally; original confirmation count1 retained; exact refusal required.",
     "positive_scope": "Eligible-source paired migration/cold reopen already covered by full production-copy proof and historical orphan source controls; this refusal node makes no idempotent-success claim",
     "review": "Root full diff and existing confirmation_schema_release._empty_closure examined; no new runtime gate, policy or schema changes; original literal/refusal/repair/no-mutation checks retained; Ruff/diffclean"
+  },
+  "final_work_summary_payload_fixture_controls": {
+    "first_red": "Historical work-summary projection references missing t.source_type;1failed2passed0.99s",
+    "result": {
+      "passed": 5,
+      "seconds": 2.07,
+      "evidence": "Bounded-agent terminal output; basetemp /tmp/work-summary-payload-focused.20261019; no persisted log"
+    },
+    "changes": "Current Store projection, registered codec on independent SQLite connection, Task8 explicit public IDs1/2/3 and terminal field update with physical lookup",
+    "preserved": "Exact compression decode/type/hash/bytes, bounded/lossless/idempotent migration and terminal provenance/retirement assertions; root reviewed full diff; no runtime/provider changes"
   }
 }
