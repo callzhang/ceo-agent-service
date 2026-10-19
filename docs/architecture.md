@@ -293,13 +293,15 @@ scheduled_tasks
   -> reply_attempt / agent_runs / provider facts
 ```
 
-Scheduled Agent Audit also receives a compact service projection of any completed
-`consumer_document_write` return from its exact Consumer parent run. The projection
-contains the returned document identity and a digest and byte count of the
-returned readback object; it omits the report body itself. An empty list means
-no matching return was captured for that parent. This establishes what the
-service tool returned, not whether the document or its claims are correct. The
-behavior is shared by scheduled Agent tasks and does not change Audit's review standard.
+Scheduled Agent Audit also receives compact service projections of completed
+`consumer_document_write` returns from completed Consumer runs in the exact
+scheduled task execution generation, including earlier revisions after Audit
+feedback. Each projection contains the returned document identity and a digest
+and byte count of the returned readback object; it omits the report body itself.
+An empty list means no matching return was captured in that generation. This
+establishes what the service tool returned, not whether the document or its
+claims are correct. The behavior is shared by scheduled Agent tasks and does
+not change Audit's review standard.
 
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是
