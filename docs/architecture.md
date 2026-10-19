@@ -174,6 +174,15 @@ or execution receipt. Failed-only History selects Reply Attempt keys with this
 same status projection and hydrates only the selected Attempt IDs through it;
 count, status and displayed rows therefore use the same current state.
 
+For terminal OA History rows whose legacy summary still says
+`external_action_uncertain`, the list hydrates Attempt detail only after sorting
+and slicing the requested page. It replaces the summary only when the current
+detail's raw status exactly matches the projected list status, using the same
+current-versus-reused external-effect wording and original operation time as the
+detail view. A status mismatch or detail-read failure leaves the legacy summary
+in place; this read-only display projection never changes status, receipts, or
+external actions.
+
 An operator may reconcile one existing uncertain OA return through the dedicated
 History endpoint. It requires the exact current reviewed candidate/review, an
 Attempt linked to that Audit run (and matching any OA identity fields already
@@ -2967,6 +2976,8 @@ Attempt detail resolves a persisted run through its stable reply_task_id; messag
 Attempt current stop evidence is scoped to the current task execution generation, including an empty current-run list. Current failure summaries and codes come from that generation's final run, task error or exact current reviewed execution; an approved Audit summary cannot replace a failed or uncertain execution result. Historical run trajectories and execution details retain their identities, while their provider-risk rerun constraints continue to use the original Attempt. A settled done/skipped task has no current stop even if an old Audit returned its candidate.
 
 OA approval detail and History detail use the same current-task-generation status projection for the newest Attempt. The OA detail also returns the persisted Attempt value as `recorded_status`; older rows remain historical. This is a read projection only: stored Attempt rows and execution receipts are unchanged, and an uncertain current execution remains uncertain.
+
+When a terminal OA History row projects `done` or `skipped` but its legacy summary still contains `external_action_uncertain`, the list hydrates that row through the same Attempt-detail projection. It replaces the stale sentence only when the detail's current raw status agrees with History, and uses the detail's current-versus-reused external-effect wording and original operation timestamp. This does not change the stored Attempt, status source, receipts, or execution; a current uncertain effect remains described as uncertain.
 Consumer and Audit both persist a new Codex session selected by the existing runtime retry router within the active run. After an idle timeout, a fresh Audit attempt may replace that run's current session just as Consumer does; each runtime attempt retains its original session, transcript slice and failure. Audit never writes the Consumer conversation session slot. This repairs session persistence only and does not change route selection, retry budgets, candidate binding or external execution.
 
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.
