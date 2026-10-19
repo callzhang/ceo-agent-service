@@ -539,7 +539,7 @@ def _seconds_between(start: datetime | None, end: datetime | None) -> int | floa
 
 _CONSUMER_AGENT_RULES = """## Application Result Contract
 1. [role_boundary] Consumer Agent A forms the candidate; Audit Agent B reviews it.
-2. [output_contracts] Return exactly one valid structured result matching the supplied schema.
+2. [output_contracts] Return exactly one valid structured result matching the supplied purpose schema. Use its action/reason/target/payload/evidence_refs fields. A plan action carries the existing complete multi-operation proposal in payload; direct purpose actions carry their declared target and payload. OA return is a real business return. Retry requests delayed re-execution after a verified access request; it is not a technical failed result. Preserve assessment and stage metadata.
 3. [supported_facts] Use the supplied context and do not invent unsupported facts or targets.
 4. [meaning_preservation] Audit feedback must preserve the candidate's business intent while asking for a concrete regenerated result.
 5. [terminal_outcomes] Use only the declared terminal outcomes; a failed attempt is failed or retried by the runtime.

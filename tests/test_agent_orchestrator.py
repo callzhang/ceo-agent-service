@@ -546,7 +546,7 @@ def test_two_tasks_can_share_runner_without_crossing_parent_or_context(tmp_path)
         ("temporary_read_error", "failed_terminal"),
         ("runtime_provider_unreachable", "failed_terminal"),
         ("codex_provider_capacity_exhausted", "failed_terminal"),
-        ("dependency_read_unavailable", "failed_retryable"),
+        ("dependency_read_unavailable", "failed_terminal"),
         ("agent_context_refresh_failed", "failed_retryable"),
     ],
 )
@@ -578,9 +578,6 @@ def test_six_persisted_technical_failures_prevent_another_provider_turn(
 @pytest.mark.parametrize(
     ("error_code", "failed_turns", "expected_delay"),
     [
-        ("dependency_read_unavailable", 1, 60),
-        ("dependency_read_unavailable", 2, 120),
-        ("dependency_read_unavailable", 5, 900),
         ("agent_context_refresh_failed", 2, 120),
     ],
 )

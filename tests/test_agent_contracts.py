@@ -392,6 +392,11 @@ def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
             payload["error_code"] = ""
         if "error_retryable" not in overrides:
             payload["error_retryable"] = False
+    outcome = payload.pop("outcome")
+    proposal = payload.pop("proposal")
+    payload.update(action="plan" if outcome == "proposal" else outcome,
+                   reason=payload["summary"], target={},
+                   payload=proposal if outcome == "proposal" else {}, evidence_refs=[])
     return payload
 
 
@@ -780,9 +785,9 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
 
 def test_wire_result_accepts_null_error_code_as_no_error():
     payload = {
-        "outcome": "proposal",
+        "action": "plan", "reason": "Prepare the notice.", "target": {}, "evidence_refs": [],
         "summary": "Prepare the notice.",
-        "proposal": _proposal(),
+        "payload": _proposal(),
         "decision_options": [],
         "error_code": None,
         "error_retryable": False,
@@ -961,9 +966,9 @@ def test_parse_typed_agent_result_accepts_single_stray_array_close_after_proposa
 def test_consumer_wire_result_preserves_nested_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {
-            "outcome": "proposal",
+            "action": "plan", "reason": "Prepare the notice.", "target": {}, "evidence_refs": [],
             "summary": "Prepare the notice.",
-            "proposal": _proposal(),
+            "payload": _proposal(),
             "decision_options": [],
             "risk": "low",
             "confidence": 1.0,

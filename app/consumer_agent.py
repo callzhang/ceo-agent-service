@@ -20,6 +20,7 @@ from app.agent_contracts import (
     dingtalk_chat_delivery,
 )
 from app.prompt_schema import _compact_prompt_schema
+from app.consumer_purpose import purpose_for_context
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -36,6 +37,7 @@ from app.agent_turn_runner import (
 from app.agent_wire_contracts import (
     AuditAgentWireResult,
     ConsumerAgentWireResult,
+    consumer_wire_model,
     parse_consumer_agent_wire_result,
 )
 from app.audit_rules import validate_audit_rules_text
@@ -248,7 +250,10 @@ CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_S
 DECISION_QUALITY_GATE_INSTRUCTIONS = """
 ## Decision Evidence
 Include risk, confidence, rule_coverage and information_completeness as truthful
-facts about the current decision, and apply this outcome gate in order:
+facts about the current decision. A purpose retry waits on an already verified
+access request: keep the business coverage scores honest and review the request
+and waiting decision; do not repeat the same factual request to satisfy the
+question branch. For business decisions apply this outcome gate in order:
 information_completeness < 0.5 means ask one focused factual question in a
 normal proposal; it is never a needs_human result. Otherwise, needs_human is
 allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5,
@@ -474,7 +479,7 @@ You are Consumer Agent A. Complete the business preparation using the task's
 applicable Skills and permitted tools, including report and document work.
 Controlled structured actions are proposals: do not dispatch them yourself.
 Audit reads and reviews the complete candidate; system code executes its exact
-persisted approved plan. Return one valid ConsumerAgentResult.
+persisted approved plan. Return one valid purpose output using its supplied action/reason/target/payload/evidence_refs schema and assessment metadata. Multi-operation work uses action=plan with the complete proposal in payload.
 Every action has a stable action_identity for the same intended external
 outcome. Change it only when the intended outcome, target or purpose changes.
 Supply canonical typed capability/operation, exact target and payload; no shell
@@ -487,7 +492,7 @@ continuing this item under that selected rule; a stop choice has
 terminal_outcome skipped and reason. Ask for missing current-instance facts in
 a normal proposal, never with requested_input as a zero-option needs_human.
 Feedback may separately select one-time application and Skill update.
-For proposal, no_action, and failed, decision_options must be empty and
+For direct business actions, plan, retry, no_action, and failed, decision_options must be empty and
 requested_input, needs_human_reason, and decision_basis must be null. Use
 those fields only for a needs_human result.
 An action plan and a human question are separate candidates. When source work
@@ -813,9 +818,11 @@ class ConsumerAgentRunner:
                 ),
             )
 
+        purpose_name = purpose_for_context(context, task)
         developer_sections = consumer_developer_sections(
             runtime_context="",
             prompt_configuration=configuration,
+            purpose_name=purpose_name,
         )
         frozen_skill_names_for_task = frozen_task_skill_names(
             task.trigger_message_json, context.skill_names,
@@ -907,6 +914,7 @@ class ConsumerAgentRunner:
         full_task_prompt = task_assembly.text + "\n\n" + context_marker_section.text
         full_task_sections = task_assembly.sections + (context_marker_section,)
         full_invocation_facts = {
+            "consumer_purpose": purpose_name,
             "stage_index": context.stage_index,
             "skill_names": list(context.skill_names),
             "skill_protocol": skill_protocol_fact,
@@ -982,7 +990,7 @@ class ConsumerAgentRunner:
                 session_id=session_id,
                 developer_instructions=developer_instructions,
                 configure_command=configure_consumer_command,
-                parse_result=_parse_consumer_result,
+                parse_result=lambda raw: _parse_consumer_result(raw, purpose=purpose_name),
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
                     parsed,
                     store=self.store,
@@ -1004,6 +1012,18 @@ class ConsumerAgentRunner:
 
 def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
     from app.reviewed_sources import capture_candidate_sources
+    if (parsed.purpose_output or {}).get("action") == "request_access":
+        from app.consumer_purpose_retry import PurposeRetryBudget
+        budget = PurposeRetryBudget(store, task.business_object_key or f"reply-task:{task.id}",
+                                    purpose_for_context(context, task)).state()
+        if budget:
+            raise ResultParseError("An access request already has a verified receipt. Reuse that receipt for retry; do not request access again.")
+    if parsed.outcome is ConsumerOutcome.RETRY:
+        from app.consumer_purpose_retry import verified_access_request
+        try:
+            verified_access_request(store, task, parsed.purpose_output["evidence_refs"])
+        except ValueError as exc:
+            raise ResultParseError(str(exc)) from exc
     try:
         require_needs_human_context_eligible(
             outcome=parsed.outcome.value,
@@ -1174,6 +1194,7 @@ def consumer_developer_sections(
     runtime_context: str | None = None,
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
 ) -> tuple[PromptSection, ...]:
     # Retain the legacy argument for caller compatibility, but never expose
     # Audit's independent review policy to the Consumer.
@@ -1183,7 +1204,7 @@ def consumer_developer_sections(
         audit_rules=None,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         common_principles=configuration.developer_instructions,
-        wire_model=ConsumerAgentWireResult,
+        wire_model=consumer_wire_model(purpose_name),
     )
     sections = _role_developer_sections(
         core,
@@ -1224,7 +1245,7 @@ def default_task_skill_catalog(
     return tuple(dict((entry.name, entry) for entry in catalog).values())
 
 
-def _parse_consumer_result(raw: str):
+def _parse_consumer_result(raw: str, *, purpose="general"):
     """Reject a Consumer failure that reports a page it never opened.
 
     The Consumer turn is read-only and has no browser: it cannot have
@@ -1242,7 +1263,7 @@ def _parse_consumer_result(raw: str):
 
     from app.email_unsubscribe import BROWSER_EXECUTION_ERROR_CODES
 
-    result = parse_consumer_agent_wire_result(raw)
+    result = parse_consumer_agent_wire_result(raw, purpose=purpose)
     if result.outcome is not ConsumerOutcome.FAILED:
         return result
     code = str(getattr(result.error, "code", "") or "")

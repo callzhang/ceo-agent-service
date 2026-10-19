@@ -47,6 +47,7 @@
     "ConsumerOutcome": {
       "enum": [
         "proposal",
+        "retry",
         "no_action",
         "needs_human",
         "failed"
@@ -706,7 +707,8 @@
         "outcome": {
           "enum": [
             "no_action",
-            "failed"
+            "failed",
+            "retry"
           ]
         },
         "proposal": {
@@ -872,6 +874,21 @@
       "default": false,
       "title": "Continue After Execution",
       "type": "boolean"
+    },
+    "purpose_output": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Purpose Output"
     },
     "source_bindings": {
       "default": [],

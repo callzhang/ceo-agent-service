@@ -1783,7 +1783,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 和 `agent_context_refresh_failed` 是外部读取等待，不形成业务结论或消耗 DingTalk attempt，也不计入六次上限；同一角色和修订连续遇到相同依赖错误时，按已持久化失败 run 数以 60、120、240 秒等间隔退避，最长 15 分钟，再读取当前来源。这个等待不终止待办。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
+角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 按普通连续六次技术失败上限处理；权限申请后的等待由经审核的 purpose `retry` 动作表示。`agent_context_refresh_failed` 仍是服务侧来源刷新等待，沿用持久化 run 计数和 60、120、240 秒、最长 15 分钟的退避，不形成业务结论。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
 
 ## 统一外发消息后缀
 
@@ -3315,3 +3315,13 @@ evidence and limits are in `docs/task-result-repair-prompt-validation.md`.
 Hourly Quality 的 Memory 队列读取继续严格校验 Actions 完整声明；当前期望为最终 compact payload、canonical Email、Business／Email history 及 physical provenance 的现有声明。它不再使用已退休的中间 Actions 声明，未知对象仍拒绝，不增加运行时兼容分支。
 
 History 按明确 source_tables 构建查询时，仅在包含 email_actions 或未限制来源时检查 Email publication；非邮件分页与失败列表不读取被排除的 Email／State manifest。邮件分支仍执行原有准确 schema 检查，分页、total、状态和回执投影不变。
+
+## Consumer purpose 动作输出和权限重试
+
+Consumer 的业务核心输出统一为 `action/reason/target/payload/evidence_refs`，评分、阶段绑定和长期记忆保留为元数据。服务在推理前选择 purpose，生成动作集合及严格的 target/payload 分支；普通 purpose 支持 typed plan、reply/react 等动作，OA purpose 支持 approve/reject/return/comment。`return` 明确映射到真实 OA `revert_task`。自然语言 reason 不用于分流。多动作 plan 保留既有完整提案结构。新输出先规范化为现有 ConsumerAgentResult，再绑定来源、计算摘要并交 Audit；历史候选保持原样。Consumer 的 purpose 输出另存于候选中，以保留动作来源和回执关联。
+
+`request_access` 是经过审核的权限请求；OA 通过流程评论，普通会话通过原消息回复向可核验责任人提出。成功执行后，服务绑定该请求的已核验回执并安排第一次延后重读。后续 Consumer 可以选择普通 purpose `retry` 并引用原回执；未经核验的请求、其他普通评论、其他任务的回执不满足条件。Audit 审核 retry；只在审核通过后排队。预算按业务对象和 purpose 在既有 service_state 中以短事务持久化，不因 session、revision、attempt 退款或进程重启重置，也不能换回执清零。
+
+从原请求发出时刻起最多 72 小时、最多启动 10 次后续 Consumer 调用，先达到任一限制即停止。请求发出时间只从已验证动作记录取值，不信任模型时间；以 dispatch 记录时间作保守边界。退避从 5 分钟指数增长、单次封顶 12 小时，预约不晚于期限。每次重读前事务预留次数；重复检查同一预约不递增。崩溃时已预留的次数保留，不会突破上限。到期检查在刷新来源和调用 Consumer 之前完成。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
+
+Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。详见 `docs/consumer-purpose-actions-validation.md`。

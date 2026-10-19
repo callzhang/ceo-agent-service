@@ -6517,7 +6517,7 @@ def test_runtime_provider_unreachable_run_is_deferred_after_retry_budget(
     assert browser_notifications == []
 
 
-def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
+def test_permission_retry_run_is_deferred_after_normal_attempt_budget(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -6540,7 +6540,7 @@ def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
     worker.store.fail_agent_run(
         run.id,
         {
-            "code": "dependency_read_unavailable",
+            "code": "consumer_purpose_retry_requested",
             "retryable": True,
             "source": "agent",
             "source_code": "audience_membership_evidence_unavailable",
@@ -6556,7 +6556,7 @@ def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
             final_role=AgentRole.AUDIT,
             summary="the DWS dependency could not provide current group membership",
             error=AgentError(
-                code="dependency_read_unavailable",
+                code="consumer_purpose_retry_requested",
                 retryable=True,
                 source="agent",
                 source_code="audience_membership_evidence_unavailable",
@@ -6569,7 +6569,7 @@ def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
     persisted = worker.store.get_reply_task(task.id)
     assert not completed
     assert persisted is not None and persisted.status == "pending"
-    assert persisted.error == "dependency_read_unavailable"
+    assert persisted.error == "consumer_purpose_retry_requested"
     expected_retry_at = fixed_worker_now().astimezone(timezone.utc) + timedelta(
         seconds=300
     )
@@ -6578,7 +6578,7 @@ def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
 
 
 @pytest.mark.parametrize(
-    "error_code", ["dependency_read_unavailable", "agent_context_refresh_failed"]
+    "error_code", ["consumer_purpose_retry_requested", "agent_context_refresh_failed"]
 )
 def test_external_dependency_wait_without_run_preserves_retry_budget(
     tmp_path: Path,

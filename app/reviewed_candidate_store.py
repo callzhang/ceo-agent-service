@@ -102,7 +102,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("completed WeChat decision mismatch")
             # The independent WeChat delivery pipeline does not adopt Audit plans.
             return
-        if data.get("outcome") not in ("proposal", "needs_human", "no_action"):
+        if data.get("outcome") not in ("proposal", "needs_human", "no_action", "retry"):
             raise ValueError("result is not a reviewable candidate")
         if (task_row is None or run is None or task_row[0] != run["execution_generation"]
             or run["role"] != "consumer" or run["status"] != "completed"):
