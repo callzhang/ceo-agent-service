@@ -35222,5 +35222,27 @@
     ],
     "scope": "Partial standalone legacy setup/follow-up layouts now explicitly rejected without mutation; actual current setup running event remains unfinished. Meeting-memory current Actions index repair, job-reference/no payload-copy and three malformed lease-field rejection controls. Historical conversion/inverse remains in existing Action delivery release controls. No runtime changes.",
     "remaining": "Two tests of uncalled removed-runtime manual converter remain; final integration/release and fullbody search choice remain open."
+  },
+  "store_explicit_removed_runtime_converter_20261019": {
+    "passed": 2,
+    "seconds": 6.83,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/store-explicit-removed-runtime.log",
+    "scope": "Existing private manual converter invoked explicitly, not by startup: existing attempt receipt preserved, missing history converted, failed cleanup rolls back tables/state/new attempt atomically. Current State fixture writer/trigger and codec used. No runtime edits or new compatibility path."
+  },
+  "current_fixture_independent_readonly_review_20261019": {
+    "scope": "Test-only f2db64d6a through84248cc93 plus final2 explicit converter fixture controls; source13 same-copy readback and156 Attention segmented map.",
+    "concrete_findings": [],
+    "limits": "Read-only reviewer ran no tests; did not audit untracked scripts or redo capacity controls."
+  },
+  "production_increment_premerge_20261019": {
+    "observed_at": "2026-10-19T09:17:21.363192+00:00",
+    "production_commit": "aa18a59858a477c3e446560fa956fbe13e26136a",
+    "production_worktree_clean": true,
+    "pending_main_commits": [
+      "ab77d8cb9",
+      "aa18a5985",
+      "00afce57f"
+    ],
+    "scope": "Main increment changes native_trajectory2lines plus docs/tests; wait frozen Store verification before merging. Not a deployment of final schema."
   }
 }

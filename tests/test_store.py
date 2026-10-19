@@ -10883,7 +10883,7 @@ def test_removed_runtime_tables_modules_and_apis_are_absent(tmp_path: Path) -> N
     assert importlib.util.find_spec("app.universal_plan") is None
 
 
-def test_removed_runtime_migrates_unreferenced_history_before_drop(
+def test_explicit_removed_runtime_converter_preserves_existing_history(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "worker.sqlite3"
@@ -10961,10 +10961,10 @@ def test_removed_runtime_migrates_unreferenced_history_before_drop(
                 ),
             ),
         )
-        db.execute(
-            "insert or replace into service_state (key, value) values (?, ?)",
-            ("dws_auth_backup", '{"archive":"removed"}'),
-        )
+        insert_state(db, 'service_state', {'key': 'dws_auth_backup', 'value': '{"archive":"removed"}'}, replace=True)
+
+    with store._connect() as db:
+        AutoReplyStore._migrate_removed_runtime(db)
 
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     migrated = AutoReplyStore(db_path)
@@ -11191,8 +11191,8 @@ def test_removed_runtime_migration_rolls_back_every_change_on_failure(
                 created_at text not null,
                 updated_at text not null
             );
-            create trigger reject_auth_cleanup before delete on service_state
-            when old.key='dws_auth_backup'
+            create trigger reject_auth_cleanup before delete on state
+            when old.record_type='service_state' and old.key='dws_auth_backup'
             begin
                 select raise(abort, 'forced migration failure');
             end;
@@ -11211,13 +11211,11 @@ def test_removed_runtime_migration_rolls_back_every_change_on_failure(
             )
             """
         )
-        db.execute(
-            "insert or replace into service_state (key, value) values (?, ?)",
-            ("dws_auth_backup", "present"),
-        )
+        insert_state(db, 'service_state', {'key': 'dws_auth_backup', 'value': 'present'}, replace=True)
 
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
+        register_task8_functions(db)
         with pytest.raises(sqlite3.IntegrityError, match="forced migration failure"):
             AutoReplyStore._migrate_removed_runtime(db)
         tables = {
@@ -11231,7 +11229,7 @@ def test_removed_runtime_migration_rolls_back_every_change_on_failure(
             "where trigger_message_id='msg-rollback'"
         ).fetchone()[0]
         auth_state = db.execute(
-            "select value from service_state where key='dws_auth_backup'"
+            f"select value from ({state_projection('service_state')}) where key='dws_auth_backup'"
         ).fetchone()
 
     assert "universal_plan_executions" in tables

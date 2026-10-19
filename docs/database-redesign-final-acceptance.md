@@ -209,3 +209,7 @@ Task Attention multisource全156个收集node ID已分段覆盖：1–71、72–
 其余启动夹具又闭合：不完整setup／follow-up旧源明确拒绝及当前running向导不设finished_at共3 pass／3.31秒；会议memory索引重开修复1项，以及原job引用／无payload正文复制、3个实际lease生成列损坏拒绝共4项通过（10.05秒）。显式历史转换和inverse仍由已有Action delivery release测试验证，不恢复独立旧表或启动时原文清理逻辑。
 
 Store目前只剩2项无生产调用的removed-runtime手动converter测试归属待处理；其余最终集成审查、正文搜索选择／性能和生产发布读回仍开放。本轮未推送／未部署。
+
+Removed-runtime最后2项通过（6.83秒）：保留实际存在的手动converter测试合同，明确显式调用后再重开；不再声称启动会自动调用。原有回执、新增历史回执以及强制失败的表／State／新attempt回滚断言保留；生产无调用，本轮无运行时修改。当前Store整文件已冻结，正在3worker定向验证；尚不记作通过。独立只读审查本轮测试差异，未发现具体断言弱化或来源错配。
+
+发布增量复核：生产已前进到aa18a59858a477c3e446560fa956fbe13e26136a且checkout干净；main新增ab77d8cb9／aa18a5985／00afce57f，包含native MCP audit receipt归一化及文档。当前Store测试结束后再合入并验证；该生产版本并非最终schema上线。本文件前述508287cf7是较早读取记录，不代表此刻生产HEAD。
