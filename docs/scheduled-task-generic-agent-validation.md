@@ -6,10 +6,133 @@ with the production configuration's selected Codex OAuth model. It performs no
 service invocation, business provider read, message send, calendar mutation or
 document write.
 
-## Evidence and result
+## Current result — 2026-10-19, runner revision 3
 
-Final results and source hashes are recorded in
-[`results.json`](../evals/scheduled_task_generic/results.json). The original
+The seven frozen annotation cases now pass after the existing one-Audit/one-correction
+budget in both arms. Candidate first turn also passes all seven common checks and
+the migration checks. Baseline first turn passes common checks but incorrectly
+ignores its historical publication gate, so that first-turn pair remains `failed`;
+`post_feedback_status` is separately `passed`. No failed phase is relabeled.
+
+| Revision-3 phase | Baseline common | Candidate common | Migration |
+| --- | --- | --- | --- |
+| First Consumer | 7/7 | 7/7 | Baseline fails; candidate passes |
+| One independent Audit and one correction per arm | 7/7 | 7/7 | Both pass |
+
+The root cause was the evaluation protocol, confirmed by tracing actual role
+inputs and saved output. Revision 2 defined retained identities as sources retained
+anywhere, including notes; a correct explanation of an exclusion could therefore
+promote that source into `include_ids`. It also supplied evaluation labels to
+Consumer but omitted them and its schema from Audit. Audit changed `respond` to
+`proposal` and `pending_source_failure` to `failed`, following the production Skill
+names rather than the evaluation wire protocol. Its corrections were scored as
+failures even when the business judgment in the notes stayed correct.
+
+Revision 3 gives Consumer, Audit and correction one shared transport contract.
+Identity lists describe substantive output or action targets, with provenance and
+coverage counts separate. Dispositions are constrained to the original nine labels.
+Identity schema values come only from explicit input `id`/`*_id` values, without
+consulting expected answers. Invalid native output fails schema validation and is
+retained; it is never converted into a passing answer. No production Skill or
+service runtime code changed in this repair.
+
+Acceptance protection is executable in
+[`test_scheduled_task_generic_eval.py`](../tests/test_scheduled_task_generic_eval.py):
+the case-file hash and scoring-function AST hash are frozen, and the old outputs
+are rescored to exactly the original failures. Three regression checks first
+failed against revision 2 and passed after the protocol repair. Focused unit and
+companion artifact checks are recorded below.
+
+- Case SHA-256 remains `938dcb51c9207d7d79bdc4240a50d827fbd1b376b606541b62799517fe862868`.
+- Scoring AST SHA-256 remains `b016cc78e6254299521296e541eb4307f672d1a8632540bf49b6e8fe2f0133a7`.
+- The complete unmodified revision-2 result is [`results.v2.json`](../evals/scheduled_task_generic/results.v2.json), SHA-256 `cd736ad91074de7e77519ec931e53e8d5fef8307a225b06ca121f3f610569103`.
+- Revision-3 native evidence is [`results.json`](../evals/scheduled_task_generic/results.json). Candidate source reference is `26e50f8d8b1c091aba46171399bbc85925168dc7`; all eleven Skill hashes are identical to the preceding candidate.
+- Both arms used the same installed CLI, production-selected requested model
+  `gpt-5.6-luna`, reasoning `high`, timeout and tool restrictions. All six phases
+  exited successfully with zero non-message runtime items. Both cleanup receipts
+  are true. Native events do not independently report the actual model identity.
+
+## Actual offline drafts and action payloads
+
+The companion [`behavior.py`](../evals/scheduled_task_generic/behavior.py)
+generates authored report paragraphs, response bodies and proposed production
+payloads from the same frozen inputs. It receives neither the annotation outputs
+nor expected answers. The real application purpose resolver and purpose-output
+parser convert those payloads to `ConsumerProposal`; the real email classifier
+wire parser checks classification. Proposed capability/operation pairs must exist
+in the existing system action registry. No new production rule is introduced.
+
+This checks actual draft rows/action targets against the original required,
+excluded and unverified source identities; it also checks the actual calendar
+response, unknown owner, source-failure action and email classification fields.
+Copying an excluded input body into a differently labeled paragraph still fails.
+Report-document work and internal candidate records remain offline draft artifacts;
+they are not invented registered SystemExecutor operations. Classification is
+bound to the case's exact source by the native envelope even though the production
+classifier wire does not itself contain an email ID.
+
+The initial companion probe is preserved without regrading in
+[`behavior-results.v1.json`](../evals/scheduled_task_generic/behavior-results.v1.json),
+SHA-256 `a0fe6bfbe57f31d85c77e74fbadf7fc4b2c1eb5f33afa1b0398a151463e60dd3`.
+It recorded 3/7 in each arm. Inspection showed its own input boundary was incomplete:
+it requested production operations without supplying the operation contracts that
+the Skills require reading, included coverage/history as substantive draft rows,
+and did not define whether verification described a quotation or its underlying
+claim. The candidate used `decline` where the adapter requires `declined`; both
+arms also invented unregistered document/message operation names. These remain
+failed probe outputs; they are not evidence that production, with its operation
+contract lookup, emits or executes the same invalid actions.
+
+Before changing that companion, two additional regression checks failed: it
+accepted an unregistered `dingtalk-chat/reply` operation and its actor input lacked
+the platform contracts. The repaired probe supplies the unchanged canonical action
+contract and calendar adapter contract to both arms, describes substantive draft
+rows separately from coverage/source tracing, and defines underlying-claim
+verification. It also refuses unregistered operations. It does not change case
+facts, expected answers, the original annotation scoring function or any Skill.
+Exactly one new paired companion probe follows that diagnosed interface repair.
+
+The repaired native generation initially scored baseline 7/7 and candidate 6/7.
+The candidate weekly report actually contained `issue-1` twice in its authored
+body, but cited `meeting-target` as the paragraph's source. The companion reader
+looked only at source labels and missed the literal issue in the actual body.
+A new regression reproduced this false negative before the deterministic reader
+was fixed. Complete input identities in authored text now count alongside source
+labels and actual action targets; longer identifier substrings do not count.
+Removing the issue from both provenance and body still fails the same check.
+
+The **same native outputs**, without another model call, now score **7/7 in each
+arm**. `scoring_revision: 2` and each arm's `score_history` preserve the prior
+scores, including the candidate's failed result. Raw deliverables remain unchanged;
+regression tests verify rescore immutability and preservation of the failure.
+Both native generations produced zero tool/runtime actions and cleaned their
+temporary files. The actual drafts were also read directly: candidate output
+retains the waiting/decision/watch items and new issue, omits irrelevant material
+from substantive content, declines the current event with `declined`, classifies
+without mail actions, leaves the meeting owner unknown and the OA claim unverified.
+
+| Actual draft / proposed payload | Baseline | Candidate |
+| --- | --- | --- |
+| Daily substantive facts and irrelevant-source exclusion | Pass | Pass |
+| Weekly target and actual new issue in body | Pass | Pass |
+| Reply to current staffing request | Pass | Pass |
+| Current invitation decline and superseded-source exclusion | Pass | Pass |
+| Notification/unimportant classification, no mail action | Pass | Pass |
+| Unassigned source-action candidate | Pass | Pass |
+| Unverified customer acceptance, technical failure, no applicant action | Pass | Pass |
+
+Focused regression verification: **13 passed** in
+`tests/test_scheduled_task_generic_eval.py`; Ruff and `git diff --check` pass.
+The native companion results and exact drafts are stored in
+[`behavior-results.json`](../evals/scheduled_task_generic/behavior-results.json).
+The companion supplements the original seven-case annotation acceptance; it does
+not replace the historical service-gate migration check or demonstrate a provider
+receipt. It does not invoke the production orchestrator, AuditAgent or executor.
+
+## Historical revision-2 evidence and result
+
+Historical revision-2 results and source hashes are recorded in
+[`results.v2.json`](../evals/scheduled_task_generic/results.v2.json). The original
 Consumer annotations, per-check scores, failed attempt history and bounded
 feedback phases are separate records. A passing model annotation does not prove
 a published report or any other external outcome.
@@ -62,8 +185,9 @@ provider action or a change in the production OA terminal state.
 
 All six final native phases completed without a non-message/tool runtime item.
 Both primary and feedback temporary-artifact cleanup receipts are true.
-No additional harness revision, Skill change, model change or rerun followed
-the bounded revision-2 result. This comparison **does not pass the fixed
+At the end of that earlier work, no additional harness revision, Skill change,
+model change or rerun had followed the bounded revision-2 result. The current
+user request explicitly authorizes diagnosing and fixing the remaining failures.  This comparison **does not pass the fixed
 seven-case acceptance check**, and the Audit probe does not establish that the
 production feedback mechanism resolves these cases.
 
@@ -169,7 +293,17 @@ passing or omitted from the comparison history.
    and a note does not substitute for that list. This clarification applies to
    both arms and discloses no expected identities or business decisions. Cases,
    rubrics and production Skills were not changed for this harness correction.
-   Exactly one revision-2 pair is authorized; it is not repeated until passing.
+   Exactly one revision-2 pair was run. The later revision-3 pair above follows a
+   demonstrated protocol defect and the user’s explicit repair request, rather
+   than repeating an unchanged experiment until a favorable sample appears.
+
+## Publication boundary for this repair
+
+Only eval code, focused tests and documentation changed. Service runtime, business
+Skills, schedules, prompts and production configuration were not modified by this
+repair, so it requires no service deploy or restart. No completed job was replayed.
+The prior migration's deployment/readback record remains separate in
+[the implementation record](scheduled-task-generic-implementation.md).
 
 ## Reproduction
 
@@ -191,6 +325,20 @@ against the saved pair and refuses an already recorded feedback budget. A new
 primary invocation preserves the previous compact result in attempt history.
 This documentation records the authorized execution count; the runner is not a
 production runtime or an approval mechanism.
+
+The separate draft probe uses the same production-selected model and disabled
+tools. A new generation refuses to overwrite an existing result:
+
+```sh
+python evals/scheduled_task_generic/behavior.py
+```
+
+To reproduce only the fixed deterministic readback of the saved version-2 native
+drafts, use `rescore_saved_result(saved, cases)` from `behavior.py`. The recorded
+`python evals/scheduled_task_generic/behavior.py --rescore` command made **zero
+model calls**, preserved old scores and raw deliverables, and refuses an already
+recorded scoring revision. It is not a new native experiment.
+
 
 ## What this establishes
 
