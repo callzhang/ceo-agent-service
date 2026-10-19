@@ -142,5 +142,92 @@
     ],
     "production_writes": 0,
     "real_provider_sends": 0
+  },
+  "merged_ui": {
+    "code": "c52516670e15fa474232b7b2ba1f732ca7977134",
+    "consumer_detail": "one completed step",
+    "audit_detail": "one completed step",
+    "native_consumer": "15 records; artifact read expanded input/output exact synthetic fixture",
+    "native_audit": "10 records; contract read and approval summary visible",
+    "history": "title search Native selection copy acceptance returned1 item, Attempt15705; clicked detail shows done and1/1 verified",
+    "real_sends": 0
+  },
+  "latest_production_copy": {
+    "source": {
+      "production_head": "465533b572a7396deabe33bb6894a87a9908eab8",
+      "source": "/private/tmp/ceo-model-simplification-0zjph5co/prepublish-source.sqlite3",
+      "size": 474054656,
+      "schema_digest": "7567dbb84f89d120e4bd177a40b534a5f220810f44930458ec317ee09e83360b",
+      "fk_findings": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ]
+    },
+    "exact_source_schema_unchanged_from_initial_source": true,
+    "accepted_runtime_code": "c52516670e15fa474232b7b2ba1f732ca7977134",
+    "protocol": {
+      "source_lineage": "465533b572a7396deabe33bb6894a87a9908eab8",
+      "target_pair": [
+        "2026-10-19.1",
+        52
+      ],
+      "source_foreign_keys": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "ordinary_constructor": {
+        "old_pair_refused_without_stored_change": true
+      },
+      "publication": {
+        "protocol": "SelectionSchemaRelease",
+        "only_source_marker_changed": true
+      },
+      "new_current_facts": {
+        "task": 416045,
+        "generation": "initial",
+        "candidate": 1030,
+        "selection": 1,
+        "execution": 328,
+        "external_key": "copy-release-eb163ffd46b9440c9f90c669357abcab",
+        "fixture": "typed DAO, no native model in this schema test",
+        "provider_invocations": 0,
+        "receipt": "explicit in-memory substitute"
+      },
+      "inverse_old_code": {
+        "source_schema_exact": true,
+        "old_store_cold_open": true,
+        "new_branch_and_receipt_readable": true,
+        "loaded_module": "/private/tmp/ceo-model-simplification-0zjph5co/prepublish-old/app/store.py"
+      },
+      "republish": {
+        "current_rows_exact_except_publication_marker_clock": true,
+        "integrity_check": "ok",
+        "store_version": "2026-10-19.1",
+        "original_fk_findings_preserved": true
+      }
+    }
+  },
+  "merged_checks": {
+    "focused_files": [
+      "test_selection_schema_release.py",
+      "test_selection_runtime_readers.py",
+      "test_native_cli_metadata.py",
+      "test_console_web_api.py"
+    ],
+    "initial_result": "137 passed, 3 failed in524.66s; failures were retired flat schema fixture writes before business assertions",
+    "fixture_repair": "same IDs/values through existing typed writers; assertions unchanged; exact3 failed cases now3passed31.96s",
+    "ruff": "passed",
+    "merge_spec": "approved",
+    "merge_quality": "approved",
+    "fixture_spec": "approved",
+    "fixture_quality": "approved"
   }
 }

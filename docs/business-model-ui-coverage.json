@@ -173,8 +173,10 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -328,8 +330,10 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -633,8 +637,10 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -663,8 +669,10 @@
         },
         {
           "name": "detail_links",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         }
       ]
     },
