@@ -7,10 +7,9 @@ from app.action_email_schema_release import (
     SOURCE_EMAIL_VERSION,
     SOURCE_STORE_VERSION,
     TARGET_EMAIL_VERSION,
-    TARGET_STORE_VERSION as PREVIOUS_STORE_VERSION,
 )
 from app.action_storage import email_action_projection
-from app.selection_schema_release import TARGET_STORE_VERSION
+from app.result_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 
 
 def _markers(db: sqlite3.Connection) -> tuple[str | None, int | None]:
@@ -18,7 +17,7 @@ def _markers(db: sqlite3.Connection) -> tuple[str | None, int | None]:
         row[0] for row in db.execute("select name from sqlite_schema where type='table'")
     }
     store = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=(PREVIOUS_STORE_VERSION,))
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     email = None
     if "email_schema_migrations" in tables:
         email = db.execute(
@@ -37,6 +36,6 @@ def publication_email_action_source(db: sqlite3.Connection) -> str:
     pair = _markers(db)
     if pair == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
         return "select status from email_actions"
-    if pair in ((PREVIOUS_STORE_VERSION, TARGET_EMAIL_VERSION), (TARGET_STORE_VERSION, TARGET_EMAIL_VERSION)):
+    if pair in tuple((version, TARGET_EMAIL_VERSION) for version in (*PREVIOUS_STORE_VERSIONS, TARGET_STORE_VERSION)):
         return email_action_projection("email_actions")
     raise ValueError("unknown or mixed Email action publication source schema")

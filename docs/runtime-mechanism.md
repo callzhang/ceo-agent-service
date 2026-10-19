@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.1`／Email52 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.2`／Email52 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -31,13 +31,25 @@ candidate／review FK，以及 `option_key`、status、created_at 三个 payload
 均从选择所绑定的不可变 candidate 和唯一 option_key 读取分支。旧 API 中的
 `branch_json` 仅为请求内派生值；后来的候选不替换原选择或历史回执的分支。
 
-既有 `prepare_database_schema_release` 只将准确 Store `2026-10-14.1`／Email52
-发布为 `2026-10-19.1`／Email52；两种已有 Reply FK 声明均保留。
-普通构造器只接受新声明或正常空库，不自动升级旧 pair。发布事务一起转换选择
-布局和 Store marker，再由既有冷启动入口验证；Email DDL 及所有 Email marker
-不变。失败回滚按当时的候选和选择重建旧分支，包括发布后新增的选择，并恢复
-原 Store marker 的值、时间及 SQLite 类型。公开／物理身份、水位及原 FK finding
-保留。inverse 元数据只保存声明 variant、marker 和 FK finding，不保存业务行副本；
+Store `2026-10-19.2` 的 `candidate_action_attempts.result_json` 原槽位允许 SQL NULL：
+仅 verified 且原始字符串与同一 `external_action_key` 的
+`external_action_results.provider_result_json` 完全一致时，正文由 receipt 唯一持有。
+failed、uncertain 和独立的结果（包括不同于 receipt 的 `{}`）仍保留在 attempt。
+执行、History、详情和修复读取只在 verified／NULL 时从准确 receipt 派生原 API 的
+`result_json`；不以空值真伪选择结果，缺失 owner 明确报完整性错误。
+正常确认与历史尝试对账在原事务中写 receipt 和 NULL 引用。既有 receipt 修正会
+先把此前引用它的历史尝试还原为原正文，再将本次实际修正的尝试指向新正文；
+因此未被修正的历史事实不会随 receipt 改写。原有身份、幂等和状态合同不变。
+
+既有 `prepare_database_schema_release` 当前将准确 Store `2026-10-19.1`／Email52
+发布为 `2026-10-19.2`／Email52；历史 `2026-10-14.1` 到 `2026-10-19.1` 的选择
+发布入口和声明工厂冻结。两种已有 Reply FK 声明均保留，普通构造器只接受当前
+声明或正常空库，不自动升级旧 pair。发布事务一起转换 result 声明和 Store marker，
+再由既有冷启动入口验证；Email DDL 及所有 Email marker 不变。A2 失败回滚从当前
+receipt 恢复所有当前 verified／NULL attempt 的正文，包括发布后新建的 receipt
+和 attempt；A1 的历史逆迁仍从当前绑定候选重建选择分支。两者恢复原 Store marker
+的值、时间及 SQLite 类型，保留当前公开／物理身份、水位及原 FK finding 的多重集合。
+inverse 元数据只保存声明 variant、marker 和 FK finding，不保存业务行副本；
 历史 action_email 发布的来源、目标和默认工厂仍保持原声明。
 
 

@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from app.action_storage import (
-    CANDIDATE_ACTION_ATTEMPT_SQL, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL, candidate_action_attempt_row, preserve_candidate_result_references, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL, EXTERNAL_ACTION_RESULT_SQL, REVIEW_CANDIDATE_SQL,
     REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, update_action,
 )
@@ -117,7 +117,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             "source_digest": source_digest, "queried_at": proof["queried_at"],
             "previous_verification": before, "previous_execution_results": [], "previous_task_state": None,
         }}
-        attempts = db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?", (key,)).fetchall()
+        attempts = [candidate_action_attempt_row(row) for row in db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?", (key,))]
         for attempt in attempts:
             if verification["state"] != "sent":
                 execution = db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where id=?", (attempt["execution_id"],)).fetchone()
@@ -153,12 +153,13 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                         db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': '?'}).sql} where id=?""",
                                    (error_code, proof["queried_at"], task["id"]))
         body = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        preserve_candidate_result_references(db, key, original)
         update_action(db, "external_action_results", key, {
             "provider_result_json": body, "result_digest": hashlib.sha256(body.encode()).hexdigest(),
         })
         for attempt in attempts:
             update_action(db, "candidate_action_attempts", attempt["id"], {
-                "result_json": body, "status": action_status,
+                "result_json": None if action_status == "verified" else body, "status": action_status,
                 "updated_at": proof["queried_at"],
             })
         for sent in db.execute(f"select id from ({SENT_REPLY_SQL}) where external_action_key=?", (key,)).fetchall():
@@ -341,6 +342,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 },
             }}
             result_json = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            preserve_candidate_result_references(db, sent["external_action_key"], original)
             receipt_cursor = update_action(db, "external_action_results", sent["external_action_key"], {
                 "provider_result_json": result_json,
                 "result_digest": hashlib.sha256(result_json.encode()).hexdigest(),
@@ -389,10 +391,10 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         actions = plan.get("actions") if isinstance(plan, dict) else None
         if not isinstance(actions, list) or len(actions) != 1:
             raise ValueError("approved candidate is not a single-action reply")
-        attempts = db.execute(
+        attempts = [candidate_action_attempt_row(row) for row in db.execute(
             f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? "
             "order by action_index", (candidate["execution_id"],),
-        ).fetchall()
+        )]
         if len(attempts) != 1:
             raise ValueError("approved action attempt set is incomplete")
         action_index = next((i for i, attempt in enumerate(attempts)
@@ -450,6 +452,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         }}
         result_json = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         result_digest = hashlib.sha256(result_json.encode()).hexdigest()
+        preserve_candidate_result_references(db, sent["external_action_key"], original)
         receipt_cursor = update_action(db, "external_action_results", sent["external_action_key"], {
             "provider_result_json": result_json, "result_digest": result_digest,
         }, where_sql="provider_result_json=?", parameters=(original,))
@@ -458,7 +461,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
 
         for attempt in attempts:
             status = "verified" if attempt["id"] == candidate["action_attempt_id"] else attempt["status"]
-            result = result_json if attempt["id"] == candidate["action_attempt_id"] else attempt["result_json"]
+            result = None if attempt["id"] == candidate["action_attempt_id"] else attempt["result_json"]
             update_action(db, "candidate_action_attempts", attempt["id"], {
                 "status": status, "result_json": result, "updated_at": queried_at,
             })

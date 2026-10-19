@@ -299,14 +299,15 @@ def _references_for(kinds):
     return references
 
 
-def _payload_check(kind, references, payloads=None):
+def _payload_check(kind, references, payloads=None, *, result_references=False):
     terms = []
     fields = payloads.layouts[kind].fields if payloads else PAYLOAD_FIELDS[kind]
     for field in fields:
         expression = "json_type(payload_json," + repr(payloads.path(kind, field) if payloads else "$." + field) + ")"
         value_type = 'integer' if field in INTEGER_FIELDS else 'text'
         condition = f"{expression} is '{value_type}'"
-        if field in NULLABLE_PAYLOAD_FIELDS.get(kind, ()):
+        if (field in NULLABLE_PAYLOAD_FIELDS.get(kind, ())
+                or result_references and kind == "candidate_action_attempts" and field == "result_json"):
             condition = f"({condition} or {expression} is 'null')"
         terms.append(condition)
     paths = ",".join(repr("$." + field) for field in fields)
@@ -343,7 +344,9 @@ def _reply_payload_check(fields, *, kind=None, payloads=None):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False):
+    if result_references and not compact_payload:
+        raise ValueError("result references require compact Actions payloads")
     if selection_references and not compact_payload:
         raise ValueError("selection references require compact Actions payloads")
     payloads = action_payloads(reply_variant or "actual_no_memory_fk", physical_provenance=physical_provenance, selection_references=selection_references) if compact_payload else None
@@ -507,7 +510,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         + ("," + ",".join(history_generated) if include_email_history else "")
         + (",payload_json blob not null," if payloads else ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),")
         + ",".join(generated)
-        + "," + ",".join(_payload_check(kind, references, payloads) for kind in old_kinds if kind not in REPLY_ACTION_TYPES)
+        + "," + ",".join(_payload_check(kind, references, payloads, result_references=result_references) for kind in old_kinds if kind not in REPLY_ACTION_TYPES)
         + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))"
                           for kind, (field, options) in ENUMS.items() if kind in kinds)
     )
@@ -706,14 +709,19 @@ RECEIPT_ACTION_TABLE_DDL, RECEIPT_ACTION_INDEX_DDL, RECEIPT_ACTION_TRIGGER_DDL =
 POSTFIX_ACTION_TABLE_DDL, POSTFIX_ACTION_INDEX_DDL, POSTFIX_ACTION_TRIGGER_DDL = _action_definitions(True, True)
 
 
-def _projection(kind, *, payloads=None, selection_references=False):
+def _projection(kind, *, payloads=None, selection_references=False, result_references=False):
     if kind in REPLY_ACTION_TYPES:
         raise ValueError("reply projection requires global schema variant")
     fields, joins = [], []
     for field in SOURCE_COLUMNS[kind]:
         if selection_references and kind == "candidate_selections" and field == "branch_json":
             continue
-        if field == IDENTITY_FIELDS.get(kind):
+        if result_references and kind == "candidate_action_attempts" and field == "result_json":
+            expression = ("case when a.status='verified' and a.result_json is null "
+                          "then result_owner.provider_result_json else a.result_json end")
+            joins.append("left join actions result_owner on result_owner.record_type='external_action_results' "
+                         "and result_owner.legacy_key=a.external_action_key")
+        elif field == IDENTITY_FIELDS.get(kind):
             expression = "a.legacy_key" if kind == "external_action_results" else "cast(a.legacy_key as integer)"
         elif kind == "sent_replies" and field == "agent_run_id":
             expression = payloads.value(kind, field, "a.payload_json") if payloads else "json_extract(a.payload_json,'$.agent_run_id')"
@@ -813,7 +821,36 @@ CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = _projection("candidate_selections", selection_references=True)
 CANDIDATE_SUPPLEMENT_SQL = ACTION_PROJECTIONS["candidate_supplements"]
 CANDIDATE_EXECUTION_SQL = ACTION_PROJECTIONS["candidate_executions"]
-CANDIDATE_ACTION_ATTEMPT_SQL = ACTION_PROJECTIONS["candidate_action_attempts"]
+CANDIDATE_ACTION_ATTEMPT_SQL = _projection("candidate_action_attempts", result_references=True)
+
+
+class CandidateResultReferenceError(sqlite3.IntegrityError):
+    """A stored result pointer has no matching receipt owner."""
+
+
+def candidate_action_attempt_row(row):
+    """Return the owned result projection, refusing a broken receipt reference."""
+    if row is None:
+        return None
+    result = dict(row)
+    if result["result_json"] is None:
+        raise CandidateResultReferenceError("candidate action result reference lacks its receipt owner")
+    return result
+
+
+def preserve_candidate_result_references(db, external_action_key, provider_result_json):
+    """Keep historical attempt meaning before an existing receipt correction.
+
+    Referenced bodies only become local facts when their owner is about to
+    change. The correction's own attempts are assigned their new result by its
+    existing writer in this same transaction.
+    """
+    path = _action_path("candidate_action_attempts", "result_json")
+    db.execute("update actions set payload_json=jsonb_set(payload_json,?,json(?)) "
+               "where record_type='candidate_action_attempts' and status='verified' "
+               "and result_json is null and external_action_key=?",
+               (path, json.dumps(provider_result_json, ensure_ascii=False), external_action_key))
+
 EXTERNAL_ACTION_RESULT_SQL = ACTION_PROJECTIONS["external_action_results"]
 AGENT_EFFECT_INTENT_SQL = ACTION_PROJECTIONS["agent_effect_intents"]
 AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
@@ -824,24 +861,24 @@ SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
 SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
-def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant, include_email=include_email, include_followup_sync=include_followup_sync, include_skill_config_receipts=include_skill_config_receipts, include_business_sync=include_business_sync, include_task_delivery=include_task_delivery, include_errors=include_errors, include_feedback=include_feedback, include_business_actions=include_business_actions, include_email_history=include_email_history, canonical_email=canonical_email, inline_legacy_owner=inline_legacy_owner, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery, include_reply=include_reply, reply_variant=reply_variant, include_email=include_email, include_followup_sync=include_followup_sync, include_skill_config_receipts=include_skill_config_receipts, include_business_sync=include_business_sync, include_task_delivery=include_task_delivery, include_errors=include_errors, include_feedback=include_feedback, include_business_actions=include_business_actions, include_email_history=include_email_history, canonical_email=canonical_email, inline_legacy_owner=inline_legacy_owner, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references):
+        for obj in _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references))
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references)
+        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references))
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references)
 
 
-def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, canonical_email=False, *, selection_references=False):
+def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, canonical_email=False, *, selection_references=False, result_references=False):
     if (include_receipts or include_postfix or include_delivery or include_reply) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
         # SQLite creates its native sequence metadata on the first declaration
         # of an AUTOINCREMENT table. The initializer has no rows and is removed;
@@ -851,7 +888,7 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False, in
             name += "_"
         db.execute(f'create table "{name}"(id integer primary key autoincrement)')
         db.execute(f'drop table "{name}"')
-    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, selection_references=selection_references)
+    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, selection_references=selection_references, result_references=result_references)
     if canonical_email:
         if not include_email or not include_reply or reply_variant is None:
             raise ValueError("canonical Email requires the complete current Actions variant")
@@ -861,28 +898,28 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False, in
 
 
 @lru_cache(maxsize=16)
-def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, canonical_email=False, *, selection_references=False):
+def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, canonical_email=False, *, selection_references=False, result_references=False):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references)
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references)
         return _objects(db, "actions")
 
 
-def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str, physical_provenance=False, compact_payload=False, selection_references=False) -> bool:
+def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False) -> bool:
     """Email-only metadata is required, outside the Store's auxiliary repairs."""
     old_names = {
         sqlite_schema_name(obj["name"])
-        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references)
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references)
     }
     expected = {
         sqlite_schema_name(obj["name"]): obj
-        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references)
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references)
         if sqlite_schema_name(obj["name"]) not in old_names
     }
     actual = {sqlite_schema_name(obj["name"]): obj for obj in _objects(db, "actions")}
     return all(actual.get(name) == obj for name, obj in expected.items())
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False) -> bool:
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False) -> bool:
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
     if include_email:
         kinds += EMAIL_TYPES_ORDER
@@ -903,7 +940,7 @@ def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=Fa
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected_objects = _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references)
+    expected_objects = _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references)
     expected = {sqlite_schema_name(o["name"]): o for o in expected_objects}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False

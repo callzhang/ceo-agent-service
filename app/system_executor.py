@@ -285,7 +285,7 @@ class SystemExecutor:
             prior_attempt_reader = getattr(self.store, "get_prior_candidate_action_attempt", None)
             prior_attempt = prior_attempt_reader(action_key, execution_id) if callable(prior_attempt_reader) else None
             if prior_attempt is not None and prior_attempt.get("status") == "failed":
-                prior_result = json.loads(prior_attempt.get("result_json") or "{}")
+                prior_result = json.loads(prior_attempt.get("result_json", "{}"))
                 if prior_result.get("reason") == "reviewed_message_preparation_mismatch":
                     try:
                         reconciliation = handler.reconcile(
@@ -344,7 +344,7 @@ class SystemExecutor:
             except Exception as exc:
                 source_code = getattr(exc, "code", "")
                 source = getattr(exc, "server_key", "")
-                prior_result = json.loads(attempt.get("result_json") or "{}")
+                prior_result = json.loads(attempt.get("result_json", "{}"))
                 outcome = ActionOutcome("uncertain", {**prior_result,
                     "reason": "provider_exception", "exception_type": type(exc).__name__,
                     "source_code": str(source_code) if source_code else "",

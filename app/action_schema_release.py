@@ -7,8 +7,8 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from app.selection_schema_release import (
-    SOURCE_STORE_VERSION, TARGET_STORE_VERSION, publication_action_schema_is_current,
+from app.result_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
@@ -29,7 +29,7 @@ VERSION_KEY = "store_schema_version"
 def publication_candidate_source(db: sqlite3.Connection) -> str:
     """Read the declared previous or target layout during the deploy window."""
     version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=(SOURCE_STORE_VERSION,))
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_VERSION:
         capture_action_schema(db)
         return "select * from review_candidates"

@@ -52,13 +52,13 @@ def migrate_scheduled_configs(db: sqlite3.Connection) -> None:
 def publication_scheduled_source(db: sqlite3.Connection) -> str:
     """Read the exact scheduled layout for the paired publication quiet wait."""
     from app.run_storage import SCHEDULED_RUN_SQL
-    from app.selection_schema_release import (
-        SOURCE_STORE_VERSION, TARGET_STORE_VERSION, publication_action_schema_is_current,
+    from app.result_schema_release import (
+        TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
     )
     from app.action_storage import action_schema_is_current, reply_schema_is_current
 
     version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=(SOURCE_STORE_VERSION,))
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     tables = {
         row[0]
         for row in db.execute("select name from sqlite_master where type='table'")
