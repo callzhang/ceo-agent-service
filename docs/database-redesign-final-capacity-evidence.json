@@ -35338,5 +35338,22 @@
     "independent_readonly_review": "No concrete correctness/privacy issue; total/order/page/filter/source errors and request-local bodies preserved. No cache/schema change.",
     "scope": "Runtime search scan batch now fixed50 rather than UI page limit. Existing HTTP fake wire response corrected to UID-set protocol; unchanged no-query listing previously returned502 from scalar fake. Full-catalog latency remains open; no inference from metadata counts.",
     "production_changed": false
+  },
+  "email_search_real_read_profile_20261019": {
+    "scope": "At most30 already source-verified originals from one observed folder, readonly LOW lease on final-copy metadata; no original saved",
+    "selected": 30,
+    "real_sends": 0,
+    "provider_writes": 0,
+    "production_writes": false,
+    "passed": true,
+    "read": 30,
+    "seconds": 12.674,
+    "timings": {
+      "metadata_seconds": 0.476,
+      "open_seconds": 1.285,
+      "fetch_messages_seconds": 9.597,
+      "logout_seconds": 0.39
+    },
+    "interpretation": "Same-folder bounded30 sample: fetch9.597s dominates connect1.285s/logout0.39s. No whole-catalog extrapolation/latency pass; connection-only refactor insufficient evidence to resolve fulltext baseline. Product choice now concrete: sender/subject with detail-only source reads, or background fulltext progress."
   }
 }
