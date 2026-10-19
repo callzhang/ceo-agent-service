@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from app import action_storage
+from app import action_feedback_storage as feedback_storage
 from app.action_feedback_storage import (
     SOURCE_SQL, SOURCE_INDEX_SQL, SOURCE_TRIGGER_SQL,
     capture_action_feedback_source, migrate_action_feedback_schema,
@@ -155,6 +156,65 @@ def _target():
     db.commit()
     db.execute("pragma foreign_keys=on")
     return db
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _historical_text_feedback_writers():
+    """Keep helper contract tests on the pre-compaction TEXT writer format."""
+    patch = pytest.MonkeyPatch()
+
+    def insert_text_action(db, kind, values, *, source_rowid=None):
+        if kind not in FEEDBACK_KINDS:
+            raise ValueError("unknown Feedback kind")
+        action_storage._email_lock(db)
+        fields = feedback_storage._materialize(db, kind, values)
+        supplied_id = (source_rowid if source_rowid is not None else
+                       fields.get("id") if kind == "feedback_processing_transitions" else None)
+        identity = (feedback_storage._next_feedback_id(db, kind) if db.execute(
+            "select typeof(?)", (supplied_id,)).fetchone()[0] == "null"
+                    else action_storage._native_integer_primary_key(supplied_id))
+        if kind == "feedback_processing_transitions":
+            fields["id"] = identity
+        row = (identity, *(fields.get(field) for field in feedback_storage.FEEDBACK_FIELDS[kind]))
+        feedback_storage._insert_feedback_row(db, kind, row, "actual")
+        return identity
+
+    def set_text_action(db, kind, source_rowid, values, *, update_timestamp=False):
+        if (kind not in FEEDBACK_KINDS[:2] or (not values and not update_timestamp)
+                or set(values) - set(feedback_storage.FEEDBACK_FIELDS[kind])):
+            raise ValueError("unsupported Feedback update")
+        if kind == "feedback_processing_transitions" and "id" in values:
+            raise ValueError("Transition ID update requires a separate source operation")
+        fields = feedback_storage.FEEDBACK_FIELDS[kind]
+        row = db.execute(
+            "select " + ",".join(feedback_storage._quote(field) for field in fields)
+            + " from (" + feedback_projection(kind, with_rowid=True)
+            + ") where _source_rowid=?", (source_rowid,),
+        ).fetchone()
+        if row is None:
+            return 0
+        current = dict(zip(fields, row, strict=True))
+        current.update(values)
+        if kind == "feedback_processing_transitions":
+            current.pop("id")
+        expression = ("json_set(?,'$.updated_at',current_timestamp)" if update_timestamp else "?")
+        return db.execute(
+            "update main.actions set payload_json=" + expression
+            + " where record_type=? and legacy_key=?",
+            (action_storage._native_payload(current), kind, str(source_rowid)),
+        ).rowcount
+
+    # Tests call both imported aliases and module-global names inside helpers.
+    for owner, name in ((feedback_storage, "insert_feedback_action"),
+                        (feedback_storage, "set_feedback_action"),
+                        (globals(), "insert_feedback_action"),
+                        (globals(), "set_feedback_action")):
+        if isinstance(owner, dict):
+            patch.setitem(owner, name, insert_text_action if name == "insert_feedback_action" else set_text_action)
+        else:
+            patch.setattr(owner, name, insert_text_action if name == "insert_feedback_action" else set_text_action)
+    yield
+    patch.undo()
 
 
 def test_feedback_helpers_and_constraints():
