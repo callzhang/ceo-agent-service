@@ -1,7 +1,8 @@
 # A2 receipt-owned candidate results
 
 This change selects Store `2026-10-19.2` / Email52 in the isolated
-`codex/business-model-receipts-20261019` worktree, based on `c29140f02`.
+`codex/business-model-receipts-20261019` worktree, based on `c29140f02` and committed
+locally by the root coordinator as `88a8853b2`.
 The implementation and local checks below are separate from root-owned native
 acceptance, independent review, integration, commit, and deployment. No provider
 send, production write, or primary-checkout edit is part of this implementation.
@@ -198,9 +199,14 @@ repository suite is not run.
 The immutable source is opened read-only with `mode=ro&immutable=1` and backed up
 to `/tmp/ceo-receipt-reference.q0eygc/result-copy.sqlite3`. Frozen A1 code first
 publishes that owned copy from 14.1/Email52 to 19.1/Email52 using the real release
-protocol. Source inventory was independently recounted as **274 verified,
+protocol. The input source is 472,539,136 bytes, SHA-256
+`37d84652b8fa4c4900bf58b573b3b2293d5b2921d1934ff93ef4f39ba1b0b78e`.
+Source inventory was independently recounted as **274 verified,
 37 failed, 5 uncertain** attempts; all 274 verified attempts had matching
 receipts, exactly 273 bodies were byte-equal, and one distinct `{}` remained.
+Those are 274 attempt-to-receipt matches over 273 distinct receipt keys. The
+entire external receipt ledger has 492 rows, all covered by the unchanged-receipt
+hash comparison; the matching count must not be described as the ledger size.
 The existing FK finding is `[('runs', 190042, 'tasks', 1)]`.
 
 The first A2 copy publication completed in 258.86s and the unchanged-table,
@@ -219,6 +225,39 @@ receipt, a NULL attempt, and an unrelated allocator watermark, rolls back from
 current facts, verifies the original Action bytes and State rows are restored,
 and publishes again to compare complete current row hashes. The final run also
 hashes all app files before and after, refusing a proof if runtime code changed.
+
+The final frozen-code run exited **0**. Forward publication and cold verification
+took **107.62s**, current-data rollback **127.18s**, and reforward publication plus
+finalization **169.56s**. All asserted row, identity, type, body, declaration,
+allocator, and FK comparisons passed. Specific evidence:
+
+| Check | Verified result |
+|---|---|
+| Exact original Action rows restored by inverse | 100,561 rows; typed-byte SHA-256 `5d389dd23e9a0afd0c3da1bb4988926e269d7c337041bc112500bd67cff90dc9` |
+| Post-forward new receipt | Physical ID `100562`, public key `a2-copy-proof` |
+| Post-forward new attempt | Physical ID `100563`, public ID `317`; NULL in target, current receipt body in source |
+| Current Actions after inverse/reforward | 100,563 rows; SHA-256 `34e8a7be11e0c3d83dcb610c1d2995f177cf8bbadce58df63cb41ebab0abb0c0` |
+| Public attempt results | 317 rows; SHA-256 `58d416825500a1b33b82d2e8cc8a51c75200a73548a23276382f8a8a951f3e0b` |
+| All current allocator rows including row IDs | 52 rows; SHA-256 `54b3383cc61d301a2eb13f60583b28753f78bfef32d2385c6f6386f8662026fc` |
+| State | Exact source State rows restored on inverse; final 23,671 nonmarker rows also match the original immutable input exactly |
+| Integrity | `quick_check = ok`; the original one-row FK finding remains exact |
+| Runtime files before/after | Identical 420-file manifest `68a39cba039e0ba86c0fc24668ea684a09a60ac49714043c8019863655961dd5` |
+
+Every ordinary table and `sqlite_sequence` has its full current typed-row digest
+in `/tmp/ceo-receipt-reference.q0eygc/copy-proof.json` (SHA-256
+`34092211b4ed7487ca2cbf7b6f869be9c3ae97cd03d6d8edb17e7b94c6c009e4`).
+Store's version/clock row
+is the only expected State difference after re-publication. The persisted
+`copy-final.log`, `final-focused.log`, `app-freeze-before.json`, and
+`app-freeze-after.json` provide the stage results and code boundary. The four
+full source/target DDL dumps for both variants are in the same owned directory.
+
+The independent SPEC and QUALITY static reviews both approved the frozen
+implementation without findings. Root integration, native acceptance on the
+latest production-derived 19.1 source, and A2 push/deploy remain separate gates.
+This owned-copy proof uses the original frozen source above; it is not a claim
+that the later production-derived source has already been accepted by this
+implementer.
 
 ## Changed-file boundary
 
@@ -259,8 +298,9 @@ tests/test_result_schema_release.py                 (new)
 tests/test_selection_schema_release.py              (retired as explained above)
 ```
 
-The upstream `EmailStore.list_recent...` SELECT addition announced by the root
-coordinator is outside this isolated base and must survive integration. This
+The upstream EmailStore SELECT addition of `classification_id` and
+`actions.action_id` announced by the root coordinator is outside this isolated
+base and must survive integration. This
 change touches only EmailStore's current-declaration checks. The validation
 copy and archive are owned temporary evidence under
 `/tmp/ceo-receipt-reference.q0eygc/`, retained for root review; they are not runtime
