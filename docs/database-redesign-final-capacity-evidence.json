@@ -34885,5 +34885,22 @@
     "scope": "2 publication row factories plus2 oldsource versions x2rowfactories; retained readonly/busy/no mutation",
     "change": "Historical post-migration 11.3 projection compared to exact app.task_storage.REPLY_TASK_SQL; final-current comparison still uses app.store.REPLY_TASK_SQL",
     "review": "Root diff reviewed; no runtime, schema, data or product behavior changes"
+  },
+  "final_semantic_immutable_import_index_controls": {
+    "scope": "Date evidence immutable UPDATE/DELETE/REPLACE, retained SQLite invalid states, typed import-owner FK, task without project, semantic index requirements; Signal parameters excluded",
+    "group_result": {
+      "passed": 44,
+      "deselected": 422,
+      "seconds": 37.17,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/task-semantic-current-constraints-final.log"
+    },
+    "index_strengthening": {
+      "passed": 1,
+      "seconds": 1.56,
+      "reason": "Root rejected deriving expected indexes solely from required manifest. Independent19actualsemanticindexnames checked both physically and against effective required declarations; missing Actions index makes actual Store manifest false, SAVEPOINT rollback restores true."
+    },
+    "effective_manifest": "Store schema manifest delegates current_configs_schema_is_current to exact complete Actions objects; flat index list alone is not the full manifest. No duplicate runtime index inventory added.",
+    "review": "Root reviewed actual production-shape schema names, JSONB immutable mutations and existing validator call path; original constraint/immutable failures retained; no runtime changes",
+    "scope_limit": "Group44 preceded strengthening its one index node; final index node rerun1passed, other43unchanged results reused; no full-file claim"
   }
 }

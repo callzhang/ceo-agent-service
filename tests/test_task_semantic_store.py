@@ -8,6 +8,7 @@ from pydantic import ValidationError
 import pytest
 
 from app import store as store_module
+from app import action_storage
 from app import task_semantic_models as models
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.business_schema_release import business_schema_is_current
@@ -861,19 +862,33 @@ def test_signal_observations_are_immutable(store, statement):
 
 
 @pytest.mark.parametrize(
-    "statement",
-    [
-        "update business_task_date_evidence set raw_phrase='下周' where id=1",
-        "delete from business_task_date_evidence where id=1",
-        "insert or replace into business_task_date_evidence (id, task_id, date_type, value_at, raw_phrase, source_signal_id, actor_kind) values (1, 1, 'estimated_deadline_at', '', '下周', 1, 'human')",
-    ],
+    "operation", ["update", "delete", "replace"],
 )
-def test_date_evidence_is_immutable(store, statement):
+def test_date_evidence_is_immutable(store, operation):
     with store._connect() as db:
         seed_references(db)
-        insert_row(db, "business_task_date_evidence", ROWS["business_task_date_evidence"][1])
+        values = dict(ROWS["business_task_date_evidence"][1])
+        insert_row(db, "business_task_date_evidence", values)
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            db.execute(statement)
+            kind = "business_task_date_evidence"
+            identity = action_storage.ACTION_RECORD_TYPES.code(kind)
+            if operation == "update":
+                path = action_storage._action_path(kind, "raw_phrase")
+                db.execute(
+                    "update actions set payload_json=jsonb_set(payload_json,?,json(?)) "
+                    "where record_type=? and legacy_key='1'",
+                    (path, json.dumps("下周", ensure_ascii=False), kind),
+                )
+            elif operation == "delete":
+                db.execute(
+                    "delete from actions where record_type=? and legacy_key='1'", (kind,)
+                )
+            else:
+                values.pop("id")
+                db.execute(
+                    "insert or replace into actions(_kind,legacy_key,payload_json) values(?,?,?)",
+                    (identity, "1", action_storage._action_payload(db, kind, values)),
+                )
 
 
 @pytest.mark.parametrize(
@@ -1259,6 +1274,7 @@ def test_foreign_keys_reject_dangling_references(store, table, column):
 def test_inline_work_todo_import_owner_has_typed_task_fk(store):
     with store._connect() as db:
         db.execute("pragma foreign_keys=on")
+        db.execute("begin")
         insert_business(db, "task", {"id": 31, "title": "formal", "stage": "candidate"})
         insert_business(db, "work_project", {"id": 7, "title": "legacy project"})
         insert_business(db, "work_todo", {"id": 11, "project_id": 7, "title": "legacy todo"})
@@ -1330,33 +1346,54 @@ def test_attention_resolution_retains_evidence_and_events(store):
 
 def test_list_indexes_are_present_and_in_the_required_manifest(store):
     expected = {
-        "idx_business_task_signals_source",
-        "idx_business_signal_document",
+        "idx_actions_signal_inline_source",
+        "idx_actions_signal_shared",
         "idx_business_task_updated",
         "idx_business_task_stage",
         "idx_business_task_relevance",
         "idx_business_task_public_id",
         "idx_business_project_public_id",
         "idx_business_anchor_public_id",
-        "idx_business_task_evidence_task",
-        "idx_business_task_events_task",
-        "idx_business_task_relations_from",
-        "idx_business_task_relations_to",
-        "idx_business_work_cluster_tasks_task",
-        "idx_business_task_anchor_links_task",
-        "idx_business_project_candidates_cluster",
-        "idx_business_attention_items_list",
-        "idx_business_attention_tasks_task",
-        "idx_business_attention_proposal_tasks_task",
-        "idx_business_attention_events_item",
+        "idx_actions_business_task_evidence_lookup",
+        "idx_actions_sync_business_task_events_0",
+        "idx_actions_business_task_relations_lookup",
+        "idx_actions_business_task_relations_reverse",
+        "idx_actions_business_work_cluster_tasks_lookup",
+        "idx_actions_business_task_anchor_links_lookup",
+        "idx_business_project_candidate_cluster",
+        "idx_business_attention_list",
+        "idx_actions_business_attention_tasks_lookup",
+        "idx_actions_business_attention_proposal_tasks_lookup",
+        "idx_actions_business_attention_events_lookup",
     }
     with store._connect() as db:
         actual = {
             row[0]
             for row in db.execute("select name from sqlite_master where type='index'")
         }
-    assert expected <= actual
-    assert expected <= set(store_module.STORE_SCHEMA_REQUIRED_INDEXES)
+        action_indexes = {
+            item["name"]
+            for item in action_storage._current_objects(
+                reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS
+            )
+            if item["type"] == "index"
+        }
+        required = set(store_module.STORE_SCHEMA_REQUIRED_INDEXES) | action_indexes
+        assert expected <= actual
+        assert expected <= required
+
+        db.execute("savepoint check_actions_index_manifest")
+        try:
+            db.execute("drop index idx_actions_business_task_evidence_lookup")
+            assert not store._schema_manifest_is_current_in_connection(
+                db, include_run_snapshots=False
+            )
+        finally:
+            db.execute("rollback to check_actions_index_manifest")
+            db.execute("release check_actions_index_manifest")
+        assert store._schema_manifest_is_current_in_connection(
+            db, include_run_snapshots=False
+        )
 
 
 
