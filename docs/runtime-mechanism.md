@@ -32,6 +32,7 @@ Runs 包含原八类执行及搜索会话元数据、分类运行样本、设置
 公开源 ID、物理运行 ID、attempt 关联和水位保留。持久标题 FTS／shadow 表退休，
 搜索仍读取 CLI 原生 trajectory 并使用既有请求内／内存索引；逆迁重建旧声明和由
 恢复元数据派生的标题索引。分类运行样本的全局保留上限仍为 2,048。
+旧的 native 副本／持久 FTS 清理函数及其隐式 CLI 动作退休；这些正文和索引在 schema 发布时已退休。`python -m app.storage_maintenance` 必须选择现有的 `--work-summary-inputs`、`--settled-reply-inputs` 或 `--done-email-classification-inputs` 之一；三个输入清理实现不变，物理 VACUUM 由维护调用者在静默窗口单独协调。
 
 Business 保留已有 Project、Task、Anchor、context revision、修复候选、Work Cluster、
 TODO evidence、Work Project、Work Todo 及候选业务对象。Work Project 的
