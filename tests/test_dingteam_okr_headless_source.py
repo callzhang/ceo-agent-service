@@ -300,24 +300,33 @@ def test_existing_local_account_uses_direct_submission_without_qr(monkeypatch):
     calls = []
 
     class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
         @property
         def first(self):
             return self
 
+        def filter(self, **_kwargs):
+            return self
+
         def is_visible(self):
-            return True
+            return self.selector != module.LOCAL_SSO_QR_TAB
+
+        def wait_for(self, **kwargs):
+            calls.append(("wait_for", kwargs))
 
     class Page:
         url = "https://login.dingtalk.com/oauth2/challenge.htm"
 
         def locator(self, selector):
             calls.append(("locator", selector))
-            return Locator()
+            return Locator(selector)
 
     monkeypatch.setattr(
         module,
         "_submit_local_dingtalk_account",
-        lambda page: calls.append(("submit", page.url)),
+        lambda page, **_kwargs: calls.append(("submit", page.url)),
     )
     monkeypatch.setattr(
         module,
@@ -327,7 +336,9 @@ def test_existing_local_account_uses_direct_submission_without_qr(monkeypatch):
 
     assert module._attempt_local_dingtalk_sso(Page()) is True
     assert calls == [
+        ("locator", module.LOCAL_SSO_QR_TAB),
         ("locator", module.LOCAL_SSO_DIRECT_BUTTON),
+        ("wait_for", {"state": "visible", "timeout": module.LOCAL_SSO_TIMEOUT_MS}),
         ("submit", Page.url),
     ]
 
@@ -370,7 +381,7 @@ def test_login_redirect_uses_qr_flow_when_no_local_account_card_is_visible(monke
 
     monkeypatch.setattr(
         module, "_submit_local_dingtalk_account",
-        lambda _page: calls.append(("submit", len(calls))),
+        lambda _page, **_kwargs: calls.append(("submit", len(calls))),
     )
     monkeypatch.setattr(module, "_confirm_local_dingtalk_login", lambda: calls.append("confirm"))
 
@@ -379,7 +390,52 @@ def test_login_redirect_uses_qr_flow_when_no_local_account_card_is_visible(monke
     qr_filter = calls.index(("filter", {"has_text": "扫码登录"}))
     confirm = calls.index("confirm")
     submit = next(i for i, item in enumerate(calls) if isinstance(item, tuple) and item[0] == "submit")
-    assert calls.index(("is_visible", module.LOCAL_SSO_DIRECT_BUTTON)) < qr_filter < confirm < submit
+    assert qr_filter < confirm < submit
+
+
+def test_login_redirect_prefers_qr_over_visible_but_blocked_direct_button(monkeypatch):
+    module = load_module()
+    calls = []
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def filter(self, **_kwargs):
+            return self
+
+        def is_visible(self):
+            return True
+
+        def wait_for(self, **_kwargs):
+            pass
+
+        def click(self, **_kwargs):
+            calls.append(("click", self.selector))
+
+    class Page:
+        url = "https://login.dingtalk.com/oauth2/challenge.htm"
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def wait_for_timeout(self, _milliseconds):
+            pass
+
+    monkeypatch.setattr(module, "_confirm_local_dingtalk_login", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "_submit_local_dingtalk_account",
+        lambda _page, **kwargs: calls.append(("submit", kwargs)),
+    )
+
+    assert module._attempt_local_dingtalk_sso(Page()) is True
+    assert calls[0] == ("click", module.LOCAL_SSO_QR_TAB)
+    assert calls[-1] == ("submit", {"allow_direct_login": False})
 
 
 def test_local_account_submission_selects_visible_org_without_native_prompt(monkeypatch):

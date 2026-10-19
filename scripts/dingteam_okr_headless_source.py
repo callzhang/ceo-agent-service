@@ -131,19 +131,20 @@ def _confirm_local_dingtalk_login() -> None:
     )
 
 
-def _submit_local_dingtalk_account(page) -> None:
+def _submit_local_dingtalk_account(page, *, allow_direct_login: bool = True) -> None:
     corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
         has_text=LOCAL_SSO_CORP_NAME
     ).first
     if not corp.is_visible():
-        direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
-        direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
-        direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+        if allow_direct_login:
+            direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
+            direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+            direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
-        page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-        # The organization chooser shares the login URL but needs no native prompt.
-        if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
-            _confirm_local_dingtalk_login()
+            page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
+            # The organization chooser shares the login URL but needs no native prompt.
+            if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
+                _confirm_local_dingtalk_login()
 
         redirected = urlsplit(getattr(page, "url", ""))
         entry = urlsplit(browser.ENTRY_URL)
@@ -162,19 +163,19 @@ def _attempt_local_dingtalk_sso(page) -> bool:
     """Use the logged-in desktop DingTalk account to recover the web session."""
     if not _is_dingtalk_login_url(getattr(page, "url", "")):
         return False
-    direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
-    if direct_login.is_visible():
-        _submit_local_dingtalk_account(page)
+    qr_tab = page.locator(LOCAL_SSO_QR_TAB).filter(has_text="扫码登录").first
+    if qr_tab.is_visible():
+        qr_tab.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+        avatar = page.locator(LOCAL_SSO_ACCOUNT_AVATAR).first
+        avatar.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+        avatar.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+        page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
+        _confirm_local_dingtalk_login()
+        _submit_local_dingtalk_account(page, allow_direct_login=False)
         return True
 
-    qr_tab = page.locator(LOCAL_SSO_QR_TAB).filter(has_text="扫码登录").first
-    qr_tab.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
-    qr_tab.click(timeout=LOCAL_SSO_TIMEOUT_MS)
-    avatar = page.locator(LOCAL_SSO_ACCOUNT_AVATAR).first
-    avatar.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
-    avatar.click(timeout=LOCAL_SSO_TIMEOUT_MS)
-    page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-    _confirm_local_dingtalk_login()
+    direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
+    direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
     _submit_local_dingtalk_account(page)
     return True
 
