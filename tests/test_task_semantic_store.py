@@ -14,13 +14,16 @@ from app.business_schema_release import business_schema_is_current
 from app.business_storage import insert_business
 from app.action_business_storage import insert_business_action
 from app.business_candidate_definitions import candidate_projection
-from app.business_candidate_storage import insert_business_candidate
+from app.business_candidate_storage import insert_business_candidate, update_business_candidate
 from app.store import AutoReplyStore
 from app.store import BUSINESS_ACTION_SQL
 from app.action_storage import action_schema_is_current, insert_sync_action
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.current_database_schema import FINAL_ACTION_OPTIONS
 from app.action_business_definitions import business_action_projection
+from app.action_business_definitions import BUSINESS_ACTION_PARENT_FIELDS, business_action_column
+from app.business_candidate_definitions import CANDIDATE_REFERENCES, candidate_column
+from app.action_followup_sync_definitions import SYNC_BUSINESS_PUBLIC_ID_FKS
 from app.business_source_reader import SourceVersionBinding
 from app.provenance_storage import insert_signal_version
 from app.run_storage import TASK_AGENT_RUN_SQL, insert_run
@@ -418,7 +421,6 @@ def seed_references(db):
     insert_row(
         db, "business_tasks", dict(ROWS["business_tasks"][1], id=2, title="安排演示")
     )
-    db.execute("insert into work_projects (id, title) values (1, 'Legacy source')")
 
 
 def current_rows(db, table):
@@ -1160,6 +1162,54 @@ def test_every_semantic_reference_has_a_foreign_key(store, table):
             )
             assert expected <= actual
             return
+        if table in BUSINESS_ACTION_SQL:
+            expected = {
+                business_action_column(table, field): BUSINESS_ACTION_PARENT_FIELDS[field]
+                for field in FOREIGN_KEYS[table]
+            }
+            actual = {
+                row["from"]: (row["table"], row["to"])
+                for row in db.execute("pragma foreign_key_list(actions)")
+                if row["from"] in expected
+            }
+            assert actual == expected
+            return
+        if table in SYNC_ACTION_PROJECTIONS:
+            expected = {}
+            for field, parent in FOREIGN_KEYS[table].items():
+                target = SYNC_BUSINESS_PUBLIC_ID_FKS.get(field)
+                if field == "signal_id":
+                    target = ("actions", "business_signal_public_id")
+                elif target is None:
+                    target = (parent, "id")
+                expected[f"sync_{field}"] = target
+            actual = {
+                row["from"]: (row["table"], row["to"])
+                for row in db.execute("pragma foreign_key_list(actions)")
+                if row["from"] in expected
+            }
+            assert actual == expected
+            return
+        candidate_kind = {
+            "business_attention_items": "attention_item",
+            "business_project_candidates": "project_candidate",
+        }.get(table)
+        if candidate_kind is not None:
+            expected = {}
+            for field, endpoint, parent in CANDIDATE_REFERENCES[candidate_kind]:
+                target = (
+                    ("actions", "business_signal_public_id")
+                    if parent == "business_task_signals"
+                    else ("business", endpoint)
+                )
+                expected[candidate_column(candidate_kind, field)] = target
+            actual = {
+                row["from"]: (row["table"], row["to"])
+                for row in db.execute("pragma foreign_key_list(business)")
+                if row["from"] in expected
+            }
+            assert actual == expected
+            return
         actual = {
             row["from"]: row["table"]
             for row in db.execute(f"pragma foreign_key_list({table})")
@@ -1256,10 +1306,10 @@ def test_membership_and_provenance_links_are_unique(store, table):
 def test_attention_resolution_retains_evidence_and_events(store):
     with store._connect() as db:
         seed_references(db)
-        db.execute(
-            "update business_attention_items set status='resolved', resolution_signal_id=1, resolved_at=? where id=1",
-            (STAMP,),
-        )
+        assert update_business_candidate(
+            db, "attention_item", 1,
+            {"status": "resolved", "resolution_signal_id": 1, "resolved_at": STAMP},
+        ) == 1
         insert_row(
             db,
             "business_attention_events",
@@ -1270,7 +1320,9 @@ def test_attention_resolution_retains_evidence_and_events(store):
             ),
         )
         item = models.BusinessAttentionItem.model_validate(
-            dict(db.execute("select * from business_attention_items").fetchone())
+            dict(db.execute(
+                f"select * from ({candidate_projection('attention_item')}) where id=1"
+            ).fetchone())
         )
     assert item.status.value == "resolved"
     assert item.resolution_signal_id == 1

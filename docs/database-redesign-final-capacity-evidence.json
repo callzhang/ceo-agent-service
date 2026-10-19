@@ -34804,5 +34804,27 @@
     },
     "review": "Root rejected removing original source-marker variants; restored both values via current State writer; original mixed/readonly/lease/public-ID/codec provenance assertions retained",
     "scope": "Current fixture controls only; historical publication and source13 layouts not counted; no runtime changes"
+  },
+  "broad_remaining_diagnostic_terminal": {
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-remaining.log",
+    "workers": 4,
+    "seconds": 15786.36,
+    "passed": 17217,
+    "failed": 1899,
+    "skipped": 118,
+    "errors": 58,
+    "scope": "Failure collection across ongoing edits, not frozen candidate acceptance. Subsequent focused frozen tests supersede corresponding stale failures; raw failure count is not current unresolved count and raw pass count is not full release proof.",
+    "next": "Map exact remaining nodes to current focused proof or actual gap; no duplicate whole run"
+  },
+  "final_semantic_current_reference_controls": {
+    "scope": "Current retained FK, dangling-reference rejection, uniqueness, defaults, listing/EQP and attention resolution events; no body/historical oracle changes",
+    "first_red": "Retired per-kind PRAGMA foreign_key_list returned no physical relation; stale work_projects seed blocked reference fixtures",
+    "fix": "Read actual Actions/Business FK declarations mapped to retained logical fields and parent endpoints; use current candidate writer/readback for resolution",
+    "result": {
+      "passed": 51,
+      "seconds": 26.23,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/task-semantic-current-constraints-red3.log"
+    },
+    "root_review": "Full diff reviewed, requested Signal public ID asserted in fixture, original dangling-reference CHECK/FK and business event oracles retained; no runtime/schema changes"
   }
 }
