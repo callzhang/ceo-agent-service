@@ -7,10 +7,13 @@ import sqlite3
 import pytest
 
 from app.action_storage import REPLY_VARIANTS, action_schema_is_current, insert_action
+from app.configs_definitions import config_projection
+from app.current_database_schema import FINAL_ACTION_OPTIONS
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
+from app.state_definitions import state_projection
 from app.store_schema_release import prepare_database_schema_release
-from tests.test_email_action_plan_direct_dao import converted_pair as _converted_pair
+from tests.test_email_action_plan_direct_dao import _genuine_old_source
 
 ROOT = Path(__file__).resolve().parents[1]
 STORE_TARGET = "2026-10-14.1"
@@ -19,13 +22,18 @@ EMAIL_TARGET = 52
 
 @pytest.fixture
 def predecessor(tmp_path, request):
-    return _converted_pair.__wrapped__(tmp_path, request)
+    # These tests publish their own source through the real coordinator.
+    return None, *_genuine_old_source(tmp_path, request)
 
 
 def _markers(path):
     with closing(sqlite3.connect(path)) as db:
+        current_state = db.execute(
+            "select 1 from sqlite_schema where name='state' collate nocase"
+        ).fetchone() is not None
+        state = state_projection("service_state") if current_state else "select * from service_state"
         store = db.execute(
-            "select value,updated_at from service_state where key='store_schema_version'"
+            f"select value,updated_at from ({state}) where key='store_schema_version'"
         ).fetchone()
         ledger = (
             tuple(
@@ -43,13 +51,18 @@ def _markers(path):
 
 def _target_shape(db):
     assert any(
-        action_schema_is_current(
-            db, include_reply=True, reply_variant=v, include_email=True
-        )
+        action_schema_is_current(db, reply_variant=v, **FINAL_ACTION_OPTIONS)
         for v in REPLY_VARIANTS
     )
-    columns = {r[1] for r in db.execute("pragma table_info(email_classifications)")}
-    assert len(columns) == 30 and "action_plan_json" not in columns
+    from app.email_current_schema import current_canonical_email_parent_is_current
+    from app.email_store import EMAIL_CLASSIFICATION_SQL
+
+    assert current_canonical_email_parent_is_current(db)
+    columns = {r[1] for r in db.execute("pragma table_info(emails)")}
+    classification_columns = db.execute(
+        f"select * from ({EMAIL_CLASSIFICATION_SQL}) limit 0"
+    ).description
+    assert len(classification_columns) == 30 and "action_plan_json" not in columns
     from app.action_email_storage import SOURCE_TABLES
 
     assert not db.execute(
@@ -108,12 +121,14 @@ def test_real_fresh_orders_current_reopen_and_classification_action(
     with email._connect() as db:
         _target_shape(db)
         before = (
-            db.execute("select count(*) from email_category_configs").fetchone()[0],
-            db.execute("select count(*) from email_model_promotion_configs").fetchone()[
-                0
-            ],
             db.execute(
-                "select count(*) from email_category_description_revisions"
+                f"select count(*) from ({config_projection('email_category_configs')})"
+            ).fetchone()[0],
+            db.execute(
+                f"select count(*) from ({config_projection('email_model_promotion_configs')})"
+            ).fetchone()[0],
+            db.execute(
+                f"select count(*) from ({config_projection('email_category_description_revisions')})"
             ).fetchone()[0],
         )
         assert before == (9, 1, 9)

@@ -34184,5 +34184,14 @@
       "/tmp/db-redesign-final-guard.3LeMgv/final-email-writes-concurrency-green.log"
     ],
     "assertion_limits_unchanged": true
+  },
+  "final_native_fresh_profile_whole_roundtrip": {
+    "test": "tests/test_email_action_callers.py::test_real_target_direct_facts_inverse_genuine_old_reopen_and_republish",
+    "passed": 1,
+    "seconds": 680.66,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-native-profile-whole-roundtrip.log",
+    "source": "genuine published 2773d6f4 constructor",
+    "scope": "whole forward; new direct facts; inverse; genuine-old reopen; real child republish; current reopen",
+    "real_external_sends": 0
   }
 }
