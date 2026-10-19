@@ -956,7 +956,10 @@ def task20_projection(kind):
     result = []
     for field in TASK20_FIELDS[kind]:
         value = task20_column(kind, field)
-        if kind == "reply_tasks" and field == "id":
+        if kind not in TASK20_TEXT_PUBLIC_KINDS and any(
+            column[0] == field and column[4] == "legacy_key"
+            for column in TASK20_COLUMNS[kind]
+        ):
             # Match the existing numeric identity index directly. Keep the
             # public key's NULL semantics instead of substituting physical ID.
             value = "cast(legacy_key as integer)"
@@ -975,7 +978,7 @@ def task20_projection(kind):
             )
         result.append(value + " as " + _quote(field))
     scope = "record_type=" + repr(kind)
-    if kind == "reply_tasks":
+    if kind not in TASK20_TEXT_PUBLIC_KINDS:
         # SQLite does not infer this partial-index predicate from equality.
         # The declared numeric identity index uses this same finite scope.
         scope += " and record_type not in (" + ",".join(map(repr, TASK20_TEXT_PUBLIC_KINDS)) + ")"

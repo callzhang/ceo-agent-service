@@ -91,7 +91,7 @@ from tests.test_email_canonical_storage import (
 )
 from app.configs_definitions import config_projection
 from app.configs_storage import insert_config, update_config
-from app.task8_storage import task8_set_parts
+from app.task8_storage import task8_insert_parts, task8_set_parts
 
 
 def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
@@ -3633,7 +3633,6 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
     tmp_path: Path, unrelated_count: int,
 ) -> None:
     database = tmp_path / "unsubscribe-lineage-query-plan.sqlite3"
-    from app.task_storage import insert_task
     from app.run_storage import insert_run
 
     email_store = EmailStore(database)
@@ -3655,20 +3654,35 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
                       (authorization["action_identity"], claim["effect_digest"]),
                       {"audit_agent_run_id": audit_id})
         for index in range(unrelated_count):
-            parent = insert_task(db, "reply_tasks", {
+            parent_parts = task8_insert_parts("reply_tasks", {
                 "conversation_id": f"unrelated-{index}", "trigger_message_id": str(index),
                 "status": "done", "conversation_title": "Unrelated", "single_chat": 1,
                 "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
-            }).lastrowid
-            canonical = insert_task(db, "reply_task_inputs", {
+            })
+            parent = db.execute(
+                f"insert into tasks({parent_parts.columns}) values({parent_parts.values})",
+                parent_parts.parameters,
+            ).lastrowid
+            input_parts = task8_insert_parts("reply_task_inputs", {
                 "legacy_key": 100000 + index, "parent_id": parent, "channel": "dingtalk",
                 "conversation_id": f"unrelated-input-{index}", "conversation_title": "Unrelated",
                 "single_chat": 1, "trigger_message_id": str(index),
                 "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
                 "business_object_key": "",
                 "trigger_text": "irrelevant body " * 200,
-            }).lastrowid
-            db.execute("update tasks set current_input_id=? where id=?", (canonical, parent))
+            })
+            canonical = db.execute(
+                f"insert into tasks({input_parts.columns}) values({input_parts.values})",
+                input_parts.parameters,
+            ).lastrowid
+            pointer = task8_set_parts(
+                "reply_tasks", {}, structural_sql={"current_input_id": "?"},
+                structural_parameters=(canonical,),
+            )
+            db.execute(
+                f"update tasks set {pointer.sql} where record_type='reply_tasks' and id=?",
+                (*pointer.parameters, parent),
+            )
     parameters = (authorization["action_identity"], claim["effect_digest"])
     with sqlite3.connect(database) as db:
         details = [
@@ -3689,9 +3703,11 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
     assert any(
         "SEARCH runs USING INTEGER PRIMARY KEY" in detail for detail in details
     )
-    assert sum("SEARCH t USING INDEX idx_tasks_public_id" in detail for detail in details) == 2
-    assert any("SEARCH i USING INTEGER PRIMARY KEY" in detail for detail in details)
-    assert not any("SCAN runs" in detail or "SCAN t" in detail or "SCAN i" in detail for detail in details)
+    assert sum(
+        "SEARCH tasks USING INDEX idx_task20_numeric_identity" in detail
+        for detail in details
+    ) == 2
+    assert not any("USE TEMP B-TREE" in detail for detail in details)
     steps = 0
 
     def progress():
@@ -3701,13 +3717,25 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
 
     with task_store._connect() as db:
         db.set_progress_handler(progress, 10)
-        rows = db.execute(email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL, parameters).fetchall()
+        try:
+            rows = db.execute(
+                email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL, parameters
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "interrupted" not in str(exc):
+                raise
+            raise AssertionError(
+                {"steps": steps, "details": details}
+            ) from exc
     assert len(rows) == 1
     assert rows[0]["audit_run_id"] == audit_id
     assert rows[0]["task_id"] == task.id
     assert rows[0]["trigger_message_id"] == authorization["action_identity"]
     assert rows[0]["task_execution_generation"] == task.execution_generation
-    assert steps < 500
+    assert not any(
+        "SCAN runs" in detail or "SCAN tasks" in detail for detail in details
+    ), details
+    assert steps < 500, {"steps": steps, "details": details}
 
 
 def test_current_schema_missing_required_foreign_key_is_domain_corruption(

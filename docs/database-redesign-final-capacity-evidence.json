@@ -34393,5 +34393,15 @@
     "real_sends": 0,
     "production_writes": false,
     "remaining": "8 coordinator/binding/receipt/updater cases executing separately"
+  },
+  "final_task20_numeric_lineage_fix": {
+    "root_cause": "Canonical input identity projected through scoped virtual CASE and lacked numeric partial-index predicate; audited lineage scanned unrelated reply_task_inputs",
+    "red": "Existing 2000-unrelated-input progress handler aborted at 500 VM steps; no-SCAN control also failed",
+    "change": "Declared numeric legacy_key source fields use raw cast expression and exact existing partial predicate; NULL preserved; DDL/indexes/fields unchanged",
+    "green": "27 passed, 304 deselected in 26.02s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-task20-point-lineage.log",
+    "coverage": "Lineage0/2000 exact original steps<500 and noSCAN; all20 projections, physical/public pointers, numeric and nullable identity controls",
+    "independent_review": "Bounded read-only projection/declaration/index review found no concrete issue; root owns acceptance",
+    "production_effect": false
   }
 }
