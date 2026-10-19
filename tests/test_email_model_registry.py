@@ -498,6 +498,60 @@ def test_prune_artifacts_keeps_only_one_candidate_across_model_families(tmp_path
     assert not abandoned.exists()
 
 
+@pytest.mark.parametrize("historical_family", ["classic", "embedding"])
+def test_prune_artifacts_does_not_pin_weights_from_mode_history(tmp_path, historical_family):
+    from app.email_classifier_runtime import ONLINE_ACTIVATION_FILENAME, _read_online_control
+
+    registry = EmailModelRegistry(tmp_path / "registry")
+    base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    if historical_family == "classic":
+        historical = _stage_full(registry, tmp_path, suffix="historical", trained_at=base)
+        historical_path = registry._artifact_path(historical)
+    else:
+        historical = "email-embedding-mlp-historical"
+        artifact = tmp_path / "historical.artifact"
+        artifact.write_bytes(b"historical embedding head")
+        registry.stage_embedding_candidate(
+            historical, artifact,
+            {"model_id": historical, "status": "candidate", "trained_at": base.isoformat()},
+        )
+        historical_path = registry.embedding_artifacts / f"{historical}.artifact"
+    current = _stage_full(registry, tmp_path, suffix="current", trained_at=base + timedelta(days=1))
+    latest = _stage_full(registry, tmp_path, suffix="latest", trained_at=base + timedelta(days=2))
+    transitions = [
+        {"request_id": f"switch-{index}", "actor": "test",
+         "from_mode": "agent_primary" if index == 0 else "model_primary",
+         "to_mode": "model_primary", "from_model_id": None if index == 0 else historical,
+         "target_model_id": model_id,
+         "promotion_config_version": "test-v1", "status": "applied",
+         "reason": "user_enabled_primary_model", "created_at": base.isoformat()}
+        for index, model_id in enumerate((historical, current))
+    ]
+    control = {
+        "mode": "model_primary", "model_id": current,
+        "artifact_sha256": sha256(registry._artifact_path(current).read_bytes()).hexdigest(),
+        "compatibility": {}, "promotion_config_version": "test-v1",
+        "mode_transitions": transitions,
+    }
+    control_path = registry.root / ONLINE_ACTIVATION_FILENAME
+    control_path.write_text(json.dumps(control))
+    original_control = control_path.read_bytes()
+    assert _read_online_control(registry) == control
+    assert not (registry.root / "active.json").exists()
+    assert not (registry.root / "previous.json").exists()
+
+    assert registry.prune_artifacts(training_active=True) == []
+    assert historical_path.exists()
+    removed = registry.prune_artifacts(training_active=False)
+
+    assert historical_path in removed
+    assert not historical_path.exists()
+    assert registry._artifact_path(current).exists()
+    assert registry._artifact_path(latest).exists()
+    assert control_path.read_bytes() == original_control
+    assert _read_online_control(registry) == control
+
+
 def test_registry_rejects_deserializable_artifact_with_reserved_legacy_classes(
     tmp_path: Path,
 ):
