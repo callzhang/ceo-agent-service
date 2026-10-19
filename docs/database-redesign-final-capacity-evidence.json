@@ -34322,5 +34322,12 @@
     },
     "logical_bytes": 511643648,
     "count_explanation": "121 sqlite_schema tables = 116 ordinary + 1 FTS virtual + 4 FTS shadows; same names as frozen source, not same-input capacity refresh"
+  },
+  "final_email_caller_controls": {
+    "result": "17 passed, 35 deselected in 41.98s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-caller-controls-root.log",
+    "scope": "Current atomic blank construction, precise store_schema_version marker write, rollback/retry four boundaries each Store and Email, opposite-order concurrency, shared repair and malformed metadata refusal",
+    "runtime_changes": false,
+    "excluded": "paired fault8/updater/coordinator/binding/receipt cases remain separately pending"
   }
 }

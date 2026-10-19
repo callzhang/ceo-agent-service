@@ -343,7 +343,7 @@ def test_email_first_calls_real_store_once_outside_email_lock(tmp_path, monkeypa
     assert events == ["store-enter", "store-complete", "email-lock"]
 
 
-def test_dynamic_store_prefix_has_no_actions_dependency_before_final_suffix(
+def test_fresh_store_publishes_parent_actions_and_marker_atomically(
     tmp_path, monkeypatch
 ):
     statements = []
@@ -363,32 +363,37 @@ def test_dynamic_store_prefix_has_no_actions_dependency_before_final_suffix(
     parent_creation = next(
         i
         for i, sql in enumerate(normalized)
-        if sql.startswith('create table "email_classifications"')
+        if sql.startswith("create table main.emails")
     )
     assert parent_creation < action_creation
     assert not any(
-        " from actions " in sql or " join actions " in sql
+        sql.startswith(("select ", "insert ", "update ", "delete "))
+        and (" from actions " in sql or " join actions " in sql)
         for sql in normalized[:action_creation]
     )
-    assert any(sql == "commit" for sql in normalized[:parent_creation])
     marker = next(
         i
         for i, sql in enumerate(normalized)
-        if sql.startswith("insert into service_state(key,value,updated_at)")
+        if sql.startswith(
+            "insert into state(record_type,legacy_key,payload_json) values('service_state'"
+        ) and "store_schema_version" in sql
     )
+    assert action_creation < marker
+    assert not any(sql == "commit" for sql in normalized[:parent_creation])
     assert not any(sql == "commit" for sql in normalized[parent_creation:marker])
+    assert any(sql == "commit" for sql in normalized[marker + 1 :])
 
 
 @pytest.mark.parametrize("stage", ["parent", "actions", "marker", "commit"])
 def test_store_fresh_suffix_fault_keeps_target_layout_and_marker_together(
     tmp_path, monkeypatch, stage
 ):
-    import app.store as module
+    import app.current_database_schema as current_schema
 
     path = tmp_path / "store-fault.sqlite3"
     original_open = AutoReplyStore._open_connection
-    original_parent = module.create_current_email_classifications
-    original_actions = module.create_action_schema
+    original_parent = current_schema._create_emails
+    original_actions = current_schema.create_action_schema
 
     def fail(*args, **kwargs):
         raise RuntimeError("fresh suffix fault")
@@ -399,20 +404,23 @@ def test_store_fresh_suffix_fault_keeps_target_layout_and_marker_together(
             original_parent(db)
             fail()
 
-        monkeypatch.setattr(module, "create_current_email_classifications", parent)
+        monkeypatch.setattr(current_schema, "_create_emails", parent)
     elif stage == "actions":
 
         def actions(db, **kwargs):
             original_actions(db, **kwargs)
             fail()
 
-        monkeypatch.setattr(module, "create_action_schema", actions)
+        monkeypatch.setattr(current_schema, "create_action_schema", actions)
     else:
 
         class Interrupted(sqlite3.Connection):
             def execute(self, sql, parameters=()):
                 if stage == "marker" and sql.startswith(
-                    "insert into service_state(key,value,updated_at)"
+                    "insert into state(record_type,legacy_key,payload_json) values('service_state'"
+                ) and any(
+                    isinstance(value, str) and "store_schema_version" in value
+                    for value in parameters
                 ):
                     fail()
                 return super().execute(sql, parameters)
@@ -429,10 +437,10 @@ def test_store_fresh_suffix_fault_keeps_target_layout_and_marker_together(
                     fail()
                 return super().__exit__(*args)
 
-        def open_connection(self):
+        def open_connection(self, *, foreign_keys=True):
             db = sqlite3.connect(self.path, factory=Interrupted)
             db.row_factory = sqlite3.Row
-            db.execute("pragma foreign_keys=on")
+            db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
             return db
 
         monkeypatch.setattr(AutoReplyStore, "_open_connection", open_connection)
@@ -440,19 +448,15 @@ def test_store_fresh_suffix_fault_keeps_target_layout_and_marker_together(
         AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
         assert not db.execute(
-            "select 1 from sqlite_schema where name in ('actions','email_classifications')"
+            "select 1 from sqlite_schema where name in ('actions','emails','tasks','state')"
         ).fetchone()
-        assert not db.execute(
-            "select 1 from service_state where key='store_schema_version'"
-        ).fetchone()
-        assert db.execute("select 1 from sqlite_schema where name='tasks'").fetchone()
-    monkeypatch.setattr(module, "create_current_email_classifications", original_parent)
-    monkeypatch.setattr(module, "create_action_schema", original_actions)
+    monkeypatch.setattr(current_schema, "_create_emails", original_parent)
+    monkeypatch.setattr(current_schema, "create_action_schema", original_actions)
     monkeypatch.setattr(AutoReplyStore, "_open_connection", original_open)
-    before = _fingerprint(path)
-    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store"):
-        AutoReplyStore(path)
-    assert _fingerprint(path) == before
+    AutoReplyStore(path)
+    assert _markers(path)[0][0] == STORE_TARGET
+    with closing(sqlite3.connect(path)) as db:
+        _target_shape(db)
 
 
 @pytest.mark.parametrize("stage", ["ddl", "seeds", "marker", "commit"])
@@ -464,7 +468,7 @@ def test_email_fresh_fault_rolls_back_to_legitimate_store_first_and_retries(
     path = tmp_path / "email-fault.sqlite3"
     AutoReplyStore(path)
     before = _fingerprint(path)
-    original_factory = module.create_current_email_non_action_schema
+    original_factory = module.create_current_email_migration_ledger
     original_seed = EmailStore._seed_current_fresh_state
     original_open = EmailStore._open_connection
 
@@ -477,7 +481,7 @@ def test_email_fresh_fault_rolls_back_to_legitimate_store_first_and_retries(
             original_factory(db)
             fail()
 
-        monkeypatch.setattr(module, "create_current_email_non_action_schema", factory)
+        monkeypatch.setattr(module, "create_current_email_migration_ledger", factory)
     elif stage == "seeds":
 
         def seed(self, db):
@@ -501,10 +505,10 @@ def test_email_fresh_fault_rolls_back_to_legitimate_store_first_and_retries(
                     fail()
                 return super().__exit__(*args)
 
-        def open_connection(self):
+        def open_connection(self, *, foreign_keys=True):
             db = sqlite3.connect(self.path, factory=Interrupted)
             db.row_factory = sqlite3.Row
-            db.execute("pragma foreign_keys=on")
+            db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
             return db
 
         monkeypatch.setattr(EmailStore, "_open_connection", open_connection)
@@ -512,7 +516,7 @@ def test_email_fresh_fault_rolls_back_to_legitimate_store_first_and_retries(
         EmailStore(path)
     assert _fingerprint(path) == before
     monkeypatch.setattr(
-        module, "create_current_email_non_action_schema", original_factory
+        module, "create_current_email_migration_ledger", original_factory
     )
     monkeypatch.setattr(EmailStore, "_seed_current_fresh_state", original_seed)
     monkeypatch.setattr(EmailStore, "_open_connection", original_open)
@@ -674,11 +678,14 @@ else:EmailStore(p);AutoReplyStore(p)
     assert _markers(path)[1] and len(_markers(path)[1]) == 1
     with closing(sqlite3.connect(path)) as db:
         assert (
-            db.execute("select count(*) from email_category_configs").fetchone()[0] == 9
+            db.execute(
+                f"select count(*) from ({config_projection('email_category_configs')})"
+            ).fetchone()[0]
+            == 9
         )
         assert (
             db.execute(
-                "select count(*) from email_category_description_revisions"
+                f"select count(*) from ({config_projection('email_category_description_revisions')})"
             ).fetchone()[0]
             == 9
         )
@@ -1005,9 +1012,8 @@ def test_current_known_repair_variant_selection_keeps_original_accepted_path(
             action_schema_is_current(
                 db,
                 allow_missing_objects=True,
-                include_reply=True,
                 reply_variant=v,
-                include_email=True,
+                **FINAL_ACTION_OPTIONS,
             )
             for v in REPLY_VARIANTS
         )
@@ -1065,7 +1071,10 @@ def test_store_first_rejects_preexisting_unversioned_email_configuration(tmp_pat
         db.execute(CATEGORY_CONFIG_TABLE_SQL)
     before = _fingerprint(path)
     for factory in (AutoReplyStore, EmailStore):
-        with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed"):
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="malformed current Store-first config declaration",
+        ):
             factory(path)
         assert _fingerprint(path) == before
 
@@ -1115,7 +1124,10 @@ def test_current_provider_malformed_target_refused_before_constructor_mutation(t
     monkeypatch.setattr(EmailStore, "_initialize", unexpected)
     try:
         for constructor in (AutoReplyStore, EmailStore):
-            with pytest.raises(sqlite3.IntegrityError, match="provider-state"):
+            with pytest.raises(
+                sqlite3.IntegrityError,
+                match="^malformed current provider/config declaration$",
+            ):
                 constructor(path)
             assert _fingerprint(path) == before and path.read_bytes() == bytes_before
             assert not path.with_name(path.name + "-wal").exists()
