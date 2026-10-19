@@ -183,6 +183,7 @@ class CodexCommandFactory:
     image_paths: tuple[Path, ...] = ()
     skill_names: tuple[str, ...] | None = None
     inlined_skill_names: tuple[str, ...] = ()
+    project_doc_max_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -198,6 +199,7 @@ class CodexCommandFactory:
         image_paths: Sequence[Path] = (),
         skill_names: Sequence[str] | None = None,
         inlined_skill_names: Sequence[str] = (),
+        project_doc_max_bytes: int | None = None,
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -206,6 +208,7 @@ class CodexCommandFactory:
             image_paths=tuple(image_paths),
             skill_names=tuple(skill_names) if skill_names is not None else None,
             inlined_skill_names=tuple(inlined_skill_names),
+            project_doc_max_bytes=project_doc_max_bytes,
         )
 
     def build(
@@ -231,6 +234,8 @@ class CodexCommandFactory:
         )
         if self.skill_names is not None:
             build_options["skill_names"] = self.skill_names
+        if self.project_doc_max_bytes is not None:
+            build_options["project_doc_max_bytes"] = self.project_doc_max_bytes
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         if self.inlined_skill_names:
