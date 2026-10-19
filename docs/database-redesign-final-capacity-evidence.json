@@ -34678,5 +34678,36 @@
     },
     "scope": "Only seven observed broad-failed nodes; no whole-file claim",
     "real_model_and_provider_calls": 0
+  },
+  "final_task_replay_current_callers": {
+    "runtime_scope": "Isolated database-copy Task replay utility; no schema or production daemon policy change",
+    "root_verification": {
+      "passed": 27,
+      "seconds": 73.35,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-replay-task-attention-root.log"
+    },
+    "first_red": "read_domain queried retired business_attention_items",
+    "changes": [
+      "current Task/Run and Business candidate/Action/sync projections",
+      "domain snapshot includes shared Business relations and provenance; excludes run bookkeeping",
+      "source-version count uses existing identity_key",
+      "exact source/status/compaction/hash/bytes/payload CAS compiled through Task8",
+      "one transient PreparedSources per case; supplied originals validated against exact binding; no source body persistence"
+    ],
+    "preserved_controls": [
+      "public and physical IDs including deliberate unrelated-row ID collision",
+      "plain and compressed payload SQLite value types",
+      "each changed CAS source field refuses before execution",
+      "multi-version source sequence uses real RequestSourceReader",
+      "missing original remains unverifiable",
+      "actual missing provenance capability refuses without DB mutation",
+      "latest public run ID despite reverse physical ordering",
+      "relation deletion changes domain snapshot"
+    ],
+    "independent_review": "Initial seeded-task body handoff finding fixed by add_current and transient context carry; delta review found no concrete remaining issue",
+    "fixture_only_native_helper": "tests/support/task_native.py imports current public Task Agent Run projection; native-only fixture writes unchanged",
+    "real_model_and_provider_calls": 0,
+    "production_writes": 0
   }
 }

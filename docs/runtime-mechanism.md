@@ -585,6 +585,16 @@ source for execution and evidence readback. Missing or changed material is
 rejected without changing the input. Frozen multi-version cases advance only
 after the preceding turn completes and compare-and-swap its prior source hash;
 this is a database-copy evaluation operation, not a production semantic import.
+Readback uses the current typed Task/Run, Business, Action and provenance
+projections. Domain comparisons include Business relations held in shared
+Actions and their provenance, excluding run bookkeeping; source versions use
+the existing source identity key. Each case retains its supplied originals only
+in one transient PreparedSources instance through seeding, each turn and final
+readback. The verified WorkItem summary can supply only its exact matching
+source binding, hash and byte count. External originals use the request reader;
+missing material remains unverifiable. No source body or trajectory copy is
+persisted. Input updates retain the prior exact source, status, body fingerprint
+and payload CAS predicates through current typed Tasks SET parts.
 
 Reply consumption reads the current generation's persisted orchestration terminal
 result before parsing its trigger input. A completed generation can therefore
@@ -2079,7 +2089,7 @@ DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adap
 已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区和启用状态，已删除的不动）。
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带
-文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。SQLite 对较大的输入 JSON 保存带版本标记的无损压缩 BLOB，Task Agent、语义导入、项目修复和 Attention JSON 投影在读取边界解码；副本回放按实际原始 TEXT/BLOB 做 CAS、按既有 codec 写入，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
+文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。较大输入的逻辑 JSON 字段使用带版本标记的无损压缩 BLOB，最终 Tasks 向量保留其 SQLite 值类型；Task Agent、语义导入、项目修复和 Attention 投影在读取边界解码。副本回放以当前投影返回的精确 TEXT/BLOB 值做 CAS、通过当前 Tasks 写入器沿用既有 codec，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
 新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
 （Derek 2026-09-23）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的

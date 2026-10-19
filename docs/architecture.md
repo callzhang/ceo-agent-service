@@ -435,7 +435,7 @@ Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判�
 `app/minutes_sync.py` 确定性完成，因此它也是服务命令。
 “工作来源”扫描还会只读发现管理周报、项目管理部周报和部门产研周报，按文档 ID、链接、统计周期和内容 digest
 建立 Task-first `work_summary` 输入；同一文档版本重复扫描保持幂等，报告内容仍由 Task Agent 提取 Project 和 Task。
-这些输入的 `payload_json` 在 SQLite 中以带版本标记的 zlib BLOB 无损压缩（内容较小时仍存原始 JSON），应用模型和离线导入/修复入口读取时统一还原为原始 JSON 文本。Attention 的 JSON 字段投影在该查询连接上使用同一解码器；副本回放比较准确解码正文后，CAS 仍绑定实际存储的 TEXT/BLOB，写入沿用编码器。迁移命令 `python -m app.work_summary_payload --db <database>` 按小批事务压缩仍需保留正文的非终态行；`done` 和 `skipped` 行继续使用终态精简，命令可重复运行、不删除记录且不执行 VACUUM，必须在维护窗口及已验证备份后单独执行。
+这些输入的逻辑 `payload_json` 对较大内容使用带版本标记的 zlib BLOB，小内容仍用 JSON 文本；最终 Tasks 向量按原 SQLite 值类型编码该字段，应用模型和离线导入/修复入口统一还原为原始 JSON 文本。Attention 的 JSON 字段投影在该查询连接上使用同一解码器；副本回放比较准确解码正文后，CAS 绑定当前投影返回的精确 TEXT/BLOB 值，通过当前 Tasks 写入器沿用原编码器。迁移命令 `python -m app.work_summary_payload --db <database>` 按小批事务压缩仍需保留正文的非终态行；`done` 和 `skipped` 行继续使用终态精简，命令可重复运行、不删除记录且不执行 VACUUM，必须在维护窗口及已验证备份后单独执行。
 scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
 `service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
@@ -3013,7 +3013,14 @@ not been deployed; remaining scope is tracked in the single final checklist.
 Current Signal creation and reads retain exact source identity, locator, hash
 and byte count without an original-body table. Semantic replay/import,
 Project context, Attention and minutes owner backfill use the current provenance
-projection rather than the historical source-document projection. Worker and
+projection rather than the historical source-document projection. The isolated
+Task replay tool also uses current Task/Run, Business candidate, Business Action
+and sync projections. Its domain comparison includes shared Business relations
+and provenance, excludes run bookkeeping, and counts source versions by their
+existing identity keys. One case carries exact supplied originals in a transient
+PreparedSources object through seeding, execution and final readback. Binding,
+hash and byte checks apply before reuse; unavailable originals remain
+unverifiable and no body is persisted or substituted from a saved quote. Worker and
 web detail readers receive the existing configured DWS reader per request;
 originals are read on demand and are not cached in the database. Retained
 Console business facts can provide their exact original event text. Missing
