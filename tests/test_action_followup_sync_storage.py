@@ -129,6 +129,33 @@ def test_opt_in_task_action_schema_targets_business_public_id():
     assert not any(parent == "business_tasks" for _, parent, _ in typed_fks)
 
 
+def _insert_historical_text_event(db, values):
+    """Write a new event at this test's frozen TEXT migration boundary."""
+    from app import action_storage as storage
+
+    kind = "business_task_events"
+    storage._sync_fields(kind, values)
+
+    def insert():
+        storage._email_lock(db, tuple(values.values()))
+        defaults = SYNC_DEFAULTS[storage._sync_variant(db)][kind]
+        missing = tuple(field for field in SYNC_FIELDS[kind]
+                        if field in defaults and field not in values)
+        evaluated = dict(zip(missing, db.execute(
+            "select " + ",".join(defaults[field] for field in missing)
+        ).fetchone(), strict=True)) if missing else {}
+        payload = {field: values[field] if field in values else evaluated.get(field)
+                   for field in SYNC_FIELDS[kind] if field != "id"}
+        public_id = storage._email_auto_next(db, kind)
+        cursor = db.execute(
+            "insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
+            (kind, str(public_id), storage._native_payload(payload)),
+        )
+        return storage.ActionWriteResult(public_id, cursor.rowcount)
+
+    return storage._email_unit(db, "historical_sync_event_insert", insert)
+
+
 def test_source_capture_accepts_exact_business_migrated_pair():
     import json
     from pathlib import Path
@@ -199,8 +226,7 @@ def test_source_capture_accepts_exact_business_migrated_pair():
             assert db.execute("select sync_task_id,sync_signal_id from actions "
                               "where record_type='business_task_events' and cast(legacy_key as integer)=-45"
                               ).fetchone() == (-11, -31)
-            from app.action_storage import insert_sync_action
-            current_write = insert_sync_action(db, "business_task_events", {
+            current_write = _insert_historical_text_event(db, {
                 "task_id": -11,
                 "event_type": "status_changed",
                 "signal_id": -31,
