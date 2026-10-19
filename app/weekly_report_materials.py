@@ -66,7 +66,9 @@ def resolve_meeting_documents(dws, window: WeeklyWindow) -> dict[str, Any]:
     Each year's meetings are child documents of that year's page (a document,
     not a folder) under the meeting folder. Past titles vary in spacing
     (`2026 年：管理层周会`, `2025年：管理层周会`, a trailing space), so names
-    are compared without whitespace.
+    are compared without whitespace. When the prior Monday title is absent,
+    use the nearest exact canonical meeting title dated in the preceding
+    reporting week; suffixed drafts are not meeting-document matches.
     """
     workspace_id = _single(
         [
@@ -93,27 +95,51 @@ def resolve_meeting_documents(dws, window: WeeklyWindow) -> dict[str, Any]:
         "workspace_id": workspace_id,
         "meeting_folder_id": root["nodeId"],
     }
-    previous_monday = window.target_monday - timedelta(days=7)
-    for label, monday in (("target", window.target_monday), ("previous", previous_monday)):
-        year_page = _at_most_one(
-            [node for node in root_children if _same_name(node, year_page_name(monday.year))],
-            f"year page {year_page_name(monday.year)!r}",
-        )
-        title = meeting_title(monday)
-        found = (
-            _at_most_one(
-                [
-                    node for node in _nodes(dws, workspace_id, parent_id=year_page["nodeId"])
-                    if _same_name(node, title)
-                ],
-                f"document {title!r}",
+    year_pages: dict[int, dict[str, Any] | None] = {}
+    year_documents: dict[int, list[dict[str, Any]]] = {}
+
+    def page_for(day: date) -> dict[str, Any] | None:
+        if day.year not in year_pages:
+            year_pages[day.year] = _at_most_one(
+                [node for node in root_children if _same_name(node, year_page_name(day.year))],
+                f"year page {year_page_name(day.year)!r}",
             )
-            if year_page is not None and year_page.get("hasChildren")
-            else None
+        return year_pages[day.year]
+
+    def document_for(day: date) -> dict[str, Any] | None:
+        year_page = page_for(day)
+        if year_page is None or not year_page.get("hasChildren"):
+            return None
+        if day.year not in year_documents:
+            year_documents[day.year] = _nodes(
+                dws, workspace_id, parent_id=year_page["nodeId"]
+            )
+        title = meeting_title(day)
+        return _at_most_one(
+            [
+                node for node in year_documents[day.year]
+                if _same_name(node, title)
+            ],
+            f"document {title!r}",
         )
+
+    previous_monday = window.target_monday - timedelta(days=7)
+    for label, expected_day in (("target", window.target_monday), ("previous", previous_monday)):
+        resolved_day = expected_day
+        found = document_for(expected_day)
+        if label == "previous" and found is None:
+            for offset in range(1, 7):
+                candidate_day = expected_day - timedelta(days=offset)
+                found = document_for(candidate_day)
+                if found is not None:
+                    resolved_day = candidate_day
+                    break
+        year_page = page_for(resolved_day)
+        title = meeting_title(resolved_day) if found is not None else meeting_title(expected_day)
         documents[label] = {
             "title": title,
-            "year_page_name": year_page_name(monday.year),
+            "expected_title": meeting_title(expected_day),
+            "year_page_name": year_page_name(resolved_day.year),
             "year_page_id": year_page["nodeId"] if year_page is not None else "",
             "exists": found is not None,
             "node_id": found["nodeId"] if found is not None else "",

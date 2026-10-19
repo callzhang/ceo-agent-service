@@ -90,6 +90,37 @@ def test_finds_target_and_previous_documents_by_title(tmp_path):
     assert documents["target"]["year_page_id"] == "year"
 
 
+def test_previous_document_uses_nearest_canonical_date_when_meeting_moves_before_monday(tmp_path):
+    dws = FakeDws(
+        _tree(
+            "2026年9月20日管理层周会",
+            "2026年9月21日管理层周会｜90分钟新版周报",
+            "2026年9月28日管理层周会",
+        )
+    )
+
+    documents = _materials(tmp_path, dws)["documents"]
+
+    assert documents["previous"]["exists"] is True
+    assert documents["previous"]["title"] == "2026年9月20日管理层周会"
+    assert documents["previous"]["node_id"] == "id-0"
+    assert documents["previous"]["expected_title"] == "2026年9月21日管理层周会"
+
+
+def test_previous_document_does_not_guess_a_suffixed_draft(tmp_path):
+    dws = FakeDws(
+        _tree(
+            "2026年9月21日管理层周会｜90分钟新版周报",
+            "2026年9月28日管理层周会",
+        )
+    )
+
+    documents = _materials(tmp_path, dws)["documents"]
+
+    assert documents["previous"]["exists"] is False
+    assert documents["previous"]["node_id"] == ""
+
+
 def test_missing_target_is_reported_not_guessed(tmp_path):
     dws = FakeDws(_tree("2026年9月21日管理层周会"))
 
