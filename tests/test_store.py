@@ -1,4 +1,4 @@
-from app.task8_storage import task8_set_parts
+from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
 from tests.test_email_legacy_schema import published_source as published_source
 import errno
 import hashlib
@@ -21,15 +21,43 @@ import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
-from app.action_storage import insert_email_action, update_email_action
+from app.action_storage import insert_email_action, update_email_action, error_set_parts, insert_error_action
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
+from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import task_id_expression, task_physical_id
+from app.task12_storage import insert_task12, task12_projection, task12_set_parts
+from app.task20_definitions import task20_column, task20_projection
+from app.runs11_definitions import run11_projection
+from app.state_storage import update_state_rows, insert_state
+from app.state_definitions import state_projection
+from app.business_storage import insert_business
+from app.business_candidate_storage import insert_business_candidate
+from app.business_candidate_definitions import candidate_projection
+from app.action_storage import insert_task_delivery_action
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
     AgentRunLeaseLostError,
     AutoReplyStore,
 )
+
+
+def _insert_current_task8(db, kind, values):
+    register_task8_functions(db)
+    parts = task8_insert_parts(kind, values)
+    return db.execute(
+        f"insert into tasks ({parts.columns}) values ({parts.values})",
+        parts.parameters,
+    )
+
+
+def _update_current_task8(db, kind, values, *, where_sql="", parameters=(), update_sql=None, structural_sql=None):
+    register_task8_functions(db)
+    parts = task8_set_parts(kind, values, update_sql=update_sql, structural_sql=structural_sql)
+    return db.execute(
+        f"update tasks set {parts.sql} where record_type=? " + where_sql,
+        (*parts.parameters, kind, *parameters),
+    )
 
 
 def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_path):
@@ -40,7 +68,7 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_pat
     with store._connect() as db:
         identity = "email-action:" + "a" * 64
         key = "email-unsubscribe-page:" + identity + ":" + "b" * 64
-        insert_task(db, "reply_tasks", {
+        _insert_current_task8(db, "reply_tasks", {
             "channel": "email", "conversation_id": "email-thread",
             "conversation_title": "Email", "single_chat": 0,
             "trigger_message_id": identity, "trigger_create_time": "",
@@ -63,7 +91,11 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_pat
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
-        db.execute("update tasks set status='failed' where record_type='reply_tasks'")
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'failed'},
+        )
         update_email_action(
             db, "email_unsubscribe_receipts", receipt.lastrowid,
             {"outcome": "skipped_no_reliable_entry"},
@@ -412,9 +444,11 @@ def test_restart_recovery_requeues_interrupted_run_without_classifying_effects(
     assert task is not None
     task_id = task.id
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing', locked_at=current_timestamp where record_type='reply_tasks' and id=?",
-            (task_id,),
+        _update_current_task8(
+            db, "reply_tasks", {"status": "processing"},
+            update_sql={"locked_at": "current_timestamp"},
+            where_sql="and id=" + task_id_expression("reply_tasks", "?"),
+            parameters=(task_id,),
         )
     claim = store.claim_agent_run(
         task_id,
@@ -473,9 +507,11 @@ def test_restart_requeues_a_processing_task_whose_last_run_already_failed(tmp_pa
     task = store.get_reply_task_for_message("cid-orphan", "msg-orphan")
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing', locked_at=current_timestamp where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db, "reply_tasks", {"status": "processing"},
+            update_sql={"locked_at": "current_timestamp"},
+            where_sql="and id=" + task_id_expression("reply_tasks", "?"),
+            parameters=(task.id,),
         )
     claim = store.claim_agent_run(
         task.id,
@@ -520,13 +556,11 @@ def test_recover_orphaned_agent_run_for_failed_reply_task(tmp_path: Path) -> Non
     )
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            """
-            update tasks
-            set status='processing', locked_at=current_timestamp
-            where record_type='reply_tasks' and id=?
-            """,
-            (task.id,),
+        _update_current_task8(
+            db, "reply_tasks", {"status": "processing"},
+            update_sql={"locked_at": "current_timestamp"},
+            where_sql="and id=" + task_id_expression("reply_tasks", "?"),
+            parameters=(task.id,),
         )
     claim = store.claim_agent_run(
         task.id,
@@ -547,13 +581,10 @@ def test_recover_orphaned_agent_run_for_failed_reply_task(tmp_path: Path) -> Non
     )
     store.mark_agent_runtime_attempt_running_once(runtime_attempt.id)
     with store._connect() as db:
-        db.execute(
-            """
-            update tasks
-            set status='failed', locked_at=null, error='consumer_failed'
-            where record_type='reply_tasks' and id=?
-            """,
-            (task.id,),
+        _update_current_task8(
+            db, "reply_tasks", {"status": "failed", "locked_at": None, "error": "consumer_failed"},
+            where_sql="and id=" + task_id_expression("reply_tasks", "?"),
+            parameters=(task.id,),
         )
 
     recovered = store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
@@ -622,30 +653,36 @@ def _claimed_runtime_agent_run(store: AutoReplyStore):
 def _seed_runtime_operation_parent(
     store: AutoReplyStore, workload_kind: str, workload_key: str
 ) -> None:
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         assert db.execute("pragma foreign_keys").fetchone()[0] == 1
         if workload_kind == "structured":
-            insert_task(db, 'okr_review_requests', {'legacy_key': int(workload_key), 'conversation_id': 'cid', 'conversation_title': 'title', 'trigger_message_id': 'msg', 'trigger_sender': 'sender', 'trigger_text': 'text', 'period_label': 'period', 'period_start': 'start', 'period_end': 'end', 'status': 'processing'})
+            _insert_current_task8(db, 'okr_review_requests', {'legacy_key': int(workload_key), 'conversation_id': 'cid', 'conversation_title': 'title', 'trigger_message_id': 'msg', 'trigger_sender': 'sender', 'trigger_text': 'text', 'period_label': 'period', 'period_start': 'start', 'period_end': 'end', 'status': 'processing'})
         elif workload_kind == "meeting":
-            job_id = insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-1'}).lastrowid
+            job_id = _insert_current_task8(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-1'}).lastrowid
             insert_run(db, 'meeting_alignment_runs', {'legacy_key': int(workload_key), 'task_id': job_id, 'status': 'running'})
         elif workload_kind == "task":
             source_id, separator, _ = workload_key.partition(":")
-            summary_input_id = insert_task(db, 'work_summary_inputs', {
+            summary_input_id = _insert_current_task8(db, 'work_summary_inputs', {
                 'legacy_key': '1', 'source_type': 'test',
                 'source_ref': 'task-parent', 'payload_json': '{}',
             }).lastrowid
             if separator:
-                db.execute("insert into work_projects (id, title, category, status, priority, risk_level) values (?, ?, 'other', 'active', 'none', 'none')", (int(source_id), f"project-{source_id}"))
+                insert_business(db, "work_project", {"id": int(source_id), "title": f"project-{source_id}", "category": "other", "status": "active", "priority": "none", "risk_level": "none"})
             else:
-                db.execute("update tasks set status='processing' where record_type='work_summary_inputs' and id=?", (summary_input_id,))
+                _update_current_task8(
+                    db,
+                    'work_summary_inputs',
+                    {'status': 'processing'},
+                    where_sql='and id=?',
+                    parameters=(summary_input_id,),
+                )
                 insert_run(db, 'task_agent_runs', {
                     'legacy_key': source_id, 'summary_input_id': 1,
                     'status': 'running',
                 })
         elif workload_kind == "weekly_okr":
             week_end, manager_user_id, source_digest = workload_key.split(":", 2)
-            insert_task(db, 'weekly_okr_analysis_jobs', {'week_end': week_end, 'manager_user_id': manager_user_id, 'source_digest': source_digest, 'status': 'running'})
+            _insert_current_task8(db, 'weekly_okr_analysis_jobs', {'week_end': week_end, 'manager_user_id': manager_user_id, 'source_digest': source_digest, 'status': 'running'})
         elif workload_kind == "memory":
             source, _, source_key = workload_key.partition(":")
             source_id, _, execution_generation = source_key.partition(":")
@@ -666,43 +703,35 @@ def _seed_runtime_operation_parent(
                 insert_action(db, "memory_write_events", {"id": int(source_id),
                     "attempt_id": 1, "event_type": "test"})
             elif table_name == "meeting_memory_write_events":
-                insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-memory-parent', 'status': 'sent', 'final_message': 'sent summary'})
-                db.execute(
-                    "insert into meeting_memory_write_events "
-                    "(id, meeting_job_id, execution_generation, payload_json) "
-                    "values (?, 1, ?, '{}')",
-                    (int(source_id), execution_generation),
-                )
-                db.execute(
-                    "update meeting_memory_write_events set status='processing' "
-                    "where id=?",
-                    (int(source_id),),
-                )
+                _insert_current_task8(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-memory-parent', 'status': 'sent', 'final_message': 'sent summary'})
+                insert_task_delivery_action(db, "meeting_memory_write_events", {
+                    "id": int(source_id), "meeting_job_id": 1,
+                    "execution_generation": execution_generation,
+                    "payload_json": "{}", "status": "processing",
+                })
             elif table_name == "wechat_memory_candidates":
-                db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity, status, memory_write_status) values (?, 'import', 'account', 'statement', 'fact', 1, 'low', 'approved', 'writing')", (int(source_id),))
+                insert_business_candidate(db, "wechat_memory_candidate", {
+                    "id": int(source_id), "import_run_id": "import", "account_id": "account",
+                    "statement": "statement", "category": "fact", "confidence": 1,
+                    "sensitivity": "low", "status": "approved", "memory_write_status": "writing",
+                })
             else:
-                db.execute(
-                    "insert into wechat_memory_import_jobs "
-                    "(id, import_run_id, account_id, status) "
-                    "values (?, 'import', 'account', 'running')",
-                    (int(source_id),),
-                )
+                insert_task12(db, "wechat_memory_import_jobs", {
+                    "id": int(source_id), "import_run_id": "import", "account_id": "account",
+                    "status": "running",
+                })
         elif workload_kind == "email_classification":
-            db.execute(
-                "create table if not exists email_agent_classification_tasks ("
-                "task_id text primary key, status text not null)"
-            )
-            db.execute(
-                "insert into email_agent_classification_tasks (task_id, status) "
-                "values (?, 'running')",
-                (workload_key,),
-            )
+            insert_task12(db, "email_agent_classification_tasks", {
+                "task_id": workload_key, "channel": "email",
+                "stable_message_identity": "runtime-parent-message",
+                "input_json": "{}", "status": "running",
+            })
         elif workload_kind == "workbench":
             task_id = "00000000-0000-0000-0000-000000000001"
-            parent = insert_task(db, 'workbench_tasks', {
+            parent = _insert_current_task8(db, 'workbench_tasks', {
                 'legacy_key': task_id, 'title': 'Workbench task', 'runtime_kind': 'codex',
             }).lastrowid
-            insert_task(db, 'workbench_turns', {
+            _insert_current_task8(db, 'workbench_turns', {
                 'legacy_key': workload_key, 'parent_id': parent,
                 'client_request_id': 'request-1', 'task_sequence': 1,
                 'user_text': 'Inspect sales', 'status': 'running',
@@ -717,14 +746,18 @@ def _seed_runtime_operation_parent(
                 trigger_message_id=action_identity, trigger_create_time="",
                 trigger_sender="", trigger_text="", trigger_message_json="{}",
             ))
-            db.execute("update tasks set status='processing', claimed_input_id=current_input_id where record_type='reply_tasks' and id=?", (task.id,))
+            _update_current_task8(
+                db, "reply_tasks", {"status": "processing"},
+                structural_sql={"claimed_input_id": "current_input_id"},
+                where_sql="and id=" + task_id_expression("reply_tasks", "?"),
+                parameters=(task.id,),
+            )
         elif workload_kind == "email_description_optimization":
             from app.configs_storage import insert_config
 
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
             ).rpartition(":")
-            db.execute("begin immediate")
             insert_config(db, "email_training_snapshots", {
                 "snapshot_id": snapshot_id, "snapshot_version": "v1",
                 "description_version": "v1", "input_schema_version": "v1",
@@ -1273,7 +1306,7 @@ def test_runtime_attempt_correction_lineage_is_sealed_and_immutable(tmp_path: Pa
 def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task-memory-parent.sqlite3")
     with store._connect() as db:
-        insert_task(db, 'work_summary_inputs', {
+        _insert_current_task8(db, 'work_summary_inputs', {
             'legacy_key': '41', 'source_type': 'test',
             'source_ref': 'ref', 'payload_json': '{}',
         })
@@ -1382,7 +1415,7 @@ def test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit(tmp_path: 
     assert reopened.outcome == "claimed"
     with store._connect() as db:
         row = db.execute(
-            "select * from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
+            f"select * from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
             (reopened.job_id,),
         ).fetchone()
     assert row["status"] == "running"
@@ -1405,7 +1438,7 @@ def test_weekly_okr_manager_identity_is_canonicalized(tmp_path: Path):
     )
     with store._connect() as db:
         row = db.execute(
-            "select manager_user_id from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
+            f"select manager_user_id from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
             (claim.job_id,),
         ).fetchone()
     assert row["manager_user_id"] == "manager-1"
@@ -1465,8 +1498,7 @@ def test_weekly_okr_completed_cache_miss_reclaims_same_job(tmp_path: Path):
     assert reclaimed.outcome == "claimed"
     with store._connect() as db:
         row = db.execute(
-            "select status, error, finished_at from tasks "
-            "where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
+            f"select status, error, finished_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
             (original.job_id,),
         ).fetchone()
     assert tuple(row) == ("running", "", "")
@@ -1677,12 +1709,12 @@ def test_task_attention_receipt_reopen_does_not_claim_historical_success(tmp_pat
     item_id = _create_receipt_attention(store)
     with store._connect() as db:
         before_run = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
-        before_item = dict(db.execute("select * from business_attention_items where id=?", (item_id,)).fetchone())
+        before_item = dict(db.execute(f"select * from ({candidate_projection('attention_item')}) where id=?", (item_id,)).fetchone())
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     reopened = AutoReplyStore(path)
     with reopened._connect() as db:
         run = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
-        item = dict(db.execute("select * from business_attention_items where id=?", (item_id,)).fetchone())
+        item = dict(db.execute(f"select * from ({candidate_projection('attention_item')}) where id=?", (item_id,)).fetchone())
     assert run == before_run
     assert item == before_item
     assert run["projection_json"] == "{}"
@@ -2737,9 +2769,12 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
         run.id, {"code": "codex_process_failed"}, owner="audit"
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='done', error='' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'done', 'error': ''},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
@@ -2806,9 +2841,12 @@ def test_reconcile_done_failed_runs_commits_between_bounded_batches(
             run.id, {"code": "codex_process_failed"}, owner="audit"
         )
         with store._connect() as db:
-            db.execute(
-                "update tasks set status='done', error='' where record_type='reply_tasks' and id=?",
-                (task.id,),
+            _update_current_task8(
+                db,
+                'reply_tasks',
+                {'status': 'done', 'error': ''},
+                where_sql='and cast(legacy_key as integer)=?',
+                parameters=(task.id,),
             )
 
     monkeypatch.setattr(store_module, "DONE_FAILED_RUN_RECONCILE_BATCH_SIZE", 1)
@@ -2832,9 +2870,12 @@ def test_reconcile_done_failed_runs_commits_between_bounded_batches(
         if committed_batches == 1:
             with store._connect() as other_writer:
                 other_writer.execute("begin immediate")
-                other_writer.execute(
-                    "update tasks set status='skipped' where record_type='reply_tasks' and id=?",
-                    (task_ids[1],),
+                _update_current_task8(
+                    other_writer,
+                    'reply_tasks',
+                    {'status': 'skipped'},
+                    where_sql='and cast(legacy_key as integer)=?',
+                    parameters=(task_ids[1],),
                 )
                 other_writer.execute("commit")
             interleaved_writer_acquired = True
@@ -3017,9 +3058,12 @@ def test_reconcile_preserves_done_task_with_recorded_message_delivery(
     ).run
     store.fail_agent_run(audit.id, {"code": "audit_validation_failed"}, owner="audit")
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='done', error='' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'done', 'error': ''},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
@@ -3064,9 +3108,12 @@ def test_reconcile_recorded_delivery_closes_needs_human_task(tmp_path: Path) -> 
         provider_result={"message_id": "provider-message-1"},
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
-            ("provider_effect_unreconciled", task.id),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human', 'error': 'provider_effect_unreconciled'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
@@ -3177,7 +3224,13 @@ def test_done_with_failed_latest_run_keeps_exact_input_until_settlement(tmp_path
     store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
     assert store.get_reply_task(task.id).status == "failed"
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'done'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
+        )
         assert not store._compact_settled_reply_task_input(db, task.id)
     unchanged = store.get_reply_task(task.id)
     assert unchanged is not None and unchanged.trigger_text == "Recoverable original"
@@ -3196,7 +3249,13 @@ def test_reply_input_compaction_rolls_back_with_terminal_transaction(tmp_path: P
     )
     with pytest.raises(RuntimeError, match="abort terminal write"):
         with store._immediate_write_transaction() as db:
-            db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
+            _update_current_task8(
+                db,
+                'reply_tasks',
+                {'status': 'done'},
+                where_sql='and cast(legacy_key as integer)=?',
+                parameters=(task.id,),
+            )
             assert store._compact_settled_reply_task_input(db, task.id)
             raise RuntimeError("abort terminal write")
     after = store.get_reply_task(task.id)
@@ -3238,16 +3297,17 @@ def test_skip_failed_reply_task_superseded_by_terminal_business_object(
         expected_execution_generation=current_task.execution_generation,
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set business_object_key='oa:process-1:task-1' "
-            "where record_type='reply_tasks' and id in (?, ?)",
-            (old_task.id, current_task.id),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'business_object_key': 'oa:process-1:task-1'},
+            where_sql='and cast(legacy_key as integer) in (?, ?)',
+            parameters=(old_task.id, current_task.id),
         )
-        db.execute(
-            "insert or replace into business_object_tasks "
-            "(business_object_key, reply_task_id) values ('oa:process-1:task-1', ?)",
-            (current_task.id,),
-        )
+        insert_task12(db, "business_object_tasks", {
+            "business_object_key": 'oa:process-1:task-1',
+            "reply_task_id": task_physical_id(db, "reply_tasks", current_task.id),
+        }, replace=True)
 
     assert store.skip_failed_reply_tasks_superseded_by_terminal_business_object() == 1
     updated = store.get_reply_task(old_task.id)
@@ -3315,16 +3375,17 @@ def test_skip_obsolete_needs_human_attempt_superseded_by_terminal_business_objec
         )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": old_run.id})
-        db.execute(
-            "update tasks set business_object_key='oa:process-2:task-2' "
-            "where record_type='reply_tasks' and id in (?, ?)",
-            (old_task.id, current_task.id),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'business_object_key': 'oa:process-2:task-2'},
+            where_sql='and cast(legacy_key as integer) in (?, ?)',
+            parameters=(old_task.id, current_task.id),
         )
-        db.execute(
-            "insert or replace into business_object_tasks "
-            "(business_object_key, reply_task_id) values ('oa:process-2:task-2', ?)",
-            (current_task.id,),
-        )
+        insert_task12(db, "business_object_tasks", {
+            "business_object_key": 'oa:process-2:task-2',
+            "reply_task_id": task_physical_id(db, "reply_tasks", current_task.id),
+        }, replace=True)
 
     assert (
         store.skip_failed_reply_tasks_superseded_by_terminal_business_object()
@@ -3524,9 +3585,12 @@ def test_needs_human_task_follows_resolved_failed_attempt(tmp_path: Path) -> Non
         send_status="failed",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
-            ("external_action_completed:verified readback", task.id),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human', 'error': 'external_action_completed:verified readback'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
         update_action(db, "reply_attempts", attempt_id, {
             "send_error": "agent_reported_failure",
@@ -3562,9 +3626,12 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
         owner="audit",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
-            ("calendar_response_not_executed", task.id),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human', 'error': 'calendar_response_not_executed'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert not store.close_unresolved_reply_task_already_settled(
@@ -3583,16 +3650,20 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     assert updated is not None
     assert updated.status == "done"
     with store._connect() as db:
-        db.execute("update tasks set status='failed' where record_type='reply_tasks' and id=?", (task.id,))
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'failed'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
+        )
     assert store.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 1
     assert store.get_reply_task(task.id).status == "done"
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
     assert store.get_reply_task(task.id).status == "done"
     with store._connect() as db:
         error = db.execute(
-            "select resolved_at, resolution from errors "
-            "where conversation_id=? and message_id=? "
-            "order by id desc limit 1",
+            f'select resolved_at, resolution from ({ERROR_SQL}) where conversation_id=? and message_id=? order by id desc limit 1',
             (task.conversation_id, task.trigger_message_id),
         ).fetchone()
     assert error is not None
@@ -3731,21 +3802,14 @@ def test_settlement_evidence_reconcile_commits_between_bounded_batches(
         [task] = store.claim_reply_tasks(limit=1)
         task_ids.append(task.id)
         with store._connect() as db:
-            db.execute(
-                "update tasks set status='failed' where record_type='reply_tasks' and id=?",
-                (task.id,),
+            _update_current_task8(
+                db,
+                'reply_tasks',
+                {'status': 'failed'},
+                where_sql='and cast(legacy_key as integer)=?',
+                parameters=(task.id,),
             )
-            db.execute(
-                "insert into errors (conversation_id, message_id, kind, detail, "
-                "resolved_at, resolution) values (?, ?, ?, ?, current_timestamp, ?)",
-                (
-                    task.conversation_id,
-                    task.trigger_message_id,
-                    "reply_task_already_settled",
-                    "External settlement was verified.",
-                    "External settlement was verified.",
-                ),
-            )
+            insert_error_action(db, {'conversation_id': task.conversation_id, 'message_id': task.trigger_message_id, 'kind': 'reply_task_already_settled', 'detail': 'External settlement was verified.', 'resolution': 'External settlement was verified.'}, resolved_at_now=True)
 
     monkeypatch.setattr(store_module, "SETTLED_REPLY_RECONCILE_BATCH_SIZE", 1)
     original_transaction = store._immediate_write_transaction
@@ -3761,9 +3825,12 @@ def test_settlement_evidence_reconcile_commits_between_bounded_batches(
         if committed_batches == 1:
             with store._connect() as other_writer:
                 other_writer.execute("begin immediate")
-                other_writer.execute(
-                    "update tasks set status='skipped' where record_type='reply_tasks' and id=?",
-                    (task_ids[1],),
+                _update_current_task8(
+                    other_writer,
+                    'reply_tasks',
+                    {'status': 'skipped'},
+                    where_sql='and cast(legacy_key as integer)=?',
+                    parameters=(task_ids[1],),
                 )
                 other_writer.execute("commit")
             interleaved_writer_acquired = True
@@ -3796,22 +3863,14 @@ def test_settlement_reconcile_preserves_uncertain_external_action(
     )
     [task] = store.claim_reply_tasks(limit=1)
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='external_action_uncertain' "
-            "where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'failed', 'error': 'external_action_uncertain'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
-        db.execute(
-            "insert into errors (conversation_id, message_id, kind, detail, "
-            "resolved_at, resolution) values (?, ?, ?, ?, current_timestamp, ?)",
-            (
-                task.conversation_id,
-                task.trigger_message_id,
-                "reply_task_already_settled",
-                "A stale settlement record must not override uncertain delivery.",
-                "A stale settlement record must not override uncertain delivery.",
-            ),
-        )
+        insert_error_action(db, {'conversation_id': task.conversation_id, 'message_id': task.trigger_message_id, 'kind': 'reply_task_already_settled', 'detail': 'A stale settlement record must not override uncertain delivery.', 'resolution': 'A stale settlement record must not override uncertain delivery.'}, resolved_at_now=True)
 
     assert store.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 0
     updated = store.get_reply_task(task.id)
@@ -4214,9 +4273,14 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
         store.upsert_codex_session_search_index(
             session_id=session_id, source_type="meeting_alignment",
             source_id=str(run_id), title=title,
-            summary_text="private summary", fts_text="private token",
-            embedding=[1.0, 0.0],
         )
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            store.upsert_codex_session_search_index(
+                session_id=session_id, source_type="meeting_alignment",
+                source_id=str(run_id), title=title,
+                summary_text="private summary", fts_text="private token",
+                embedding=[1.0, 0.0],
+            )
 
     calls = []
 
@@ -4265,9 +4329,11 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     )
     assert len(calls) == 3
     with store._connect() as db:
-        db.execute(
-            "update tasks set source_json=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=1",
-            ('{"minutes_info":{"summary":"业务补充摘要"}}',),
+        _update_current_task8(
+            db,
+            'meeting_alignment_jobs',
+            {'source_json': '{"minutes_info":{"summary":"业务补充摘要"}}'},
+            where_sql='and cast(legacy_key as integer)=1',
         )
     refreshed_source = store.search_codex_sessions(
         fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
@@ -4289,20 +4355,23 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     assert by_session["session-risk-budget"].native_reason == "native_input_unavailable"
     assert by_session["session-risk-budget"].embedding_score == 0.0
     with store._connect() as db:
-        columns = {row["name"] for row in db.execute('pragma table_info(codex_session_search_index)')}
+        columns = {column[0] for column in db.execute(
+            f"select * from ({run11_projection('codex_session_search_index')}) limit 0"
+        ).description}
+        assert columns == {"id", "session_id", "source_type", "source_id", "title", "created_at", "updated_at"}
         assert not columns.intersection({
             'summary_text', 'fts_text', 'embedding_json', 'embedding_model', 'embedding_updated_at',
         })
         rows = db.execute(
-            "select session_id,title from codex_session_search_index order by session_id"
+            f"select session_id,title from ({run11_projection('codex_session_search_index')}) order by session_id"
         ).fetchall()
         assert [tuple(row) for row in rows] == [
             ('session-customer-script', '客服话术'),
             ('session-risk-budget', '上线评审'),
         ]
         assert db.execute(
-            "select count(*) from codex_session_search_fts "
-            "where codex_session_search_fts match 'private'"
+            "select count(*) from sqlite_schema "
+            "where name in ('codex_session_search_index','codex_session_search_fts')"
         ).fetchone()[0] == 0
 
 
@@ -4405,11 +4474,7 @@ def test_immediate_write_transaction_retries_begin_without_repeating_body(
 
     with store._immediate_write_transaction() as db:
         body_runs += 1
-        db.execute(
-            "insert into errors (conversation_id, message_id, kind, detail) "
-            "values (?, ?, ?, ?)",
-            ("cid", "msg", "test", "lock retry"),
-        )
+        insert_error_action(db, {'conversation_id': 'cid', 'message_id': 'msg', 'kind': 'test', 'detail': 'lock retry'})
 
     assert begin_attempts == 2
     assert body_runs == 1
@@ -4826,7 +4891,7 @@ def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path
 
     try:
         reader.execute("begin")
-        reader.execute("select count(*) from errors").fetchone()
+        reader.execute(f'select count(*) from ({ERROR_SQL})').fetchone()
 
         store.record_error("cid-1", "msg-1", "producer", "database is locked")
     finally:
@@ -5048,16 +5113,22 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
         channel="email",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error=? where record_type='reply_tasks' and trigger_message_id=?",
-            (
-                "email_unsubscribe_browser_failed: category=operation_failed",
-                action_identity,
-            ),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'failed', 'error': 'email_unsubscribe_browser_failed: category=operation_failed'},
+            where_sql=f"and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+            parameters=(action_identity,),
         )
 
     with store._connect() as db:
-        db.execute("update tasks set trigger_message_json=? where record_type='reply_task_inputs' and trigger_message_id=?", (json.dumps(payload), action_identity))
+        _update_current_task8(
+            db,
+            'reply_task_inputs',
+            {'trigger_message_json': json.dumps(payload)},
+            where_sql=f"and {task20_column('reply_task_inputs', 'trigger_message_id')}=?",
+            parameters=(action_identity,),
+        )
 
     assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
     task = store.list_reply_tasks(limit=1)[0]
@@ -5067,16 +5138,16 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
     assert task.execution_generation != "initial"
 
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='email_unsubscribe_browser_timeout' where record_type='reply_tasks' and id=1"
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'failed', 'error': 'email_unsubscribe_browser_timeout'},
+            where_sql='and cast(legacy_key as integer)=1',
         )
-        db.execute(
-            "insert into service_state(key,value) values (?,?)",
-            (
-                f"email_unsubscribe_execution_pending:v1:{action_identity}",
-                json.dumps({"action_identity": action_identity}),
-            ),
-        )
+        insert_state(db, "service_state", {
+            "key": f"email_unsubscribe_execution_pending:v1:{action_identity}",
+            "value": json.dumps({"action_identity": action_identity}),
+        })
     assert store.retry_failed_effect_free_email_unsubscribe_tasks() == []
     task = store.list_reply_tasks(limit=1)[0]
     assert task.status == "failed"
@@ -6770,8 +6841,12 @@ def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path, mon
         )
         update_action(db, "reply_attempts", attempt_id,
                       {"agent_run_id": run.lastrowid})
-        db.execute(
-            "update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,)
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert store.reconcile_invalid_needs_human_projections() == 0
@@ -6782,9 +6857,12 @@ def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path, mon
 
     # A later queue transition is not rewritten from this unreviewed legacy row.
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='pending', error='orphaned_before_agent_start' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'pending', 'error': 'orphaned_before_agent_start'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
     assert store.reconcile_invalid_needs_human_projections() == 0
     assert store.get_reply_task(task.id).status == "pending"
@@ -7246,7 +7324,7 @@ def test_oa_comment_aliases_the_known_node_on_current_schema(tmp_path: Path):
     assert store.get_reply_task(original.id).business_object_key == "oa:proc-1:task-1"
     assert len(store.list_reply_task_inputs(original.id)) == 3
     with store._connect() as db:
-        assert [tuple(row) for row in db.execute("select business_object_key,reply_task_id from business_object_tasks")] == [("oa:proc-1:task-1", original.id)]
+        assert [tuple(row) for row in db.execute(f"select business_object_key,reply_task_id from ({task12_projection('business_object_tasks')})")] == [("oa:proc-1:task-1", original.id)]
 
 
 def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
@@ -7262,18 +7340,19 @@ def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
             trigger_text=f"Input {message_id}",
         )
     with store._connect() as db:
+        parts = task12_set_parts("business_object_tasks", {
+            "created_at": "2020-01-02 03:04:05", "updated_at": "2021-02-03 04:05:06",
+        })
         db.execute(
-            "update business_object_tasks set created_at=?, updated_at=?",
-            ("2020-01-02 03:04:05", "2021-02-03 04:05:06"),
+            f"update tasks set {parts.sql} where record_type='business_object_tasks'",
+            parts.parameters,
         )
         before = [tuple(row) for row in db.execute(
             "select business_object_key, reply_task_id, created_at, updated_at "
-            "from business_object_tasks order by business_object_key"
+            f"from ({task12_projection('business_object_tasks')}) order by business_object_key"
         )]
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
+        update_state_rows(db, "service_state", {"value": store_module.STORE_SCHEMA_VERSION},
+                          where_sql="key=?", parameters=(store_module.STORE_SCHEMA_VERSION_KEY,))
     # The core is current; exercise the retained business migration directly.
     store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -7282,7 +7361,7 @@ def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
     with upgraded._connect() as db:
         after = [tuple(row) for row in db.execute(
             "select business_object_key, reply_task_id, created_at, updated_at "
-            "from business_object_tasks order by business_object_key"
+            f"from ({task12_projection('business_object_tasks')}) order by business_object_key"
         )]
     assert after == before
 
@@ -7298,13 +7377,13 @@ def test_current_business_object_mapping_keeps_latest_input(tmp_path: Path):
     assert second.trigger_text == "Second input"
     assert second.input_version == first.input_version + 1
     with store._connect() as db:
-        before = [tuple(row) for row in db.execute("select * from business_object_tasks")]
+        before = [tuple(row) for row in db.execute(f"select * from ({task12_projection('business_object_tasks')})")]
     store_module._INITIALIZED_STORE_PATHS.discard(store.path.resolve())
     reopened = AutoReplyStore(store.path)
     assert reopened.get_reply_task(first.id).trigger_text == "Second input"
     assert [row["trigger_text"] for row in reopened.list_reply_task_inputs(first.id)] == ["First input", "Second input"]
     with reopened._connect() as db:
-        assert [tuple(row) for row in db.execute("select * from business_object_tasks")] == before
+        assert [tuple(row) for row in db.execute(f"select * from ({task12_projection('business_object_tasks')})")] == before
 
 
 def test_different_oa_nodes_keep_separate_current_reply_tasks(tmp_path: Path) -> None:
@@ -7580,14 +7659,13 @@ def test_recover_native_codex_auth_resumes_orphaned_recovery_lock(tmp_path):
     task = store.get_reply_task(task_id)
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            """
-            update tasks
-            set status='processing', locked_at=datetime('now', '-2 minutes'),
-                error='codex_auth_recovered'
-            where record_type='reply_tasks' and id=?
-            """,
-            (task_id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'processing', 'error': 'codex_auth_recovered'},
+            update_sql={'locked_at': "datetime('now', '-2 minutes')"},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task_id,),
         )
 
     assert store.has_failed_native_codex_auth_tasks(channel="dingtalk") is True
@@ -8646,9 +8724,13 @@ def test_reset_recoverable_okr_review_requests_requeues_stale_processing(
     claimed = store.claim_okr_review_requests(limit=1)[0]
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update tasks set updated_at=datetime('now', '-31 minutes') where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
-            (request_id,),
+        _update_current_task8(
+            db,
+            'okr_review_requests',
+            {},
+            update_sql={'updated_at': "datetime('now', '-31 minutes')"},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(request_id,),
         )
 
     recovered = store.reset_recoverable_okr_review_requests(
@@ -9962,7 +10044,7 @@ def test_scheduled_service_incident_resolution_uses_task_history_index(tmp_path,
 
     monkeypatch.setattr(store, "_open_connection", traced_connection)
     store.resolve_errors_recovered_by_scheduled_service_command()
-    statement = next(sql for sql in statements if "update errors as error_event" in sql)
+    statement = next(sql for sql in statements if "update actions as error_event" in sql)
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + statement)]
     assert any("SEARCH run" in step and "scheduled_task_id=?" in step for step in plan), plan
@@ -9990,14 +10072,12 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
         "scheduled_task_service_command_failed",
         "other task still failing",
     )
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
+        parts, parameters = error_set_parts({"created_at": "2026-09-10 12:00:00"})
         db.execute(
-            """
-            update errors
-            set created_at='2026-09-10 12:00:00'
-            where message_id='event-failed'
-            """
+            f"update actions set {parts} where record_type='errors' and error_message_id='event-failed'",
+            parameters,
         )
         insert_run(db, 'scheduled_task_runs', {
             'event_id': 'event-success',
@@ -10045,14 +10125,17 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
         trigger_text="sync",
         channel="scheduled",
     )
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         reply_task_id = db.execute(
-            "select cast(legacy_key as integer) from tasks where record_type='reply_tasks' and trigger_message_id='event-success'"
+            f"select id from ({task20_projection('reply_tasks')}) where trigger_message_id='event-success'"
         ).fetchone()[0]
-        db.execute(
-            "update tasks set status='done', updated_at='2026-09-18 12:02:00' where record_type='reply_tasks' and id=?",
-            (task_physical_id(db, 'reply_tasks', reply_task_id),),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'done', 'updated_at': '2026-09-18 12:02:00'},
+            where_sql='and id=?',
+            parameters=(task_physical_id(db, 'reply_tasks', reply_task_id),),
         )
         insert_run(db, 'scheduled_task_runs', {
             'event_id': 'event-success',
@@ -10073,9 +10156,8 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
         "runtime route paused",
     )
     with store._connect() as db:
-        db.execute(
-            "update errors set created_at='2026-09-18 11:59:00' where message_id='event-success'"
-        )
+        parts, parameters = error_set_parts({"created_at": '2026-09-18 11:59:00'})
+        db.execute(f"update actions set {parts} where record_type='errors' and error_message_id='event-success'", parameters)
 
     assert store.resolve_errors_recovered_by_scheduled_reply_task() == 1
     [error] = store.list_errors()
@@ -10136,59 +10218,36 @@ def test_meeting_memory_health_uses_matching_live_leases_not_runtime_status_alon
             ("health-active", "health-ghost", "health-due", "health-retry", "health-failed"),
             start=1,
         ):
-            insert_task(db, 'meeting_alignment_jobs', {
-                'id': job_id, 'legacy_key': job_id, 'meeting_id': meeting_id,
+            parts = task8_insert_parts('meeting_alignment_jobs', {
+                'legacy_key': job_id, 'meeting_id': meeting_id,
                 'status': 'sent', 'final_message': 'summary',
             })
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                lease_owner, lease_expires_at, created_at, updated_at
-            ) values (31, 1, 'active', '{}', 'processing', 'worker-active',
-                      '2026-09-15T12:20:00+00:00',
-                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
-            """
-        )
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                lease_owner, lease_expires_at, created_at, updated_at
-            ) values (32, 2, 'ghost', '{}', 'processing', 'worker-ghost',
-                      '2026-09-15T11:59:00+00:00',
-                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
-            """
-        )
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                available_at, created_at, updated_at
-            ) values (33, 3, 'due', '{}', 'pending',
-                      '2026-09-15T11:20:00+00:00',
-                      '2026-09-15T11:00:00+00:00', '2026-09-15T11:00:00+00:00')
-            """
-        )
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                available_at, error, created_at, updated_at
-            ) values (34, 4, 'retry', '{}', 'pending',
-                      '2026-09-15T12:10:00+00:00', 'temporary route failure',
-                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
-            """
-        )
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                error, created_at, updated_at
-            ) values (35, 5, 'failed', '{}', 'failed', 'permanent failure',
-                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
-            """
-        )
+            db.execute(
+                f"insert into tasks (id,{parts.columns}) values (?,{parts.values})",
+                (job_id, *parts.parameters),
+            )
+        for values in (
+            dict(id=31, meeting_job_id=1, execution_generation='active',
+                 status='processing', lease_owner='worker-active',
+                 lease_expires_at='2026-09-15T12:20:00+00:00',
+                 created_at='2026-09-15T11:55:00+00:00', updated_at='2026-09-15T11:55:00+00:00'),
+            dict(id=32, meeting_job_id=2, execution_generation='ghost',
+                 status='processing', lease_owner='worker-ghost',
+                 lease_expires_at='2026-09-15T11:59:00+00:00',
+                 created_at='2026-09-15T11:55:00+00:00', updated_at='2026-09-15T11:55:00+00:00'),
+            dict(id=33, meeting_job_id=3, execution_generation='due', status='pending',
+                 available_at='2026-09-15T11:20:00+00:00',
+                 created_at='2026-09-15T11:00:00+00:00', updated_at='2026-09-15T11:00:00+00:00'),
+            dict(id=34, meeting_job_id=4, execution_generation='retry', status='pending',
+                 available_at='2026-09-15T12:10:00+00:00', error='temporary route failure',
+                 created_at='2026-09-15T11:55:00+00:00', updated_at='2026-09-15T11:55:00+00:00'),
+            dict(id=35, meeting_job_id=5, execution_generation='failed', status='failed',
+                 error='permanent failure', created_at='2026-09-15T11:55:00+00:00',
+                 updated_at='2026-09-15T11:55:00+00:00'),
+        ):
+            insert_task_delivery_action(
+                db, 'meeting_memory_write_events', dict(payload_json='{}', **values),
+            )
         for event_id, generation, owner in (
             (31, "active", "worker-active"),
             (32, "ghost", "worker-ghost"),
@@ -10461,9 +10520,12 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
         ),
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set oa_url='' where record_type='reply_tasks' and trigger_message_id=?",
-            (trigger_message_id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'oa_url': ''},
+            where_sql=f"and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+            parameters=(trigger_message_id,),
         )
     attempt_id = store.record_reply_attempt(
         conversation_id="oa_pending_scan",
@@ -10507,9 +10569,12 @@ def test_backfill_oa_audit_metadata_scans_before_opening_write_transaction(
             ),
         )
         with store._connect() as db:
-            db.execute(
-                "update tasks set oa_url='' where record_type='reply_tasks' and trigger_message_id=?",
-                (trigger_message_id,),
+            _update_current_task8(
+                db,
+                'reply_tasks',
+                {'oa_url': ''},
+                where_sql=f"and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+                parameters=(trigger_message_id,),
             )
         store.record_reply_attempt(
             conversation_id="oa_pending_scan",
@@ -10610,9 +10675,12 @@ def test_completed_oa_failed_attempt_closes_stale_task(
     task = store.claim_reply_task(1)
     assert task is not None
     with store._immediate_write_transaction() as db:
-        db.execute(
-            "update tasks set status=?, error='codex_result_invalid' where record_type='reply_tasks' and id=?",
-            (task_status, task.id),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': task_status, 'error': 'codex_result_invalid'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id,
@@ -11304,9 +11372,12 @@ def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
     _claim_audit_run(store, task.id, task.execution_generation, owner="stale-worker")
 
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update tasks set locked_at='2026-07-20 10:00:00', updated_at='2026-07-20 10:00:00' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'locked_at': '2026-07-20 10:00:00', 'updated_at': '2026-07-20 10:00:00'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
         db.execute(
             "update runs set updated_at='2026-07-20 10:00:00', lease_expires_at='2099-01-01 00:00:00' where record_type='agent_runs' and task_id=?",
@@ -11356,9 +11427,13 @@ def test_stale_processing_task_with_completed_turn_is_recoverable(
         owner="active-worker",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-11 minutes') where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {},
+            update_sql={'locked_at': "datetime('now', '-11 minutes')"},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     stale = store.list_stale_processing_reply_tasks(600)
@@ -11500,16 +11575,19 @@ def test_terminal_work_summary_incident_recovery_uses_incident_time(
     store.record_error("work_summary_input", str(input_id), "task_agent", "validation failed")
     store.mark_work_summary_input_skipped(claimed.id, "no usable material")
     with store._connect() as db:
-        db.execute(
-            "update tasks set updated_at='2026-10-15 07:00:00' "
-            "where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (input_id,),
+        _update_current_task8(
+            db,
+            'work_summary_inputs',
+            {'updated_at': '2026-10-15 07:00:00'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(input_id,),
         )
-        db.execute("update errors set created_at=?", (incident_time,))
+        parts, parameters = error_set_parts({"created_at": incident_time})
+        db.execute(f"update actions set {parts} where record_type='errors'", parameters)
 
     assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == expected_count
     with store._connect() as db:
-        row = db.execute("select resolved_at from errors").fetchone()
+        row = db.execute(f'select resolved_at from ({ERROR_SQL})').fetchone()
     assert bool(row["resolved_at"]) is (expected_count == 1)
 
 
@@ -11770,9 +11848,12 @@ def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
     task = store.get_reply_task_for_message("cid-retry-deadline", "msg-retry-deadline")
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='pending', attempts=3, error='consumer_retry_exhausted' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'pending', 'attempts': 3, 'error': 'consumer_retry_exhausted'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     closed = store.terminalize_exhausted_pending_reply_tasks(max_attempts=3)
@@ -12111,8 +12192,7 @@ def test_recover_stale_runtime_attempts_closes_expired_weekly_okr_parent(
 
     with store._connect() as db:
         job = db.execute(
-            "select status, error, lease_owner, lease_expires_at, finished_at "
-            "from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
+            f"select status, error, lease_owner, lease_expires_at, finished_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
             (claim.job_id,),
         ).fetchone()
     assert tuple(job) == (
@@ -12159,8 +12239,7 @@ def test_superseded_stale_weekly_okr_job_is_completed_and_can_be_reclaimed(
     ) == 1
     with store._connect() as db:
         row = db.execute(
-            "select status, error, lease_owner, lease_expires_at from "
-            "tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
+            f"select status, error, lease_owner, lease_expires_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
             (stale.job_id,),
         ).fetchone()
     assert tuple(row) == (
@@ -12307,14 +12386,18 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
     # begin_weekly_okr_analysis_job stamps created_at with the wall clock;
     # pin the order the live rows had (the rerun started after the failure).
     with store._connect() as db:
-        db.execute(
-            "update tasks set created_at='2026-09-08 04:25:00' "
-            "where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer) in (?, ?)",
-            (stale.job_id, business.job_id),
+        _update_current_task8(
+            db,
+            'weekly_okr_analysis_jobs',
+            {'created_at': '2026-09-08 04:25:00'},
+            where_sql='and cast(legacy_key as integer) in (?, ?)',
+            parameters=(stale.job_id, business.job_id),
         )
-        db.execute(
-            "update tasks set created_at='2026-09-08 05:12:00' "
-            "where record_type='weekly_okr_analysis_jobs' and status='completed'",
+        _update_current_task8(
+            db,
+            'weekly_okr_analysis_jobs',
+            {'created_at': '2026-09-08 05:12:00'},
+            where_sql=f"and {task20_column('weekly_okr_analysis_jobs', 'status')}='completed'",
         )
 
     assert store.complete_superseded_failed_weekly_okr_analysis_jobs(
@@ -12324,8 +12407,7 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
         rows = {
             row[0]: tuple(row[1:])
             for row in db.execute(
-                "select cast(legacy_key as integer), status, error, lease_owner, lease_expires_at "
-                "from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer) in (?, ?)",
+                f"select id, status, error, lease_owner, lease_expires_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id in (?, ?)",
                 (stale.job_id, business.job_id),
             ).fetchall()
         }
@@ -12349,7 +12431,7 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
         {"command": "produce-once", "required_runtime_capabilities": [], "task_id": 1}
     )
     stale = json.dumps({"task_id": 2})
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         assert store._scheduled_task_run_snapshots_are_current(db) is True
         cols = {column[0] for column in db.execute(f"select * from ({SCHEDULED_RUN_SQL}) limit 0").description}
         assert "snapshot_id" in cols
@@ -12743,8 +12825,13 @@ def test_an_unanswered_question_is_never_retired_by_its_own_closed_task(tmp_path
         trigger_message_json="{}",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and trigger_message_id=?",
-                   ("msg-payroll",))
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'done'},
+            where_sql=f"and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+            parameters=('msg-payroll',),
+        )
 
     assert _projected(store, pending_question) == "needs_human"
 
@@ -12764,9 +12851,12 @@ def test_skipped_task_retires_its_failed_attempt_from_current_problems(tmp_path)
         trigger_message_json="{}",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='skipped' where record_type='reply_tasks' and trigger_message_id=?",
-            ("msg-skipped",),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'skipped'},
+            where_sql=f"and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+            parameters=('msg-skipped',),
         )
 
     assert all(
@@ -12900,11 +12990,13 @@ def test_a_task_whose_approval_action_completed_still_ends_failed(tmp_path):
     task = store.get_reply_task_for_message("oa_pending_scan", "oa-pending:INST:1")
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing', locked_at=current_timestamp, "
-            "claimed_input_version=input_version, "
-            "business_object_key='oa:INST:T1' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'processing', 'business_object_key': 'oa:INST:T1'},
+            update_sql={'locked_at': 'current_timestamp', 'claimed_input_version': task20_column('reply_tasks', 'input_version')},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
     claim = store.claim_agent_run(
         task.id,
@@ -12960,11 +13052,13 @@ def test_a_task_that_wrote_nothing_still_fails(tmp_path):
     task = store.get_reply_task_for_message("oa_pending_scan", "oa-pending:INST2:1")
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing', locked_at=current_timestamp, "
-            "claimed_input_version=input_version, "
-            "business_object_key='oa:INST2:T1' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'processing', 'business_object_key': 'oa:INST2:T1'},
+            update_sql={'locked_at': 'current_timestamp', 'claimed_input_version': task20_column('reply_tasks', 'input_version')},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     store.fail_reply_task(
@@ -12999,10 +13093,13 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     task = store.get_reply_task_for_message("cid-stale", "msg-stale")
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing', "
-            "locked_at=datetime('now','-45 minutes') where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'processing'},
+            update_sql={'locked_at': "datetime('now','-45 minutes')"},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
     claim = store.claim_agent_run(
         task.id,
@@ -13016,12 +13113,12 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     )
     with store._connect() as db:
         db.execute("update runs set status='failed' where record_type='agent_runs' and cast(legacy_key as integer)=?", (claim.run.id,))
-        db.execute(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at) "
-            "values ('reply', ?, 'live-dispatcher', 1, 1, datetime('now','-1 minute'))",
-            (str(task.id),),
-        )
+        expired_at = db.execute("select datetime('now','-1 minute')").fetchone()[0]
+        insert_state(db, 'dispatcher_claim_leases', {
+            'adapter_name': 'reply', 'source_id': str(task.id),
+            'owner': 'live-dispatcher', 'owner_pid': 1, 'generation': 1,
+            'lease_expires_at': expired_at,
+        })
 
     recovered = store.recover_stale_processing_reply_tasks(stale_after_seconds=900)
 
@@ -13032,7 +13129,7 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     assert updated.error == "stale_lease_recovered"
     with store._connect() as db:
         lease = db.execute(
-            "select owner, lease_expires_at from dispatcher_claim_leases "
+            f"select owner, lease_expires_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='reply' and source_id=?",
             (str(task.id),),
         ).fetchone()
@@ -13054,10 +13151,13 @@ def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):
     task = store.get_reply_task_for_message("cid-live", "msg-live")
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing', "
-            "locked_at=datetime('now','-45 minutes') where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'processing'},
+            update_sql={'locked_at': "datetime('now','-45 minutes')"},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
     store.claim_agent_run(
         task.id,
@@ -13243,7 +13343,11 @@ def test_a_resume_that_never_stops_is_allowed_to_fail(tmp_path: Path):
     statuses = []
     for _ in range(AutoReplyStore.RESUMABLE_MAX_ATTEMPTS + 1):
         with store._connect() as db:
-            db.execute("update tasks set available_at='' where record_type='reply_tasks'")
+            _update_current_task8(
+                db,
+                'reply_tasks',
+                {'available_at': ''},
+            )
         claimed = store.claim_reply_tasks(limit=1)
         if not claimed:
             break
@@ -13360,9 +13464,12 @@ def test_reconcile_preserves_invalid_legacy_needs_human_projection(
             "agent_run_id": claim.run.id,
             "send_error": "provider_receipt_missing",
         })
-        db.execute(
-            "update tasks set status='needs_human', error='' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human', 'error': ''},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert all(
@@ -13416,9 +13523,12 @@ def test_reconcile_preserves_failed_attempt_and_stale_task_for_investigation(
             "agent_run_id": consumer.id,
             "send_error": "codex_result_invalid",
         })
-        db.execute(
-            "update tasks set status='needs_human', error='codex_result_invalid' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human', 'error': 'codex_result_invalid'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert store.reconcile_invalid_needs_human_projections() == 0
@@ -13437,7 +13547,11 @@ def test_failed_task_without_a_current_human_projection_is_unchanged(tmp_path: P
     )
     task = store.claim_reply_tasks(limit=1)[0]
     with store._connect() as db:
-        db.execute("update tasks set status='failed', error='codex_result_missing' where record_type='reply_tasks'")
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'failed', 'error': 'codex_result_missing'},
+        )
 
     assert store.reconcile_invalid_needs_human_projections() == 0
     assert store.get_reply_task(task.id).status == "failed"
@@ -13473,9 +13587,12 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
             "agent_run_id": run.lastrowid,
             "send_error": "needs_human",
         })
-        db.execute(
-            "update tasks set execution_generation='current-gen', status='pending' where record_type='reply_tasks' and id=?",
-            (task.id,),
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'execution_generation': 'current-gen', 'status': 'pending'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
         )
 
     assert store.reconcile_invalid_needs_human_projections() == 0
@@ -13514,7 +13631,13 @@ def test_current_generation_failed_attempt_remains_visible_while_task_retries(tm
             "agent_run_id": run.lastrowid,
             "send_error": "codex_process_failed",
         })
-        db.execute("update tasks set status='pending' where record_type='reply_tasks' and id=?", (task.id,))
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'pending'},
+            where_sql='and cast(legacy_key as integer)=?',
+            parameters=(task.id,),
+        )
     assert store.get_reply_task(task.id).status == "pending"
     assert [item.id for item in store.list_current_unresolved_problem_attempts()] == [attempt_id]
     assert [item["id"] for item in store.list_current_unresolved_problem_attempt_summaries()] == [str(attempt_id)]
@@ -13660,7 +13783,11 @@ def test_an_answered_question_can_close(tmp_path: Path):
     )
     task = store.claim_reply_tasks(limit=1)[0]
     with store._connect() as db:
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks'")
+        _update_current_task8(
+            db,
+            'reply_tasks',
+            {'status': 'needs_human'},
+        )
 
     assert store.close_needs_human_task_with_decision(
         task.id, decision="认可已发出的内容，不补发。"
@@ -13682,16 +13809,18 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
     from app.agent_cron.models import ScheduledTaskSnapshot
 
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    with store._connect() as db:
-        db.execute(
-            "insert into scheduled_tasks (id, name, prompt, command, cron_expression, "
-            "timezone, runtime_id, enabled) values (13, '准备 CEO 管理周报', 'p', '', "
-            "'0 12 * * 6', 'America/Los_Angeles', '', 1)"
-        )
+    from app.schedules_storage import insert_schedule
+
+    with store._immediate_write_transaction() as db:
+        insert_schedule(db, {
+            'id': 13, 'name': '准备 CEO 管理周报', 'prompt': 'p', 'command': '',
+            'cron_expression': '0 12 * * 6', 'timezone': 'America/Los_Angeles',
+            'runtime_id': '', 'enabled': 1,
+        })
     task = store.get_scheduled_task(13)
     assert task is not None
     snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         from app.scheduled_config_storage import intern_scheduled_config
         snapshot_id = intern_scheduled_config(db, snapshot_json)
         for event_id, scheduled_for, execution_kind, execution_id in (

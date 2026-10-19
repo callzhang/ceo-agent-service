@@ -185,3 +185,7 @@ History整文件当前33项通过，包含真实dangling Run／Task来源、最�
 旧诊断后续证据盘点明确的优先补验范围：test_store.py（旧115节点）、test_task_attention_multisource.py（旧42）、wechat/test_send_mode.py（旧27）、test_task_suggestions.py（旧16）。这些数字只是旧诊断中尚未找到匹配后续闭合证据的节点，不能当作当前运行缺陷数；worker旧29节点已有部分后续证明，准确映射仍待核对。已开始有界、无真实发送的代表测试及当前／退休契约核对。
 
 剩余差项后续闭合：微信发送模式整文件33项通过（55.19秒），只移除退休表夹具写入，额外核验当前创建API已保存准确prepared final body；confirm／auto／批准／拒绝／恢复断言和替身sender全部保留。Task建议整文件17项通过（28.93秒），准确职责／风险原文只通过临时PreparedSources提供，身份／事务／provenance及TODO负向断言保留。旧盘点的对应27／16节点不再列为无后续证据范围。存储API与多来源Attention仍在核对，不宣称整体完成。
+
+### Store current fixture closure (2026-10-19)
+
+Store 定向66项已闭合：同轮65 pass／230.97秒，最后一项旧scheduled_tasks写入经当前schedules writer修正后1 pass／3.78秒。Task8／Task12、Business、Actions、State和Schedules均通过实际当前写入接口造夹具；保留公开与物理ID边界、原恢复／回执／租约／事务断言。原生会话搜索仍验证实际native检索与内存索引，只接受当前元数据API，额外证明持久正文／向量参数不再可写。仅改测试；不是整个Store模块通过。旧诊断中另31个未修改测试函数正在核对当前证据，未将其计为已闭合。
