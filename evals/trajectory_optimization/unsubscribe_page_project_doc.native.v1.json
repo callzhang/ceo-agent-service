@@ -1,0 +1,224 @@
+{
+  "model": "gpt-5.6-luna",
+  "scope": "Anonymous read-only Codex OAuth; no mailbox, business MCP or browser action",
+  "case_count": 3,
+  "repetitions": 2,
+  "results": [
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "4484215a7256a1a47bc8b8b512fff33b357e02314c11bd9f0f37ca92e99c3903",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "done",
+        "evidence": "Your subscription to Example updates has been canceled. You will receive no more updates."
+      },
+      "validation_error": "",
+      "case": "done_with_control",
+      "repetition": 1,
+      "arm": "baseline",
+      "expected_state": "done",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "4484215a7256a1a47bc8b8b512fff33b357e02314c11bd9f0f37ca92e99c3903",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "done",
+        "evidence": "Your subscription to Example updates has been canceled. You will receive no more updates."
+      },
+      "validation_error": "",
+      "case": "done_with_control",
+      "repetition": 1,
+      "arm": "candidate",
+      "expected_state": "done",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "4484215a7256a1a47bc8b8b512fff33b357e02314c11bd9f0f37ca92e99c3903",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "done",
+        "evidence": "Your subscription to Example updates has been canceled. You will receive no more updates."
+      },
+      "validation_error": "",
+      "case": "done_with_control",
+      "repetition": 2,
+      "arm": "baseline",
+      "expected_state": "done",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "4484215a7256a1a47bc8b8b512fff33b357e02314c11bd9f0f37ca92e99c3903",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "done",
+        "evidence": "Your subscription to Example updates has been canceled. You will receive no more updates."
+      },
+      "validation_error": "",
+      "case": "done_with_control",
+      "repetition": 2,
+      "arm": "candidate",
+      "expected_state": "done",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "ab6620796e2b0b3eb6bc5e1f628774b5386100239340a69180cf9cb527f4c93c",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "action_required",
+        "evidence": "To stop Example alerts, select Unsubscribe below. Your subscription remains active until you do."
+      },
+      "validation_error": "",
+      "case": "action_required",
+      "repetition": 1,
+      "arm": "baseline",
+      "expected_state": "action_required",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "ab6620796e2b0b3eb6bc5e1f628774b5386100239340a69180cf9cb527f4c93c",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "action_required",
+        "evidence": "To stop Example alerts, select Unsubscribe below. Your subscription remains active until you do."
+      },
+      "validation_error": "",
+      "case": "action_required",
+      "repetition": 1,
+      "arm": "candidate",
+      "expected_state": "action_required",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "ab6620796e2b0b3eb6bc5e1f628774b5386100239340a69180cf9cb527f4c93c",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "action_required",
+        "evidence": "To stop Example alerts, select Unsubscribe below. Your subscription remains active until you do."
+      },
+      "validation_error": "",
+      "case": "action_required",
+      "repetition": 2,
+      "arm": "baseline",
+      "expected_state": "action_required",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1292,
+      "prompt_sha256": "ab6620796e2b0b3eb6bc5e1f628774b5386100239340a69180cf9cb527f4c93c",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "action_required",
+        "evidence": "To stop Example alerts, select Unsubscribe below. Your subscription remains active until you do."
+      },
+      "validation_error": "",
+      "case": "action_required",
+      "repetition": 2,
+      "arm": "candidate",
+      "expected_state": "action_required",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1283,
+      "prompt_sha256": "7e57b22d29e9bd519080a27ad658354f24914bb650dfdd858c9631e2a04a4320",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "already_unsubscribed",
+        "evidence": "You were already unsubscribed from Example alerts before opening this page."
+      },
+      "validation_error": "",
+      "case": "already_off_with_login_nav",
+      "repetition": 1,
+      "arm": "baseline",
+      "expected_state": "already_unsubscribed",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1283,
+      "prompt_sha256": "7e57b22d29e9bd519080a27ad658354f24914bb650dfdd858c9631e2a04a4320",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "already_unsubscribed",
+        "evidence": "You were already unsubscribed from Example alerts before opening this page."
+      },
+      "validation_error": "",
+      "case": "already_off_with_login_nav",
+      "repetition": 1,
+      "arm": "candidate",
+      "expected_state": "already_unsubscribed",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1283,
+      "prompt_sha256": "7e57b22d29e9bd519080a27ad658354f24914bb650dfdd858c9631e2a04a4320",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "already_unsubscribed",
+        "evidence": "You were already unsubscribed from Example alerts before opening this page."
+      },
+      "validation_error": "",
+      "case": "already_off_with_login_nav",
+      "repetition": 2,
+      "arm": "baseline",
+      "expected_state": "already_unsubscribed",
+      "state_matches": true,
+      "evidence_cites_page": true
+    },
+    {
+      "exit_code": 0,
+      "prompt_chars": 1283,
+      "prompt_sha256": "7e57b22d29e9bd519080a27ad658354f24914bb650dfdd858c9631e2a04a4320",
+      "native_event_count": 5,
+      "tool_call_count": 0,
+      "decision": {
+        "state": "already_unsubscribed",
+        "evidence": "You were already unsubscribed from Example alerts before opening this page."
+      },
+      "validation_error": "",
+      "case": "already_off_with_login_nav",
+      "repetition": 2,
+      "arm": "candidate",
+      "expected_state": "already_unsubscribed",
+      "state_matches": true,
+      "evidence_cites_page": true
+    }
+  ]
+}

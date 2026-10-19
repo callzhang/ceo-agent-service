@@ -1107,16 +1107,26 @@ def register_console_routes(
 
     @app.get("/api/console/oa-approvals/{process_instance_id:path}")
     def console_oa_detail(process_instance_id: str):
-        histories = store_factory().list_oa_attempt_histories([process_instance_id])
+        store = store_factory()
+        histories = store.list_oa_attempt_histories([process_instance_id])
         attempts = histories.get(process_instance_id, [])
         if not attempts:
             return JSONResponse({"ok": False, "code": "not_found", "message": "OA approval not found", "details": {}}, status_code=404)
+        latest = attempts[0]
+        _, latest_detail = build_attempt_detail(store, latest.id)
+        current_status = (
+            latest_detail["status"]["raw"]
+            if latest_detail is not None else latest.send_status
+        )
         return item_envelope({"process_instance_id": process_instance_id,
-                              "status": attempts[-1].send_status,
-                              "title": attempts[-1].conversation_title,
-                              "attempts": [{"id": a.id, "status": a.send_status,
+                              "status": current_status,
+                              "title": latest.conversation_title,
+                              "attempts": [{"id": a.id,
+                                            "status": current_status if index == 0 else a.send_status,
+                                            "recorded_status": a.send_status,
                                             "action": a.oa_action, "remark": a.oa_remark,
-                                            "created_at": a.created_at} for a in attempts]})
+                                            "created_at": a.created_at}
+                                           for index, a in enumerate(attempts)]})
 
     @app.get("/api/console/feedback")
     def console_feedback(page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100), q: str = "", status: str = ""):

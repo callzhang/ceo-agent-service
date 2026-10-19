@@ -11,7 +11,10 @@ from app.agent_cli import (
     execute_reviewed_write,
 )
 from app.agent_result import EffectKind
-from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
+from app.native_cli_metadata import (
+    AgentReadOnlyViolationError,
+    NativeCliMetadataClassifier,
+)
 from app.native_cli_metadata import describe_native_command
 from app.dws_client import DwsClient
 from app.runtime_environment import central_python
@@ -164,7 +167,7 @@ def test_describe_native_command_allows_service_owned_dingteam_okr_read():
     }
 
 
-def test_describe_native_command_allows_service_owned_daily_report_facts_read():
+def test_describe_native_command_allows_service_owned_scheduled_context_read():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
@@ -172,7 +175,7 @@ def test_describe_native_command_allows_service_owned_daily_report_facts_read():
                 str(central_python()),
                 "-m",
                 "app.cli",
-                "daily-report-facts",
+                "scheduled-context",
                 "--scheduled-run",
                 "58148",
             ],
@@ -181,11 +184,11 @@ def test_describe_native_command_allows_service_owned_daily_report_facts_read():
 
     assert descriptor is not None
     assert descriptor.effect is EffectKind.READ_ONLY
-    assert descriptor.command_path == "app.cli daily-report-facts"
+    assert descriptor.command_path == "app.cli scheduled-context"
     assert descriptor.target_identifiers == {"scheduled-run": "58148"}
 
 
-def test_describe_native_command_allows_service_owned_weekly_report_materials_read():
+def test_describe_native_command_allows_service_owned_service_activity_read():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
@@ -193,16 +196,18 @@ def test_describe_native_command_allows_service_owned_weekly_report_materials_re
                 str(central_python()),
                 "-m",
                 "app.cli",
-                "weekly-report-materials",
-                "--scheduled-run",
-                "58149",
+                "service-activity",
+                "--start",
+                "2026-10-18T00:00:00Z",
+                "--end",
+                "2026-10-19T00:00:00Z",
             ],
         }
     )
 
     assert descriptor is not None
     assert descriptor.effect is EffectKind.READ_ONLY
-    assert descriptor.command_path == "app.cli weekly-report-materials"
+    assert descriptor.command_path == "app.cli service-activity"
 
 
 def test_describe_native_command_rejects_local_pipeline_with_identifiers():

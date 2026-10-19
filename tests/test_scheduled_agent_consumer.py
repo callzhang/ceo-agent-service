@@ -141,7 +141,6 @@ def commands(produce_once=lambda: "produce-once queued=0"):
         "scan-meeting-todos-once": lambda: "scan-meeting-todos-once queued=0",
         "request-minutes-access": lambda: "request-minutes-access requested=0",
         "sync-minutes-once": lambda: "sync-minutes-once queued=0",
-        "weekly-okr-report": lambda: "weekly-okr-report status=sent",
         "sync-chrome-cookies": lambda: "sync-chrome-cookies copied=0",
     })
 
@@ -1306,3 +1305,43 @@ def test_scheduled_context_refresh_failures_stop_after_three_attempts(tmp_path):
     attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
     assert attempts[0].send_status == 'failed'
     assert 'CTX503' in attempts[0].audit_summary
+
+
+def test_new_ordinary_report_uses_configured_skill_and_generic_tools(tmp_path, monkeypatch):
+    """A previously unknown report name needs no core report-category branch."""
+    from app import task_artifacts
+
+    store, run, options = fixture(tmp_path)
+    persisted = dispatch(store, run, options)
+    task_id = int(persisted.execution_id)
+    claim(ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False),
+          task_id, "new-report")
+    task = store.get_reply_task(task_id)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "artifacts")
+    scripts = tmp_path / ".agents/skills/managed-check/scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "render.py").write_text(
+        "from pathlib import Path\n"
+        "Path('ordinary.md').write_text('New ordinary report\\n')\n"
+        "print('ordinary.md')\n"
+    )
+    tool_manager = build_role_server(
+        "consumer", task_id=task_id, db_path=store.path,
+        execution_generation=task.execution_generation,
+    )._tool_manager
+    context = tool_manager.get_tool("read_scheduled_context").fn()
+    assert context["scheduled_task_id"] == run.scheduled_task_id
+    result = tool_manager.get_tool("consumer_run_skill_script").fn(
+        "managed-check", "scripts/render.py", []
+    )
+    assert result["exit_code"] == 0 and result["stdout"].strip() == "ordinary.md"
+    assert tool_manager.get_tool("read_task_artifact").fn("ordinary.md")["content"] == "New ordinary report\n"
+    submitted = []
+    monkeypatch.setattr("app.agent_cli._write_document_artifact",
+                        lambda **kw: submitted.append(kw) or {"node_id": "ordinary-node"})
+    receipt = tool_manager.get_tool("consumer_document_write").fn(
+        "ordinary.md", "An ordinary report", parent_id="folder", workspace_id="wiki"
+    )
+    assert receipt["node_id"] == "ordinary-node"
+    assert submitted[0]["artifact_name"] == "ordinary.md"

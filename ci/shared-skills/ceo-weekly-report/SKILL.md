@@ -5,137 +5,79 @@ metadata:
   managed_by: ceo-agent-service
 ---
 
-# CEO Weekly Report
+# CEO Weekly Management Report
 
-## Overview
+Prepare the upcoming management meeting's CEO report from live evidence.
+Read `references/report-contract.md` for business requirements and
+`references/dingtalk-runbook.md` for document operations. Fixed metrics,
+coverage, issue continuity, privacy and source quality are business review
+requirements: assess them under this Skill and the normal Audit feedback
+cycle. Publication readiness is decided by this business review and Audit.
+The former service `publishable` flag and separate publication validator have
+been retired; historical validation output is not a current publication
+condition. Missing business-line submissions are disclosed and do not block the
+report. Do not ask Derek to supply materials already accessible to the Agent.
 
-Produce an evidence-backed management mechanism, not an activity summary. Track
-results, deviations, recurring causes, decisions, and unresolved issues across
-Beijing-calendar weeks.
+## Inputs and dates
 
-Read [report-contract.md](references/report-contract.md) and
-[dingtalk-runbook.md](references/dingtalk-runbook.md) completely before work.
+1. Call `agent_cli.read_scheduled_context`; save the exact JSON as
+   `context.json` with `consumer_artifact_write`. The returned
+   `artifact_directory` is the working directory for selected Skill scripts.
+2. Call `consumer_run_skill_script` with name `ceo-weekly-report`, script
+   `scripts/materials.py`, arguments `--context context.json --output
+   materials.json --before before.json --ensure-year-page`. It computes the upcoming Monday,
+   resolves target/prior meeting documents and writes complete template JSONML
+   locally. It preserves the existing target's revision even when its blank
+   paragraph skeleton requires using the prior complete meeting template.
+   A prior meeting moved within the previous reporting week may supply the
+   template only under a unique canonical title; suffixed drafts are excluded.
+3. Call `read_service_activity` with the materials' explicit window and
+   sources=["meetings"]. Screen all discovered meetings, then read relevant
+   full transcripts using `read_meeting_archive(meeting_id)` or
+   `dingtalk-minutes`; missing archives are coverage gaps. Use `dingtalk-chat`
+   to read relevant group messages in the same window. Read the previous
+   report, the company OKR and the business-line materials as needed.
 
-## Management Weekly Template and Disclosure
+## Judgment and report data
 
-When this report is prepared for the management weekly meeting or its shared
-company-health section, also read the confirmed rules in
-[management-weekly.md](../ceo-meeting-work/references/management-weekly.md).
-Keep each department's meeting report to 3–5 core metrics with short definitions
-beside each metric. Share one blank template, including finance; restrict real
-financial values by the actual report audience. Financial values do not belong
-in the all-management company-health section. The technical report schema and
-historical fixed-metric list do not authorize broader financial disclosure.
-Keep the existing revision-guarded publication and section-ownership contract.
+Follow the report contract's fixed KPI definitions and evidence requirements.
+Keep facts, participant claims and CEO judgments distinct. Include real source
+IDs, dates, responsible people and evidence for changes. Trace prior open
+issues and explain new risks and decisions. Never infer ownership from
+attendance. Report absent or inaccessible materials truthfully. Apply privacy
+requirements from the report contract before preparing any public document.
 
-## Required Inputs
+Write structured report JSON as `report.json`. The meeting renderer reads:
+`ceo_judgment` (status/text objects), `company_metrics` and `issues` arrays.
+Metric fields are name, target, previous, current, change, status, data_date,
+definition_evidence. Tracking rows require a top-level as_of date. Every issue
+retains its stable id and supplies question, current_root_cause,
+prior_state, new_evidence, status_icon, weeks_open, next_checkpoint,
+closure_standard and owner={name,user_id}. Use empty arrays only when your
+business review supports them. Additional full-draft sections and business-line
+shapes are described in the report contract and renderer.
 
-- **Service materials**: call the task-bound `agent_cli.weekly_report_materials`
-  read operation. It returns the target Monday, the Beijing
-  window and cutoff, the target and previous `管理层周会` documents (title,
-  node ID, URL, whether the target exists, its year page), and every meeting
-  the service recorded in the window with its participants, its follow-up
-  message and the path of its archived transcript. Do not ask anyone to
-  confirm the target; it is the upcoming meeting, never one already held.
-- Prior report: the previous meeting document from the materials.
-- Current company DingTang OKR.
-- Business-line material: what the MorningStar, Friday, international and
-  world-model marketing owners wrote in section 四 of the target document and
-  the reports linked under 六. A line with nothing written yet is recorded as
-  `未提交` in the manifest's `business_reports`, gets a coverage warning and
-  a native mention in the report, and does not block the run.
+## Render and publish
 
-Publication is blocked if the materials command cannot resolve the unique
-target, an existing target changes after rendering, a target appears or
-disappears before the bound write, or the write cannot be read back.
+1. Run `scripts/render_dingtalk_jsonml.py --before before.json --report
+   report.json --meeting-document --output target.jsonml` using
+   `consumer_run_skill_script`. Add `--draft-output draft.jsonml` for the full
+   seven-section draft. The script checks the fields it actually consumes and
+   the generated JSONML. It does not decide business readiness.
+2. Review the resulting content under this Skill. The published meeting
+   document changes only “二、CEO本周判断”, “三、公司级重点指标”, and new rows
+   appended to “一、重点问题及待办跟踪”. Preserve previous rows, business-line
+   sections, discussion and report links owned by participants.
+3. Call `consumer_document_write` using artifact_name="target.jsonml",
+   title from materials, doc_format="jsonml" and target node_id plus
+   expected_revision for an existing target. For a missing target use the
+   resolved year page as parent_id plus workspace_id. The materials script ensures the canonical year page exists under the
+   meeting folder when --ensure-year-page is supplied.
+4. Read the complete readback artifact, compare its three managed areas and
+   verify unchanged participant content. A revision conflict requires a fresh
+   target read and a new render. A previously completed write remains a fact
+   after interruption; read the target before deciding whether another write
+   is needed. Record the document link and coverage in the final result.
 
-## Workflow
-
-1. Read the task-bound service materials. Keep the target, previous document,
-   meeting index, coverage and source identifiers in the report's manifest.
-2. Read the target and previous documents with
-   `agent_cli.read_dingtalk_document_full` and inspect their identities and
-   contents. Do not construct or shorten the JSONML passed to the render tool:
-   `agent_cli.render_weekly_report` reads the complete current target as its
-   render base. If an existing target is only an empty paragraph skeleton, the
-   tool uses the complete previous meeting document as its render base and
-   reports that source title; the existing target's current revision remains
-   bound to the write. If the target does not exist, the previous meeting
-   document is also the render base. A blank existing target without a complete
-   previous document cannot be published. The task-bound write creates a
-   missing target in the resolved year page, creating that page under the
-   meeting folder when needed.
-3. Screen every meeting in the materials from its title, participants and
-   follow-up message; read the archived transcript file of each one relevant to
-   Derek's management responsibilities or a business line, using
-   `agent_cli.read_weekly_report_archive` for each indexed path.
-4. Search all accessible chats for Derek's messages. Read sufficient context
-   for every selected message.
-5. Read the business-line material and linked evidence without editing it.
-   Read authoritative operating actuals when accessible; otherwise write `无数据`.
-   Use CRM as the sole system of record for sales data, including orders,
-   Pipeline, Lead/Opportunity Gate, expected signing, and commercial POC
-   status. Do not ask finance to supply or confirm sales-funnel data. Finance
-   remains the source only for accounting metrics such as recognized revenue,
-   cash received, gross margin, and overdue receivables.
-   For decision-critical missing actuals, include the responsible native mention
-   and a dated next checkpoint; never substitute a target or plan for an actual.
-6. Extract prior open issue IDs from the previous document and the target's
-   tracking table. Reconcile new evidence against the original question, prior
-   diagnosis, deadline, and closure standard.
-7. Draft the seven-section `report.json` with `as_of` set to the cutoff's
-   Beijing date. Classify every consequential claim and retain evidence IDs.
-8. Call `agent_cli.validate_weekly_report` with the manifest, report and prior
-   issues; fix blockers. Call `agent_cli.render_weekly_report` with the report.
-   The service resolves and reads the complete render base, checks the target
-   JSONML and native parser, then returns the complete seven-section draft,
-   render metadata and an opaque `render_id`. The full target JSONML stays
-   bound inside the current Consumer turn so large source documents cannot
-   truncate the tool response.
-9. The scheduled run is authorized to write the target meeting document
-   (Derek 2026-09-24). Pass the returned `render_id` to task-bound
-   `agent_cli.consumer_document_write`; do not reconstruct or resubmit target
-   JSONML. The service writes the exact checked render bound to that ID, saves
-   a recoverable version for an existing target, and performs one
-   revision-guarded overwrite.
-   For a missing target, it creates the document in the resolved year page.
-10. Compare the complete readback returned by that operation with the rendered
-    target and verify the unchanged places and issue table before reporting
-    completion. Unknown write status requires readback, never a blind second
-    write.
-
-## What the report writes into the meeting document
-
-Only three places, and nothing else in the document changes:
-
-- `二、CEO本周判断`: the CEO judgment, followed by the cross-week issues table,
-  the cockpit abnormalities, the root-cause guidance and the decisions needed.
-- `三、公司级重点指标`: the company metrics table.
-- `一、重点问题及待办跟踪`: one new row per issue whose ID is not already in the
-  table. Existing rows belong to their owners and are not edited.
-
-The business-line sections, the topic discussion and the report links are the
-meeting participants' and stay as they are.
-
-## Management Reasoning
-
-- Ask what result changed, what proves it, what deviated, why it recurred, and
-  which management choice is required.
-- Separate fact, participant statement, forecast, CEO judgment, current
-  judgment, and hypothesis. Treat coordination gaps as coordination gaps rather
-  than unsupported blame.
-- Friday demand, resources, and timing require Derek's unified confirmation.
-  Financial demand requires Shawn and Derek alignment.
-- MorningStar's overall plan is decided by Shawn; market direction, product
-  path, and technical leadership require Derek's confirmation and feedback.
-  Test the plan for new opportunities, customer profile, sales assumptions,
-  market validation, leading features, and commercial feedback loops.
-- Reconcile Friday product and technical milestones, release Gate, business and
-  general Eval ownership, scenario evidence, staffing, and reusable assets.
-
-## Completion Gate
-
-Completion requires `publishable: true`, a saved version for an existing
-target, unchanged expected revision, one guarded write, and a full matching
-readback in which everything outside the three written places equals the
-before JSONML. A successful command response alone is insufficient.
+Use the ordinary Consumer/Audit feedback lifecycle. The system checks provider
+format and document revision; report quality is judged by this Skill and Audit.

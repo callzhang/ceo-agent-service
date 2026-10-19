@@ -118,7 +118,7 @@ def render_runtime_context(
     if not any(tools.values()):
         lines.append("  - 本轮未声明来源读取入口；不能由个人安装或历史会话推断。")
     if role == "consumer":
-        lines.append("- consumer_document_write 仅适用于已有绑定的 scheduled 日报/周报，声明工具不代表本任务有绑定。")
+        lines.append("- consumer_document_write 使用当前 scheduled 任务产物和显式文档目标；consumer_run_skill_script 执行已选择 Skill 的确定性脚本。")
     lines.append("- 受控业务动作的精确范围以已注入 System Action Contracts 与当前系统任务为准；Consumer 提案、Audit 只读、System 执行。")
     return "\n".join(lines)
 

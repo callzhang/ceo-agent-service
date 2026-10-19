@@ -343,6 +343,7 @@ class EmailClassifierRoutedBackend:
                 ),
                 use_output_schema=False,
                 inlined_skill_names=(self.skill_name,),
+                project_doc_max_bytes=0,
             ),
             parser=parse_in_exact_context,
             result_codec=_CLASSIFICATION_RESULT_CODEC,

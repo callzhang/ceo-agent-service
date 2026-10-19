@@ -417,6 +417,17 @@ def build_meeting_alignment_prompt(
     group_candidates_text = json.dumps(
         group_candidates or [], ensure_ascii=False, separators=(",", ":")
     )
+    if group_candidates:
+        group_candidates_text = (
+            "Before selecting effects, verify live full relevant discussion, full group roster, "
+            "and each member's actual authorization for this exact content. Layoff and workforce "
+            "reduction plans are sensitive even without names or counts. Business relevance, "
+            "matching attendees, member precision and titles never establish permission. "
+            "Candidate excerpts and prior deliveries "
+            "do not verify the audience. Denied history is unresolved access evidence, not empty "
+            "discussion, no-group evidence, or permission to send; never use a self fallback.\n"
+            + group_candidates_text
+        )
     scheduled_consumer_block = ""
     if consumer_prompt.strip() or skill_protocol.strip():
         scheduled_consumer_block = f"""## Scheduled Consumer Prompt

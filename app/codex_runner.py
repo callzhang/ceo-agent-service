@@ -222,6 +222,7 @@ class CodexRunner:
         shell_environment_policy_core: bool = False,
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
+        project_doc_max_bytes: int | None = None,
         skill_exclusion_override: str = "",
     ) -> list[str]:
         if approval_policy not in {"on-failure", "never"}:
@@ -233,6 +234,8 @@ class CodexRunner:
             "danger-full-access",
         }:
             raise ValueError("unsupported sandbox mode")
+        if project_doc_max_bytes is not None and project_doc_max_bytes < 0:
+            raise ValueError("project_doc_max_bytes must be non-negative")
         effective_approval_bypass = use_approval_bypass and approval_policy != "never"
         if preserve_native_instructions:
             effective_developer_instructions = ""
@@ -285,6 +288,11 @@ class CodexRunner:
             else []
         )
         common_options = [
+            *(
+                ["-c", f"project_doc_max_bytes={project_doc_max_bytes}"]
+                if project_doc_max_bytes is not None
+                else []
+            ),
             *sandbox_options,
             *(["--skip-git-repo-check"] if skip_git_repo_check else []),
             "--json",
