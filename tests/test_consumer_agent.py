@@ -1092,7 +1092,7 @@ def test_consumer_capability_section_keeps_tool_contract_without_repeating_commo
     assert "consumer_run_skill_script" in capability
     assert "mcp__agent_cli" in capability
     assert "dependency_read_unavailable" in capability
-    assert "provider_risk_rejected" in capability
+    assert "provider-risk refusal" in capability
 
 
 def test_consumer_document_action_keeps_body_out_of_description():

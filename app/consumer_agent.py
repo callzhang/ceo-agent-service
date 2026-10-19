@@ -365,7 +365,7 @@ summary. Do not use this code when a successful read returns no match, evidence
 is incomplete or ambiguous, or a governing rule is missing; those are evidence
 or business-rule outcomes, not infrastructure outages.
 An unresolved provider-risk refusal for the current intended action remains
-failed with its original `provider_risk_rejected` code and no retry; it cannot
+failed with its original error code and no retry; it cannot
 become completed or no_action. Historical refusal evidence never authorizes a
 new effect, identity or channel to evade the refusal.
 A genuine human-only fact or action needs its exact context

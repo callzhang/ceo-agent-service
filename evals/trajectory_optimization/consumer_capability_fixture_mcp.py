@@ -29,8 +29,39 @@ CONTRACT_TOOL = {
 }
 
 
+def _tool(name: str, properties: dict, required: list[str] | None = None) -> dict:
+    return {
+        "name": name, "description": "Synthetic task-bound provider operation.",
+        "annotations": {"readOnlyHint": name not in {
+            "consumer_artifact_write", "consumer_document_write",
+        }, "destructiveHint": False, "idempotentHint": True,
+            "openWorldHint": False},
+        "inputSchema": {"type": "object", "properties": properties,
+                        "required": required or [], "additionalProperties": False},
+    }
+
+
+OA_TOOL = _tool("read_dingtalk_oa", {"process_instance_id": {"type": "string"}},
+                ["process_instance_id"])
+SCHEDULED_TOOLS = (
+    _tool("read_scheduled_context", {}),
+    _tool("consumer_artifact_write", {
+        "name": {"type": "string"}, "content": {"type": "string"},
+    }, ["name", "content"]),
+    _tool("read_task_artifact", {"name": {"type": "string"}}, ["name"]),
+    _tool("consumer_document_write", {
+        "artifact_name": {"type": "string"}, "title": {"type": "string"},
+        "doc_format": {"type": "string"}, "node_id": {"type": "string"},
+        "expected_revision": {"type": "integer"},
+    }, ["artifact_name", "title", "node_id"]),
+)
+
+
 def serve(case: dict, trace: Path) -> None:
     from app.action_contract_catalog import read_system_action_contract
+
+    artifacts: dict[str, str] = {}
+    document_receipt: dict | None = None
 
     for line in sys.stdin:
         request = None
@@ -46,7 +77,11 @@ def serve(case: dict, trace: Path) -> None:
                     "serverInfo": {"name": "consumer-capability-synthetic-read", "version": "1"},
                 }
             elif method == "tools/list":
-                result = {"tools": [*source_catalog(case), CONTRACT_TOOL]}
+                special = (
+                    [OA_TOOL] if case.get("kind") == "oa" else
+                    list(SCHEDULED_TOOLS) if case.get("kind") == "scheduled" else []
+                )
+                result = {"tools": [*source_catalog(case), CONTRACT_TOOL, *special]}
             elif method == "tools/call":
                 params = request.get("params") or {}
                 name = params.get("name")
@@ -61,6 +96,41 @@ def serve(case: dict, trace: Path) -> None:
                     except ValueError:
                         payload = {"code": "contract_not_found"}
                         is_error = True
+                elif name == "read_dingtalk_oa" and case.get("kind") == "oa":
+                    exact = arguments.get("process_instance_id") == case["oa_instance_id"]
+                    payload = (case["oa_instance"] if exact else
+                               {"code": "process_instance_not_found"})
+                    is_error = not exact
+                elif name == "read_scheduled_context" and case.get("kind") == "scheduled":
+                    payload, is_error = case["scheduled_context"], False
+                elif name == "consumer_artifact_write" and case.get("kind") == "scheduled":
+                    artifact_name = str(arguments.get("name") or "")
+                    content = str(arguments.get("content") or "")
+                    if artifact_name and content:
+                        artifacts[artifact_name] = content
+                        payload, is_error = {"name": artifact_name, "bytes": len(content.encode())}, False
+                    else:
+                        payload, is_error = {"code": "artifact_invalid"}, True
+                elif name == "consumer_document_write" and case.get("kind") == "scheduled":
+                    artifact_name = str(arguments.get("artifact_name") or "")
+                    exact_target = arguments.get("node_id") == case["document_node_id"]
+                    if artifact_name in artifacts and exact_target:
+                        document_receipt = {
+                            "node_id": case["document_node_id"],
+                            "revision": 8,
+                            "readback_artifact_name": "document-readback.md",
+                        }
+                        artifacts["document-readback.md"] = artifacts[artifact_name]
+                        payload, is_error = document_receipt, False
+                    else:
+                        payload, is_error = {"code": "document_target_or_artifact_invalid"}, True
+                elif name == "read_task_artifact" and case.get("kind") == "scheduled":
+                    artifact_name = str(arguments.get("name") or "")
+                    if artifact_name in artifacts:
+                        payload, is_error = {"name": artifact_name,
+                                             "content": artifacts[artifact_name]}, False
+                    else:
+                        payload, is_error = {"code": "artifact_not_found"}, True
                 else:
                     payload, is_error = source_response(case, name, arguments)
                 with trace.open("a", encoding="utf-8") as stream:
