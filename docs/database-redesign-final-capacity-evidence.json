@@ -34236,5 +34236,15 @@
       "new current facts inverse",
       "sequence highwater"
     ]
+  },
+  "final_email_metadata_repair_closure": {
+    "passed": 39,
+    "seconds": 377.06,
+    "finite_delta_control": {
+      "passed": 1,
+      "seconds": 0.82
+    },
+    "scope": "both constructors reject exact damaged final declaration with exact IntegrityError/message; no repair and before/after fingerprints unchanged; both cached/uncached and row validation modes; genuine0441 historical exception contract unchanged; existing shared-index repair retained",
+    "runtime_changes": false
   }
 }

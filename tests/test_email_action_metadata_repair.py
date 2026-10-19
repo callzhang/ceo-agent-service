@@ -14,7 +14,8 @@ import pytest
 
 from app.action_email_storage import SOURCE_TABLES
 from app.action_storage import REPLY_VARIANTS, _current_objects
-from app.email_store import EmailPersistenceCorruption, EmailStore
+from app.current_database_schema import FINAL_ACTION_OPTIONS
+from app.email_store import EmailStore
 from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
 from app.store_schema_release import prepare_database_schema_release
 
@@ -23,14 +24,18 @@ SOURCE_REF = "0441cf15fafe800f9ca4d67f667e87062ca62109"
 
 
 def _email_objects(variant):
+    options = dict(
+        include_reply=True,
+        reply_variant=variant,
+        physical_provenance=True,
+        compact_payload=True,
+    )
     old = {
-        o["name"] for o in _current_objects(include_reply=True, reply_variant=variant)
+        o["name"] for o in _current_objects(**options)
     }
     return {
         o["name"]: o
-        for o in _current_objects(
-            include_reply=True, reply_variant=variant, include_email=True
-        )
+        for o in _current_objects(include_email=True, **options)
         if o["name"] not in old
     }
 
@@ -167,16 +172,15 @@ def test_email_auxiliary_missing_never_becomes_store_repair(pair, tmp_path, name
                     else (AutoReplyStore, EmailStore)
                 )
                 for constructor in constructors:
-                    expected = (
-                        EmailPersistenceCorruption
-                        if constructor is EmailStore
-                        else sqlite3.IntegrityError
-                    )
-                    with pytest.raises(expected):
+                    with pytest.raises(
+                        sqlite3.IntegrityError,
+                        match="^malformed current provider/config declaration$",
+                    ) as error:
                         if constructor is EmailStore:
                             constructor(path, validate_rows=not fast)
                         else:
                             constructor(path)
+                    assert type(error.value) is sqlite3.IntegrityError
                     assert _fingerprint(path) == before
 
 
@@ -200,7 +204,7 @@ def test_email_auxiliary_type_owner_and_sql_are_compared_before_store(
         else:
             db.execute(f'drop index "{index}"')
             if damage == "index_owner":
-                db.execute(f'create index "{index}" on email_messages(id)')
+                db.execute(f'create index "{index}" on emails(id)')
             elif damage == "index_type":
                 db.execute(
                     f'create trigger "{index}" before update on actions begin select 1; end'
@@ -211,12 +215,14 @@ def test_email_auxiliary_type_owner_and_sql_are_compared_before_store(
                 )
         assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
     before = _fingerprint(path)
-    with pytest.raises(EmailPersistenceCorruption):
-        EmailStore(path)
-    assert _fingerprint(path) == before
-    with pytest.raises(sqlite3.IntegrityError):
-        AutoReplyStore(path)
-    assert _fingerprint(path) == before
+    for constructor in (EmailStore, AutoReplyStore):
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="^malformed current provider/config declaration$",
+        ) as error:
+            constructor(path)
+        assert type(error.value) is sqlite3.IntegrityError
+        assert _fingerprint(path) == before
 
 
 def test_shared_store_public_index_still_uses_existing_repair(pair, tmp_path):
@@ -233,6 +239,6 @@ def test_shared_store_public_index_still_uses_existing_repair(pair, tmp_path):
     EmailStore(path)
     with closing(sqlite3.connect(path)) as db:
         assert action_schema_is_current(
-            db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True
+            db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS
         )
         assert tuple(db.execute("select * from email_schema_migrations")) == markers
