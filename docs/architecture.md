@@ -288,6 +288,8 @@ through the existing native per-path Skill configuration. Unspecified standard
 turns retain the native default catalog, while an explicit selection (including
 empty) filters the catalog through the existing per-path helper. Existing
 always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page-judgement Codex command also sets `project_doc_max_bytes=0`, omitting
+the unrelated checkout `AGENTS.md` project document from this no-file task.
 The page states, verbatim evidence contract, route, approval, sandbox and
 unsubscribe execution rules are unchanged. Native global memory and AGENTS
 instructions remain CLI-owned and are not represented as service prompt text.
@@ -418,7 +420,7 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 
 `okr_review` 使用上述闭环生成逐 KR 评审；管理者 OKR 周报评分范围是当前 OKR 周期起始日至报告日，本周窗口只标记新增进展和风险。每位名单成员都必须保留一个区块，但只有可用的实时目标和有效分析才产生评分；个人季度或目标确证缺失、已验证来源中的成员数据故障以及终态结果校验失败使用系统绑定成员 ID 的未评分缺口。不得以零分、上季度目标或省略成员填补缺口。共享认证、未配置来源、未分类来源故障或身份/权限证明无效仍阻断发布，不按失败人数推断共享故障；明确的成员级失败即使覆盖全名单，也只能形成如实的缺口报告。原始回执和诊断保留在本地来源材料及任务记录中，不把历史季度指标、凭据、路径或 provider 正文放入管理报告。
 
-名单覆盖以稳定 user ID 关联评分、来源和缺口；同名不同成员仍保留独立区块及附录，现有唯一姓名附录的文档身份不变。有效评分保留原 KR、四项领导力和三项文化维度校验及计算公式。每位管理者的模型分析沿用统一应急上限、idle watchdog、任务租约及完成缓存；仍在执行的分析保持 `analysis_in_progress`，不能当作终态缺口提前发布。评分、文档及群摘要回执是不同完成级别；完整名单缺口报告已发布不等于所有成员已完成评分。周报调度的 `last_attempt_at` 只控制失败重试间隔；完整流程沿用原有单实例 run lease、续租及崩溃恢复。
+名单覆盖以稳定 user ID 关联评分、来源和缺口；同名不同成员仍保留独立区块及附录，现有唯一姓名附录的文档身份不变。有效评分保留原 KR、四项领导力和三项文化维度校验及计算公式。OKR 分析使用普通 scheduled Agent 生命周期和 task generation 产物，来源变更后重新分析；模型调用沿用统一应急上限与 idle watchdog。评分、文档及群摘要回执是不同完成级别；完整名单缺口报告已发布不等于所有成员已完成评分。调度、重试、租约与恢复由普通任务机制负责。
 
 OKR 评审的实时数据读取由业务 Skill 选择当前可用的 provider 能力完成。服务提供的
 `app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>`，该入口调用
@@ -526,14 +528,23 @@ rowid 倒序排序。终态时间的必需部分索引定位第 10,000 条边界
 日历更新、同步会议结论与管理者视角、处理已授权会话的新微信消息、处理新的钉钉 OA 审批、将会议
 行动项整理到 Tasks、生成并发送每周 OKR 管理周报、准备 CEO 管理周报、发送 CEO 每日总结、同步
 Chrome 登录态、申请读不到的钉钉 AI 听记，以及下载新增的钉钉 AI 听记（每天 `20:00`，`Asia/Shanghai`）。
-全部以服务命令形式 seed；早先以 Agent 形式创建的同一
-migration key 任务在启动时原地转换为命令形式，
-保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。新安装创建的全部
+默认定义保留服务命令与普通 Agent 两种执行形式；以稳定 migration key 原地升级默认配置，
+保留名称、Cron、时区和用户修改。已删除的旧任务不动，服务命令通过 Console API 不可修改。新安装创建的全部
 默认任务都是**暂停**状态，由用户配好连接器后自行启用（Derek 2026-09-23）；seed 从不改变已有任务的
 启用状态，包括从未被编辑过的 version 1 任务。默认的名称与 Cron 与负责人本机的现行任务一致。Lark
 不创建默认 seed；其余已有任务的用户修改不会被 seed 覆盖。
 
-另有两个 Agent 形式的报告任务，同样以暂停状态 seed：每周六 `12:00`（`America/Los_Angeles`，即北京周日 03:00）的“准备 CEO 管理周报”（`ceo-weekly-report`）和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入由只读服务命令 `app.cli daily-report-facts --scheduled-run <触发记录 id>` 从服务库导出，窗口是上一份成功发出的日报到本次触发（会议与会后跟进、当天变化的业务 Task、业务需关注项、当天标为重要的邮件、已处理与等 Derek 处理的事项），Agent 再扫描窗口内群消息，发布同日钉钉文档，并经服务的已审核消息通道以 Derek 本人身份单聊发给「磊哥」（不用机器人）；缺来源写进覆盖说明而不追问，细节见 `docs/runtime-mechanism.md`。周报的必需输入同样由只读服务命令 `app.cli weekly-report-materials --scheduled-run <触发记录 id>` 给出（目标周一、窗口、目标与上期周会文档、本周会议清单）。周报渲染工具从服务解析出的目标文档读取完整 JSONML；目标缺失时读取上期周会 JSONML；目标存在但仅含空白段落骨架时，也用上期完整 JSONML 作渲染基底，同时保留目标存在状态及当前 revision 的写入守卫，并向 Agent 返回实际基底标题。其他已有目标仍使用其完整 JSONML。上一期周会如改期至上一报告周内的其他日期，仅在存在唯一精确标准标题时读取最近日期的文档，后缀草稿不作为基底。Skill validator 在渲染前核对 renderer 所需字段；服务要求当前报告存在匹配的 `publishable: true` 校验结果后才允许渲染。新校验会清除旧渲染绑定，失败或报告内容变更时旧 `render_id` 不能用于写入。为避免上期文档的完整 JSONML 截断工具回传，服务将通过检查的目标正文保留在当前 Consumer turn，仅向 Agent 返回完整七节草稿、元数据和 `render_id`；任务绑定写入通过该 ID 提交原始渲染正文，并沿用目标存在状态及 revision 守卫。周报只写进目标周会文档的三处，见 `docs/runtime-mechanism.md`。
+定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
+
+`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
+
+日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。
+
+OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
+
+发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束；核查未完成执行的原始快照，不依赖当前任务仍保留旧命令或 Skill 引用。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
+
+定时任务的固定 Agent 验收使用独立离线合成案例；Consumer、Audit 和修订共享同一评测传输契约，业务规则仍来自选定 Skill。评测字段不能混用生产动作名称，也不能把排除说明的来源追踪当作最终管理内容。案例与评分函数保持冻结，失败历史、首轮与一次审核修订结果分别保留。正文/动作草稿与真实外部回执独立核查，详见 [Agent 验收记录](scheduled-task-generic-agent-validation.md)。此评测契约不注入生产运行。
 
 ### Runtime-managed Skill 生命周期
 
@@ -815,6 +826,9 @@ ActionPlan、分类、模型和配置版本，以及 opaque unsubscribe entry。
 它不复制邮箱凭证、附件字节、本地附件路径、邮件正文、完整私密 URL 或 query token。
 
 模型拒判后的分类 Agent 走系统统一的 runtime 线路与回退顺序，没有专用线路（Derek，2026-09-24）。
+分类器的 Codex 轮次将原生 `project_doc_max_bytes` 设为 `0`，不重复注入仓库的
+`AGENTS.md` 项目说明；分类任务输入中仍包含本轮冻结的完整分类 Skill、邮件事实、
+允许类别和退订候选，且使用原有结果校验及候选索引绑定。
 它的提示词里带最多 8 封主人已确认标签、与当前邮件最相似的邮件（发件人、主题、正文前 250 字和主人给的类别），
 让它照主人的归类习惯判断（Derek，2026-09-26；`app/email_similar_examples.py`）。相似度用字符 n-gram 的 TF-IDF，
 只取主人确认过（`classification_source='user'`）、类别仍然存在、且不是当前邮件本身的行；索引按主人确认标签的“条数+最新更新时间”缓存在进程里，每次分类只读这一个戳；主人有新确认时才重读并重建（约 900 封 1.2 秒，单次查询 7 毫秒，重启后第一封多花一次建索引的时间）。
@@ -981,6 +995,9 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 效果、投递回执、活动领取或运行时回合都会拒绝导入。分析和投递阶段读取同一持久化转写，保留
 原失败运行；外部消息仍只能由原 Meeting 审查与投递流程产生。
 独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力。Codex 路线在本轮有冻结的托管会议 Skill 时，提交本轮定时任务提示和该托管 Skill 的完整规则，省去已由服务完成的操作 Skill 正文，并用原生 Skill 目录配置阻止重复加载；其他路线仍提交全部冻结 Skill 正文。没有托管会议 Skill 或冻结材料时，沿用完整原输入及旧自定义 inline 约定。结果模型、受众核验与投递流程不变。
+
+Meeting 群候选的受众核验要求在非空候选列表前完整提交一次，不再在每个候选项里重复；
+候选的群身份、完整成员名单、近期讨论与读取状态仍逐项保留。空候选列表保持原输入。
 
 `audience_scope` 是当前 Meeting Alignment Agent 输出的必填字段。投递器读取早于该字段的
 持久化 `send` 决策时，只能从其已保存的 `target.kind` 规范化一次：`group` 对应 `business`，
@@ -1491,7 +1508,7 @@ frontmatter 并以 SHA 防止并发覆盖。用户、系统或插件目录中的
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
 Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
-日报/周报接口操作文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
+通用 scheduled 文档接口操作明确目标的文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
 真实工具结果与读回。`consumer_artifact_write` 将本任务材料写入
 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>`，`read_task_artifact` 与
 `list_task_artifacts` 为两角色提供当前代的只读材料；Audit 没有对应写入工具。任务仍为
@@ -1833,7 +1850,7 @@ DingTalk 原始发送方法或 WeChat IPC runner。Email 不属于该文本发�
 
 Consumer/Audit 的完整 Application Result Contract 各在 Developer 的“应用结果合同”段注入一次。Task context 只渲染当前事实、阶段、候选与反馈，继续保留显式自定义 Audit Rules；不再次复制通用结果合同。Audit 的旧 Role Boundary 与应用结果合同完全相同，合并为同一段。输出 wire schema、业务合同内容、会话绑定与路由不变；Settings 使用同一装配函数显示该来源与顺序，历史输入按原保存内容展示。
 
-周报的 `validate_weekly_report` 和 `render_weekly_report` 使用 `app/weekly_report_contracts.py` 中的原生工具参数结构。Agent 可从工具 schema 查询现有报告字段与嵌套容器类型；格式不符时 SDK 在执行前返回字段路径错误。结构声明不注入 prompt；额外字段完整保留，缺失业务章节和发布要求仍由安装的周报 Skill 校验，不转换对象映射为数组，也不修改候选内容。服务将 `publishable: true` 绑定到通过稳定 JSON 摘要识别的报告，只有相同报告可以渲染；每次重新校验会废止旧渲染，`publishable: false` 后不能渲染或使用旧 `render_id` 写入。
+报告工具已统一为上述显式事实、文档与产物接口；字段结构、格式转换和精确计算由各 Skill 的脚本承担。
 
 Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的提示、工具调用、输出和
 结果。SQLite 只保存恢复所需的最小状态：
@@ -2975,6 +2992,8 @@ Audit field assertions are first bound to the exact current candidate. Only thei
 Attempt detail resolves a persisted run through its stable reply_task_id; message-key lookup is used only for records without a bound run. Current OA input keys can change while the original run keeps its task identity. Verified execution recovery can therefore project the settled task without rewriting historical Attempts or runs. Attempt15465 execution213/action208 was reconciled from its existing accepted OA return using exact native readback, then task404881 was closed through the existing settlement operation; no dispatch was made and original run rows matched the verified backup.
 
 Attempt current stop evidence is scoped to the current task execution generation, including an empty current-run list. Current failure summaries and codes come from that generation's final run, task error or exact current reviewed execution; an approved Audit summary cannot replace a failed or uncertain execution result. Historical run trajectories and execution details retain their identities, while their provider-risk rerun constraints continue to use the original Attempt. A settled done/skipped task has no current stop even if an old Audit returned its candidate.
+
+OA approval detail and History detail use the same current-task-generation status projection for the newest Attempt. The OA detail also returns the persisted Attempt value as `recorded_status`; older rows remain historical. This is a read projection only: stored Attempt rows and execution receipts are unchanged, and an uncertain current execution remains uncertain.
 Consumer and Audit both persist a new Codex session selected by the existing runtime retry router within the active run. After an idle timeout, a fresh Audit attempt may replace that run's current session just as Consumer does; each runtime attempt retains its original session, transcript slice and failure. Audit never writes the Consumer conversation session slot. This repairs session persistence only and does not change route selection, retry budgets, candidate binding or external execution.
 
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.
@@ -3356,4 +3375,4 @@ Consumer 的业务核心输出统一为 `action/reason/target/payload/evidence_r
 
 从原请求发出时刻起最多 72 小时、最多启动 10 次后续 Consumer 调用，先达到任一限制即停止。请求发出时间只从已验证动作记录取值，不信任模型时间；以 dispatch 记录时间作保守边界。退避从 5 分钟指数增长、单次封顶 12 小时，预约不晚于期限。每次重读前事务预留次数；重复检查同一预约不递增。崩溃时已预留的次数保留，不会突破上限。到期检查在刷新来源和调用 Consumer 之前完成。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
 
-Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。详见 `docs/consumer-purpose-actions-validation.md`。
+Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。字段、动作表、JSON 示例和计数边界见 [Consumer purpose 输出与权限重试](consumer-purpose-output.md)；发布证据见 [验证记录](consumer-purpose-actions-validation.md)。

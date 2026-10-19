@@ -1,6 +1,6 @@
 {
   "source": "frontend/src/app/router.tsx",
-  "boundary": "Coverage specification only; no browser or runtime scenario has been marked passed.",
+  "boundary": "Actual copy-UI evidence is recorded per scenario. All other scenarios remain not_run; no production acceptance implied.",
   "routes": [
     {
       "route": "*",
@@ -112,8 +112,11 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/business-model-a1-runtime-validation.md",
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -132,8 +135,11 @@
         },
         {
           "name": "selected_original_candidate",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/business-model-a1-runtime-validation.md",
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "receipt_and_unknown_effect",
@@ -167,8 +173,10 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -322,8 +330,10 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -627,8 +637,10 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         },
         {
           "name": "api_error",
@@ -657,8 +669,10 @@
         },
         {
           "name": "detail_links",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
         }
       ]
     },

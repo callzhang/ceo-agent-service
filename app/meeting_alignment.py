@@ -976,15 +976,6 @@ def _search_meeting_group_candidates(
             "member_roster_complete": evidence.members is not None,
             "reference_audience_complete": request.audience_is_complete,
             "history_read_status": "denied" if evidence.history_read_denial else "read" if provider.capabilities.message_history else "unavailable",
-            "audience_verification_required": (
-                "Before selecting effects, verify live full relevant discussion, full group roster, "
-                "and each member's actual authorization for this exact content. Layoff and workforce "
-                "reduction plans are sensitive even without names or counts. Business relevance, "
-                "matching attendees, member precision and titles never establish permission. "
-                "Candidate excerpts and prior deliveries "
-                "do not verify the audience. Denied history is unresolved access evidence, not empty "
-                "discussion, no-group evidence, or permission to send; never use a self fallback."
-            ),
         }
         if evidence.history_read_denial is not None:
             candidate.update(

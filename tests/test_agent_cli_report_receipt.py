@@ -1,22 +1,42 @@
-"""Scheduled daily report receipts preserve the resolved folder evidence."""
+"""Generic activity validation and Skill-selected document destinations/readback."""
 
-from datetime import date
+from datetime import UTC, datetime
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
 
-from app.agent_cli import _write_bound_report_document, build_role_server
-from app.weekly_report_materials import MANAGEMENT_WIKI_NAME
+from app.agent_cli import _write_document_artifact, build_role_server
+from app.store import AutoReplyStore
 
 
-def test_daily_report_facts_tool_uses_schema_only_email_validation(
-    tmp_path, monkeypatch
+_destination_path = (
+    Path(__file__).resolve().parents[1]
+    / "ci/shared-skills/ceo-daily-report/scripts/destination.py"
+)
+_destination_spec = importlib.util.spec_from_file_location(
+    "daily_report_destination_tests", _destination_path
+)
+_destination = importlib.util.module_from_spec(_destination_spec)
+sys.modules[_destination_spec.name] = _destination
+_destination_spec.loader.exec_module(_destination)
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_service_activity_tool_uses_schema_only_email_validation(
+    tmp_path, monkeypatch, role
 ):
-    import app.daily_report_facts as daily_report_facts
     import app.email_store as email_store_module
+    import app.service_activity as service_activity
 
     validations = []
     real_email_store = email_store_module.EmailStore
+    db_path = tmp_path / "runtime-activity.sqlite3"
+    store = AutoReplyStore(db_path)
 
     def track_email_store(path, **kwargs):
         validations.append(kwargs.get("validate_rows", True))
@@ -24,68 +44,75 @@ def test_daily_report_facts_tool_uses_schema_only_email_validation(
 
     monkeypatch.setattr(email_store_module, "EmailStore", track_email_store)
     monkeypatch.setattr(
-        "app.agent_cli._bound_report",
-        lambda db_path, task_id: (object(), SimpleNamespace(id=42), "daily"),
+        "app.agent_cli._bound_scheduled_run",
+        lambda *args: (store, SimpleNamespace(id=42)),
     )
-    monkeypatch.setattr(
-        daily_report_facts,
-        "report_window_for_run",
-        lambda store, run_id: object(),
-    )
-    monkeypatch.setattr(
-        daily_report_facts,
-        "collect_daily_report_facts",
-        lambda store, mail_store, window: {"validated": True},
-    )
+    calls = []
 
-    tool = build_role_server(
-        "audit", db_path=tmp_path / "runtime-report.sqlite3"
-    )._tool_manager.get_tool("daily_report_facts").fn
-    result = tool()
+    def collect(bound_store, mail_store, start, end, sources):
+        calls.append(
+            (bound_store, isinstance(mail_store, real_email_store), start, end, sources)
+        )
+        return {"validated": True}
+
+    monkeypatch.setattr(service_activity, "collect_service_activity", collect)
+    tool = (
+        build_role_server(role, db_path=db_path)
+        ._tool_manager.get_tool("read_service_activity")
+        .fn
+    )
+    result = tool("2026-10-06T00:00:00+00:00", "2026-10-07T00:00:00+00:00", ["emails"])
 
     assert result == {"validated": True}
     assert validations == [False]
+    assert calls == [
+        (
+            store,
+            True,
+            datetime(2026, 10, 6, tzinfo=UTC),
+            datetime(2026, 10, 7, tzinfo=UTC),
+            ["emails"],
+        )
+    ]
 
 
-def test_daily_report_facts_command_uses_schema_only_email_validation(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "start,end,sources,error",
+    [
+        ("2026-10-06T00:00:00", "2026-10-07T00:00:00+00:00", [], "aware"),
+        ("2026-10-07T00:00:00+00:00", "2026-10-06T00:00:00+00:00", [], "start < end"),
+        (
+            "2026-10-06T00:00:00+00:00",
+            "2026-10-07T00:00:00+00:00",
+            ["unknown"],
+            "unknown activity source",
+        ),
+    ],
+)
+def test_generic_activity_tool_rejects_invalid_interval_or_source(
+    tmp_path, monkeypatch, start, end, sources, error
 ):
-    import app.cli as cli
-    import app.daily_report_facts as daily_report_facts
-    import app.email_store as email_store_module
-
-    validations = []
-    real_email_store = email_store_module.EmailStore
-
-    def track_email_store(path, **kwargs):
-        validations.append(kwargs.get("validate_rows", True))
-        return real_email_store(path, **kwargs)
-
-    monkeypatch.setattr(email_store_module, "EmailStore", track_email_store)
     monkeypatch.setattr(
-        daily_report_facts,
-        "report_window_for_run",
-        lambda store, run_id: object(),
+        "app.agent_cli._bound_scheduled_run",
+        lambda *args: (object(), SimpleNamespace(id=42)),
     )
-    monkeypatch.setattr(
-        daily_report_facts,
-        "collect_daily_report_facts",
-        lambda store, mail_store, window: {"validated": True},
+    monkeypatch.setattr("app.email_store.EmailStore", lambda *args, **kwargs: object())
+    tool = (
+        build_role_server("audit", db_path=tmp_path / "activity.sqlite3")
+        ._tool_manager.get_tool("read_service_activity")
+        .fn
     )
-
-    result = cli.daily_report_facts_command(
-        SimpleNamespace(db_path=tmp_path / "runtime-report-cli.sqlite3"),
-        scheduled_run_id=42,
-    )
-
-    assert result == {"validated": True}
-    assert validations == [False]
+    with pytest.raises(ValueError, match=error):
+        tool(start, end, sources)
 
 
 @pytest.mark.parametrize("document_exists", [False, True])
 @pytest.mark.parametrize("url_field", ["url", "docUrl", None])
-def test_daily_report_returns_exact_provider_folder(
-    tmp_path, monkeypatch, document_exists, url_field,
+def test_skill_destination_preserves_exact_provider_folder_and_generic_write_readback(
+    tmp_path,
+    monkeypatch,
+    document_exists,
+    url_field,
 ):
     folder = {
         "nodeId": "daily-folder",
@@ -104,9 +131,13 @@ def test_daily_report_returns_exact_provider_folder(
 
         def run_json(self, command):
             if "+space-list" in command:
-                return {"data": {"spaces": [{
-                    "name": MANAGEMENT_WIKI_NAME, "workspaceId": "management-wiki",
-                }]}}
+                return {
+                    "data": {
+                        "spaces": [
+                            {"name": "🎯  目标与执行", "workspaceId": "management-wiki"}
+                        ]
+                    }
+                }
             assert "+node-list" in command
             assert "--page-all" in command
             if "--folder" not in command:
@@ -126,26 +157,39 @@ def test_daily_report_returns_exact_provider_folder(
             assert node_id == document["nodeId"]
             return {"content": "# Verified report"}
 
+    monkeypatch.setattr(_destination, "run", Provider().run_json)
     monkeypatch.setattr("app.dws_client.DwsClient", Provider)
-    monkeypatch.setattr(
-        "app.agent_cli._bound_report",
-        lambda db_path, task_id: (object(), SimpleNamespace(id=42), "daily"),
+    destination = _destination.resolve("2026-10-06")
+    (tmp_path / "report.md").write_text("# Verified report", encoding="utf-8")
+    target = (
+        {"node_id": destination["node_id"]}
+        if document_exists
+        else {
+            "parent_id": destination["parent_id"],
+            "workspace_id": destination["workspace_id"],
+        }
     )
-    monkeypatch.setattr(
-        "app.daily_report_facts.report_window_for_run",
-        lambda store, run_id: SimpleNamespace(report_date=date(2026, 10, 6)),
-    )
-    result = _write_bound_report_document(
-        db_path=tmp_path / "service.sqlite3", task_id=7,
-        content="# Verified report", expected_revision=None,
+    result = _write_document_artifact(
+        root=tmp_path,
+        artifact_name="report.md",
+        title=destination["title"],
+        doc_format="markdown",
+        **target,
     )
 
-    assert result["folder"] == folder
+    assert destination["folder"] == folder
     assert result["node_id"] == document["nodeId"]
     assert result["title"] == title
-    assert result["readback"] == {"content": "# Verified report"}
-    assert writes[0][0] == ("updated" if document_exists else "created")
+    readback = (tmp_path / result["readback"]["artifact_name"]).read_bytes()
+    assert json.loads(readback) == {"content": "# Verified report"}
+    assert result["readback"]["sha256"] == hashlib.sha256(readback).hexdigest()
+    assert result["readback"]["bytes"] == len(readback)
+    assert result["content_sha256"] == hashlib.sha256(b"# Verified report").hexdigest()
+    assert result["operation"] == ("updated" if document_exists else "created")
+    assert writes[0][0] == result["operation"]
     assert len(writes) == 1
     assert writes[0][1]["content"] == "# Verified report"
     if url_field is None:
-        assert "url" not in result["folder"] and "docUrl" not in result["folder"]
+        assert (
+            "url" not in destination["folder"] and "docUrl" not in destination["folder"]
+        )

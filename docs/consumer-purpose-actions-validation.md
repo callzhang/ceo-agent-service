@@ -64,3 +64,21 @@ Publish code and the reviewed Skill manifest through
 is the installed commit, new process, health, queues, Attention/History
 readback, and exact installed Skill digests. Record the outcome in the owning
 agent claim; a code push alone is not deployment.
+
+## Production readback
+
+Published and deployed runtime commit `d6a1b024c` on 2026-10-19. The formal
+publication operation `deploy-3391d6c1-ec65-4401-81d2-80d1910ede88` finished
+`succeeded` at 21:44:36 UTC; its Consumer-system publication receipt is
+`verified` and runtime Skill configuration 347 is active. The installed OA
+and document-review Skill SHA-256 values exactly match the release manifest.
+
+The replacement launchd process PID is 63580 and `/healthz` returned
+`ok=true,status=ok`. Console readback at 21:45 UTC showed Attention 5 and
+summary failed 10, unchanged from the pre-release baseline. Existing reply
+failures remain 5; unsubscribe failures remain 4. One new email-provider
+action was processing, without a new failure; History returned processing,
+done and skipped as its latest three rows. No OA write or historical retry
+was started for this verification. These observations establish publication
+and runtime loading; the maximum count/deadline behavior is covered by the
+controlled-clock regression tests above, not a real three-day wait.

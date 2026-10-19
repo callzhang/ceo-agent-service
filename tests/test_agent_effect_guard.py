@@ -137,8 +137,8 @@ def test_consumer_role_keeps_report_documents_without_controlled_write_tools(tmp
         "audit", task_id=1, db_path=db_path,
     ).list_tools())}
 
-    assert {"daily_report_facts", "weekly_report_materials",
-            "validate_weekly_report", "render_weekly_report",
+    assert {"read_scheduled_context", "read_service_activity",
+            "consumer_run_skill_script",
             "consumer_document_write"} <= consumer
     assert "consumer_document_write" not in audit
     assert {"read_dingtalk_oa", "read_dingtalk_document"} <= consumer & audit
