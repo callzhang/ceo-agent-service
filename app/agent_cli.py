@@ -1551,6 +1551,43 @@ def _write_bound_report_document(
     return receipt
 
 
+def _weekly_report_jsonml_is_blank(document: object) -> bool:
+    """Recognize only an empty DingTalk paragraph skeleton as a blank report."""
+    if not isinstance(document, list) or len(document) < 3 or document[0] != "root":
+        return False
+
+    def blank_node(node: object) -> bool:
+        if not isinstance(node, list) or len(node) < 2:
+            return False
+        tag, attributes = node[0], node[1]
+        if tag == "p":
+            if not isinstance(attributes, dict):
+                return False
+        elif tag == "span":
+            if (
+                not isinstance(attributes, dict)
+                or attributes.get("data-type") not in {"text", "leaf"}
+            ):
+                return False
+        else:
+            return False
+        for child in node[2:]:
+            if isinstance(child, str):
+                if child.strip():
+                    return False
+            elif isinstance(child, list):
+                if not blank_node(child):
+                    return False
+            else:
+                return False
+        return True
+
+    for child in document[2:]:
+        if not blank_node(child):
+            return False
+    return True
+
+
 def _weekly_report_render_source(
     run, dws, materials: dict[str, object] | None = None,
 ):
@@ -1568,6 +1605,7 @@ def _weekly_report_render_source(
     target_exists = target["exists"]
     source = target if target_exists else documents["previous"]
     source_node_id = source.get("node_id")
+    source_title = source.get("title")
     if not source.get("exists") or not isinstance(source_node_id, str) or not source_node_id:
         raise ValueError("weekly report render source document is unavailable")
 
@@ -1598,7 +1636,45 @@ def _weekly_report_render_source(
             raise ValueError("weekly report target revision is unavailable") from exc
         if revision < 0 or str(revision) != str(raw_revision):
             raise ValueError("weekly report target revision is invalid")
-    return before, target_exists, revision, target["title"]
+        if _weekly_report_jsonml_is_blank(before):
+            previous = documents["previous"]
+            previous_node_id = previous.get("node_id")
+            if (
+                not previous.get("exists")
+                or not isinstance(previous_node_id, str)
+                or not previous_node_id
+            ):
+                raise ValueError(
+                    "blank weekly report target has no previous meeting document"
+                )
+            source_title = previous.get("title")
+            previous_payload = dws.fetch_report_document_full(previous_node_id)
+            previous_content = previous_payload.get("content")
+            if (
+                previous_payload.get("complete") is not True
+                or not isinstance(previous_content, dict)
+                or previous_content.get("success") is not True
+                or previous_content.get("nodeId") != previous_node_id
+            ):
+                raise ValueError(
+                    "previous weekly report render source document is unavailable"
+                )
+            previous_jsonml = previous_content.get("jsonml")
+            try:
+                before = (
+                    json.loads(previous_jsonml)
+                    if isinstance(previous_jsonml, str)
+                    else previous_jsonml
+                )
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "previous weekly report render source JSONML is invalid"
+                ) from exc
+            if not isinstance(before, list) or len(before) < 3 or before[0] != "root":
+                raise ValueError(
+                    "previous weekly report render source must be a complete JSONML document"
+                )
+    return before, target_exists, revision, target["title"], source_title
 
 
 def build_role_server(
@@ -2262,7 +2338,7 @@ def build_role_server(
             renderer = _weekly_skill_module("render_dingtalk_jsonml")
             checker = _weekly_skill_module("jsonml_check")
             dws = DwsClient()
-            before, target_exists, expected_revision, target_title = (
+            before, target_exists, expected_revision, target_title, render_source_title = (
                 _weekly_report_render_source(
                     _run, dws,
                     weekly_materials_snapshot,
@@ -2293,6 +2369,7 @@ def build_role_server(
                 "native_parse": native_parse,
                 "target_exists": target_exists,
                 "target_title": target_title,
+                "render_source_title": render_source_title,
                 "expected_revision": expected_revision,
             }
 

@@ -57,9 +57,14 @@ disappears before the bound write, or the write cannot be read back.
    `agent_cli.read_dingtalk_document_full` and inspect their identities and
    contents. Do not construct or shorten the JSONML passed to the render tool:
    `agent_cli.render_weekly_report` reads the complete current target as its
-   render base, or the complete previous meeting document when the target does
-   not exist. The task-bound write creates a missing target in the resolved
-   year page, creating that page under the meeting folder when needed.
+   render base. If an existing target is only an empty paragraph skeleton, the
+   tool uses the complete previous meeting document as its render base and
+   reports that source title; the existing target's current revision remains
+   bound to the write. If the target does not exist, the previous meeting
+   document is also the render base. A blank existing target without a complete
+   previous document cannot be published. The task-bound write creates a
+   missing target in the resolved year page, creating that page under the
+   meeting folder when needed.
 3. Screen every meeting in the materials from its title, participants and
    follow-up message; read the archived transcript file of each one relevant to
    Derek's management responsibilities or a business line, using
