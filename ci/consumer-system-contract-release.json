@@ -11,13 +11,13 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
       "target": "skills/ceo-weekly-report/scripts/report_contract.py",
-      "old_sha256": "5cdf29f49100c8149683b5fe4e09717f702e59f496cdfb17bb90d44ab8b27886",
+      "old_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a",
       "new_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
       "target": "skills/ceo-weekly-report/scripts/validate_run.py",
-      "old_sha256": "e2fb2e4d20443121c7041bbdc5a7a43694e4dd5ffc46bbc5008abfdf23f9f82e",
+      "old_sha256": "4c81e3de54a191655da8c899e2c50464108828a4be769014743f837b976bd6b5",
       "new_sha256": "4c81e3de54a191655da8c899e2c50464108828a4be769014743f837b976bd6b5"
     },
     {
