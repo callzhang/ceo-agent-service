@@ -35004,6 +35004,10 @@
       "original_vm_bounds_preserved": true,
       "intentional_dangling_fk_readback": 99999998,
       "provider_calls": 0
+    },
+    "final_fixture_review": {
+      "findings": [],
+      "scope": "Physical vs public Task identity, current variant JSONB corruption path with generated readback, original totals/status/page and VM limits."
     }
   },
   "merged_main_scheduled_consumers_20261019": {
@@ -35037,5 +35041,32 @@
     "findings": [],
     "scope": "History two source-selection guards, dead ProjectAttention inference removal, scheduled fixture IDs, malformed-input writes and error ordering.",
     "limitations": "Not a new whole migration or production verification."
+  },
+  "historical_diagnostic_gap_inventory_20261019": {
+    "source_log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-remaining.log",
+    "source_is_current_acceptance": false,
+    "historical_failed_nodes": 1899,
+    "historical_errors": 58,
+    "historical_files": 184,
+    "highest_priority_without_later_matched_closure": [
+      {
+        "file": "tests/test_store.py",
+        "historical_nodes": 115
+      },
+      {
+        "file": "tests/test_task_attention_multisource.py",
+        "historical_nodes": 42
+      },
+      {
+        "file": "tests/wechat/test_send_mode.py",
+        "historical_nodes": 27
+      },
+      {
+        "file": "tests/test_task_suggestions.py",
+        "historical_nodes": 16
+      }
+    ],
+    "ambiguity": "tests/test_worker.py has scoped later evidence but no exact map to29 diagnostic nodes; no inference that those nodes are currently failing.",
+    "status": "Next bounded triage, not current defect totals."
   }
 }

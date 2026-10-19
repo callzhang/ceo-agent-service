@@ -181,3 +181,5 @@ State 更新索引补验：完成租约原需111175 VM步，其中 UPDATE 53695�
 Signal／业务语义整文件444项通过（176.96秒），已将输入DTO与持久Fact分开验证：原文只用于临时PreparedSources，持久化核验准确identity／hash／字节数、共享provenance、不可变约束及重复失败不留部分状态。旧正文表／FK及手动调用退休推导函数的历史测试明确退休，未伪装为当前兼容路径。History来源选择、退休推导函数和Scheduled夹具的有界独立只读审查未发现具体问题；不代表整体发布验收通过。
 
 History整文件当前33项通过，包含真实dangling Run／Task来源、最终JSONB槽位损坏及生成列99999998读回，避免用错误JSON路径的空操作冒充故障注入；公开／物理Task身份、过滤、总数、页面及原查询成本边界均保留。
+
+旧诊断后续证据盘点明确的优先补验范围：test_store.py（旧115节点）、test_task_attention_multisource.py（旧42）、wechat/test_send_mode.py（旧27）、test_task_suggestions.py（旧16）。这些数字只是旧诊断中尚未找到匹配后续闭合证据的节点，不能当作当前运行缺陷数；worker旧29节点已有部分后续证明，准确映射仍待核对。已开始有界、无真实发送的代表测试及当前／退休契约核对。
