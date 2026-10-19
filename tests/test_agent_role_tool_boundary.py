@@ -11,7 +11,6 @@ from app.agent_runtime_contracts import (
 )
 from app.dws_client import DwsClient
 from app.consumer_agent import AGENT_CAPABILITY_INSTRUCTIONS, audit_developer_sections
-from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
 from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command

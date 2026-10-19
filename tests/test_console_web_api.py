@@ -242,6 +242,69 @@ def test_console_api_reuses_the_initialized_audit_store(
     assert len(constructions) == constructed_for_app
 
 
+def test_console_oa_approval_projects_latest_attempt_from_current_task_generation(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa-projection-conversation",
+        conversation_title="OA approval",
+        trigger_message_id="oa-projection-message",
+        trigger_sender="Derek OA",
+        trigger_text="Review the OA approval",
+        action="oa_approval",
+        sensitivity_kind="general",
+        codex_reason="The comment was verified in the current task generation.",
+        draft_reply_text="Access was requested.",
+        oa_process_instance_id="oa-projection-process",
+        oa_task_id="oa-projection-task",
+        oa_action="comment",
+        oa_remark="Access was requested.",
+        send_status="failed",
+    )
+    assert store.enqueue_reply_task(
+        conversation_id="oa-projection-conversation",
+        conversation_title="OA approval",
+        single_chat=False,
+        trigger_message_id="oa-projection-message",
+        trigger_create_time="2026-10-19T18:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="Review the OA approval",
+    )
+    task = store.get_reply_task_for_message(
+        "oa-projection-conversation", "oa-projection-message"
+    )
+    assert task is not None
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    with _client(tmp_path) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+        response = client.get(
+            "/api/console/oa-approvals/oa-projection-process"
+        )
+
+    assert response.status_code == 200
+    approval = response.json()["item"]
+    assert approval["status"] == detail["status"]["raw"] == "done"
+    assert approval["attempts"] == [
+        {
+            "id": attempt_id,
+            "status": "done",
+            "recorded_status": "failed",
+            "action": "comment",
+            "remark": "Access was requested.",
+            "created_at": approval["attempts"][0]["created_at"],
+        }
+    ]
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+
 def test_console_tutorial_run_persists_resulting_step_and_uses_sync_endpoint(
     tmp_path: Path, monkeypatch
 ):
