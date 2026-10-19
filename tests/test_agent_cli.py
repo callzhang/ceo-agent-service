@@ -74,7 +74,7 @@ def test_weekly_report_render_and_write_use_service_bound_snapshot_schema():
     render = server._tool_manager.get_tool("render_weekly_report")
     write = server._tool_manager.get_tool("consumer_document_write")
     assert set(render.fn_metadata.arg_model.model_fields) == {"report"}
-    assert set(write.fn_metadata.arg_model.model_fields) == {"content"}
+    assert set(write.fn_metadata.arg_model.model_fields) == {"content", "render_id"}
 
 
 def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
@@ -93,7 +93,7 @@ def test_weekly_report_write_requires_a_current_render(monkeypatch, tmp_path):
 
     write = server._tool_manager.get_tool("consumer_document_write").fn
     with pytest.raises(ValueError, match="must be rendered before write"):
-        write(content='["root", {}]')
+        write(render_id="missing")
     assert writes == []
 
 
@@ -250,12 +250,17 @@ def test_weekly_report_render_and_write_bind_source_revision_and_content(
     assert rendered["target_title"] == "target meeting"
     assert rendered["render_source_title"] == render_source_title
     assert rendered["expected_revision"] == expected_revision
-    content = json.dumps(["root", {}, ["h1", {}, "Agent final"]], ensure_ascii=False)
+    assert "target_after" not in rendered
+    assert len(rendered["render_id"]) == 64
+    rendered_content = json.dumps(rendered_jsonml, ensure_ascii=False)
     write = server._tool_manager.get_tool("consumer_document_write").fn
-    write(content=content)
+    with pytest.raises(ValueError, match="must use the current render_id"):
+        write(render_id="stale-render")
+    assert writes == []
+    write(render_id=rendered["render_id"])
     assert writes[0]["expected_revision"] == expected_revision
     assert writes[0]["expected_target_exists"] is target_exists
-    assert writes[0]["content"] == content
+    assert writes[0]["content"] == rendered_content
 
 
 @pytest.mark.parametrize(

@@ -4,9 +4,9 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
-      "old_sha256": "6c510f3af2aa955008bcbbacc076c93956d7f6d5ee641c99fff09800159adb0c",
-      "new_sha256": "7481847ea3f488906f38bafc8549acb363e162daf96a7066889c27015cffe832",
-      "old_managed_sha256": "6c510f3af2aa955008bcbbacc076c93956d7f6d5ee641c99fff09800159adb0c"
+      "old_sha256": "7481847ea3f488906f38bafc8549acb363e162daf96a7066889c27015cffe832",
+      "new_sha256": "0668fa0d76e0a97c059a078501cbae62d7a45fecc1fd8808a57494f7267813c8",
+      "old_managed_sha256": "7481847ea3f488906f38bafc8549acb363e162daf96a7066889c27015cffe832"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",

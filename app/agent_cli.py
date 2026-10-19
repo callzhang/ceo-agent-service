@@ -2359,21 +2359,26 @@ def build_role_server(
             native_parse = dws.validate_report_jsonml(target_content)
             if target_exists and expected_revision is None:
                 raise ValueError("weekly report target revision is unavailable")
+            render_id = hashlib.sha256(target_content.encode("utf-8")).hexdigest()
             weekly_render_binding = {
                 "expected_revision": expected_revision,
                 "target_exists": target_exists,
+                "render_id": render_id,
+                "content": target_content,
             }
             return {
-                "target_after": target_after,
                 "draft": draft,
                 "native_parse": native_parse,
                 "target_exists": target_exists,
                 "target_title": target_title,
                 "render_source_title": render_source_title,
                 "expected_revision": expected_revision,
+                "render_id": render_id,
             }
 
-        def consumer_document_write(content: str) -> dict[str, object]:
+        def consumer_document_write(
+            content: str | None = None, render_id: str | None = None,
+        ) -> dict[str, object]:
             """Publish this scheduled CEO report to its service-resolved document."""
             nonlocal weekly_render_binding
             if artifact_generation is None:
@@ -2385,7 +2390,16 @@ def build_role_server(
             if kind == "weekly":
                 if weekly_render_binding is None:
                     raise ValueError("weekly report must be rendered before write")
+                if (
+                    not isinstance(render_id, str)
+                    or render_id != weekly_render_binding["render_id"]
+                    or content is not None
+                ):
+                    raise ValueError("weekly report write must use the current render_id")
+                content = str(weekly_render_binding["content"])
                 expected_revision = weekly_render_binding["expected_revision"]
+            elif not isinstance(content, str) or render_id is not None:
+                raise ValueError("document content is required for this report task")
             receipt = _write_bound_report_document(
                 db_path=db_path, task_id=task_id, content=content,
                 expected_revision=expected_revision,

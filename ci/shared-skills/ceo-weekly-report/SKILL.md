@@ -87,14 +87,17 @@ disappears before the bound write, or the write cannot be read back.
    Beijing date. Classify every consequential claim and retain evidence IDs.
 8. Call `agent_cli.validate_weekly_report` with the manifest, report and prior
    issues; fix blockers. Call `agent_cli.render_weekly_report` with the report.
-   The service resolves and reads the complete render base, then returns the
-   target body, source revision and complete seven-section draft after the
-   Skill's JSONML check and native document parser pass.
+   The service resolves and reads the complete render base, checks the target
+   JSONML and native parser, then returns the complete seven-section draft,
+   render metadata and an opaque `render_id`. The full target JSONML stays
+   bound inside the current Consumer turn so large source documents cannot
+   truncate the tool response.
 9. The scheduled run is authorized to write the target meeting document
-   (Derek 2026-09-24). Call task-bound `agent_cli.consumer_document_write` with
-   the rendered target JSONML. The service binds the target existence and
-   revision from rendering; for an existing target, the operation
-   saves a recoverable version and performs one revision-guarded overwrite.
+   (Derek 2026-09-24). Pass the returned `render_id` to task-bound
+   `agent_cli.consumer_document_write`; do not reconstruct or resubmit target
+   JSONML. The service writes the exact checked render bound to that ID, saves
+   a recoverable version for an existing target, and performs one
+   revision-guarded overwrite.
    For a missing target, it creates the document in the resolved year page.
 10. Compare the complete readback returned by that operation with the rendered
     target and verify the unchanged places and issue table before reporting
