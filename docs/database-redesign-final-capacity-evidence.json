@@ -34013,12 +34013,44 @@
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-runtime-router-green.log"
   },
   "workbench_live_current_gap": {
-    "status": "failed",
+    "status": "open_performance_regression_investigation",
     "failed": 1,
     "seconds": 26.33,
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-live-root.log",
     "assertion": "safe_wait_entered.wait(2)",
-    "boundary": "Runtime attempted native session and emitted first text event before cleanup stopped task; startup/event persistence latency still needs diagnosis. Timeout unchanged."
+    "boundary": "Runtime attempted native session and emitted first text event before cleanup stopped task; startup/event persistence latency still needs diagnosis. Timeout unchanged.",
+    "timing_diagnostic": {
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-timing.log",
+      "status": "same startup wait failed; test instrumentation only",
+      "observed_load": "29.74/24.39/21.17 on 10 CPUs",
+      "readonly_probe_seconds": {
+        "schema_first_query_wall": 0.413343,
+        "schema_first_query_cpu": 0.064744,
+        "turn_projection_wall": 0.004456,
+        "turn_projection_cpu": 0.001136
+      },
+      "interpretation": "Contention is measurable, but does not by itself establish that startup under normal load passes. No timeout relaxation; rerun after focused jobs drain."
+    },
+    "unchanged_rerun": {
+      "failed": 1,
+      "seconds": 29.28,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-live-unmodified-rerun.log",
+      "same_assertion": true
+    },
+    "old_baseline": {
+      "commit": "2246d5184",
+      "passed": 1,
+      "seconds": 17.88,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-old-baseline.log",
+      "scope": "Archived old app and its own deterministic fake-runtime e2e at same host load; 2-second startup threshold passes. Not a same-test performance ratio."
+    },
+    "schema_largest_sql_bytes": {
+      "actions": 940879,
+      "tasks": 409821,
+      "business": 211099,
+      "configs": 210589,
+      "state": 147933
+    }
   },
   "production_readonly_refresh": {
     "head": "78e8c4474c05fee31ed27541b238f30381c8ba33",
@@ -34029,5 +34061,35 @@
       "78e8c4474"
     ],
     "note": "This redesign is not deployed. Original cold rollback evidence used 2246d5184; refresh against latest production code before release."
+  },
+  "runtime_worker_options_fixture_closure": {
+    "passed": 12,
+    "deselected": 89,
+    "seconds": 366.92,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-worker-options-green.log",
+    "scope": "Additional needs_human/absent fact/OA branches; existing task_class option contract unchanged. Earlier raw Task8 recovery update controls separately 11 passed."
+  },
+  "upstream_integration_refresh": {
+    "merge_commit": "42c2db2a9",
+    "origin_main": "78e8c4474c05fee31ed27541b238f30381c8ba33",
+    "claims_conflict": "Preserved both appended claim groups; no runtime conflict.",
+    "old_to_current_storage_diff": "No changes from 2246d5184 to origin/main in app/store.py, app/email_store.py, app/*schema*, app/*storage*. Cold latest-code validation still to be considered before release."
+  },
+  "config_console_fixture_closure": {
+    "initial_full_seconds": 414.01,
+    "initial_console_passed": 75,
+    "initial_console_failed": 4,
+    "initial_config": "passed",
+    "corrected_node_passed": 11,
+    "corrected_seconds": 75.0,
+    "scope": "Task8 set parts, Task20 canonical columns, original public legacy_key selector and one-row update assertion; compact config fixture and json() representation read. No runtime or schema changes.",
+    "reported_by": "exact_imap_batch_read_inventory",
+    "root_review": "Reviewed full patch and static checks, committed cdbcb4749.",
+    "later_stale_broad_node": {
+      "node": "test_missing_transcript_does_not_resurrect_copied_attempt_calls",
+      "current_passed": 1,
+      "seconds": 14.96,
+      "no_further_change": true
+    }
   }
 }

@@ -6,7 +6,7 @@
 
 候选已实现 **10 张核心表＋1 张已有迁移账本**；同一不可变生产输入、两侧均 VACUUM：**490,651,648 → 473,292,800 B**，净减少 **17,358,848 B（16.5546875 MiB，3.538%）**。最新历史来源补验后的演练副本为 **457,007,104 B**；它包含额外任务记录及原文退休，不能作为纯结构收益。
 
-**未推送、未部署、整体尚未验收通过。** 最新只读核验的生产代码为 `78e8c4474c05fee31ed27541b238f30381c8ba33`，工作区干净。候选已合并 `origin/main fa119306b`，另有三条上游提交待整合；原回退冷启动证据使用旧生产 `2246d5184`，发布前须以最新生产代码补验。
+**未推送、未部署、整体尚未验收通过。** 最新只读核验的生产代码为 `78e8c4474c05fee31ed27541b238f30381c8ba33`，工作区干净。候选已合并 `origin/main 78e8c4474` 的新增三条提交；原回退冷启动证据使用旧生产 `2246d5184`，发布前须以最新生产代码补验。
 
 ## 最终目标表及实际字段去向
 
@@ -116,8 +116,8 @@ Console列表／详情、任务完整线程、任务创建／恢复已使用准�
 - [x] 最终结构／字段去向／删除清单，10核心表＋账本，正常空库直接最终声明，无旧表／view兼容别名。
 - [x] 同一输入容量对照、完整副本迁移、迁后新增事实inverse／reforward、原生CLI五分支及合并后新增真实任务。
 - [x] 本轮有界来源补验、956 owner案例冷重建、来源未查实原文保留、最新副本容量独立核对。
-- [x] 真Chrome Workbench两项检查：隔离数据库／非执行替身，2 pass、106.23秒；前端tsc／vite构建通过。另一个既有Python Workbench端到端测试在启动等待2秒处失败，尚未闭合，不以Chrome通过代替。
-- [ ] 更广Python回归全部差项闭合。前轮28 failed／60 passed／87 skipped、303.41秒；历史delivery四文件90 pass、bootstrap2 pass修正后，新轮发现Email history／error组件旧夹具问题；error整文件13 pass／655.94秒，Email history整文件7 pass／489.25秒；其余历史postfix110、receipt22、通用Actions68、reply发布26、follow-up5项已分别通过，反馈／runtime router／代际与终态关联／配置存储已补齐定向验证；task-delivery、其余runtime worker、配置集成、任务详情和Attention等差项仍在核对。已通过且未变的大批量历史用例复用原证据，不重复堆叠运行。
+- [x] 真Chrome Workbench两项检查：隔离数据库／非执行替身，2 pass、106.23秒；前端tsc／vite构建通过。另一个既有Python Workbench端到端测试连续在启动等待2秒处失败，旧代码同环境原测试17.88秒通过。按新版启动性能差项继续诊断，不以Chrome通过代替，也未调整超时。
+- [ ] 更广Python回归全部差项闭合。前轮28 failed／60 passed／87 skipped、303.41秒；历史delivery四文件90 pass、bootstrap2 pass修正后，新轮发现Email history／error组件旧夹具问题；error整文件13 pass／655.94秒，Email history整文件7 pass／489.25秒；其余历史postfix110、receipt22、通用Actions68、reply发布26、follow-up5项已分别通过，反馈／runtime router／代际与终态关联／配置存储已补齐定向验证；worker既有恢复组11项及追加协议分支12项、配置存储75项、代际终态70项、配置集成／任务详情追加11项均已通过；task-delivery、Attention、Workbench启动时延及后续诊断回归差项仍在核对。已通过且未变的大批量历史用例复用原证据，不重复堆叠运行。
 - [x] 邮件输入／URL同步时序问题：确定性回归复现后已修复，原逐字输入／最终请求断言保留；主审独立3项通过，Email＋Scheduled定向107项通过。降低并发后完整前端46文件734 pass／2 skipped，433.57秒，超时阈值不变；主审tsc／vite构建通过。
 - [ ] 正文搜索产品取舍／性能边界处理，不能据局部来源读回视为全库可用。
 - [ ] 最终稳定候选集成审查、远端增量核对、提交／推送、既有deploy发布，以及生产PID／health／queues／Attention／History／实际schema和容量读回。
