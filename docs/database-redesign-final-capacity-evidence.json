@@ -17963,7 +17963,13 @@
     "cleanup": {
       "old_five_test_directories": "still present: explicit rm -rf rejected by automatic approval: approval required, AskForApproval Never",
       "production_backups": "one integrity-stamped daily SQLite backup retained",
-      "historical_model_weight": "8905681-byte history-only artifact removed by normal worker cleanup; current and latest candidate remain"
+      "historical_model_weight": "8905681-byte history-only artifact removed by normal worker cleanup; current and latest candidate remain",
+      "current_test_directory": {
+        "path": "/private/tmp/email-preview-release.2UMQww",
+        "open_files": false,
+        "status": "retained: explicit rm -rf rejected by automatic approval; approval required but AskForApproval Never",
+        "production_data": false
+      }
     }
   }
 }
