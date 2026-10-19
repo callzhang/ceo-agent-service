@@ -16,7 +16,7 @@
 ## 当前验证检查点
 
 - 当前代码的能力正文从 4,556 缩到 3,469 字符，完整能力段连标题从 4,583 缩到 3,496，减少 1,087 字符。匿名 Developer 输入在同一场景内减少同样的 1,087 字符；其他段落、Task 和 schema 逐字相同。旧正文来自固定的 `465533b5` 提交。生产历史原生输入约 3,887 字符是较早版本的观察值，不能作为当前代码差值。
-- 先写的长度／保留工具入口回归在旧代码失败，候选通过。一次较宽的测试运行发现两条有独立业务意义的低后果选择和有限事实询问要求被误删，候选已恢复原文；独立审查还发现风险拒绝码被误写为固定值，已改回“保留原始错误码”。最新 `tests/test_consumer_agent.py -k 'prompt or capability'` 为 10 项通过，`test_prompt_composition.py`、`test_action_contract_catalog.py` 与 `test_consumer_skill_session_contract.py` 共 50 项通过。此前 25 项 prompt 用例也通过。那次宽运行被中断，其中 SQLite fixture 的锁错误不计作通过，也不归因于本变更。
+- 先写的长度／保留工具入口回归在旧代码失败，候选通过。一次较宽的测试运行发现两条有独立业务意义的低后果选择和有限事实询问要求被误删，候选已恢复原文；独立审查还发现风险拒绝码被误写为固定值，已改回“保留原始错误码”。合入最新 `origin/main` 后，Consumer prompt/能力筛选 41 项、拼接／动作契约／Skill session 50 项、Settings prompt preview 14 项通过。此前 25 项 prompt 用例也通过。那次宽运行被中断，其中 SQLite fixture 的锁错误不计作通过，也不归因于本变更。
 - 匿名原生对照见 `evals/trajectory_optimization/consumer_capability_dedupe_native.results.v1.json`：相同 `gpt-5.6-luna`、medium、事实、假工具返回和完整当前 Consumer wire parser，十组配对共二十轮；候选十组均通过逐项业务断言，旧输入八组通过。覆盖日历候选、认证失败、历史风险拒绝、仅草稿、成功读取但无匹配、敏感群、OA 精确实例、定时文档工件写入与读回、以及冷启动后同 session 续会话。两臂均保留风险拒绝来源码 `provider_risk_refused`；无匹配不报依赖故障；OA 只读 `OA-EXACT-204` 并指出返程票据缺口；定时文档均通过内存假工具写到 `synthetic-weekly-doc-1`、读取 `document-readback.md`，没有声称客户验收完成。两臂续会话均复用冷启动 session ID，草稿轮没有发送候选。旧输入在该组冷启动给出了与占用事件冲突的 09:00–10:00 时段，且敏感群案例虽删去了敏感内容，却改为不带原消息 ID 的群消息；候选给出无冲突的 10:00–11:00 时段，并精确回复原消息。此观察只说明这些固定案例，不推断一般质量提升。
 - 首个匿名工具夹具未声明精确动作契约，导致正例两臂失败；该轮已排除并补足只读契约查询。敏感群初版夹具只提供通用模拟 Skill，两臂在重复运行中都曾向群暗示人员调整话题；这不能证明能力段变化造成退化。最终配对绑定当前真实的 `ceo-personnel-communication` Skill，两臂均实际读取并仅输出交付事实。上述排除原因和最终 Skill hash 在对照证据中明确记录。
 
