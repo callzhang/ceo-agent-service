@@ -17,6 +17,14 @@ from tests.test_action_receipt_storage import target_db  # noqa: F401
 from tests.test_postfix_action_source import SOURCE as POSTFIX_SOURCE
 
 
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """Keep this Store16/17 TEXT fixture on its historical Actions layout."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
+
+
 SOURCE = ("2026-10-13.2", " original marker time ")
 TARGET = "2026-10-13.3"
 

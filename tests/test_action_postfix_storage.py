@@ -18,6 +18,14 @@ from tests.test_postfix_action_source import SOURCE, CHILDREN
 POSTFIX_TYPES = tuple(SOURCE)
 
 
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """Keep this pre-final Actions storage contract on its TEXT layout."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
+
+
 def _target(db, *, include_postfix=True):
     db.execute("pragma foreign_keys=on")
     create_task_schema(db)
