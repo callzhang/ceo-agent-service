@@ -4,13 +4,15 @@
 
 ## 当前结论
 
-**候选已实现10张核心表＋1张已有账本；未推送、未部署、整体未完成。** 最新功能提交 `8faae621c` 修正仅被历史切换记录引用的模型权重保留；`a2589d733` 解耦全文搜索批次与页面大小；main 的原生 MCP 审查回执修正已通过 `b859e78ce` 合入。当前 Store 整文件450项、来源读取／HTTP四文件85项通过；其余既有回归证据见下表，不声称整仓测试全绿。
+**候选已实现10张核心表＋1张已有账本；未推送、未部署、整体未完成。** `13f957f0d`落实已批准的1000字符单份预览、本地默认检索及主动全文检索；`cd390f748`补充长正文详情与隔离UI夹具验证。最新main通过 `1da3d2d14` 合入，OA／发信内容准备／native回执／预览22项合并后通过。当前没有声称整仓测试全绿。
 
 2026-10-19 09:21 UTC，在真实生产路径只读执行同一发布 coordinator，6.794秒通过：源 Store `2026-10-13.5`／Email51，目标 Store `2026-10-14.1`／Email52，231来源版本全部准备成功。生产 checkout `aa18a59858a477c3e446560fa956fbe13e26136a` 干净。未调用 publish 或生产 Store 构造器；该结果不等于迁移已上线。
 
 2026-10-19 10:03 UTC再次只读核对，生产仍为同一干净commit，116普通表＋1 virtual＋4 shadow；主文件514,686,976 B、WAL4,161,232 B，最终结构尚未发布。这是更新生产时点，不能与冻结来源的候选容量直接作差。
 
-当前主要差项：已批准1000字符预览的副本容量／迁移恢复及页面性能验证，最终候选发布及生产读回。Derek已明确批准有界预览例外及默认预览／主动全文检索；完整正文仍不重复长期保存。
+最新只读生产预检基于干净 `223788a26296a13341c8a522f362742c5606cb27`，12.778秒准备238来源版本成功。已批准预览的真实child副本正迁715.512秒通过，VACUUM后480,055,296 B，9,402封均单份且≤1000字符，默认DAO列表及查询56.733–121.055毫秒且来源读取被禁止。
+
+当前主要差项仅剩推送／官方部署及生产读回。已核验Email引用发布副本：7,424正文及5,501模型输入退休，其余所有物理字段（包括两处预览）、schema及其他表逐字段hash不变。加入1封测试邮件并完成额外原文退休的副本VACUUM后461,447,168 B／free0，不能当作纯结构收益。最新main的Claude Consumer schema修正已通过c446d9537合入，相关62项通过／0.54秒；没有改变存储声明、迁移／inverse或Codex路径。Derek已明确批准有界预览例外及默认预览／主动全文检索；完整正文仍不重复长期保存。
 
 ## 需求与证据
 
@@ -18,10 +20,10 @@
 | --- | --- | --- |
 | 原生 trajectory 是过程正文唯一来源 | session／准确记录范围／内容路径／完整hash定位；DB过程事件、审查调用及envelope副本退休 | 原生不可用明确显示不可用；不回写原文到trajectory |
 | 约10张核心表，字段来自实际业务 | 下表、字段清单及当前有限声明；正常空库直接最终结构，无旧表／view写入兼容层 | 字段映射不能以物理表数代替 |
-| 同数据、同VACUUM条件缩小结构 | 490,651,648→473,292,800 B，净减17,358,848 B／3.538% | 固定229来源／956 Signal／9,402邮件；不混入后续退休或新任务收益 |
+| 同数据、同VACUUM条件缩小结构 | 纯结构490,651,648→473,292,800 B；加批准预览后480,055,296 B，仍净减10,596,352 B | 固定229来源／956 Signal／9,402邮件；预览成本6,762,496 B单列，不混入后续退休或新任务收益 |
 | 新任务完整执行及恢复 | 五分支13次真实CLI／4次替身发送；合并后另1原生任务 | 0真实发送；不是每个任务都单独整库逆迁 |
 | 迁后新增数据可回退 | 新Task／Run／结果／回执经inverse→旧代码冷开→真实child再正迁→新代码冷开一致 | 不用旧备份覆盖当前业务事实；已知源FK finding保持，无新增 |
-| 发布闭环 | 新增main已合入；最新真实生产只读预检通过 | 搜索方式及性能未关闭；未推送／deploy／生产最终读回 |
+| 发布闭环 | 新增main已合入；最新真实生产只读预检通过 | 默认本地检索及页面行为已验证；整库HTTP与inverse已通过；发布读回待完成 |
 
 ## 最终表、字段与退休清单
 
@@ -79,25 +81,29 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 
 净减17,358,848 B／16.5546875 MiB／3.538%；索引增加14,315,520 B已计入。不得以删除更多历史解释纯结构收益。
 
-后续完成额外来源退休并含新CLI任务的演练副本：9,403邮件，457,007,104 B，schema2,146,304 B、free0；这是混合阶段结果，不是生产实测或同口径结构收益。
+上表为无新增预览的纯结构基线。已批准1000字符预览实测：表页372,379,648 B、索引105,529,344 B、schema2,146,304 B、free0，共480,055,296 B。相对纯结构基线增加6,762,496 B／6.44921875 MiB；相对同一旧库仍节省10,596,352 B。9,402份预览逻辑UTF-8合计7,834,970 B，与页占用不混同；完整输入未因预览截断。
+
+后续完成额外来源退休、批准预览并含1封新测试邮件的演练副本：9,403邮件，461,447,168 B，schema2,146,304 B、free0；这是混合阶段结果，不是生产实测或同口径结构收益。先前457,007,104 B快照属于不含批准长预览的旧演练，不再作为当前占用。
 
 | 表 | 表页B | 索引B | 行数 |
 | --- | ---: | ---: | ---: |
-| actions | 135262208 | 29585408 | 99229 |
+| actions | 135249920 | 29577216 | 99215 |
 | business | 10498048 | 1212416 | 5135 |
 | configs | 7442432 | 1347584 | 6028 |
 | email_schema_migrations | 4096 | 0 | 39 |
-| emails | 47312896 | 4034560 | 9403 |
-| runs | 85291008 | 46084096 | 248599 |
+| emails | 51781632 | 4034560 | 9403 |
 | provenance | 90112 | 45056 | 141 |
-| provider_state | 14368768 | 11399168 | 72333 |
+| provider_state | 14364672 | 11399168 | 72333 |
+| runs | 85291008 | 46084096 | 248595 |
 | schedules | 16384 | 8192 | 15 |
-| state | 6561792 | 2396160 | 23596 |
-| tasks | 42471424 | 9424896 | 36251 |
+| state | 6561792 | 2396160 | 23594 |
+| tasks | 42467328 | 9424896 | 36248 |
 
-另sqlite_sequence一页4096 B／51行。2026-10-19 07:52生产只读旧结构测量512,962,560 B／WAL4,152,992 B，不代表此刻大小，也不替代固定输入对照。
+另sqlite_sequence一页4096 B／51行。生产实测在发布后单独回读，不能与此冻结来源副本直接作差。
 
 ## 完整业务链和当前事实inverse
+
+批准预览后的新演练在同一冻结生产副本迁后，经公开persist_scan_result新增1,300字符邮件，预览1000且原始／模型输入保留。inverse301.427秒、旧生产代码223788a2冷启动读回304.606秒，随后真实child再正迁及当前代码冷启动通过；全部9,403邮件两种公共投影逐字段hash完全相同。最初汇总脚本在最终FK检查引用不存在的报告key，改从已保存的release metadata读取并补完quick_check／FK／字段复核，没有重跑迁移或掩盖原始脚本失败。
 
 完整生产副本实际coordinator／child正迁、Store／EmailStore冷启动通过。迁后新增external_action_result／effect_intent／execution_receipt及Task／Run，经当前数据inverse、旧代码冷开、真实child再正迁、新代码冷开一致；645.788秒。后来补验旧代码78e8c4474冷启动读回1739.245秒；review_candidate／audit_review／execution／result／sent_reply／reply_attempt全部公开字段、SQLite类型和值匹配。旧代码更新不涉及存储声明的部分不重复整库往返；最终发布仍需按当时HEAD核对。
 
@@ -132,15 +138,17 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 | 其他迁移／调用方 | 既有Configs39、Email元数据39、dispatcher74、路由63、回放27＋子进程1、只读Inspector12、检索35、Project评估25、Workbench manifest20、回复输入12、状态摘要9等证据按原范围复用；不把scoped结果改为整文件通过 |
 | 前端及浏览器 | 46文件734 pass／2既有skip；tsc／vite通过；真实Chrome隔离Workbench2项106.23秒；原2秒启动预算下连接复用23项＋9连接控制通过 |
 
+本轮关闭最后一个旧结构命令引用：`bb01074b8`退休隐式native-copy／FTS清理。当前最终空库先复现FTS不存在，改后6项CLI回归通过／1.48秒；保留三个输入清理函数AST逐一完全相同，独立只读审查无发现。旧native清理的4个缓存前提案例随已退休功能取消，旧来源迁移及inverse实现不变。
+
 旧广泛诊断17,217 pass／1,899 fail／118 skip／58 error是持续修改中的失败收集，非稳定候选通过／失败数。按当前模块、精确node或明确退休／替换合同映射；尚未找到匹配的项目继续登记，不重复已经足够的全量回归。Source13旧schema真实正迁先前已完成，原lease经当前投影在同副本准确读回；后续Store整文件亦通过。
 
-发布路径最终代码复核：相对 `b859e78ce`，当前存储声明、配对迁移、inverse、官方deploy／updater文件未变化；后续app变更仅搜索批次及模型保留。现有失败处理先对当前数据库inverse，再回退代码及重启；不以迁前backup覆盖新业务事实。复用既有实际整库演练，不重复整库往返。
+发布路径代码复核：官方deploy／updater及inverse机制保持。相对前次基线，paired publish新增退休前的预览回填，因此本次重新执行整库正迁／当前数据inverse／真实child再正迁；其余同物理声明的真实CLI证据复用。现有失败处理先对当前数据库inverse，再回退代码及重启；不以迁前backup覆盖新业务事实。
 
 ## 搜索性能与发布差项
 
 全文仍为Unicode casefold连续子串、准确total／顺序／分页；来源缺失或变化明确报错。50条来源批次独立于页面limit：同一最终DAO9,402候选中搜索“合同”需9,376原文判定；页面25的502账号会话降至269，页面1原9,376亦降至269。此为操作数，不能当作网络性能证明。
 
-真实只读样本30封同folder、已有完整来源校验的邮件全部重取，12.674秒：fetch9.597、连接1.285、logout0.390、metadata0.476秒。主要成本在上游读取，未按样本线性推算全库。Spec第191行关键列表性能基线尚未满足，连接复用不足以据此关闭差项。
+真实只读样本30封同folder、已有完整来源校验的邮件全部重取，12.674秒：fetch9.597、连接1.285、logout0.390、metadata0.476秒。主要成本在上游读取，未按样本线性推算全库。这是全文检索的历史上游读取成本；已批准方案的默认列表改为本地预览，不再逐封读取来源。真实整库DAO默认列表56.733毫秒，合同／STRASSE／周五查询114.125／118.088／121.055毫秒，分页25；整库HTTP四个请求177.345／198.655／178.731／260.548毫秒，0 provider调用；生产端到端仍单独核对。
 
 此前二选一已被2026-10-19明确批准的折中方案取代：**最多1000字符纯文本预览＋本地默认搜索＋按需详情／主动全文检索**。不再等待旧选项答复；有界预览是已批准的重复内容例外，须单列其容量成本，不改变完整正文及模型输入的来源校验。
 
@@ -148,7 +156,9 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 - [x] 已完成来源核验及限定20原文退休决定；Email未核实来源保留，退休发布工具有副本证明。
 - [x] 上述当前回归及关键独立只读审查；后续增量按实际影响补验，不重跑无变化部分。
 - [x] 本轮发现的当前消费者证据缺口已闭合：TaskAgent247节点、Sync派发19、Project重放28、发送回执历史27；旧广泛诊断仍保留原范围，不宣称整仓通过。
-- [ ] 搜索产品方式及性能／页面行为验证；模型历史权重保留偏差已修复并验证，生产清理及只留当前／最新的实际读回待发布。
+- [x] 搜索产品方式已批准，1000字符／唯一owner／完整详情／显式全文／输入回到预览已通过单测及隔离UI。
+- [x] 整库HTTP性能及预览迁后新增邮件的current-data inverse／旧代码冷开／真实child再正迁：9,403封所有邮件字段相同，quick_check通过，只有原始FK finding，无模型或发送重放。
+- [ ] 模型历史权重生产清理及只留当前／最新的实际读回待发布。
 - [ ] 最终来源／候选绑定刷新、推送与官方`python -m app.deploy`；执行前完整备份，发布失败使用schema inverse保存迁后新事实。
 - [ ] 生产PID／healthz／queues／Attention／History／最终schema及容量读回，核对无新增失败／卡住／重复发送后才报告生效。
 
@@ -159,4 +169,6 @@ Email正文与model input分别按实际序列化、完整hash／字节证明；
 - [x] Backend TDD: new preview tests prove1000 Unicode characters, HTML/plain display normalization, a single populated preview, no source calls for ordinary listing/query, and deep-only keyword matching only with full scope. Run `pytest -q tests/test_email_preview.py tests/test_email_classification_reader.py tests/test_email_source_web_api.py` in task temporary paths; existing full-read tests explicitly select full scope.
 - [x] Implement `email_preview.py` bounded extraction/backfill, `persist_scan_result` and `compact_email_message_body` preview writes, paired publish backfill before retirement, Reader default local query and API `search_scope` enum. No new schema field/table, no change to classification/model inputs or external sends.
 - [x] Frontend: extend EmailClassificationListParams with `search_scope`, default preview label and explicit full-search action, query changes return to preview mode, full loading/error UI and ordinary detail unchanged. Existing React tests plus full build.
-- [ ] Root review and one representative production-copy forward/inverse/reforward validate approved preview policy, unchanged results/receipts and capacity; reuse unchanged CLI evidence. Then refresh final source binding, push/integrate and official deploy, read back schema/queues/Attention/History/preview/details and independently VACUUM in quiet window.
+- [x] Root review and production-copy forward/inverse/old-code cold readback/actual-child reforward verify approved preview policy and all9,403 Email fields. Existing unchanged CLI/receipt evidence reused; current-copy HTTP177–261ms,0 source calls.
+- [x] Source-proof publication current-copy check:7,424 bodies／5,501 model inputs retired; all other physical fields/schema exact, including preview; quick_check／source-only FK verified.
+- [ ] Push/integrate and official deploy; read back schema/queues/Attention/History/preview/details and VACUUM in quiet window.

@@ -16605,10 +16605,477 @@
         "passed": 69,
         "followup_scope_regressions_passed": 2,
         "build": "tsc and Vite passed before dependency-only followup"
+      },
+      "deep_detail": {
+        "passed": 1,
+        "seconds": 2.83,
+        "log": "/tmp/email-preview-release.2UMQww/deep-detail-test.log",
+        "proof": "detail returns all 1110+ characters including deep suffix, while preview is exactly1000"
+      },
+      "merged_callers": {
+        "passed": 22,
+        "seconds": 12.93,
+        "log": "/tmp/email-preview-release.2UMQww/merged-caller-tests.log"
       }
     },
     "independent_review": "Found standalone retirement-tool preview omission; root fixed same-transaction target-derived prefix and duplicate clear. No other concrete defect; exact page IDs and unsubscribe preview cases added. Root frontend diff reviewed.",
     "production_writes": false,
-    "migration_copy_and_final_capacity": "pending"
+    "migration_copy_and_final_capacity": {
+      "source": "/tmp/db-redesign-latest.RIJJUz/source.sqlite3",
+      "elapsed_seconds": 715.512,
+      "old_vacuum_bytes": 490651648,
+      "pure_structure_before_preview_bytes": 473292800,
+      "approved_preview_vacuum_bytes": 480055296,
+      "preview_incremental_physical_bytes": 6762496,
+      "net_saved_bytes": 10596352,
+      "after": {
+        "table": 372379648,
+        "index": 105529344,
+        "schema": 2146304,
+        "free": 0,
+        "total": 480055296
+      },
+      "preview": {
+        "rows": 9402,
+        "classified": 9402,
+        "max_chars": 1000,
+        "utf8_bytes": 7834970,
+        "single_owner": true,
+        "source_full_text_preserved_before_retirement": true
+      },
+      "local_list_queries_no_original_calls": [
+        {
+          "query": "",
+          "seconds": 0.056733,
+          "total": 9402,
+          "page_rows": 25
+        },
+        {
+          "query": "合同",
+          "seconds": 0.114125,
+          "total": 83,
+          "page_rows": 25
+        },
+        {
+          "query": "STRASSE",
+          "seconds": 0.118088,
+          "total": 10,
+          "page_rows": 10
+        },
+        {
+          "query": "周五",
+          "seconds": 0.121055,
+          "total": 53,
+          "page_rows": 25
+        }
+      ],
+      "quick_check": "ok",
+      "source_fk_only": true,
+      "tables": "10 core plus migration ledger",
+      "new_synthetic_rows_in_capacity_comparison": 0
+    },
+    "browser": {
+      "scope": "synthetic fixture only; default/explicit full/type-reset/detail observed; in-memory API, no production requests",
+      "screenshot": "/Users/derek/.codex/visualizations/2026/10/09/01a122e3-0bec-73b3-b7aa-c0be8e731a61/email-preview-validation.png",
+      "progress_api_fixture_corrected": true
+    },
+    "current_data_inverse_reforward": {
+      "production_writes": false,
+      "real_sends": 0,
+      "provider_calls": 0,
+      "native_cli_repeated": false,
+      "stages": [
+        {
+          "stage": "new_email_public_write_verified",
+          "elapsed_seconds": 3.677,
+          "classification_id": 5820191000123456,
+          "preview_chars": 1000,
+          "original_characters": 1300,
+          "model_input_preserved": true
+        },
+        {
+          "stage": "current_data_inverse_started",
+          "elapsed_seconds": 3.797
+        },
+        {
+          "stage": "inverse_preserves_every_email_field_verified",
+          "elapsed_seconds": 301.427
+        },
+        {
+          "stage": "old_code_cold_email_store_readback_verified",
+          "elapsed_seconds": 304.606,
+          "output": {
+            "cold_email_store": true,
+            "new_email_readback": true
+          }
+        },
+        {
+          "stage": "actual_child_reforward_and_cold_readback_verified",
+          "completion_check_seconds": 19.54,
+          "note": "original harness reached final FK-summary lookup after successful real child, all-email hash checks and cold readback; source_fk read from saved release metadata after summary KeyError, without reexecuting migration"
+        }
+      ],
+      "expected_email_messages": {
+        "count": 9403,
+        "sha256": "e378dae73aa20f87d173e46b71f6966ca2622010f1940e7341eda1265d3d6bed"
+      },
+      "expected_email_classes": {
+        "count": 9403,
+        "sha256": "98c5c188d20a3eccad8eed33b785c9c56473572263a4a4f250b099a24fe99a9e"
+      },
+      "old_code_commit": "223788a26296a13341c8a522f362742c5606cb27",
+      "all_email_fields_exact": true,
+      "new_email_original_model_input_preview_preserved": true,
+      "quick_check": "ok",
+      "fk_baseline_only": true,
+      "actual_child_reforward_completed": true,
+      "summary_keyerror_recovered_without_repeating_migration": true
+    },
+    "http_current_copy": {
+      "production_writes": false,
+      "provider_calls": 0,
+      "real_sends": 0,
+      "rows": [
+        {
+          "query": "",
+          "seconds": 0.177345,
+          "total": 9403,
+          "page_rows": 25
+        },
+        {
+          "query": "合同",
+          "seconds": 0.198655,
+          "total": 83,
+          "page_rows": 25
+        },
+        {
+          "query": "STRASSE",
+          "seconds": 0.178731,
+          "total": 10,
+          "page_rows": 10
+        },
+        {
+          "query": "周五",
+          "seconds": 0.260548,
+          "total": 53,
+          "page_rows": 25
+        }
+      ]
+    },
+    "verified_reference_publication": {
+      "passed": true,
+      "preview": {
+        "dry_run": true,
+        "source_rows": 7497,
+        "missing_or_ineligible": 0,
+        "body_matches": 7424,
+        "model_matches": 5501,
+        "body_retired": 0,
+        "model_inputs_retired": 0,
+        "changed_rows": 0
+      },
+      "apply": {
+        "dry_run": false,
+        "source_rows": 7497,
+        "missing_or_ineligible": 0,
+        "body_matches": 7424,
+        "model_matches": 5501,
+        "body_retired": 7424,
+        "model_inputs_retired": 5501,
+        "changed_rows": 7497
+      },
+      "all_other_physical_fields_and_schema_unchanged": true,
+      "including_tables": {
+        "schema": {
+          "sha256": "781220a51d5b47f277c80c521bd7bcb8d2522817125e049e95d362bb9c3287b8"
+        },
+        "actions": {
+          "count": 99215,
+          "sha256": "0a1c2b907de69ed439b6753dc17b2a8d618d2045c1bff9610ce734825b838930"
+        },
+        "business": {
+          "count": 5135,
+          "sha256": "83dfdf361bf862c893413be191a34ce48d0979925648017d99c4c7303f8ad256"
+        },
+        "configs": {
+          "count": 6028,
+          "sha256": "e03eb9f72bb38a35449bf3c6b3e146b507cf2cde8cc70c09c195bb73c574f5b4"
+        },
+        "email_schema_migrations": {
+          "count": 39,
+          "sha256": "1f0ac09f67f5a7400e04d17ff6b0156c80673168cd66694bdb095bdbbc969a50"
+        },
+        "emails": {
+          "count": 9403,
+          "sha256": "9692d547f886e9ed5e3017cbba984578e5aefe39f15299ea76c3b39b4f77d924"
+        },
+        "provenance": {
+          "count": 141,
+          "sha256": "f97f85aed1d366d424add981111fa159b4b60a788176973d6c3e4886aad3243c"
+        },
+        "provider_state": {
+          "count": 72333,
+          "sha256": "5606753688d0331d1347bab12bba245aca864c93ebee05c0d3bc50a43b050c3c"
+        },
+        "runs": {
+          "count": 248595,
+          "sha256": "a9644c3d9a80ef1a50588e83f2b5e7c5e4d98a4b9440ac3cb8dd0205a461535c"
+        },
+        "schedules": {
+          "count": 15,
+          "sha256": "d8e2cc8399ba090fac80a44e0cc422b10448cb7f44725631c983a1831075a5d0"
+        },
+        "sqlite_sequence": {
+          "count": 51,
+          "sha256": "3da7152708e448ece7127a83c133683e810116e7b82ff786b0056db43cbd7712"
+        },
+        "state": {
+          "count": 23594,
+          "sha256": "ad108cc247d97da3d23140672fd08056b346f130d06cc247ce6af03b615c894f"
+        },
+        "tasks": {
+          "count": 36248,
+          "sha256": "ccfc89a042a6cc4eaf0138749458397e94140128d2cb7a1facfeaece66b6aec4"
+        }
+      },
+      "quick_check": "ok",
+      "fk_baseline_only": true,
+      "real_sends": 0,
+      "provider_reads": 0,
+      "production_writes": false,
+      "scope": "approved preview full-copy after current-data inverse/reforward; all non-input fields including both previews and schema byte exact",
+      "seconds": 36.754
+    },
+    "after_reference_retirement_capacity": {
+      "bytes": 461447168,
+      "free": 0,
+      "quick_check": "ok",
+      "seconds": 20.47,
+      "groups": [
+        [
+          null,
+          null,
+          2146304
+        ],
+        [
+          "actions",
+          "index",
+          29577216
+        ],
+        [
+          "actions",
+          "table",
+          135249920
+        ],
+        [
+          "business",
+          "index",
+          1212416
+        ],
+        [
+          "business",
+          "table",
+          10498048
+        ],
+        [
+          "configs",
+          "index",
+          1347584
+        ],
+        [
+          "configs",
+          "table",
+          7442432
+        ],
+        [
+          "email_schema_migrations",
+          "table",
+          4096
+        ],
+        [
+          "emails",
+          "index",
+          4034560
+        ],
+        [
+          "emails",
+          "table",
+          51781632
+        ],
+        [
+          "provenance",
+          "index",
+          45056
+        ],
+        [
+          "provenance",
+          "table",
+          90112
+        ],
+        [
+          "provider_state",
+          "index",
+          11399168
+        ],
+        [
+          "provider_state",
+          "table",
+          14364672
+        ],
+        [
+          "runs",
+          "index",
+          46084096
+        ],
+        [
+          "runs",
+          "table",
+          85291008
+        ],
+        [
+          "schedules",
+          "index",
+          8192
+        ],
+        [
+          "schedules",
+          "table",
+          16384
+        ],
+        [
+          "sqlite_sequence",
+          "table",
+          4096
+        ],
+        [
+          "state",
+          "index",
+          2396160
+        ],
+        [
+          "state",
+          "table",
+          6561792
+        ],
+        [
+          "tasks",
+          "index",
+          9424896
+        ],
+        [
+          "tasks",
+          "table",
+          42467328
+        ]
+      ],
+      "scope": "after approved source-reference retirement and one synthetic new Email; not pure structural comparison",
+      "tables": {
+        "actions": {
+          "table_bytes": 135249920,
+          "index_bytes": 29577216,
+          "rows": 99215
+        },
+        "business": {
+          "table_bytes": 10498048,
+          "index_bytes": 1212416,
+          "rows": 5135
+        },
+        "configs": {
+          "table_bytes": 7442432,
+          "index_bytes": 1347584,
+          "rows": 6028
+        },
+        "email_schema_migrations": {
+          "table_bytes": 4096,
+          "index_bytes": 0,
+          "rows": 39
+        },
+        "emails": {
+          "table_bytes": 51781632,
+          "index_bytes": 4034560,
+          "rows": 9403
+        },
+        "provenance": {
+          "table_bytes": 90112,
+          "index_bytes": 45056,
+          "rows": 141
+        },
+        "provider_state": {
+          "table_bytes": 14364672,
+          "index_bytes": 11399168,
+          "rows": 72333
+        },
+        "runs": {
+          "table_bytes": 85291008,
+          "index_bytes": 46084096,
+          "rows": 248595
+        },
+        "schedules": {
+          "table_bytes": 16384,
+          "index_bytes": 8192,
+          "rows": 15
+        },
+        "sqlite_sequence": {
+          "table_bytes": 4096,
+          "index_bytes": 0,
+          "rows": 51
+        },
+        "state": {
+          "table_bytes": 6561792,
+          "index_bytes": 2396160,
+          "rows": 23594
+        },
+        "tasks": {
+          "table_bytes": 42467328,
+          "index_bytes": 9424896,
+          "rows": 36248
+        }
+      }
+    }
+  },
+  "latest_production_preview_preflight": {
+    "production_writes": false,
+    "published": false,
+    "seconds": 12.778,
+    "source_version": "2026-10-13.5",
+    "target_store_version": "2026-10-14.1",
+    "target_email_version": 52,
+    "prepared_source_versions": 238,
+    "production_commit": "223788a26296a13341c8a522f362742c5606cb27"
+  },
+  "retired_native_cleanup_cli": {
+    "commit": "bb01074b8",
+    "reason": "Final schema has no persisted native event-body/FTS cache; only old default CLI and tests still called the cleanup",
+    "red_current_final_schema": "1 failed in1.47s: no such table codex_session_search_fts",
+    "green": {
+      "passed": 6,
+      "seconds": 1.48,
+      "log": "/tmp/email-preview-release.2UMQww/retired-maintenance-green.log"
+    },
+    "retained_function_ASTs_exact": true,
+    "independent_readonly_review": "No runtime/deploy/migration/inverse dependency; no reproducible diff defect; three retained compaction function ASTs independently equal",
+    "retired_obsolete_tests": 4,
+    "schema_changes": false
+  },
+  "latest_final_production_preflight": {
+    "production_writes": false,
+    "published": false,
+    "seconds": 9.298,
+    "source_version": "2026-10-13.5",
+    "target_store_version": "2026-10-14.1",
+    "target_email_version": 52,
+    "prepared_source_versions": 238,
+    "production_commit": "f836b6f90f57ae5d77aeaea0b4dd85e1504530a8",
+    "candidate_runtime_commit": "c446d953749adceffe2f31fd16bab6d5d1e47776"
+  },
+  "latest_main_claude_merge": {
+    "runtime_commit": "c446d9537",
+    "upstream_runtime": "f836b6f90",
+    "scope": "Claude native Consumer schema projection only; no Store/Email declarations, migration, inverse or Codex branch change",
+    "tests": {
+      "passed": 62,
+      "seconds": 0.54,
+      "log": "/tmp/email-preview-release.2UMQww/merged-claude-tests.log"
+    }
   }
 }
