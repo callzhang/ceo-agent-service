@@ -788,6 +788,7 @@ TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/cs
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 ERROR_LOG_ACTIVE_WINDOW = timedelta(hours=4)
+ATTENTION_STALLED_PENDING_SECONDS = 60 * 60
 RECOVERED_REPLY_ATTEMPT_STATUSES = frozenset(
     {"calendar", "commented", "completed", "document", "reacted", "sent", "skipped"}
 )
@@ -3450,23 +3451,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 f"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? "
                 "order by id desc limit 1", (key,),
             ).fetchone()
-            if task is not None:
-                pending_oa_rows.append({
-                    "category": "OA approval", "id": str(task["id"]),
-                    "status": "pending", "context": str(task["conversation_title"]),
-                    "summary": str(task["trigger_text"]),
-                    "updated_at": str(task["updated_at"]),
-                    "error": str(task["error"] or
-                        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."),
-                })
-            else:
-                pending_oa_rows.append({
-                    "category": "OA approval", "id": key, "status": "pending",
-                    "context": "OA approval", "summary": key,
-                    "updated_at": str(state["last_success_at"]),
-                    "error": str(state["last_error"] or
-                        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."),
-                })
+            if task is None:
+                continue
+            stalled = db.execute(
+                "select julianday(?) <= julianday('now') - (? / 86400.0)",
+                (task["updated_at"], ATTENTION_STALLED_PENDING_SECONDS),
+            ).fetchone()[0]
+            if not stalled:
+                continue
+            pending_oa_rows.append({
+                "category": "OA approval", "id": str(task["id"]),
+                "status": "pending", "context": str(task["conversation_title"]),
+                "summary": str(task["trigger_text"]),
+                "updated_at": str(task["updated_at"]),
+                "error": str(task["error"] or
+                    "DingTalk still reports this OA process as pending; "
+                    "the tracked task has had no update for over one hour."),
+            })
         db.create_function(
             "decode_work_summary_payload",
             1,

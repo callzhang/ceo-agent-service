@@ -23,6 +23,13 @@ read snapshot and reuses its current-task/delivery reads for repeated failed
 message keys only within that request. Evidence is in
 `docs/console-query-performance.md`.
 
+An OA process enters Attention only while the authenticated scanner still
+tracks the exact node as Derek-owned and its current reply task has had no
+update for more than one hour. A recent pending node is still visible in its
+normal queue and History views; a pending scanner key without a matched task
+timestamp is excluded because it cannot establish stalled work. This projection
+does not change the OA process, task, or provider receipt.
+
 OA Reply Attempt History status and status filters use the owning task's
 current execution generation, matching Attempt detail; OA Attempts without a
 resolvable bound run resolve the task by channel, conversation and trigger message

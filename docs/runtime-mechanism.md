@@ -272,8 +272,12 @@ values in the field index.
 
 OA Attention is a business-pending projection for work Derek still owns or must
 review. The scanner tracks exact Derek-owned RUNNING nodes from the authenticated
-pending list and source details. A locally completed reply task does not remove
-an OA item while that exact external node is still RUNNING for Derek. Conversely,
+pending list and source details. The projection includes a tracked node only
+when its matching current reply task has had no update for more than one hour;
+recently changed pending nodes remain in their normal queue and History views.
+Unmatched keys have no reliable task-progress timestamp and are not promoted to
+Attention. A locally completed reply task does not remove a stale OA item while
+that exact external node is still RUNNING for Derek. Conversely,
 an overall RUNNING process is not Derek's Attention when the exact tracked node
 is completed or assigned to another approver; the scanner removes only that
 node's key and preserves the historical task/attempt. Partial scans, missing
