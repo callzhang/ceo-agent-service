@@ -12,8 +12,9 @@ import json
 from app import action_storage as storage
 
 
-def _insert_text_action(db, record_type, values, *, ignore=False):
+def _insert_text_action(db, record_type, values, *, ignore=False, selection_references=False):
     """Apply the generic non-Reply writer to the historical TEXT layout."""
+    assert not selection_references
     storage._check_fields(record_type, values)
     if record_type in storage.REPLY_ACTION_TYPES or record_type not in storage.ALL_ACTION_TYPES_WITH_DELIVERY:
         raise ValueError("historical TEXT fixture only supports non-Reply delivery Actions")

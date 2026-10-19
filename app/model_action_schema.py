@@ -1,4 +1,4 @@
-"""Unselected reference-only selections and their current-fact schema inverse.
+"""Reference-only selections and their current-fact schema inverse.
 
 Both directions require a caller-owned FK-off transaction. Only selections are
 repacked; other Action payloads remain opaque bytes. Inverse metadata identifies
@@ -9,12 +9,6 @@ from functools import lru_cache
 import json
 
 from app import action_storage as actions
-from app.action_email_storage import _columns, _external_dependencies, _quote
-from app.business_candidate_storage import _collision
-from app.configs_schema_transfer import _target_declarations as _config_declarations
-from app.email_canonical_storage import ACTION_OPTIONS
-from app.final_action_schema import _email_guards
-from app.reviewed_candidate_store import _json
 from app.storage_payload import ACTION_RECORD_TYPES
 
 
@@ -26,6 +20,7 @@ _WATER = "_model_selection_water"
 @lru_cache(maxsize=4)
 def selection_action_objects(reply_variant, *, selection_references=True):
     """Complete target or frozen source declarations; no runtime discovery."""
+    from app.email_canonical_storage import ACTION_OPTIONS
     return actions._current_objects(
         reply_variant=reply_variant, inline_legacy_owner=True,
         physical_provenance=True, compact_payload=True, canonical_email=True,
@@ -56,6 +51,8 @@ def selected_branch(db, selection_id):
 
 
 def _require_source(db, *, selection_references):
+    from app.business_candidate_storage import _collision
+
     if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
         raise ValueError("selection transition requires caller-owned FK-off transaction")
     _collision(db, ("actions", _STAGING, _WATER))
@@ -68,6 +65,8 @@ def _require_source(db, *, selection_references):
 
 
 def _branches(db, *, selection_references):
+    from app.reviewed_candidate_store import _json
+
     branch_column = "null" if selection_references else "s.branch_json"
     rows = db.execute("""select s.id,c.candidate_json,s.option_key,""" + branch_column + """
         from main.actions s left join main.actions c
@@ -87,6 +86,10 @@ def _branches(db, *, selection_references):
 
 
 def _dependencies(db):
+    from app.action_email_storage import _external_dependencies
+    from app.configs_schema_transfer import _target_declarations as _config_declarations
+    from app.final_action_schema import _email_guards
+
     config_guards = {obj["name"]: obj["sql"] for obj in _config_declarations()["configs"]["triggers"]}
     allowed = [name for name, sql in db.execute(
         "select name,sql from main.sqlite_schema where type='trigger' and tbl_name='configs'")
@@ -98,6 +101,8 @@ def _dependencies(db):
 
 
 def _rebuild(db, variant, branches, *, selection_references):
+    from app.action_email_storage import _columns, _quote
+
     _dependencies(db)
     columns = _columns(db, "actions")
     names = ",".join(map(_quote, columns))

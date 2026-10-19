@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from app.run_storage import AGENT_RUN_SQL, insert_run
+from app.state_definitions import state_projection
+from app.task8_storage import task8_set_parts
 from app.action_storage import CANDIDATE_EXECUTION_SQL, update_action
 from app.store import AgentRole, AutoReplyStore, STORE_SCHEMA_VERSION_KEY
 from app import store as store_module
@@ -243,7 +245,7 @@ def test_native_audit_completion_race_rechecks_outside_writer(tmp_path, monkeypa
                                      owner="contract", transcript_end_line=1)
 
 
-def _reviewed(store: AutoReplyStore, *, options=True):
+def _reviewed(store: AutoReplyStore, *, options=True, decision_options=None):
     store.enqueue_reply_task(
         channel="dingtalk", conversation_id="candidate-test", conversation_title="Test",
         single_chat=True, trigger_message_id="candidate-1", trigger_sender="Derek",
@@ -262,6 +264,8 @@ def _reviewed(store: AutoReplyStore, *, options=True):
                 {"key": "stop", "terminal_outcome": "skipped", "reason": "not needed"},
             ] if options else []),
             "proposal": (None if options else {"actions": [{"action_identity": "a", "operation": "send", "target": {"user_id": "x"}}]})}
+    if decision_options is not None:
+        body["decision_options"] = decision_options
     store.complete_agent_run(consumer.id, body, owner="consumer")
     candidate = store.persist_review_candidate(task, consumer, body)
     audit = store.claim_agent_run(
@@ -346,6 +350,59 @@ def test_choice_conflict_and_execution_lease(tmp_path: Path):
     assert store.begin_candidate_action(resumed["id"], "reconciler", 0, "action-key")["status"] == "uncertain"
 
 
+def test_selection_stores_only_reference_and_reads_exact_bound_option(tmp_path):
+    store = AutoReplyStore(tmp_path / "reference-selection.sqlite3")
+    task, candidate, review, body = _reviewed(store)
+    selected = store.select_candidate_option(candidate["id"], review["id"], "execute")
+    with store._connect() as db:
+        assert "branch_json" not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
+        stored = db.execute("""select json(payload_json),candidate_id,review_id
+            from actions where record_type='candidate_selections' and legacy_key=?""",
+            (str(selected["id"]),)).fetchone()
+        assert json.loads(stored[0]) == ["execute", "selected", selected["created_at"]]
+        assert stored[1] != candidate["id"] or stored[2] != review["id"]
+    assert store.select_candidate_option(candidate["id"], review["id"], "execute") == selected
+    with pytest.raises(ValueError, match="selection_conflict"):
+        store.select_candidate_option(candidate["id"], review["id"], "stop")
+    reopened = AutoReplyStore(store.path)
+    current = reopened.current_reviewed_candidate(task.id, task.execution_generation)
+    assert json.loads(current["branch_json"]) == body["decision_options"][0]
+    execution = reopened.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
+    reopened.begin_candidate_action(execution["id"], "worker", 0, "reference-effect")
+    reopened.record_candidate_external_action(execution["id"], "worker", 0, "reference-effect",
+        "send", {"user_id": "x"}, {"receipt": "provider substitute"})
+    reopened.finish_candidate_execution(execution["id"], "worker", "done", {})
+    source = reopened.get_verified_action_source("reference-effect")
+    assert json.loads(source["branch_json"]) == body["decision_options"][0]
+    assert reopened.list_human_decision_evidence(task.id)[0]["selected_branch"] == body["decision_options"][0]
+
+
+def test_new_candidate_does_not_change_prior_selection_or_receipt_branch(tmp_path):
+    store = AutoReplyStore(tmp_path / "immutable-selection.sqlite3")
+    task, candidate, review, body = _reviewed(store)
+    selected = store.select_candidate_option(candidate["id"], review["id"], "execute")
+    execution = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
+    store.begin_candidate_action(execution["id"], "worker", 0, "old-effect")
+    later = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=1, turn_attempt=0, parent_agent_run_id=review["audit_run_id"],
+        operation_id="", owner="later").run
+    new_body = json.loads(json.dumps(body))
+    new_body["decision_options"][0]["plan"]["actions"][0]["target"] = {"user_id": "new-target"}
+    store.complete_agent_run(later.id, new_body, owner="later")
+    store.record_candidate_external_action(execution["id"], "worker", 0, "old-effect",
+        "send", {"user_id": "x"}, {"receipt": "late provider substitute"})
+    store.finish_candidate_execution(execution["id"], "worker", "done", {})
+    with pytest.raises(ValueError, match="stale candidate"):
+        store.select_candidate_option(candidate["id"], review["id"], "execute")
+    with pytest.raises(ValueError, match="stale candidate"):
+        store.select_candidate_option(candidate["id"], review["id"], "stop")
+    assert selected["candidate_id"] == candidate["id"]
+    source = store.get_verified_action_source("old-effect")
+    assert source["candidate_id"] == candidate["id"]
+    assert json.loads(source["branch_json"])["plan"]["actions"][0]["target"] == {"user_id": "x"}
+    assert store.list_human_decision_evidence(task.id)[0]["selected_branch"] == body["decision_options"][0]
+
+
 def test_supplement_invalidates_without_erasing_choice(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store)
@@ -386,8 +443,8 @@ def test_provider_receipt_survives_candidate_invalidation_after_dispatch(tmp_pat
             "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
             "invalidation_reason": "new source fact",
         })
-        db.execute("""update tasks set execution_generation='next-generation',
-            status='pending' where record_type='reply_tasks' and id=?""", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"execution_generation": "next-generation", "status": "pending"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
     with pytest.raises(ValueError, match="generation mismatch"):
         store.begin_candidate_action(claim["id"], "worker", 0, "effect-key")
     receipt = store.record_candidate_external_action(
@@ -460,7 +517,8 @@ def test_generation_rotation_prevents_old_approved_plan(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store, options=False)
     with store._connect() as db:
-        db.execute("update tasks set execution_generation='new-generation' where record_type='reply_tasks' and id=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"execution_generation": "new-generation"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
     assert store.current_reviewed_candidate(task.id, task.execution_generation) is None
     with pytest.raises(ValueError, match="generation mismatch"):
         store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
@@ -489,7 +547,7 @@ def test_repeated_current_schema_initialization_preserves_existing_history(tmp_p
         # Actual predecessor migrations use the exact captured 11.1 source
         # fixture; this copied current database tests repeated initialization.
         schema_version = target.execute(
-            "select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,),
+            f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,),
         ).fetchone()[0]
     reopened = AutoReplyStore(migration_copy)
     assert reopened.current_reviewed_candidate(task.id, task.execution_generation)["option_key"] == "stop"
@@ -499,7 +557,7 @@ def test_repeated_current_schema_initialization_preserves_existing_history(tmp_p
     with second._connect() as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
         assert db.execute(
-            "select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,),
+            f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,),
         ).fetchone()[0] == schema_version
 
 
@@ -542,7 +600,8 @@ def test_selection_wakes_same_generation_without_rewriting_question(tmp_path: Pa
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store)
     with store._connect() as db:
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"status": "needs_human"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
     with pytest.raises(ValueError, match="choice is missing"):
         store.wake_selected_candidate_execution(candidate["id"], review["id"])
     store.select_candidate_option(candidate["id"], review["id"], "execute")
@@ -560,7 +619,8 @@ def test_preserved_human_evidence_survives_invalidation_and_generation_change(tm
     store.select_candidate_option(candidate["id"], review["id"], "execute")
     store.record_candidate_supplement(candidate["id"], "Applicant changed the due date")
     with store._connect() as db:
-        db.execute("update tasks set execution_generation='new-facts-generation' where record_type='reply_tasks' and id=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"execution_generation": "new-facts-generation"})
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
 
     events = store.list_human_decision_evidence(task.id)
     assert [event["kind"] for event in events] == ["selection", "supplement"]
@@ -574,3 +634,13 @@ def test_preserved_human_evidence_survives_invalidation_and_generation_change(tm
     assert selected["selected_branch"]["plan"]["actions"][0]["target"] == {"user_id": "x"}
     assert supplement["instruction"] == "Applicant changed the due date"
     assert selected["invalidation_reason"] == supplement["invalidation_reason"] == "supplement"
+
+
+def test_selection_requires_unique_option_in_exact_candidate(tmp_path):
+    store = AutoReplyStore(tmp_path / "duplicate-option.sqlite3")
+    duplicate = {"key": "stop", "terminal_outcome": "skipped"}
+    _, candidate, review, _ = _reviewed(store, decision_options=[duplicate, duplicate])
+    with pytest.raises(ValueError, match="exactly once"):
+        store.select_candidate_option(candidate["id"], review["id"], "stop")
+    with store._connect() as db:
+        assert db.execute("select count(*) from actions where record_type='candidate_selections'").fetchone()[0] == 0

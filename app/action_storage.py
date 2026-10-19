@@ -706,11 +706,13 @@ RECEIPT_ACTION_TABLE_DDL, RECEIPT_ACTION_INDEX_DDL, RECEIPT_ACTION_TRIGGER_DDL =
 POSTFIX_ACTION_TABLE_DDL, POSTFIX_ACTION_INDEX_DDL, POSTFIX_ACTION_TRIGGER_DDL = _action_definitions(True, True)
 
 
-def _projection(kind, *, payloads=None):
+def _projection(kind, *, payloads=None, selection_references=False):
     if kind in REPLY_ACTION_TYPES:
         raise ValueError("reply projection requires global schema variant")
     fields, joins = [], []
     for field in SOURCE_COLUMNS[kind]:
+        if selection_references and kind == "candidate_selections" and field == "branch_json":
+            continue
         if field == IDENTITY_FIELDS.get(kind):
             expression = "a.legacy_key" if kind == "external_action_results" else "cast(a.legacy_key as integer)"
         elif kind == "sent_replies" and field == "agent_run_id":
@@ -808,7 +810,7 @@ def reply_schema_is_current(db: sqlite3.Connection, *, include_email=False,
                for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
-CANDIDATE_SELECTION_SQL = ACTION_PROJECTIONS["candidate_selections"]
+CANDIDATE_SELECTION_SQL = _projection("candidate_selections", selection_references=True)
 CANDIDATE_SUPPLEMENT_SQL = ACTION_PROJECTIONS["candidate_supplements"]
 CANDIDATE_EXECUTION_SQL = ACTION_PROJECTIONS["candidate_executions"]
 CANDIDATE_ACTION_ATTEMPT_SQL = ACTION_PROJECTIONS["candidate_action_attempts"]
@@ -865,15 +867,15 @@ def _current_objects(include_receipts=False, include_postfix=False, include_deli
         return _objects(db, "actions")
 
 
-def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str, physical_provenance=False, compact_payload=False) -> bool:
+def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str, physical_provenance=False, compact_payload=False, selection_references=False) -> bool:
     """Email-only metadata is required, outside the Store's auxiliary repairs."""
     old_names = {
         sqlite_schema_name(obj["name"])
-        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, physical_provenance=physical_provenance, compact_payload=compact_payload)
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references)
     }
     expected = {
         sqlite_schema_name(obj["name"]): obj
-        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True, physical_provenance=physical_provenance, compact_payload=compact_payload)
+        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references)
         if sqlite_schema_name(obj["name"]) not in old_names
     }
     actual = {sqlite_schema_name(obj["name"]): obj for obj in _objects(db, "actions")}
@@ -1121,22 +1123,23 @@ def _native_payload(values):
                       ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
-def _action_layout(kind, *, reply_variant="actual_no_memory_fk"):
-    return action_payloads(reply_variant, physical_provenance=True).layouts[kind]
+def _action_layout(kind, *, reply_variant="actual_no_memory_fk", selection_references=False):
+    return action_payloads(reply_variant, physical_provenance=True,
+                           selection_references=selection_references).layouts[kind]
 
 
 def _action_path(kind, field, *, reply_variant="actual_no_memory_fk"):
     return _action_layout(kind, reply_variant=reply_variant).path(field)
 
 
-def _action_payload(db, kind, values, *, reply_variant="actual_no_memory_fk"):
+def _action_payload(db, kind, values, *, reply_variant="actual_no_memory_fk", selection_references=False):
     """Bind the final JSONB value vector, including declared nullable slots.
 
     SQL-parts callers retain their native placeholders and cursor semantics;
     SQLite produces its own binary representation on this same connection.
     Historical row transfers continue to use the explicit object serializer.
     """
-    layout = _action_layout(kind, reply_variant=reply_variant)
+    layout = _action_layout(kind, reply_variant=reply_variant, selection_references=selection_references)
     packed = layout.pack(dict.fromkeys(layout.fields) | values,
                          scalar_codec=_encoded_native_sqlite_value)
     return db.execute("select jsonb(?)", (packed,)).fetchone()[0]
@@ -1770,7 +1773,8 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
     return db.execute(f"update actions set {','.join(assignments)} where {predicate}", arguments)
 
 
-def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
+def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False,
+                  selection_references: bool = False) -> ActionWriteResult:
     """Allocate automatic receipt IDs under SQLite's writer lock."""
     _check_fields(record_type, values)
     if record_type in EMAIL_TYPES_ORDER:
@@ -1797,7 +1801,8 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
             # A no-row write acquires the lock before reading the allocator.
             # Deferred connections retain their ordinary caller-owned transaction.
             db.execute("update main.sqlite_sequence set seq=seq where 0")
-        result = _insert_action(db, record_type, values, ignore=ignore)
+        result = _insert_action(db, record_type, values, ignore=ignore,
+                                selection_references=selection_references)
     except BaseException:
         if owned and db.in_transaction:
             db.execute("rollback to action_receipt_insert")
@@ -1808,7 +1813,8 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
     return result
 
 
-def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
+def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False,
+                   selection_references: bool = False) -> ActionWriteResult:
     """Insert source-shaped values; return the original per-type public ID."""
     _check_fields(record_type, values)
     if record_type in REPLY_ACTION_TYPES:
@@ -1820,7 +1826,8 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
     }
     payload.update({field: value for field, value in values.items() if field in PAYLOAD_FIELDS[record_type]})
     fields = [field for field in (REFERENCES | DELIVERY_REFERENCES) if field in _kind_references(record_type)]
-    arguments = [ACTION_RECORD_TYPES.code(record_type), _action_payload(db, record_type, payload)]
+    arguments = [ACTION_RECORD_TYPES.code(record_type), _action_payload(
+        db, record_type, payload, selection_references=selection_references)]
     arguments += [_parent_id(db, field, values.get(field)) for field in fields]
     public_id = (tuple(values.get(field) for field in POSTFIX_IDENTITY_FIELDS)
                  if record_type in POSTFIX_ACTION_TYPES else
