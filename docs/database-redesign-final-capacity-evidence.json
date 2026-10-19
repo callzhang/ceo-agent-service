@@ -34658,5 +34658,25 @@
     ],
     "excluded": "Known historical meeting orphan unsupported Config source declaration not included or claimed closed",
     "root_review": "Full diffs reviewed; original assertions retained; agent actual terminal evidence, no redirected log"
+  },
+  "final_cli_artifact_and_probe_observed_nodes": {
+    "runtime_and_test_changes": false,
+    "artifact_representative": {
+      "passed": 1,
+      "seconds": 2.19,
+      "evidence": "Agent exact current-code tool output"
+    },
+    "artifact_remaining": {
+      "passed": 5,
+      "seconds": 5.0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-cli-artifact-remaining5.log"
+    },
+    "probe": {
+      "passed": 1,
+      "seconds": 3.35,
+      "evidence": "Agent exact current-code tool output"
+    },
+    "scope": "Only seven observed broad-failed nodes; no whole-file claim",
+    "real_model_and_provider_calls": 0
   }
 }
