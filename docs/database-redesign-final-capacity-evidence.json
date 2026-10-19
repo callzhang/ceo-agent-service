@@ -34929,5 +34929,113 @@
     },
     "changes": "Current Store projection, registered codec on independent SQLite connection, Task8 explicit public IDs1/2/3 and terminal field update with physical lookup",
     "preserved": "Exact compression decode/type/hash/bytes, bounded/lossless/idempotent migration and terminal provenance/retirement assertions; root reviewed full diff; no runtime/provider changes"
+  },
+  "production_readonly_20261019_075251": {
+    "observed_at_utc": "2026-10-19T07:52:51.631160+00:00",
+    "checkout_head": "508287cf73243f289bbdfcf167d37ad484831d50",
+    "checkout_dirty": false,
+    "store_version": "2026-10-13.5",
+    "email_ledger_version": 51,
+    "sqlite_schema_table_entries_excluding_sqlite_prefix": 121,
+    "main_bytes": 512962560,
+    "wal_bytes": 4152992,
+    "shm_bytes": 32768,
+    "scope": "Metadata-only read transaction and git readback; no publication/constructor/backup/provider/send calls; not same-input capacity comparison"
+  },
+  "main_reconciliation_508287cf7": {
+    "merge_commit": "9725e4199",
+    "new_main_commits": 9,
+    "conflict": "Only docs/agent-claims append conflict; both sides preserved",
+    "app_cli_root_task20_projection": "Auto-merged and verified retained",
+    "runtime_static_check": "Ruff passes agent_cli/context/orchestrator/weekly_report_materials",
+    "storage_recovery_reuse": "git diff --quiet 78e8c4474..508287cf7 exits0 for app/store.py,email_store.py,task_storage.py,run_storage.py,action_storage.py,native_trajectory.py,config.py. Prior78cold recovery proof remains evidence for unchanged storage read path; do not call it a fresh508cold run.",
+    "pending": "Merged scheduled Audit receipt and new CLI tools integration focused verification; fresh final production source preflight still required"
+  },
+  "merged_main_focused_20261019": {
+    "head": "9725e4199",
+    "tests": [
+      "tests/test_agent_cli.py",
+      "tests/test_agent_context.py",
+      "tests/test_agent_role_tool_boundary.py",
+      "tests/test_oa_comment_attachment_reader.py",
+      "tests/test_weekly_report_materials.py",
+      "tests/test_consumer_system_release.py"
+    ],
+    "passed": 180,
+    "seconds": 81.17,
+    "exit_code": 0,
+    "log": "/tmp/merged-main-cli-weekly-oa.20261019.log",
+    "provider_calls": 0,
+    "scope": "Fake or monkeypatched provider boundaries; not whole suite, not scheduled audit whole file."
+  },
+  "history_query_performance_20261019": {
+    "red": {
+      "passed": 13,
+      "failed": 1,
+      "seconds": 62.8,
+      "vm_steps": 269000,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/history-pagination-root-green.log"
+    },
+    "diagnosis": {
+      "key_query_vm_steps": 47000,
+      "hydration_vm_steps": 15000,
+      "single_excluded_email_publication_probe_vm_steps": 73000
+    },
+    "fixed_actual_api_probe": {
+      "total": 480,
+      "rows": 20,
+      "vm_steps": 59000,
+      "provider_calls": 0,
+      "source": "same failed test database; instrumented all opened SQLite connections; no availability stub"
+    },
+    "bound": 100000,
+    "whole_file_status": "passed",
+    "failed_history_regressions": {
+      "passed": 10,
+      "seconds": 19.41,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/failed-history-source-selection.log"
+    },
+    "whole_file": {
+      "passed": 33,
+      "seconds": 66.2,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/history-pagination-final4.log",
+      "original_vm_bounds_preserved": true,
+      "intentional_dangling_fk_readback": 99999998,
+      "provider_calls": 0
+    }
+  },
+  "merged_main_scheduled_consumers_20261019": {
+    "passed": 38,
+    "seconds": 94.87,
+    "exit_code": 0,
+    "log": "/tmp/scheduled-agent-consumer-task8-final3.20261019.log",
+    "scope": "Full current scheduled consumer test file, fake providers/models, Task8 damage fixtures and Store/state projections; includes new cross-revision document receipt assertions.",
+    "provider_calls": 0
+  },
+  "retired_project_inference_20261019": {
+    "removed_method": "AutoReplyStore._migrate_project_attention_evidence",
+    "runtime_callers_before_removal": 0,
+    "reason": "Only manually invoked archaeology tests; referenced retired physical tables. Current release snapshots/restores exact existing ProjectEvidence and does not infer new links.",
+    "current_project_context": {
+      "passed": 12,
+      "seconds": 12.14,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/project-context-final-root.log"
+    }
+  },
+  "current_semantic_sources_full_20261019": {
+    "passed": 444,
+    "seconds": 176.96,
+    "exit_code": 0,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/task-semantic-after-retire-fixed.log",
+    "scope": "Current complete semantic-store module after retiring obsolete source-body container migration and manually invoked dead ProjectAttention inference tests. Retains body-free facts, exact source identity/hash/bytes, prepared originals, shared provenance, CHECK/FK/immutability/atomicity contracts.",
+    "retired_contracts": "Retired source body table/foreign key and zero-runtime-caller inference; current preservation controls remain."
+  },
+  "current_integration_readonly_review_20261019": {
+    "findings": [],
+    "scope": "History two source-selection guards, dead ProjectAttention inference removal, scheduled fixture IDs, malformed-input writes and error ordering.",
+    "limitations": "Not a new whole migration or production verification."
   }
 }

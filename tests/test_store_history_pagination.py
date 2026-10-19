@@ -1,14 +1,44 @@
 from contextlib import contextmanager
-import sqlite3
-
 import pytest
 
 from app import history_types
-from app.action_storage import insert_action, update_action
+from app.action_storage import _action_path, _reply_variant_for, insert_action, update_action
 from app.run_storage import insert_run
-from app.store import AutoReplyStore, OperationLog
-from app.task_storage import insert_task
-from app.task_storage import REPLY_TASK_SQL
+from app.store import AutoReplyStore, OperationLog, REPLY_TASK_SQL
+from app.task8_storage import task8_insert_parts, task8_set_parts
+
+
+def _insert_reply_task(db, values):
+    parts = task8_insert_parts("reply_tasks", values)
+    return db.execute(
+        f"insert into tasks ({parts.columns}) values ({parts.values})",
+        parts.parameters,
+    )
+
+
+def _update_reply_task(db, physical_id, values):
+    parts = task8_set_parts("reply_tasks", values)
+    return db.execute(
+        f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+        (*parts.parameters, physical_id),
+    )
+
+
+def _reply_task_ids(store, trigger_message_id):
+    with store._connect() as db:
+        row = db.execute(
+            f"""
+            select tasks.id as physical_id, reply_tasks.id as public_id
+            from tasks
+            join ({REPLY_TASK_SQL}) as reply_tasks
+              on reply_tasks.id=cast(tasks.legacy_key as integer)
+            where tasks.record_type='reply_tasks'
+              and reply_tasks.trigger_message_id=?
+            """,
+            (trigger_message_id,),
+        ).fetchone()
+    assert row is not None
+    return int(row["physical_id"]), int(row["public_id"])
 
 
 def test_plain_history_key_stage_uses_compact_branch_projections(tmp_path, monkeypatch):
@@ -298,11 +328,7 @@ def test_failed_history_uses_source_candidates_without_changing_results(
         trigger_text="failed task body",
         execution_generation="history-generation",
     )
-    with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("same-task-failures",),
-        ).fetchone()[0]
+    task_id = _reply_task_ids(store, "same-task-failures")[0]
     same_task_attempts = []
     for turn in range(2):
         attempt_id = store.record_reply_attempt(
@@ -412,7 +438,7 @@ def test_history_latest_attempt_query_work_is_bounded_by_task_count(tmp_path):
     store = AutoReplyStore(tmp_path / "history.sqlite3")
     with store._connect() as db:
         for number in range(240):
-            task_id = insert_task(db, "reply_tasks", {
+            task_id = _insert_reply_task(db, {
                 "channel": "dingtalk", "conversation_id": f"history-{number}",
                 "conversation_title": "History", "single_chat": 0,
                 "trigger_message_id": str(number), "trigger_create_time": "",
@@ -484,6 +510,11 @@ def test_history_page_key_query_prunes_unused_display_projection(tmp_path, monke
         return db
 
     monkeypatch.setattr(store, "_open_connection", instrumented_connection)
+
+    def unexpected_email_probe():
+        pytest.fail("non-Email History must not probe an excluded Email branch")
+
+    monkeypatch.setattr(store, "_email_actions_history_available", unexpected_email_probe)
     total, rows = store.list_operation_logs_with_count(
         limit=20,
         offset=1,
@@ -505,7 +536,7 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
             (("current", "current"), ("old", "current"), (None,),
              ("current", "current"), ("current", "old"))
         ):
-            task_id = insert_task(db, "reply_tasks", {
+            task_id = _insert_reply_task(db, {
                 "channel": "dingtalk", "conversation_id": f"task-{task_number}",
                 "conversation_title": "History", "single_chat": 0,
                 "trigger_message_id": "same-message", "trigger_create_time": "",
@@ -539,11 +570,20 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
 
     # A historical copy can contain real foreign-key violations. The original
     # predicate groups valid runs even when their task parent is missing.
-    with sqlite3.connect(store.path) as db:
+    with store._connect() as db:
         db.execute("pragma foreign_keys=off")
         db.execute("update runs set task_id=99999999 where id in (?, ?)", orphan_run_ids)
-        db.execute("update actions set payload_json=json_set(payload_json, '$.agent_run_id', 99999998) where legacy_key=? "
-                   "and record_type='reply_attempts'", (str(ids[4]),))
+        db.execute(
+            "update actions set payload_json=jsonb_set(payload_json, ?, json('99999998')) "
+            "where legacy_key=? and record_type='reply_attempts'",
+            (_action_path(
+                "reply_attempts", "agent_run_id", reply_variant=_reply_variant_for(db)
+            ), str(ids[4])),
+        )
+        assert db.execute(
+            "select attempt_agent_run_id from actions where legacy_key=? and record_type='reply_attempts'",
+            (str(ids[4]),),
+        ).fetchone()[0] == 99999998
 
     total, rows = store.list_operation_logs_with_count(
         limit=20, source_tables=("reply_attempts",)
@@ -576,10 +616,7 @@ def test_failed_history_projects_terminal_status_through_stable_run_task_id(tmp_
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("old-trigger-key",),
-        ).fetchone()[0]
+        task_id = _reply_task_ids(store, "old-trigger-key")[0]
         attempt_id = insert_action(db, "reply_attempts", {
             "conversation_id": "history-bound-task",
             "conversation_title": "Bound task",
@@ -597,11 +634,10 @@ def test_failed_history_projects_terminal_status_through_stable_run_task_id(tmp_
             "status": "completed",
         }).lastrowid
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run_id})
-        db.execute(
-            "update tasks set status='done', trigger_message_id=?, "
-            "updated_at='2026-10-16 00:00:00' where id=?",
-            ("refreshed-trigger-key", task_id),
-        )
+        _update_reply_task(db, task_id, {
+            "status": "done", "trigger_message_id": "refreshed-trigger-key",
+            "updated_at": "2026-10-16 00:00:00",
+        })
 
     done_total, done_rows = store.list_operation_logs_with_count(
         limit=20, statuses=("done",), source_tables=("reply_attempts",)
@@ -620,14 +656,10 @@ def test_failed_history_projects_terminal_status_through_stable_run_task_id(tmp_
         execution_generation="generation-uncertain",
     )
     with store._connect() as db:
-        uncertain_task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("uncertain-trigger",),
-        ).fetchone()[0]
-        db.execute(
-            "update tasks set status='failed', error='external_action_uncertain' where id=?",
-            (uncertain_task_id,),
-        )
+        uncertain_task_id = _reply_task_ids(store, "uncertain-trigger")[0]
+        _update_reply_task(db, uncertain_task_id, {
+            "status": "failed", "error": "external_action_uncertain",
+        })
         uncertain_attempt_id = insert_action(db, "reply_attempts", {
             "conversation_id": "history-bound-uncertain",
             "conversation_title": "Uncertain task",
@@ -676,10 +708,7 @@ def test_history_projects_successful_legacy_attempt_status_from_current_task(
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("trigger",),
-        ).fetchone()[0]
+        task_id = _reply_task_ids(store, "trigger")[0]
         run = insert_run(db, "agent_runs", {
             "task_id": task_id,
             "execution_generation": "generation-1",
@@ -698,9 +727,7 @@ def test_history_projects_successful_legacy_attempt_status_from_current_task(
             "send_status": legacy_status,
             "agent_run_id": run.lastrowid,
         })
-        db.execute(
-            "update tasks set status='done' where id=?", (task_id,)
-        )
+        _update_reply_task(db, task_id, {"status": "done"})
 
     done_total, done_rows = store.list_operation_logs_with_count(
         limit=20, statuses=("done",), source_tables=("reply_attempts",)
@@ -730,10 +757,7 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("trigger",),
-        ).fetchone()[0]
+        task_id = _reply_task_ids(store, "trigger")[0]
         bound_run = insert_run(db, "agent_runs", {
             "task_id": task_id,
             "execution_generation": "generation-1",
@@ -758,7 +782,7 @@ def test_history_skipped_attempt_matches_detail_only_when_bound_run_is_latest(tm
             "send_status": "skipped",
             "agent_run_id": bound_run.lastrowid,
         })
-        db.execute("update tasks set status='done' where id=?", (task_id,))
+        _update_reply_task(db, task_id, {"status": "done"})
 
     done_total, done_rows = store.list_operation_logs_with_count(
         limit=20, statuses=("done",), source_tables=("reply_attempts",)
@@ -793,10 +817,7 @@ def test_history_projects_attempt_without_run_from_current_message_task(
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("trigger",),
-        ).fetchone()[0]
+        task_id = _reply_task_ids(store, "trigger")[0]
         attempt = insert_action(db, "reply_attempts", {
             "conversation_id": "history-unbound-message-task",
             "conversation_title": "Bound by message",
@@ -809,7 +830,7 @@ def test_history_projects_attempt_without_run_from_current_message_task(
             "send_status": legacy_status,
             "agent_run_id": 999999,
         })
-        db.execute("update tasks set status='done' where id=?", (task_id,))
+        _update_reply_task(db, task_id, {"status": "done"})
 
     done_total, done_rows = store.list_operation_logs_with_count(
         limit=20, statuses=("done",), source_tables=("reply_attempts",)
@@ -841,10 +862,7 @@ def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncert
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("terminal-trigger",),
-        ).fetchone()[0]
+        task_id = _reply_task_ids(store, "terminal-trigger")[0]
         consumer = insert_run(db, "agent_runs", {
             "task_id": task_id,
             "execution_generation": "generation-1",
@@ -892,10 +910,7 @@ def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncert
             "send_error": "external_action_uncertain",
             "agent_run_id": audit.lastrowid,
         }).lastrowid
-        db.execute(
-            "update tasks set status='done' where record_type='reply_tasks' and id=?",
-            (task_id,),
-        )
+        _update_reply_task(db, task_id, {"status": "done"})
         resolution = json.dumps({
             "business_id": "business-1",
             "checked_at": "2026-10-15T10:37:10+00:00",
@@ -952,14 +967,10 @@ def test_history_keeps_unbound_oa_external_uncertainty_uncertain(tmp_path):
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("trigger",),
-        ).fetchone()[0]
-        db.execute(
-            "update tasks set status='failed', error='external_action_uncertain' where id=?",
-            (task_id,),
-        )
+        task_id = _reply_task_ids(store, "trigger")[0]
+        _update_reply_task(db, task_id, {
+            "status": "failed", "error": "external_action_uncertain",
+        })
         attempt = insert_action(db, "reply_attempts", {
             "conversation_id": "history-unbound-oa-uncertain",
             "conversation_title": "Uncertain OA task",
@@ -1157,17 +1168,11 @@ def test_terminal_local_task_does_not_block_orphan_attempt_closure(tmp_path):
         trigger_text="approval action",
         business_object_key="oa:process-oa:task-oa",
     )
+    task_id, public_task_id = _reply_task_ids(store, "task-trigger")
     with store._connect() as db:
-        task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' "
-            "and conversation_id='terminal-owner-oa'"
-        ).fetchone()[0]
-        db.execute(
-            "update tasks set status='failed' where record_type='reply_tasks' and id=?",
-            (task_id,),
-        )
+        _update_reply_task(db, task_id, {"status": "failed"})
     assert store.close_unresolved_reply_task_already_settled(
-        task_id,
+        public_task_id,
         expected_execution_generation="initial",
         settled_evidence="previously settled",
     )
@@ -1209,10 +1214,7 @@ def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(t
         execution_generation="generation-1",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
-            ("old-trigger",),
-        ).fetchone()[0]
+        task_id = _reply_task_ids(store, "old-trigger")[0]
         consumer = insert_run(db, "agent_runs", {
             "task_id": task_id,
             "execution_generation": "generation-1",
@@ -1262,11 +1264,10 @@ def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(t
             "resolution": "Business follow-up closed; original external receipt remains unverified.",
             "agent_run_id": audit.lastrowid,
         }).lastrowid
-        db.execute(
-            "update tasks set status='done', trigger_message_id=?, "
-            "updated_at='2026-10-16 00:00:00' where id=?",
-            ("new-trigger", task_id),
-        )
+        _update_reply_task(db, task_id, {
+            "status": "done", "trigger_message_id": "new-trigger",
+            "updated_at": "2026-10-16 00:00:00",
+        })
 
     uncertain_total, uncertain_rows = store.list_operation_logs_with_count(
         limit=20, statuses=("uncertain",), source_tables=("reply_attempts",)

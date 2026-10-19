@@ -247,7 +247,7 @@ from app.work_summary_payload import (
     decode_work_summary_payload,
     encode_work_summary_payload,
 )
-from app.task_source_documents import source_document_key, source_is_observed
+from app.task_source_documents import source_document_key
 from app.business_source_reader import (
     BusinessTaskSignalFact, RequestSourceReader, SourceVersionBinding,
 )
@@ -2595,30 +2595,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 {"key": STORE_SCHEMA_VERSION_KEY, "value": STORE_SCHEMA_VERSION},
                 {"value": state_json_field("value"), "updated_at": "json_quote(current_timestamp)"},
             )
-
-    @staticmethod
-    def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
-        """Carry proven original sources to Project evidence once, without changing history."""
-        marker = "business_project_attention_evidence_migrated"
-        if db.execute(f"select 1 from ({state_projection('service_state')}) where key=?", (marker,)).fetchone() is not None:
-            return
-        rows = db.execute(
-            "select distinct project.id as project_id, signal.id as signal_id, signal.source_type "
-            f"from ({candidate_projection('attention_item')}) card "
-            f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.canonical_anchor_id=card.anchor_id '
-            "join business_task_anchor_links link on link.anchor_id=card.anchor_id "
-            "join business_task_evidence evidence on evidence.task_id=link.task_id "
-            "join business_task_signals signal on signal.id=evidence.signal_id "
-            "where card.status='active' and link.status='confirmed' and link.active=1"
-        ).fetchall()
-        for row in rows:
-            if source_is_observed(row["source_type"]):
-                db.execute(
-                    "insert into business_project_evidence(project_id, signal_id) values (?, ?) "
-                    "on conflict(project_id, signal_id) do nothing",
-                    (row["project_id"], row["signal_id"]),
-                )
-        insert_state(db, "service_state", {"key": marker, "value": "1"})
 
     def prepare_meeting_alignment_message(
         self, *, delivery_key: str, body: str, original_text: str,
@@ -27875,7 +27851,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
             """,
         }
-        if self._email_actions_history_available():
+        if (not source_tables or "email_actions" in source_tables) and self._email_actions_history_available():
             from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
 
             candidate_queries["email_actions"] = f"""
@@ -28637,7 +28613,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 join ({config_projection('scheduled_task_config_versions')}) as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """
-        if self._email_actions_history_available():
+        if (not source_tables or "email_actions" in source_tables) and self._email_actions_history_available():
             # The email tables belong to EmailStore, which the service opens
             # on this same SQLite file; a store opened alone has none.
             from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS

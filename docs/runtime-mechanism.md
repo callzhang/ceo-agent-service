@@ -1379,10 +1379,7 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 成员清空不自动 resolve。recompute_for_tasks 保留且仅更新既有卡片成员、时间和成员事件，不重新
 判断风险、不创建卡片、不修改 category/current_state 或 active/resolved。人类 TODO 完成后直接
 调用这个成员更新，不再调用旧 Agent 卡片适配或要求虚假 receipt。
-Schema .4 的一次性迁移仅把旧 active 卡片所属 Project 已确认有效 Task 关联中的原始 Signal
-建成 Project evidence，排除 memory/session provenance，不改历史对象或引用，不重新激活 retired
-Project；原有关系即使 anchor 后来退休也仅作历史证明保留。独立 marker 与证据插入同事务提交；
-已有证据保留，多角色 Signal 去重，失败整体回滚，后续初始化/读取不继续补写。
+当前配对迁移逐值保留源库已有 Project evidence，包括原身份、SQLite 类型和关系；不再运行历史 Schema .4 从 Attention／Task 关系推导 Project evidence 的一次性函数。该函数已无运行时调用者并随旧物理表退休。新证据仍由显式 Signal 与已核验原文建立，不在初始化或读取时推导、补写或重新激活历史项目。
 只读 inspector 输出当前 Project 决定、真实回执映射及由这些实际身份查得的最新 context/revision；
 历史缺字段仍缺失，不补为 not_needed，不推测 ID，不改源库或历史 run。
 多来源回归已经通过；v2 native 对照、W39 副本迁移/回放和生产迁移尚未全部完成。评测读回独立判断的提案，
@@ -4225,3 +4222,5 @@ correction budget are unchanged. Fixed-case evidence and limits are in
 `docs/task-result-repair-prompt-validation.md`.
 
 小时 Quality 的既有 Actions 声明校验使用最终 compact Tasks／Actions 发布对应的 FINAL_ACTION_OPTIONS；Memory 队列仍从现有 typed projection 读取，额外未知 Actions index 等不匹配声明继续报错。ASR 恢复、操作员跳过、终态 OA 和 needs-human 当前投影使用既有 typed DAO 写入，并保留上游原事务、状态条件和回执语义。
+
+History 按明确 source_tables 构建查询时，仅在包含 email_actions 或未限制来源时检查 Email publication；非邮件分页与失败列表不读取被排除的 Email／State manifest。邮件分支仍执行原有准确 schema 检查，分页、total、状态和回执投影不变。
