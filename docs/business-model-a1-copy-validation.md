@@ -39,7 +39,21 @@ task ends, not retained historical backups or application storage.
 This initial full-copy roundtrip used component code hash
 `3dd3f0a7bea9428e6d71e842a5b8d1b0162cf11c680820fb55e7112f51cf9de0`.
 Independent QUALITY review subsequently identified order-sensitive comparison
-of preexisting FK findings; correction and final review remain pending. The
-copy's single preexisting finding did not exercise that multi-finding case.
-Do not treat this report as final component approval until that correction and
-its verification are recorded.
+of preexisting FK findings. The correction compares sorted complete tuples,
+preserving duplicate findings. Its regression produced four genuine failures
+before the change and seven focused passes afterward. QUALITY rereview approves
+the frozen component; declarations and all source factory hashes are unchanged.
+
+The parent then replayed **final code**
+`0c815aea4ff006f6bac9d1876b8865031096fedd0905ba29b2f42d1d3c8e5825`
+on the same current candidate: inverse reproduced the exact full source schema
+and retained the new fact; actual archived old Store cold-open passed its full
+manifest and decoded the added selection's branch with the correct option key;
+reforward reproduced every current stored table digest; final
+`integrity_check=ok` and the original one-FK finding were unchanged. The detailed
+body-free result is committed in
+`superpowers/specs/2026-10-19-business-model-a1-copy.json`.
+
+This completes the unselected component's copy/schema-inverse acceptance.
+Runtime caller conversion, versioned publication, UI/native CLI acceptance and
+production readback remain separate work.
