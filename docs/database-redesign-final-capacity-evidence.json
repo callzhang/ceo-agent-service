@@ -34403,5 +34403,23 @@
     "coverage": "Lineage0/2000 exact original steps<500 and noSCAN; all20 projections, physical/public pointers, numeric and nullable identity controls",
     "independent_review": "Bounded read-only projection/declaration/index review found no concrete issue; root owns acceptance",
     "production_effect": false
+  },
+  "latest_production_current_data_inverse_cold_readback": {
+    "passed": true,
+    "old_code_commit": "78e8c4474c05fee31ed27541b238f30381c8ba33",
+    "task_id": 5715333616543262,
+    "new_native_results_receipts_unchanged": true,
+    "cold_old_code_readback": true,
+    "quick_check": "ok",
+    "fk_baseline_only": true,
+    "real_sends": 0,
+    "production_writes": false,
+    "native_calls_this_supplement": 0,
+    "elapsed_seconds": 1739.245,
+    "scope": "latest production code cold reopening current-data inverse; existing full inverse/reforward proof retained",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/latest-old-cold.log",
+    "current_candidate_cold_readback_exact": true,
+    "current_candidate_readback": "/tmp/db-redesign-final-guard.3LeMgv/current-projection-native-readback.json",
+    "current_candidate_note": "After numeric projection fix, final target copy native snapshot exactly matches earlier real CLI task/business/results/receipts; no new model call or dispatch"
   }
 }
