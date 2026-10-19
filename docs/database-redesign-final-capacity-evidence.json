@@ -34488,5 +34488,12 @@
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-sync-inverse.log",
     "runtime_changes": false,
     "static_check": "Root Ruff/diff clean; explicit fixture re-export alias only changed after run, same fixture binding"
+  },
+  "final_failed_history_fixture_verification": {
+    "root_cause": "Legacy REPLY_TASK_SQL projection accessed removed t.channel and task fixture updated removed physical status/error columns",
+    "change": "Actual current source projection and typed task writes, exact one-row updates; all OA status, History filtering/count/pagination checks retained",
+    "result": "10 passed in 36.44s",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-failed-history-green.log",
+    "runtime_changes": false
   }
 }

@@ -3,8 +3,8 @@ import pytest
 from app import history_types
 from app.action_storage import insert_action, update_action
 from app.run_storage import insert_run
-from app.store import AutoReplyStore
-from app.task_storage import REPLY_TASK_SQL
+from app.store import AutoReplyStore, REPLY_TASK_SQL
+from app.task8_storage import task8_set_parts
 
 
 @pytest.mark.parametrize("legacy_status", [
@@ -21,7 +21,11 @@ def test_failed_history_includes_projected_oa_failures(tmp_path, legacy_status):
     )
     with store._connect() as db:
         task_id = db.execute(f"select id from ({REPLY_TASK_SQL})").fetchone()[0]
-        db.execute("update tasks set status='failed' where id=?", (task_id,))
+        parts = task8_set_parts("reply_tasks", {"status": "failed"})
+        assert db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (*parts.parameters, task_id),
+        ).rowcount == 1
         attempt_id = insert_action(db, "reply_attempts", {
             "conversation_id": "oa-current", "conversation_title": "Approval",
             "trigger_message_id": "trigger", "trigger_sender": "sender",
@@ -58,12 +62,14 @@ def test_failed_history_uses_current_oa_status(tmp_path, scenario):
     with store._connect() as db:
         if scenario != "orphan_after_terminal":
             task_id = db.execute(f"select id from ({REPLY_TASK_SQL})").fetchone()[0]
-            db.execute(
-                "update tasks set status=?,error=? where id=?",
-                ("failed" if scenario == "uncertain" else "pending",
-                 "external_action_uncertain" if scenario == "uncertain" else "",
-                 task_id),
-            )
+            parts = task8_set_parts("reply_tasks", {
+                "status": "failed" if scenario == "uncertain" else "pending",
+                "error": "external_action_uncertain" if scenario == "uncertain" else "",
+            })
+            assert db.execute(
+                f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+                (*parts.parameters, task_id),
+            ).rowcount == 1
         values = {
             "conversation_id": "oa-current", "conversation_title": "Approval",
             "trigger_message_id": "trigger", "trigger_sender": "sender",

@@ -159,3 +159,5 @@ Email Store 已按当前名称／参数映射50个观察到的旧失败，合并
 最新旧代码恢复读回另作完整值比较：原生任务的review_candidate、audit_review、execution、external_action_result、sent_reply、reply_attempt共6类各1行，所有公开字段、SQLite值类型及完整值在最终副本与逆迁后旧代码投影逐项一致；证据仅存字段数／hash，不复制正文。
 
 Follow-up／sync历史组件逆迁整文件26项通过（202.02秒）：仅两个需要写入历史TEXT中间结构的用例绑定原生68a137490写入器，全部新增事实、类型、ROWID、水位、精确逆迁及再正迁断言保留。当前运行时未改动。
+
+失败History投影整文件10项通过（36.44秒）：用当前Tasks投影及类型写入取代旧t.channel／status物理列夹具；当前OA状态、失败过滤、准确total及分页断言均保留，无运行时改动。
