@@ -34892,7 +34892,7 @@
       "passed": 44,
       "deselected": 422,
       "seconds": 37.17,
-      "log": "/tmp/db-redesign-final-guard.3LeMgv/task-semantic-current-constraints-final.log"
+      "evidence": "Exact terminal tool output reported by bounded agent; no persisted log for this run has been verified"
     },
     "index_strengthening": {
       "passed": 1,
