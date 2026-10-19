@@ -23,6 +23,7 @@ from app.agent_contracts import AuditAgentResult, AuditFeedback, ConsumerAgentRe
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
+    claude_consumer_output_schema,
     parse_consumer_agent_wire_result,
 )
 from app.agent_runtime_config import load_runtime_config
@@ -1102,6 +1103,20 @@ def test_consumer_prompt_schema_is_the_parser_schema():
     )
 
 
+def test_claude_native_schema_projection_preserves_final_outcome_validation():
+    native_schema = claude_consumer_output_schema()
+    assert "oneOf" not in native_schema
+
+    result = _wire_result({
+        "outcome": "proposal",
+        "summary": "A proposal must contain a plan.",
+        "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    with pytest.raises(ValueError):
+        ConsumerAgentWireResult.model_validate(result)
+
+
 @pytest.mark.parametrize(
     "audit_rules",
     (
@@ -2036,6 +2051,9 @@ def test_consumer_claude_runtime_receives_parent_execution_mode(
     assert executor.environments[0]["CEO_DRY_RUN"] == "1"
     assert executor.environments[0]["CEO_NOT_SEND_MESSAGE"] == "1"
     assert executor.environments[0]["ANTHROPIC_API_KEY"] == "test-claude-secret"
+    command = executor.commands[0]
+    assert "--json-schema" in command
+    assert json.loads(command[command.index("--json-schema") + 1])["type"] == "object"
 
 
 @pytest.mark.parametrize("failure_count", [1, 2])

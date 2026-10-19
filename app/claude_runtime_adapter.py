@@ -217,6 +217,7 @@ class ClaudeRuntimeAdapter:
         max_turns: int,
         policy: ClaudeCommandPolicy | None = None,
         reasoning_effort: str | None = None,
+        json_schema: dict[str, object] | None = None,
     ) -> list[str]:
         configured = self._configured_route(route)
         effort = reasoning_effort or self.config.claude_reasoning_effort
@@ -272,6 +273,11 @@ class ClaudeRuntimeAdapter:
             command.extend(["--tools", ""])
         elif selected_policy.role:
             command.extend(["--restricted", "--tools", "Read,Glob,Grep"])
+        if json_schema is not None:
+            command.extend([
+                "--json-schema",
+                json.dumps(json_schema, ensure_ascii=False, separators=(",", ":")),
+            ])
         if session_id is not None:
             command.extend(["--resume", session_id])
         return command

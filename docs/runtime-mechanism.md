@@ -3473,6 +3473,15 @@ Claude attempt start/end coordinates use the native Claude JSONL line counter, i
 
 Claude/Friday single-message bridges serialize the complete output schema as compact JSON. Parsed content, descriptions and whitespace within string values are preserved; only JSON formatting is removed. Codex retains its native file channel. Schema occurrence count, validation, facts, routing and sessions are unchanged. Verification is documented in docs/native-input-evidence-release-validation.md.
 
+Claude Consumer additionally passes a compatible `ConsumerAgentWireResult` schema
+inline through native CLI `--json-schema`. This projection retains the field
+shapes and required fields but removes the wire schema's unsupported `oneOf` and
+`allOf` conditions; the unchanged Pydantic wire/business models remain the
+authoritative validator for those relationships and every result. The adapter
+uses the native result's JSON text through the existing event normalizer and
+parser. Audit and other Claude workloads keep their existing command; no route,
+tool, Skill, prompt rule, retry or session policy changes.
+
 
 ## Task citation mismatch diagnostics
 

@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import Literal
 
 from pydantic import (
@@ -135,6 +136,39 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
                     if value is not None and (not isinstance(value, str) or not value.strip()):
                         raise ValueError(f"dingtalk-chat target.{field} must be a nonempty string or null")
         return result
+
+
+def claude_consumer_output_schema() -> dict[str, object]:
+    """Project the wire shape into Claude's supported native schema subset.
+
+    Claude rejects the wire model's conditional branches. The original Pydantic
+    model still validates every returned value, including those conditions.
+    Keep this projection explicit so a newly added conditional cannot silently
+    disappear from the native contract.
+    """
+    schema = deepcopy(ConsumerAgentWireResult.model_json_schema())
+    definitions = schema["$defs"]
+    if schema.get("$ref") != "#/$defs/_ConsumerWire":
+        raise ValueError("Consumer wire schema root changed")
+    wire = definitions["_ConsumerWire"]
+    option = definitions["DecisionOption"]
+    action = definitions["ProposedAction"]
+    if not wire.pop("oneOf", None) or not option.pop("oneOf", None) or not action.pop("allOf", None):
+        raise ValueError("Consumer wire schema conditions changed")
+    native = {**wire, "$defs": definitions}
+
+    def check(value: object) -> None:
+        if isinstance(value, dict):
+            if {"oneOf", "allOf", "if", "then", "else"} & value.keys():
+                raise ValueError("Consumer wire schema has an unsupported condition")
+            for child in value.values():
+                check(child)
+        elif isinstance(value, list):
+            for child in value:
+                check(child)
+
+    check(native)
+    return native
 
 
 class _AuditFeedbackWire(AuditFeedback):
