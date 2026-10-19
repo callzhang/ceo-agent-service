@@ -6,6 +6,14 @@ import pytest
 from test_action_storage import source_database
 
 
+@pytest.fixture
+def historical_text_action_dml(monkeypatch):
+    """Apply historical DML only to the explicit old publication boundary."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
+
+
 def _source(path):
     db = source_database(path)
     db.execute("create table service_state (key text primary key,value text not null,updated_at text not null default current_timestamp)")
@@ -24,7 +32,7 @@ def _publish(root, path):
         db.commit()
 
 
-def test_actions_release_inverse_retains_current_facts_and_original_marker(tmp_path):
+def test_actions_release_inverse_retains_current_facts_and_original_marker(tmp_path, historical_text_action_dml):
     from app.action_schema_release import prepare_action_schema_release
     from app.action_storage import insert_action, update_action
 
@@ -73,7 +81,7 @@ def test_actions_publication_reads_exact_source_or_target_without_recreating_tab
 
 
 @pytest.mark.parametrize('failure', ['dependencies', 'verification', 'restart', 'health', 'loaded'])
-def test_actions_publication_failure_restores_schema_before_old_start_and_keeps_receipts(tmp_path, failure):
+def test_actions_publication_failure_restores_schema_before_old_start_and_keeps_receipts(tmp_path, failure, historical_text_action_dml):
     import json
     from app.action_schema_release import prepare_action_schema_release
     from app.action_storage import insert_action, update_action
