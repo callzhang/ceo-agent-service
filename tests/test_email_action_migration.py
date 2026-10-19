@@ -4,6 +4,9 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
+from types import ModuleType
 from tempfile import TemporaryDirectory
 
 import pytest
@@ -61,6 +64,35 @@ def db(source):
         yield connection
 
 
+@pytest.fixture
+def historical_text_action_writers():
+    """Load the frozen Actions TEXT writer without changing current writers."""
+    module_name = "_test_action_storage_68a137490"
+    source = subprocess.check_output(
+        ["git", "show", "68a137490:app/action_storage.py"],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+    )
+    module = ModuleType(module_name)
+    module.__file__ = "68a137490:app/action_storage.py"
+    sys.modules[module_name] = module
+    try:
+        exec(compile(source, module.__file__, "exec"), module.__dict__)
+        yield module
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def _patch_historical_text_action_writers(monkeypatch, module):
+    for name in (
+        "insert_action",
+        "insert_email_action",
+        "update_email_action",
+        "delete_email_action",
+    ):
+        monkeypatch.setattr(action_storage, name, getattr(module, name))
+
+
 def _schema(db):
     return list(db.execute("select type,name,tbl_name,sql from sqlite_schema order by type,name"))
 
@@ -100,7 +132,9 @@ def _source_facts(db):
     return facts
 
 
-def test_all_thirteen_families_preserve_current_facts(db, source):
+def test_all_thirteen_families_preserve_current_facts(
+    db, source, historical_text_action_writers, monkeypatch
+):
     db.execute("insert into email_classifications(id,status,current_action_plan_id) values(11,'done','plan')")
     db.execute("insert into email_accounts(account_id) values('account')")
     db.execute("insert into email_messages(account_id,stable_message_identity,thread_identity) "
@@ -126,6 +160,7 @@ def test_all_thirteen_families_preserve_current_facts(db, source):
     assert db.execute("select count(*) from main.actions where record_type in (" +
                       ",".join("?" for _ in SOURCE_NAMES) + ")", SOURCE_NAMES).fetchone()[0] == 15
     assert db.execute("select id,payload_json from main.actions where id=1").fetchone()[0] == 1
+    _patch_historical_text_action_writers(monkeypatch, historical_text_action_writers)
     action_storage.insert_email_action(
         db, "email_action_plans", cases["email_action_plans"] |
         {"action_plan_id": None, "action_plan_version": 4})
@@ -187,13 +222,16 @@ def test_existing_source_foreign_key_finding_is_not_treated_as_new_orphan(db):
     assert list(db.execute("pragma main.foreign_key_check(email_action_plans)")) == before
 
 
-def test_deleted_highest_ordinary_rowid_is_reused_after_forward(db):
+def test_deleted_highest_ordinary_rowid_is_reused_after_forward(
+    db, historical_text_action_writers, monkeypatch
+):
     case = _cases()["email_action_plans"]
     _insert_case(db, "email_action_plans", case, rowid=1)
     _insert_case(db, "email_action_plans", case | {"action_plan_id": "discarded",
                                                  "action_plan_version": 2}, rowid=9)
     db.execute("delete from main.email_action_plans where rowid=9")
     state = migrate_email_action_schema(db)
+    _patch_historical_text_action_writers(monkeypatch, historical_text_action_writers)
     result = action_storage.insert_email_action(
         db, "email_action_plans", case | {"action_plan_id": "new", "action_plan_version": 3})
     assert result.lastrowid == 2

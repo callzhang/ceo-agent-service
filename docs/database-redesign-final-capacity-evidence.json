@@ -34211,5 +34211,30 @@
       "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-unsubscribe-current.log"
     },
     "scope": "fixture full real publish and real EmailStore; native source oracle untouched; other nodes not yet revalidated"
+  },
+  "final_pending_fixture_closure": {
+    "direct": "Whole-publish source proven separately; new immutable per-session templates give each test separate source/target backup. Initial run loaded deepcopy clone and failed on frozen mappingproxy. JSON roundtrip clone independently reproduced equal; corrected fixture full-file proof pending. Existing run still draining, not counted green.",
+    "validators": "Initial selected 6 nodes errored in inherited deepcopy fixture; 666.52 seconds. Final schema object selectors corrected (trg_emails_*); no runtime changes, rerun pending.",
+    "metadata": "Observed early pair guard rejects exact damaged final declaration via base IntegrityError, not later EmailPersistenceCorruption. Test-only final metadata/options/selector corrections pending focused run; old genuine source oracle unchanged.",
+    "task_delivery": "Prior 11 failed /55 passed diagnostic preceded latest fixture fixes; corrected historical 4-family two-variant control 2 passed/92.48 seconds. Paired representatives still running.",
+    "broad": "Long-running diagnostic started before latest changes, results require failure-by-failure closure; do not count as final stable candidate proof.",
+    "resource_policy": "No additional migration jobs until current pending jobs drain; keep existing timeouts."
+  },
+  "final_historical_email_action_migration_controls": {
+    "source_writer_commit": "68a137490",
+    "scope": "only two explicit post-forward historical TEXT-boundary tests; original source setup and forward/inverse assertions unchanged; current runtime writers unmodified",
+    "red": "table actions has no column named _kind",
+    "passed": 4,
+    "seconds": 8.74,
+    "variants": [
+      "actual",
+      "fresh_candidate"
+    ],
+    "assertions": [
+      "13 families current facts/types",
+      "ordinary ROWID reuse",
+      "new current facts inverse",
+      "sequence highwater"
+    ]
   }
 }
