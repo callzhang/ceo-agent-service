@@ -1137,7 +1137,14 @@ def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
         return text_key if conversation_id and message_id else None
     if delivery == "group":
         return text_key if conversation_id else None
-    return text_key if recipient else None
+    if recipient:
+        return text_key
+    # Generic send operations are dispatched to a conversation when one is
+    # supplied. Explicit direct sends deliberately clear that target in the
+    # handler, so they still require a stable recipient ID.
+    if action.operation != "send_direct_message" and conversation_id:
+        return text_key
+    return None
 
 
 def consumer_developer_instructions(

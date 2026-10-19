@@ -50,6 +50,7 @@ duplicates, processQueryKey and generic finished statuses do not prove delivery.
 Unknown, pending, incomplete or conflicting readbacks retain ambiguity. Native
 reply preparation persists the accepted receipt before verification, including
 unknown outcomes, and rechecks it on recovery without another send.
+Before Audit, Consumer preparation persists the exact service-finalized body for each executable DingTalk chat action. Its target rules match the executor: replies require a conversation and source message, group sends require a conversation, direct sends require a stable recipient, and generic sends may target a conversation. The executor sends only when the reviewed body exactly matches that prepared body.
 For a strictly complete, failure-free group-window readback, zero exact matches
 is a delivery verification failure, not an unknown success and not permission to
 dispatch the old reviewed candidate again. Incomplete windows or multiple exact
