@@ -7,8 +7,7 @@ import sqlite3
 import pytest
 
 import app.store as store_module
-from app.action_business_storage import insert_business_action
-from app.action_email_history_definitions import HISTORY_KINDS, history_projection
+from app.action_email_history_definitions import HISTORY_FIELDS, HISTORY_KINDS, history_projection
 from app.action_email_history_storage import (
     capture_email_history_source, migrate_email_history_schema,
     restore_email_history_schema, insert_email_history, _projected_snapshot,
@@ -18,6 +17,22 @@ from app.business_schema_release import _snapshot
 from app.business_storage import insert_business
 from app.store import AutoReplyStore
 from app.email_store import EmailStore
+
+
+def _insert_text_email_history(db, kind, values, *, ignore_public_duplicate=False):
+    """Write only at the frozen historical TEXT Actions migration boundary."""
+    from app import action_storage as actions
+
+    if kind not in HISTORY_KINDS or set(values) - set(HISTORY_FIELDS[kind]):
+        raise ValueError("unsupported Email history insert fields")
+    fields = HISTORY_FIELDS[kind]
+    data = {field: values.get(field, "" if kind == HISTORY_KINDS[1]
+                              and field == "action_outcome" else None) for field in fields}
+    actions._email_lock(db, tuple(data.values()))
+    rowid = actions._email_rowid_next(db, kind)
+    sql = ("insert or ignore " if ignore_public_duplicate else "insert ")
+    sql += "into actions(record_type,legacy_key,payload_json) values(?,?,?)"
+    return db.execute(sql, (kind, str(rowid), actions._native_payload(data))).rowcount
 
 
 def test_default_current15_action_oracles_remain_exact():
@@ -40,7 +55,7 @@ def test_fresh_current_email_history_is_in_actions(tmp_path):
         tables = {name for (name,) in db.execute(
             "select name from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
         )}
-        assert len(tables) == 13
+        assert len(tables) == 11
         assert "email_historical_classification_history" not in tables
         assert "email_historical_operations" not in tables
         columns = {row[1] for row in db.execute("pragma main.table_xinfo(actions)")}
@@ -49,23 +64,60 @@ def test_fresh_current_email_history_is_in_actions(tmp_path):
 
 
 def _source15_store(path, monkeypatch):
-    """Keep the two exact source declarations for a component-only fixture."""
-    with monkeypatch.context() as patch:
-        patch.setattr(store_module, "migrate_email_history_schema",
-                      lambda db, metadata: metadata)
-        patch.setattr(AutoReplyStore, "_schema_manifest_is_current_in_connection",
-                      lambda self, db, *, include_run_snapshots: True)
-        AutoReplyStore(path)
+    """Build the frozen TEXT current15 boundary without invoking current stores."""
+    from pathlib import Path
+    from app.action_storage import create_action_schema
+    from app.action_business_storage import SOURCE_OPTIONS
+    from app.action_task_delivery_storage import _source_declaration
+    from app.configs_storage import create_configs_schema
+    from app.schedules_storage import create_schedules_schema
+    from app.task20_current_schema import create_current_task20_schema
+    from app.runs11_current_schema import create_current_run11_schema
+
+    capsule = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs"
+                          / "2026-10-17-email-history-current15-source.json").read_text())
     with sqlite3.connect(path) as db:
         db.execute("pragma foreign_keys=off")
         db.execute("begin")
+        create_configs_schema(db)
+        create_schedules_schema(db)
+        create_current_task20_schema(db)
+        create_current_run11_schema(db)
+        create_action_schema(db, reply_variant="fresh_memory_fk",
+                             **(SOURCE_OPTIONS | {"include_business_actions": True,
+                                                  "include_email_history": False}))
+        for sql in store_module.BUSINESS_SOURCE_DOCUMENT_SCHEMA:
+            db.execute(sql)
+        for name, key in (("business", "unchanged_business_parent_declaration"),
+                          ("business_legacy_links", "unchanged_legacy_child_declaration")):
+            declaration = capsule[key]
+            db.execute(next(obj[3] for obj in declaration["objects"] if obj[0] == "table"))
+            sql_by_name = {obj[1]: obj[3] for obj in declaration["objects"] if obj[0] == "index"}
+            for item in reversed(declaration["indexes"]):
+                sql = sql_by_name[item["list"][1]]
+                if sql:
+                    db.execute(sql)
+            for obj in declaration["objects"]:
+                if obj[0] == "trigger":
+                    db.execute(obj[3])
+            assert _hash(_source_declaration(db, name)) == _hash(declaration)
+        for kind, declaration in capsule["fresh_native_declarations"].items():
+            db.execute(next(obj[3] for obj in declaration["objects"] if obj[0] == "table"))
+            sql_by_name = {obj[1]: obj[3] for obj in declaration["objects"] if obj[0] == "index"}
+            for item in reversed(declaration["indexes"]):
+                sql = sql_by_name[item["list"][1]]
+                if sql:
+                    db.execute(sql)
+            for obj in declaration["objects"]:
+                if obj[0] == "trigger":
+                    db.execute(obj[3])
         source = capture_email_history_source(db)
         assert source["variant"] == "fresh_memory_fk"
         assert _hash(source["source_tables"][HISTORY_KINDS[0]]) == (
             "77af2546065da3a40e79f69c9b5b883b82b7ffdd99d06cccf32fd1b14b54b1a3")
         assert _hash(source["source_tables"][HISTORY_KINDS[1]]) == (
             "2cf9b1103b170b04e639676f0f0ad9569d7510274ff8986b2af7555771faba6b")
-        db.rollback()
+        db.commit()
 
 
 def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, monkeypatch):
@@ -76,7 +128,8 @@ def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, mo
         db.execute("begin")
         db.execute("insert into business_source_documents(id,identity_key,body) "
                    "values(1,'synthetic:document','Synthetic body')")
-        signal = insert_business_action(db, "business_task_signals", {
+        from tests.test_action_business_storage import _insert_text_boundary_business_action
+        signal = _insert_text_boundary_business_action(db, "business_task_signals", {
             "source_type": "meeting", "source_ref": "synthetic:meeting",
             "dedupe_key": "synthetic:signal", "context_json": "{}",
             "source_document_id": 1,
@@ -113,7 +166,7 @@ def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, mo
         assert _snapshot(db, "business_legacy_links") == parents["business_legacy_links"]
         for kind in HISTORY_KINDS:
             assert _projected_snapshot(db, kind) == family[kind]
-        insert_email_history(db, HISTORY_KINDS[0], {
+        _insert_text_email_history(db, HISTORY_KINDS[0], {
             "event_id": "new", "stable_message_identity": "new", "model_id": "model",
             "predicted_category": None, "threshold": None, "probability": None,
             "important": None, "action_outcome": "new", "created_at": "later",
@@ -201,7 +254,7 @@ def test_source_constraint_and_binding_results_match_actions(tmp_path, monkeypat
         for kind, values, error in cases:
             db.execute("savepoint action_case")
             try:
-                insert_email_history(db, kind, values)
+                _insert_text_email_history(db, kind, values)
             except error:
                 pass
             else:
@@ -209,17 +262,17 @@ def test_source_constraint_and_binding_results_match_actions(tmp_path, monkeypat
             db.execute("rollback to action_case")
             db.execute("release action_case")
         # Ordinary PK NULLs and non-array JSON remain accepted in both roles.
-        insert_email_history(db, HISTORY_KINDS[0], history | {"event_id": None})
-        insert_email_history(db, HISTORY_KINDS[0], history | {"event_id": None})
-        insert_email_history(db, HISTORY_KINDS[1], operation | {"operation_id": None})
-        insert_email_history(db, HISTORY_KINDS[1], operation | {
+        _insert_text_email_history(db, HISTORY_KINDS[0], history | {"event_id": None})
+        _insert_text_email_history(db, HISTORY_KINDS[0], history | {"event_id": None})
+        _insert_text_email_history(db, HISTORY_KINDS[1], operation | {"operation_id": None})
+        _insert_text_email_history(db, HISTORY_KINDS[1], operation | {
             "operation_id": None, "stable_message_identity": "other", "account_id": "other-account"})
         assert db.execute("select count(*) from (" + history_projection(HISTORY_KINDS[0])
                           + ") where event_id is null").fetchone()[0] == 2
         assert db.execute("select count(*) from (" + history_projection(HISTORY_KINDS[1])
                           + ") where operation_id is null").fetchone()[0] == 2
         with pytest.raises(sqlite3.IntegrityError):
-            insert_email_history(db, HISTORY_KINDS[1], operation | {
+            _insert_text_email_history(db, HISTORY_KINDS[1], operation | {
                 "operation_id": "different", "account_id": "other-account"})
         db.rollback()
 
@@ -248,8 +301,10 @@ def test_history_rowid_max_allocation_and_caller_rollback(tmp_path):
                   important=None, action_outcome="done", created_at="time")
     with sqlite3.connect(path) as db:
         db.execute("begin")
-        db.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)", (
-            HISTORY_KINDS[0], str(2**63 - 1), json.dumps(values | {"event_id": "max"}),
+        from app import action_storage as actions
+        db.execute("insert into actions(_kind,legacy_key,payload_json) values(?,?,?)", (
+            actions.ACTION_RECORD_TYPES.code(HISTORY_KINDS[0]), str(2**63 - 1),
+            actions._action_payload(db, HISTORY_KINDS[0], values | {"event_id": "max"}),
         ))
         db.execute("savepoint caller")
         assert insert_email_history(db, HISTORY_KINDS[0], values) == 1
