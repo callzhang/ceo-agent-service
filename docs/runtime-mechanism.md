@@ -548,7 +548,9 @@ partial terminal-time index supports that order. Completion finds the 10,000th
 row's `(terminal_at, rowid)` boundary and deletes only older terminal rows in the
 same transaction. It no longer sorts the whole table or materializes a 10,000-ID
 membership list while holding the writer lock. Existing-schema initialization
-adds the index without rewriting lease facts.
+adds the index without rewriting lease facts. Guarded State updates seek the
+existing numeric source-rowid unique index using the identity already selected
+under the writer lock; canonical identity checks, CAS and retention remain unchanged.
 
 The meeting delivery batch poll reads the exact ready, unlocked and due
 eligibility before requesting SQLite's shared writer lock. An ineligible poll

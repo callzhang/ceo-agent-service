@@ -125,8 +125,8 @@ def update_state(db, kind, source_rowid, values, *, new_source_rowid=_UNSET,
     return db.execute(
         "update " + mode + "state set legacy_key=?,payload_json=" +
         _json_assignments("?", defaults) +
-        " where record_type=? and legacy_key=?",
-        (str(identity), _native_payload(bound), kind, str(old_identity)),
+        " where record_type=? and cast(legacy_key as integer)=?",
+        (str(identity), _native_payload(bound), kind, old_identity),
     ).rowcount
 
 

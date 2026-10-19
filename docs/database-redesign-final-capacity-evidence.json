@@ -34495,5 +34495,37 @@
     "result": "10 passed in 36.44s",
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-failed-history-green.log",
     "runtime_changes": false
+  },
+  "final_state_guarded_update_index": {
+    "change": "Guarded UPDATE uses existing numeric source-rowid identity index; no DDL, index, fields, CAS or retention change",
+    "before_vm_steps": {
+      "completion": 111175,
+      "update": 53695,
+      "delete": 56397
+    },
+    "regression": {
+      "files": [
+        "tests/test_dispatcher_ledger_retention.py",
+        "tests/test_state_storage.py"
+      ],
+      "passed": 153,
+      "seconds": 28.28,
+      "vm_step_limit_unchanged": 100000,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-state-point-update.log"
+    },
+    "review": "Independent read-only review found no concrete issue; canonical integer CHECK and unique expression index preserve selected row identity"
+  },
+  "final_meeting_alignment_fixture_closure": {
+    "observed_failed_nodes_closed": 15,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-meeting-alignment.log",
+    "root_followup": {
+      "passed": 2,
+      "deselected": 133,
+      "seconds": 36.49,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-meeting-public-projection.log",
+      "scope": "Actual current public projection for strict DTO; reopened copy keeps receipt through claim/release"
+    },
+    "runtime_changes": false,
+    "whole_file_rerun_claimed": false
   }
 }
