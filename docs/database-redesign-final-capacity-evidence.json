@@ -35067,7 +35067,14 @@
       }
     ],
     "ambiguity": "tests/test_worker.py has scoped later evidence but no exact map to29 diagnostic nodes; no inference that those nodes are currently failing.",
-    "status": "Next bounded triage, not current defect totals."
+    "status": "Next bounded triage, not current defect totals.",
+    "latest_priority_closures": {
+      "store": "450 full module pass260.05s",
+      "attention": "156 exact collected IDs covered by passing slices; no single uninterrupted full-module claim",
+      "wechat": "33 full module pass55.19s",
+      "suggestions": "17 full module pass28.93s",
+      "worker": "Exact29 historical failed IDs pass313.32s"
+    }
   },
   "wechat_send_mode_current_20261019": {
     "passed": 33,
@@ -35244,5 +35251,39 @@
       "00afce57f"
     ],
     "scope": "Main increment changes native_trajectory2lines plus docs/tests; wait frozen Store verification before merging. Not a deployment of final schema."
+  },
+  "store_current_wholefile_final_20261019": {
+    "passed": 450,
+    "seconds": 260.05,
+    "workers": 3,
+    "exit_code": 0,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/store-current-full-final.log",
+    "scope": "Frozen full tests/test_store.py after current fixture/rejection/repair conversions. Not a whole repository suite. Runtime storage unchanged by subsequent main merge."
+  },
+  "main_reconciliation_b859e78ce": {
+    "merge_commit": "b859e78ce",
+    "preserved_main_commits": [
+      "ab77d8cb9",
+      "aa18a5985",
+      "00afce57f"
+    ],
+    "conflicts": "Append-only docs/agent-claims.md; preserved both branches. Runtime native trajectory merge was automatic.",
+    "changed_runtime": "Native McpToolCall2line normalization; storage/migration files unchanged.",
+    "focused_test": {
+      "passed": 10,
+      "seconds": 7.61,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/native-increment-final.log"
+    }
+  },
+  "production_readonly_release_preflight_20261019_092123": {
+    "observed_at": "2026-10-19T09:21:23.501907+00:00",
+    "source_store": "2026-10-13.5",
+    "source_email": 51,
+    "target_store": "2026-10-14.1",
+    "target_email": 52,
+    "source_versions": 231,
+    "read_only": true,
+    "publish_called": false,
+    "seconds": 6.794
   }
 }
