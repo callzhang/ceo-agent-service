@@ -18586,7 +18586,7 @@
     },
     "scope": "same12000actualstoredrows,samecompleteActionsCHECK/gencolDDL,noindicesortriggers,transactionrolledback; notfullmigrationtiming"
   },
-  "latest_evidence_status": "Owned-copy source audit, capacity and inverse evidence unchanged. Historical delivery fixture group90pass and bootstrap2pass; new broader Python regression running. Frontend build passed; Email search test review still open. No push/deploy; overall release not accepted.",
+  "latest_evidence_status": "Full frontend734passed2skip plus rootbuildpassed. Closed focused historical groups recorded separately; remaining broad Python diagnostic running, outstanding feedback/taskdelivery/router/worker/postfixcallers/Workbench failures under triage. No push/deploy.",
   "raw_copy_batch_real_pair": {
     "scope": "actualexistingpairedpublicationwithsource116,currentTasks_kind+vectors;Actionsstillobject;nativevariablelimitrawcopybatching",
     "candidate": "/tmp/redesign-native-batch-pair-ceykva9s/target.sqlite3",
@@ -33880,10 +33880,14 @@
     }
   },
   "final_regression_after_delivery_fixture_closure": {
-    "status": "running",
+    "status": "terminal_failed",
     "session": 32167,
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-after-delivery-fixtures.log",
-    "scope": "Parallel broader Python regression, excluding two previously passed unchanged large backfill cases; verbose node IDs; maxfail6."
+    "scope": "Parallel broader Python regression, excluding two previously passed unchanged large backfill cases; verbose node IDs; maxfail6.",
+    "passed": 115,
+    "failed": 8,
+    "skipped": 87,
+    "seconds": 1494.19
   },
   "final_workbench_real_browser": {
     "status": "passed",
@@ -33891,5 +33895,139 @@
     "seconds": 106.23,
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-browser.log",
     "scope": "Real Chrome browser, isolated synthetic WorkbenchStore, non-executing executor; no real external dispatch."
+  },
+  "historical_error_fixture_closure": {
+    "scope": "Module-scoped historical TEXT Actions adapter, test assertions/runtime unchanged; root reviewed diff and Ruff.",
+    "reported_by": "final_input_release_preflight",
+    "session": 46856,
+    "passed": 13,
+    "seconds": 655.94,
+    "log": "Tool output only; no logfile configured."
+  },
+  "email_search_url_sync_repair": {
+    "commit": "541fb1d83",
+    "cause": "Own debounced URL transition could overwrite a newer local input before query synchronization effect committed.",
+    "regression": "Batched change to 合, advance300ms, change to 合同 before effect commit: input previously reset to合.",
+    "fix": "Skip matching own query commit; preserve external query/history synchronization.",
+    "root_focused": {
+      "passed": 3,
+      "skipped_by_selection": 64,
+      "seconds": 10.7,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-email-search-root-verification.log"
+    },
+    "agent_focused": {
+      "passed": 107,
+      "scope": "EmailPage and ScheduledTasksPage"
+    },
+    "full_frontend": {
+      "passed": 718,
+      "failed": 16,
+      "skipped": 2,
+      "failure_kind": "Test timeouts observed during concurrent heavy Python testing; causality not independently established.",
+      "status": "not_accepted"
+    },
+    "build": "agent reported passed; runtime unchanged after build, later additions test-only"
+  },
+  "remaining_python_regression": {
+    "status": "running",
+    "session": 27508,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-remaining.log",
+    "workers": 4,
+    "scope": "Exclude already verified historical business/error/delivery group and in-progress Email history fixture file; exclude two unchanged large backfill cases previously passed. No maxfail; collect remaining gaps once. Existing stopped-scheduling earlier run still draining at most two workers."
+  },
+  "final_frontend_single_worker": {
+    "status": "passed",
+    "files": 46,
+    "passed": 734,
+    "skipped": 2,
+    "seconds": 433.57,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-frontend-single-worker.log",
+    "timeout_threshold_changed": false,
+    "root_build": {
+      "status": "passed",
+      "vite_seconds": 2.99,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-frontend-build-root.log"
+    }
+  },
+  "postfix_historical_fixture_closure": {
+    "passed": 110,
+    "seconds": 63.7,
+    "reported_by": "final_input_release_preflight",
+    "scope": "Two TEXT historical modules, original index/constraint assertions unchanged, root reviewed patch."
+  },
+  "followup_historical_fixture_closure": {
+    "passed": 5,
+    "seconds": 112.03,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-followup-green.log"
+  },
+  "generic_historical_fixture_closure": {
+    "passed": 68,
+    "seconds": 44.54,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-generic-actions-green.log",
+    "scope": "Historical six-family storage + two publication DML cases; final constructor cases unpatched."
+  },
+  "email_history_historical_fixture_closure": {
+    "passed": 7,
+    "seconds": 489.25,
+    "reported_by": "exact_imap_batch_read_inventory",
+    "scope": "Frozen capsule source guards and indexorder exact; real current parent endpoints; final max-row test still actual compact writer; root reviewed."
+  },
+  "receipt_historical_current_fixture_closure": {
+    "passed": 22,
+    "seconds": 163.3,
+    "reported_by": "final_input_release_preflight",
+    "scope": "Current Tasks8 fixture writes and explicit historical Store15 adapter; no assertion changes."
+  },
+  "reply_release_historical_fixture_closure": {
+    "passed": 26,
+    "seconds": 27.44,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-reply-release-root.log",
+    "root_review": "Copied original writer mechanics, changed only TEXT/object physical representation; corrected draft native-table lookup and duplicate payload assignment. No format-detection fallback."
+  },
+  "cli_artifact_route_pause_fixture_closure": {
+    "passed": 12,
+    "seconds": 21.49,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-cli-probe-fixtures-green.log",
+    "cause": "Old mini Task8 source made missing quoted generated name appear as literal generation string; route pause table retired into State. Current fixture/projection now used."
+  },
+  "runtime_generation_settled_fixture_closure": {
+    "passed": 70,
+    "seconds": 192.37,
+    "files": [
+      "test_agent_turn_store.py",
+      "test_attempt_current_generation_failure.py",
+      "test_attention_settled_bound_task.py"
+    ],
+    "root_review": "Public session upsert, typed Task8 write preserving generation/processing guard, task_class metadata; business assertions unchanged."
+  },
+  "configs_current_action_fixture_closure": {
+    "passed": 75,
+    "seconds": 17.18,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-configs-green.log",
+    "red_log": "/tmp/db-redesign-final-guard.3LeMgv/final-configs-blockers-red.log",
+    "cause": "Explicit current blocker fixture created historical TEXT Actions but called compact writer. Build selected compact schema; unchanged UPDATE/DELETE assertions."
+  },
+  "runtime_router_fixture_closure": {
+    "passed": 62,
+    "seconds": 149.57,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-runtime-router-green.log"
+  },
+  "workbench_live_current_gap": {
+    "status": "failed",
+    "failed": 1,
+    "seconds": 26.33,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-live-root.log",
+    "assertion": "safe_wait_entered.wait(2)",
+    "boundary": "Runtime attempted native session and emitted first text event before cleanup stopped task; startup/event persistence latency still needs diagnosis. Timeout unchanged."
+  },
+  "production_readonly_refresh": {
+    "head": "78e8c4474c05fee31ed27541b238f30381c8ba33",
+    "dirty": false,
+    "unmerged_upstream_commits": [
+      "3cf2084c9",
+      "3e38979c3",
+      "78e8c4474"
+    ],
+    "note": "This redesign is not deployed. Original cold rollback evidence used 2246d5184; refresh against latest production code before release."
   }
 }
