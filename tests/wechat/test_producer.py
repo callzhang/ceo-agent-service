@@ -12,6 +12,7 @@ from app.agent_cron.commands import (
 from app.skill_features import FeatureRegistry
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 from app.wechat.producer import WechatReplyProducer, is_reply_candidate
+from app.wechat import producer as producer_module
 
 
 class FakeReader:
@@ -128,12 +129,79 @@ def test_scheduled_trigger_persists_consumer_prompt_and_skills(
 
 def test_direct_messages_coalesce_during_the_five_minute_settle_window(producer, reader, store):
     reader.messages = [direct_message("d1", text="hi"), direct_message("d2", text="hello")]
-    assert producer.run_once() == 2
+    assert producer.run_once() == 1
     tasks = store.list_reply_tasks(channel="wechat")
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "d2"
     assert tasks[0].trigger_text == "hello"
     assert tasks[0].available_at == "2026-07-17T11:05:02"
+
+
+def test_direct_chat_waits_for_observed_quiet_window_across_scans(
+    producer, reader, store, monkeypatch,
+):
+    class Clock(datetime):
+        current = datetime.fromisoformat("2026-07-17T11:04:11+00:00")
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current if tz is None else cls.current.astimezone(tz)
+
+    monkeypatch.setattr(producer_module, "datetime", Clock)
+    first = direct_message("d1", text="LinkedIn link").model_copy(
+        update={"sent_at": "2026-07-17T11:00:00+00:00"}
+    )
+    second = direct_message("d2", text="more context").model_copy(
+        update={"sent_at": "2026-07-17T11:04:32+00:00"}
+    )
+    reader.messages = [first]
+    assert producer.run_once() == 0
+    assert store.count_reply_tasks(channel="wechat") == 0
+
+    reader.messages.append(second)
+    Clock.current = datetime.fromisoformat("2026-07-17T11:09:10+00:00")
+    assert producer.run_once() == 0
+    assert store.count_reply_tasks(channel="wechat") == 0
+
+    Clock.current = datetime.fromisoformat("2026-07-17T11:10:30+00:00")
+    assert producer.run_once() == 1
+    [task] = store.list_reply_tasks(channel="wechat")
+    assert task.trigger_message_id == second.message_id
+    assert producer.run_once() == 0
+
+
+def test_empty_direct_text_does_not_trigger_a_reply(producer, reader, store):
+    reader.messages = [direct_message("d3", text="  ")]
+    assert producer.run_once() == 0
+    assert store.count_reply_tasks(channel="wechat") == 0
+
+
+def test_new_direct_burst_does_not_hold_an_earlier_settled_burst(
+    producer, reader, store, monkeypatch,
+):
+    class Clock(datetime):
+        current = datetime.fromisoformat("2026-07-17T11:09:00+00:00")
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current if tz is None else cls.current.astimezone(tz)
+
+    monkeypatch.setattr(producer_module, "datetime", Clock)
+    first = direct_message("d1", text="first topic").model_copy(
+        update={"sent_at": "2026-07-17T11:00:00+00:00"}
+    )
+    second = direct_message("d2", text="second topic").model_copy(
+        update={"sent_at": "2026-07-17T11:08:00+00:00"}
+    )
+    reader.messages = [first, second]
+
+    assert producer.run_once() == 1
+    assert [t.trigger_message_id for t in store.list_reply_tasks(channel="wechat")] == ["d1"]
+    assert store.get_wechat_reply_scope("acct-1", "direct", "u9").last_active_at == first.sent_at
+
+    Clock.current = datetime.fromisoformat("2026-07-17T11:14:00+00:00")
+    assert producer.run_once() == 1
+    assert [t.trigger_message_id for t in store.list_reply_tasks(channel="wechat")] == ["d2"]
 
 
 def test_disabled_wechat_auto_reply_does_not_create_wechat_tasks(
@@ -241,7 +309,7 @@ def test_first_activation_establishes_watermark_and_does_not_replay_history(
 
 @pytest.mark.parametrize("target_type", ["direct", "group"])
 def test_message_after_activation_is_processed_once_and_advances_watermark(
-    target_type, store, reader, account,
+    target_type, store, reader, account, monkeypatch,
 ):
     target_id = "u9" if target_type == "direct" else "g1"
     trigger_mode = (
@@ -266,6 +334,13 @@ def test_message_after_activation_is_processed_once_and_advances_watermark(
             "m1", text="@Derek new", mentioned_user_ids=["self-1"]
         ).model_copy(update={"sent_at": sent_at})
     reader.messages = [message]
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            settled = datetime.fromisoformat(sent_at) + timedelta(minutes=6)
+            return settled if tz is None else settled.astimezone(tz)
+
+    monkeypatch.setattr(producer_module, "datetime", Clock)
     producer = WechatReplyProducer(store, reader, account, self_user_id="self-1")
 
     assert producer.run_once() == 1
@@ -357,7 +432,7 @@ def test_backlog_larger_than_read_limit_is_processed_oldest_page_first(
         store, reader, account, self_user_id="self-1", read_limit=2,
     )
 
-    assert producer.run_once() == 2
+    assert producer.run_once() == 1
     assert producer.run_once() == 1
     tasks = store.list_reply_tasks(channel="wechat")
     assert [task.trigger_message_id for task in tasks] == ["d3"]

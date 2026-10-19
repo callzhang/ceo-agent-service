@@ -10124,7 +10124,7 @@ def test_deferred_orchestration_result_requeues_the_email_task():
         def get_agent_run(self, run_id):
             raise AssertionError("a deferred result must not require a final run")
 
-        def defer_reply_task(self, task_id, error, *, expected_execution_generation, available_at):
+        def defer_reply_task(self, task_id, error, *, expected_execution_generation, available_at, refund_attempt=False):
             captured.update(
                 task_id=task_id,
                 error=error,

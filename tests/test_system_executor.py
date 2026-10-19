@@ -36,6 +36,7 @@ class FakeStore:
         self.previous_candidate = None
         self.ledger = None
         self.verified_source = None
+        self.prior_action = None
 
     def current_reviewed_candidate(self, task_id, generation):
         self.events.append("load")
@@ -79,6 +80,17 @@ class FakeStore:
         elif self.attempts[index]["status"] == "dispatched":
             self.attempts[index]["status"] = "uncertain"
         return self.attempts[index]
+
+    def get_prior_candidate_action_attempt(self, action_key, execution_id):
+        if self.prior_action is not None:
+            self.events.append("prior_action")
+        return self.prior_action
+
+    def record_prior_candidate_action_reconciliation(self, execution_id, owner, index, action_key, status, result):
+        self.events.append(f"reconcile_prior:{status}")
+        self.prior_action["status"] = status
+        self.prior_action["result_json"] = json.dumps(result)
+        return self.prior_action
 
     def record_candidate_external_action(self, execution_id, owner, index, action_key, operation, target_identifiers, provider_result):
         self.events.append(f"receipt:{index}")
@@ -182,6 +194,33 @@ def test_uncertain_action_resumes_from_positive_reconciliation_without_redispatc
     assert result.outcome == "executed"
     assert handler.calls == []
     assert store.events.index("begin:0") < store.events.index("receipt:0")
+
+
+def test_failed_preparation_is_read_back_before_action_key_can_be_reused():
+    action = {"description": "Notice", "action_identity": "first",
+        "capability": "dingtalk-chat", "operation": "send_message",
+        "target": {"conversation_id": "cid"}, "payload": {"content": "Exact text"}}
+    store = FakeStore(_candidate(actions=[action]))
+    expected = __import__("app.system_executor", fromlist=["expected_external_action"]).expected_external_action(
+        store.candidate.proposal.actions[0], action_index=0,
+        business_object_key="object:1",
+    )["external_action_key"]
+    store.prior_action = {"status": "failed", "external_action_key": expected,
+        "created_at": "2026-10-19T19:00:00+00:00",
+        "result_json": json.dumps({"reason": "reviewed_message_preparation_mismatch"})}
+    handler = Handler()
+    handler.reconcile_result = ActionOutcome("confirmed_no_effect", {
+        "readback": {"completeWindowReadback": True, "exactMatchCount": 0},
+    })
+
+    result = SystemExecutor(store, {("dingtalk-chat", "send_message"): handler}, owner="worker").execute(
+        store.get_reply_task(1), 1, 2,
+    )
+
+    assert result.outcome == "executed"
+    assert store.events.index("prior_action") < store.events.index("reconcile_prior:confirmed_no_effect")
+    assert store.events.index("reconcile_prior:confirmed_no_effect") < store.events.index("begin:0")
+    assert handler.calls == ["first"]
 
 
 def test_reconciliation_only_requires_an_existing_uncertain_oa_return():
@@ -648,6 +687,68 @@ def test_native_dingtalk_handler_requires_exact_prepared_body_and_receipt():
     assert sender.calls[-1][1] is None
     assert sender.calls[-1][2]["user_id"] == "applicant-user"
     assert sender.calls[-1][2]["open_dingtalk_id"] is None
+
+
+def test_dingtalk_message_reconciliation_checks_provider_when_prepared_body_mismatches():
+    from datetime import UTC, datetime
+
+    from app.system_action_handlers import DingTalkMessageHandler
+
+    class Task:
+        id = 1
+        business_object_key = "object:1"
+        execution_generation = "gen-1"
+        conversation_id = "cid"
+        conversation_title = "Group"
+        single_chat = True
+
+    class Store:
+        def get_reply_task_for_execution(self, task_id, generation):
+            return Task()
+
+        def get_outbound_postfix(self, channel, delivery_key):
+            return None
+
+        def get_outbound_postfix_receipt(self, channel, delivery_key):
+            return None
+
+    class Dws:
+        def __init__(self):
+            self.reads = []
+
+        def reconcile_message_send(self, conversation, body, *, not_before):
+            self.reads.append((conversation.open_conversation_id, conversation.single_chat, body, not_before))
+            return {
+                "errorCode": "complete_readback_no_exact_match",
+                "readbackVerification": {
+                    "contractVersion": "dingtalk.complete-message-window.v1",
+                    "state": "not_found", "completeWindowReadback": True,
+                    "exactMatchCount": 0,
+                },
+            }
+
+        def verify_message_send_result(self, result):
+            return {"state": "failed", "reason": result["errorCode"],
+                    "readback_verification": result["readbackVerification"]}
+
+    from app.agent_contracts import ProposedAction
+
+    action = ProposedAction.model_validate({
+        "description": "Send", "action_identity": "first", "capability": "dingtalk-chat",
+        "operation": "send_message", "target": {"conversation_id": "cid"},
+        "payload": {"content": "Exact approved text"},
+    })
+    dws = Dws()
+    handler = DingTalkMessageHandler(Store(), dws)
+
+    outcome = handler.reconcile(action, action_key="key", candidate={
+        "task_id": 1, "proposal_revision": 0, "execution_generation": "gen-1",
+        "action_attempt": {"created_at": datetime(2026, 10, 19, tzinfo=UTC).isoformat(),
+                           "result_json": json.dumps({"reason": "reviewed_message_preparation_mismatch"})},
+    })
+
+    assert outcome.status == "confirmed_no_effect"
+    assert dws.reads == [("cid", True, "Exact approved text", datetime(2026, 10, 19, tzinfo=UTC))]
 
 
 def test_reply_reconciliation_recovers_only_exact_compacted_trigger_readback():

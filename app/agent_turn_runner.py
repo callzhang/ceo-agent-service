@@ -1152,7 +1152,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
                         json_schema=(
-                            claude_consumer_output_schema()
+                            claude_consumer_output_schema((invocation_facts or {}).get("consumer_purpose", "general"))
                             if run.role is AgentRole.CONSUMER else None
                         ),
                         policy=(

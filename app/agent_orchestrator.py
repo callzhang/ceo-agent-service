@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol
@@ -24,12 +25,18 @@ from app.external_retry import DEFAULT_MAX_RETRY_DELAY_SECONDS, retry_delay_seco
 from app.reviewed_candidates import rejected_content_changed
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
+from app.consumer_purpose import purpose_for_context
+from app.consumer_purpose_retry import (
+    PurposeRetryBudget, RetryBudgetExhausted, RETRY_REQUESTED, RETRY_EXHAUSTED,
+    utc_time, verified_access_request,
+)
+
 MAX_TURNS_PER_PROCESS = 32
 MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 MAX_CONSECUTIVE_FAILED_TURNS = MAX_ROLE_ATTEMPTS_PER_PROCESS * 3
 EXTERNAL_DEPENDENCY_WAIT_ERRORS = frozenset(
-    {"dependency_read_unavailable", "agent_context_refresh_failed"}
+    {"agent_context_refresh_failed", RETRY_REQUESTED}
 )
 MAX_EXECUTION_STAGES = 16
 
@@ -247,7 +254,9 @@ class AgentOrchestrator:
         consumer: ConsumerRunner,
         audit: AuditRunner,
         system_executor: CandidateExecutor | None = None,
+        now: Callable[[], datetime] | None = None,
     ):
+        self.now = now or (lambda: datetime.now(timezone.utc))
         self.store, self.consumer, self.audit, self.system_executor = (
             store,
             consumer,
@@ -318,6 +327,11 @@ class AgentOrchestrator:
                     return self._candidate_terminal(
                         state, status, executed.error, executed
                     )
+                elif (state.consumer_result.purpose_output or {}).get("action") == "request_access":
+                    next_state = self._purpose_retry_state(task, state, request_completed=True)
+                    if isinstance(next_state, OrchestrationResult):
+                        return next_state
+                    state = next_state
                 elif state.consumer_result.stage_index + 1 >= MAX_EXECUTION_STAGES:
                     return self._candidate_terminal(
                         state,
@@ -346,6 +360,25 @@ class AgentOrchestrator:
                 return self._retry_exhausted_result(
                     task, role=role, proposal_revision=state.proposal_revision
                 )
+            if isinstance(state, _NextConsumer):
+                budget = self._purpose_budget(task, purpose_for_context(context, task))
+                saved = budget.state()
+                if saved and not saved.get("closed"):
+                    current_time = self.now()
+                    try:
+                        budget._check(saved, current_time)
+                        delay = (utc_time(saved["next_at"]) - current_time).total_seconds()
+                        if delay > 0:
+                            return self._deferred_result(_Deferred(None, RETRY_REQUESTED,
+                                self._feedback_cycles(task), retry_after_seconds=delay))
+                        next_turn = self.store.next_agent_run_turn_attempt(
+                            task.id, task.execution_generation, role=AgentRole.CONSUMER,
+                            proposal_revision=state.proposal_revision,
+                        )
+                        budget.reserve(f"{task.id}:{task.execution_generation}:{state.proposal_revision}:{next_turn}", current_time)
+                    except RetryBudgetExhausted as exc:
+                        return OrchestrationResult("failed_terminal", 0, AgentRole.CONSUMER,
+                            str(exc), AgentError(code=RETRY_EXHAUSTED), self._feedback_cycles(task))
             attempts[key] = attempts.get(key, 0) + 1
             try:
                 fresh = refresh_context()
@@ -699,6 +732,8 @@ class AgentOrchestrator:
             and not current["selection_id"]
         ):
             return self._candidate_terminal(state, "needs_human", review_result.error)
+        if result.outcome is ConsumerOutcome.RETRY:
+            return self._purpose_retry_state(task, state)
         if result.outcome is ConsumerOutcome.NO_ACTION:
             uncertain_delivery = self._uncertain_message_delivery(parent)
             if uncertain_delivery is not None:
@@ -740,6 +775,8 @@ class AgentOrchestrator:
                 execution["result_json"]
             )
             if executed.outcome == "executed" and result.continue_after_execution:
+                if (result.purpose_output or {}).get("action") == "request_access":
+                    return self._purpose_retry_state(task, state, request_completed=True)
                 if result.stage_index + 1 >= MAX_EXECUTION_STAGES:
                     return self._candidate_terminal(
                         state,
@@ -764,6 +801,41 @@ class AgentOrchestrator:
             return self._candidate_terminal(state, status, executed.error, executed)
         return state
 
+    def _purpose_budget(self, task, purpose):
+        return PurposeRetryBudget(self.store,
+            task.business_object_key or f"reply-task:{task.id}", purpose)
+
+    def _purpose_retry_state(self, task, state, *, request_completed=False):
+        if request_completed and state.consumer_result.stage_index + 1 >= MAX_EXECUTION_STAGES:
+            return self._candidate_terminal(state, "failed_terminal", AgentError(code="execution_stage_limit_reached"))
+        output = state.consumer_result.purpose_output
+        purpose = output["purpose"]
+        refs = output["evidence_refs"]
+        if request_completed:
+            refs = [row["external_action_key"]
+                    for row in self.store.list_verified_candidate_actions(task.id)
+                    if row["candidate_id"] == state.candidate_id]
+        try:
+            receipt, requested_at = verified_access_request(self.store, task, refs)
+            wake = self._purpose_budget(task, purpose).schedule(
+                receipt, requested_at, str(state.review_id), self.now())
+        except RetryBudgetExhausted as exc:
+            return replace(self._candidate_terminal(state, "failed_terminal",
+                AgentError(code=RETRY_EXHAUSTED, source_code=str(exc))), summary=str(exc))
+        except ValueError as exc:
+            return self._candidate_terminal(state, "failed_terminal", AgentError(code="consumer_retry_receipt_invalid", source_code=str(exc)))
+        delay = (wake - self.now()).total_seconds()
+        if delay > 0:
+            return self._deferred_result(_Deferred(None, RETRY_REQUESTED,
+                state.feedback_cycles, retry_after_seconds=delay))
+        if request_completed:
+            return _NextConsumer(state.consumer_run.proposal_revision + 1,
+                state.audit_run.id, None, stage_index=state.consumer_result.stage_index + 1,
+                predecessor_review_id=state.review_id)
+        return _NextConsumer(state.consumer_run.proposal_revision + 1,
+            state.audit_run.id, None, stage_index=state.consumer_result.stage_index,
+            predecessor_review_id=state.consumer_result.predecessor_review_id)
+
     def _with_persisted_evidence(self, task, context, state):
         receipts = {receipt.receipt_id: receipt for receipt in context.prior_receipts}
         for row in self.store.list_verified_candidate_actions(task.id):
@@ -776,6 +848,9 @@ class AgentOrchestrator:
                 completed=True,
             )
         changes = context.business_state_changes
+        budget = self._purpose_budget(task, purpose_for_context(context, task)).state()
+        if budget:
+            changes = changes + ({"purpose_retry_budget": budget},)
         parent_id = state.parent_run_id
         review = self.store.get_candidate_review_for_audit_run(parent_id) if parent_id else None
         execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
@@ -984,8 +1059,11 @@ class AgentOrchestrator:
             max_delay_seconds=DEFAULT_MAX_RETRY_DELAY_SECONDS,
         )
 
-    @staticmethod
-    def _candidate_terminal(state, status, error, execution=None):
+    def _candidate_terminal(self, state, status, error, execution=None):
+        output = state.consumer_result.purpose_output
+        if output and output["action"] != "request_access" and status in {"executed", "no_action", "skipped"}:
+            task = self.store.get_reply_task(state.consumer_run.reply_task_id)
+            self._purpose_budget(task, output["purpose"]).close()
         return OrchestrationResult(
             status,
             state.audit_run.id,

@@ -28,7 +28,7 @@ def is_reply_candidate(
     if message.direction != "inbound" or message.kind != "text":
         return False
     if message.conversation_type == "direct":
-        return scope.trigger_mode == "every_inbound_text"
+        return scope.trigger_mode == "every_inbound_text" and bool(message.text.strip())
     return (
         scope.trigger_mode == "mention_current_account"
         and message.mentions_user(self_user_id)
@@ -75,10 +75,18 @@ class WechatReplyProducer:
             )
             ordered = sorted(messages, key=lambda m: m.sent_at)
             new_messages = [m for m in ordered if m.sent_at >= scope.last_active_at]
+            candidates = [
+                m for m in new_messages
+                if is_reply_candidate(m, scope, self_user_id=self.self_user_id)
+            ]
+            if scope.target_type == "direct":
+                candidates, waiting_for_quiet = self._settled_direct_candidates(
+                    candidates, now=datetime.now().astimezone()
+                )
+            else:
+                waiting_for_quiet = False
             # Oldest-first; the frontier moves only after the complete batch.
-            for message in new_messages:
-                if not is_reply_candidate(message, scope, self_user_id=self.self_user_id):
-                    continue
+            for message in candidates:
                 available_at = ""
                 trigger_message_json = self._trigger_message_json(message)
                 if message.conversation_type == "direct":
@@ -111,12 +119,45 @@ class WechatReplyProducer:
                     available_at=available_at,
                 ):
                     enqueued += 1
-            if new_messages:
+            if waiting_for_quiet and candidates:
+                watermark = candidates[-1].sent_at
+            elif waiting_for_quiet:
+                watermark = ""
+            elif new_messages:
+                watermark = new_messages[-1].sent_at
+            else:
+                watermark = ""
+            if watermark:
                 self.store.advance_wechat_scope_watermark(
                     scope.account_id, scope.target_type, scope.target_id,
-                    new_messages[-1].sent_at,
+                    watermark,
                 )
         return enqueued
+
+    @staticmethod
+    def _settled_direct_candidates(
+        candidates: list[WechatMessage], *, now: datetime,
+    ) -> tuple[list[WechatMessage], bool]:
+        """Emit one trigger per conversation burst after five observed quiet minutes."""
+        settled: list[WechatMessage] = []
+        last: WechatMessage | None = None
+        window_seconds = DIRECT_REPLY_SETTLE_WINDOW.total_seconds()
+        for message in candidates:
+            if (
+                last is not None
+                and datetime.fromisoformat(message.sent_at).timestamp()
+                - datetime.fromisoformat(last.sent_at).timestamp()
+                > window_seconds
+            ):
+                if datetime.fromisoformat(last.sent_at).timestamp() + window_seconds > now.timestamp():
+                    return settled, True
+                settled.append(last)
+            last = message
+        if last is not None:
+            if datetime.fromisoformat(last.sent_at).timestamp() + window_seconds > now.timestamp():
+                return settled, True
+            settled.append(last)
+        return settled, False
 
     @staticmethod
     def _trigger_message_json(message: WechatMessage) -> str:

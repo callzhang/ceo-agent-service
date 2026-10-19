@@ -509,6 +509,8 @@ def test_independent_project_unknown_clue_is_recorded_without_fake_project_or_ta
 
 
 def test_independent_project_prompt_and_skill_have_one_current_contract():
+    from app.task_agent import WORK_TRACKING_SKILL_PATH
+
     prompt = build_task_agent_prompt(
         _independent_project_work_item(), "bounded context"
     )
@@ -519,18 +521,40 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "related_task_ids" not in prompt
     assert "Project can have zero Tasks" in prompt
     assert "suggestion" in prompt
+    prompt = " ".join((prompt + WORK_TRACKING_SKILL_PATH.read_text()).split())
     assert "suggested_owner_name" in prompt
-    prompt = " ".join(prompt.split())
     assert "For project_assessments, use exactly one selector" in prompt
     assert "Never include a skip decision in decision_indexes" in prompt
     assert "status and business_relevance may only change through update_fields" in prompt
     assert "They remain top-level fields" in prompt
     assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
     assert "When promoting a suggestion, omit the suggestion field" in prompt
-    from app.task_agent import WORK_TRACKING_SKILL_PATH
-
-    # Shared business guidance is owned by the complete current Skill.
+    # Shared business guidance remains in the selected Skill.
     assert " ".join(WORK_TRACKING_SKILL_PATH.read_text().split()) in prompt
+
+
+def test_task_prompt_names_exact_current_skill_for_on_demand_read(monkeypatch, tmp_path):
+    import hashlib
+    import app.task_agent as task_agent
+
+    skill_path = tmp_path / "ceo-work-tracking" / "SKILL.md"
+    skill_path.parent.mkdir()
+    skill_path.write_text("# Current work protocol\nUNIQUE_SKILL_BODY_SENTINEL\n")
+    monkeypatch.setattr(task_agent, "WORK_TRACKING_SKILL_PATH", skill_path)
+
+    prompt = task_agent.build_task_agent_prompt(_work_item(), "bounded context")
+
+    assert str(skill_path) in prompt
+    assert "read" in prompt.lower()
+    assert "UNIQUE_SKILL_BODY_SENTINEL" not in prompt
+    first_digest = hashlib.sha256(skill_path.read_bytes()).hexdigest()
+    assert first_digest in prompt
+
+    skill_path.write_text("# Current work protocol\nUPDATED_SKILL_BODY_SENTINEL\n")
+    updated_prompt = task_agent.build_task_agent_prompt(_work_item(), "bounded context")
+    assert hashlib.sha256(skill_path.read_bytes()).hexdigest() in updated_prompt
+    assert first_digest not in updated_prompt
+    assert "UPDATED_SKILL_BODY_SENTINEL" not in updated_prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):
@@ -1283,12 +1307,13 @@ class FakeCodex:
         self.calls = []
 
     def decide(
-        self, *, prompt, session_id=None, workload_key=None, session_scope_id=None,
+        self, *, prompt, friday_prompt=None, session_id=None, workload_key=None, session_scope_id=None,
         continuation_prompt=None, continuation_session_id=None,
     ):
         self.prompts.append(prompt)
         self.calls.append(
             {
+                "friday_prompt": friday_prompt,
                 "workload_key": workload_key,
                 "session_scope_id": session_scope_id,
                 "continuation_prompt": continuation_prompt,
@@ -1928,10 +1953,10 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert input_row[0] == "skipped"
     assert run_count == 1
     assert "不可用：memory connector token is expired" in codex.prompts[0]
-    assert (
-        "Memory is discovery/background, not observed source proof"
-        in codex.prompts[0]
-    )
+    from app.task_agent import WORK_TRACKING_SKILL_PATH
+
+    assert str(WORK_TRACKING_SKILL_PATH) in codex.prompts[0]
+    assert "Memory is discovery/background, not observed source proof" in WORK_TRACKING_SKILL_PATH.read_text()
 
 
 def test_task_agent_codex_runner_uses_standard_runtime_factory():
@@ -1959,13 +1984,93 @@ def test_task_agent_codex_runner_uses_standard_runtime_factory():
     assert isinstance(routed.calls[0]["command_factory"], CodexCommandFactory)
 
 
+def test_task_agent_keeps_full_skill_for_remote_text_runtime():
+    from app.agent_runtime_contracts import RuntimeKind
+    from app.task_agent import WORK_TRACKING_SKILL_PATH
+
+    routed = FakeRoutedTaskExecution(json.dumps({
+        "project_decisions": [], "project_assessments": [],
+        "update_summary": "No durable item.",
+        "task_decisions": [{"action": "skip", "transition": "none",
+                            "skip_reason": "No source-grounded task."}],
+    }))
+    short_prompt = build_task_agent_prompt(_work_item(), "bounded context")
+    remote_prompt = build_task_agent_prompt(
+        _work_item(), "bounded context", inline_skill=True
+    )
+
+    TaskAgentCodexRunner(routed_execution=routed).decide(
+        prompt=short_prompt, friday_prompt=remote_prompt, workload_key="1"
+    )
+
+    call = routed.calls[0]
+    assert WORK_TRACKING_SKILL_PATH.read_text().strip() not in call["prompt"]
+    assert call["route_prompt_overrides"][RuntimeKind.FRIDAY_RUNTIME] == remote_prompt
+    assert WORK_TRACKING_SKILL_PATH.read_text().strip() in remote_prompt
+    assert "SHA-256:" not in remote_prompt
+    assert "bounded context" in remote_prompt
+
+
+def test_task_runner_passes_matching_short_and_remote_skill_prompts():
+    from app.task_agent import WORK_TRACKING_SKILL_PATH
+
+    codex = FakeCodex({
+        "project_decisions": [], "project_assessments": [],
+        "update_summary": "No durable item.",
+        "task_decisions": [{"action": "skip", "transition": "none",
+                            "skip_reason": "No source-grounded task."}],
+    })
+    TaskAgentRunner(codex).decide(
+        _work_item(), "bounded context", run_id=1,
+        session_scope_id="task-agent:work-tracking:v1",
+    )
+
+    short_prompt = codex.prompts[0]
+    remote_prompt = codex.calls[0]["friday_prompt"]
+    assert remote_prompt is not None
+    assert WORK_TRACKING_SKILL_PATH.read_text().strip() not in short_prompt
+    assert WORK_TRACKING_SKILL_PATH.read_text().strip() in remote_prompt
+    for marker in ("Current execution time:", "Current Work Item JSON:", "bounded context"):
+        assert short_prompt.split(marker, 1)[1].split("\n", 1)[0] == remote_prompt.split(marker, 1)[1].split("\n", 1)[0]
+
+
+def test_friday_task_prompt_preserves_scheduled_scope_containing_skill_marker():
+    payload = _work_item().model_dump(mode="json")
+    payload["scheduled_consumer"] = {
+        "schema": "scheduled_consumer.v1",
+        "scheduled_task_id": 7,
+        "scheduled_task_run_id": 11,
+        "skill_names": ["ceo-work-tracking"],
+        "skill_protocol": "# Historical snapshot excluded from current Task prompt",
+        "prompt": (
+            "SCHEDULED_SCOPE_BEFORE_MARKER\n"
+            "CEO Work Tracking Skill (complete current protocol): quoted text\n"
+            "SCHEDULED_SCOPE_AFTER_MARKER"
+        ),
+    }
+    item = WorkItem.model_validate(payload)
+
+    short_prompt = build_task_agent_prompt(item, "bounded context")
+    full_prompt = build_task_agent_prompt(item, "bounded context", inline_skill=True)
+
+    for prompt in (short_prompt, full_prompt):
+        assert "SCHEDULED_SCOPE_BEFORE_MARKER" in prompt
+        assert "SCHEDULED_SCOPE_AFTER_MARKER" in prompt
+        assert "bounded context" in prompt
+    assert "SHA-256:" in short_prompt
+    assert "SHA-256:" not in full_prompt
+
+
 def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeypatch):
+    skill_path = Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
     monkeypatch.setattr(
         "app.task_agent.WORK_TRACKING_SKILL_PATH",
-        Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md",
+        skill_path,
     )
-    prompt = " ".join(build_task_agent_prompt(_work_item(), "无候选项目").split())
-    assert "# CEO Work Tracking" in prompt
+    submitted = build_task_agent_prompt(_work_item(), "无候选项目")
+    assert "# CEO Work Tracking" not in submitted
+    assert str(skill_path) in submitted
+    prompt = " ".join((submitted + skill_path.read_text()).split())
     from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
     assert json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()) == task_agent_output_schema()
     assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
@@ -1998,13 +2103,13 @@ def _current_task_guidance(surface, monkeypatch):
         task_agent, "WORK_TRACKING_SKILL_PATH",
         Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md",
     )
-    text = (
-        build_task_agent_prompt(_work_item(), "候选上下文为空。")
-        if surface == "prompt"
-        else (
-            Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
-        ).read_text()
-    )
+    skill = task_agent.WORK_TRACKING_SKILL_PATH.read_text()
+    if surface == "prompt":
+        submitted = build_task_agent_prompt(_work_item(), "候选上下文为空。")
+        assert str(task_agent.WORK_TRACKING_SKILL_PATH) in submitted
+        text = submitted + skill
+    else:
+        text = skill
     return " ".join(text.split())
 
 
@@ -2282,7 +2387,8 @@ def test_fresh_task_agent_loads_current_project_contract_from_selected_skill_roo
     fresh_agent = runpy.run_path(str(root / "app/task_agent.py"))
     skill = fresh_agent["WORK_TRACKING_SKILL_PATH"].read_text()
     prompt = fresh_agent["build_task_agent_prompt"](_work_item(), "无候选项目")
-    assert skill in prompt
+    assert skill not in prompt
+    assert str(fresh_agent["WORK_TRACKING_SKILL_PATH"]) in prompt
     assert fresh_agent["WORK_TRACKING_SKILL_PATH"] == (
         root / "ci/shared-skills/ceo-work-tracking/SKILL.md"
     )
@@ -2322,7 +2428,8 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
     work_json, _ = json.JSONDecoder().raw_decode(prompt.split("Current Work Item JSON:\n", 1)[1])
     assert type(work_json["scheduled_consumer"]["scheduled_task_run_id"]) is int
     assert work_json["scheduled_consumer"]["scheduled_task_run_id"] == 11
-    assert skill_path.read_text().strip() in prompt
+    assert str(skill_path) in prompt
+    assert skill_path.read_text().strip() not in prompt
     assert "native CLI manages compaction" in prompt
     assert (
         "current independent Project/Task/assessment envelope controls output" in prompt
@@ -7221,18 +7328,22 @@ def test_acceptance_with_wrong_conversation_or_reply_reference_is_not_applied(
 
 def test_task_agent_prompt_reads_minutes_owners_from_the_conversation_around_each_item():
     """DingTalk leaves an action item's executor empty; the scanner attaches the conversation, and the prompt says how to use it."""
+    from app.task_agent import WORK_TRACKING_SKILL_PATH
+
     prompt = build_task_agent_prompt(_work_item(), "context")
 
-    assert "transcript_excerpts" in prompt
-    assert "speaker label included" in prompt
-    assert '"excerpt"' in prompt  # the owner_evidence key the service reads
+    assert str(WORK_TRACKING_SKILL_PATH) in prompt
+    available_guidance = prompt + WORK_TRACKING_SKILL_PATH.read_text()
+    assert "transcript_excerpts" in available_guidance
+    assert "speaker label included" in available_guidance
+    assert '"excerpt"' in available_guidance  # the owner_evidence key the service reads
     assert (
-        "Generic speaker placeholders" in prompt
+        "Generic speaker placeholders" in available_guidance
     )  # DingTalk's placeholder for an unnamed speaker is not an owner
     # Derek 2026-09-28: a narrow transcript window can miss the sentence that names the owner;
     # the meeting's own DingTalk summary is a second source and must be checked too.
-    assert "meeting_summary" in prompt
-    assert "A team, department, participant, speaker" in prompt
+    assert "meeting_summary" in available_guidance
+    assert "A team, department, participant, speaker" in available_guidance
 
     incomplete_item = _work_item().model_copy(
         update={
