@@ -18586,7 +18586,7 @@
     },
     "scope": "same12000actualstoredrows,samecompleteActionsCHECK/gencolDDL,noindicesortriggers,transactionrolledback; notfullmigrationtiming"
   },
-  "latest_evidence_status": "Guard-fixed final 10-core+ledger actual paired forward, same-input capacity and real Codex execute/audit passed (2 native calls,1 fake send,0 real sends). Current-data inverse with new task6130645274975311 is live. Upstream integration overlap16paths incl Attention mismatch, full historical/model input lifecycle, product choices, final whole release review and production deployment remain open.",
+  "latest_evidence_status": "Final bounded history audit completed with unproved inputs preserved; owned copyVACUUM457007104B, 956 owner features/labels exact (152 reference-backed),100.618s. New upstream increment merged, focused181+corrected4pass. Broader Python regression still running with new failures; frontend dependencies installed and tests/build running. No push/deploy; overall release not accepted.",
   "raw_copy_batch_real_pair": {
     "scope": "actualexistingpairedpublicationwithsource116,currentTasks_kind+vectors;Actionsstillobject;nativevariablelimitrawcopybatching",
     "candidate": "/tmp/redesign-native-batch-pair-ceykva9s/target.sqlite3",
@@ -32508,6 +32508,1359 @@
     "final_real_constructors": true,
     "native_sqlite_full_comparison": true,
     "runtime_or_schema_changes": false,
+    "production_writes": false
+  },
+  "final_historical_source_supplement": {
+    "scope": "account1 previously unproved inputs only; reuse checked native absence for unchanged bytes; isolate each resolution failure and each exact folder/generation group",
+    "candidates": 3387,
+    "prior_examined_ids_excluded": 873,
+    "examined": 3387,
+    "body_retired": 3107,
+    "model_retired": 2457,
+    "native_proof_reused_for_unchanged_inputs": true,
+    "failure_reasons": {
+      "email source Message-ID is missing or ambiguous": 84,
+      "email source UID is unavailable": 4,
+      "TimeoutError": 112
+    },
+    "status": "complete",
+    "provider_mutations": 0,
+    "real_sends": 0,
+    "production_writes": false,
+    "seconds": 3008.415,
+    "all_other_physical_fields_and_schema_unchanged": true,
+    "all_new_retirements_exact_hash": true,
+    "quick_check": "ok",
+    "fk_baseline_only": true,
+    "reference_components_including_existing_pilot": {
+      "body": 7424,
+      "model": 5501
+    },
+    "pilot_already_in_component_totals": {
+      "body": 27,
+      "model": 24
+    }
+  },
+  "final_source_capacity": {
+    "scope": "owned final schema native CLI copy after historical input retirement; not production, not structural baseline",
+    "tables": {
+      "actions": {
+        "table_bytes": 135262208,
+        "index_bytes": 29585408,
+        "unused_within_pages": 22070439,
+        "indexes": [
+          {
+            "name": "idx_actions_email_public_key",
+            "bytes": 4583424
+          },
+          {
+            "name": "idx_actions_postfix_identity",
+            "bytes": 2908160
+          },
+          {
+            "name": "idx_actions_public_id",
+            "bytes": 2658304
+          },
+          {
+            "name": "idx_actions_reply_current_trigger",
+            "bytes": 2117632
+          },
+          {
+            "name": "idx_actions_reply_trigger_history",
+            "bytes": 1880064
+          },
+          {
+            "name": "idx_actions_email_email_actions_1",
+            "bytes": 1318912
+          },
+          {
+            "name": "idx_actions_email_email_action_attempts_0",
+            "bytes": 1159168
+          },
+          {
+            "name": "idx_actions_email_email_actions_0",
+            "bytes": 1118208
+          },
+          {
+            "name": "idx_actions_email_email_actions_2",
+            "bytes": 1101824
+          },
+          {
+            "name": "idx_actions_email_email_action_plans_1",
+            "bytes": 978944
+          },
+          {
+            "name": "idx_actions_email_email_actions_3",
+            "bytes": 978944
+          },
+          {
+            "name": "idx_actions_errors_reply_task_settlement",
+            "bytes": 929792
+          },
+          {
+            "name": "idx_actions_business_signal_public_id",
+            "bytes": 872448
+          },
+          {
+            "name": "idx_actions_reply_trigger_message",
+            "bytes": 839680
+          },
+          {
+            "name": "idx_actions_reply_status",
+            "bytes": 770048
+          },
+          {
+            "name": "idx_actions_reply_created",
+            "bytes": 692224
+          },
+          {
+            "name": "idx_actions_reply_run_recovery",
+            "bytes": 397312
+          },
+          {
+            "name": "idx_actions_reply_public_order",
+            "bytes": 380928
+          },
+          {
+            "name": "idx_actions_sent_history",
+            "bytes": 233472
+          },
+          {
+            "name": "idx_actions_business_task_signals_dedupe_key",
+            "bytes": 225280
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_effects_0",
+            "bytes": 196608
+          },
+          {
+            "name": "idx_actions_email_email_action_plans_0",
+            "bytes": 184320
+          },
+          {
+            "name": "idx_actions_sync_work_updates_0",
+            "bytes": 176128
+          },
+          {
+            "name": "idx_actions_email_email_feedback_requests_0",
+            "bytes": 135168
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_claims_0",
+            "bytes": 135168
+          },
+          {
+            "name": "idx_actions_sync_follow_up_drafts_4",
+            "bytes": 126976
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_receipts_0",
+            "bytes": 110592
+          },
+          {
+            "name": "idx_actions_sync_follow_up_drafts_3",
+            "bytes": 110592
+          },
+          {
+            "name": "idx_actions_sync_follow_up_drafts_5",
+            "bytes": 110592
+          },
+          {
+            "name": "idx_actions_email_email_feedback_requests_1",
+            "bytes": 102400
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_claims_1",
+            "bytes": 102400
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_receipts_1",
+            "bytes": 102400
+          },
+          {
+            "name": "idx_actions_sync_follow_up_drafts_0",
+            "bytes": 98304
+          },
+          {
+            "name": "idx_actions_sync_follow_up_drafts_1",
+            "bytes": 98304
+          },
+          {
+            "name": "idx_actions_email_email_feedback_requests_2",
+            "bytes": 86016
+          },
+          {
+            "name": "idx_actions_sync_follow_up_drafts_2",
+            "bytes": 81920
+          },
+          {
+            "name": "idx_actions_sync_work_updates_1",
+            "bytes": 81920
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_steps_0",
+            "bytes": 77824
+          },
+          {
+            "name": "idx_actions_reply_oa_history",
+            "bytes": 77824
+          },
+          {
+            "name": "idx_actions_global_business",
+            "bytes": 73728
+          },
+          {
+            "name": "idx_actions_skill_load_pid",
+            "bytes": 69632
+          },
+          {
+            "name": "idx_actions_skill_load_config",
+            "bytes": 65536
+          },
+          {
+            "name": "idx_actions_intent_operation",
+            "bytes": 57344
+          },
+          {
+            "name": "idx_actions_text_public_key",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_actions_business_task_evidence_lookup",
+            "bytes": 40960
+          },
+          {
+            "name": "idx_actions_sync_business_task_events_0",
+            "bytes": 40960
+          },
+          {
+            "name": "idx_actions_execution_receipt_operation",
+            "bytes": 36864
+          },
+          {
+            "name": "idx_actions_skill_export_revision",
+            "bytes": 36864
+          },
+          {
+            "name": "idx_actions_sent_external_key",
+            "bytes": 32768
+          },
+          {
+            "name": "idx_actions_business_task_evidence_key",
+            "bytes": 28672
+          },
+          {
+            "name": "idx_actions_candidates_task",
+            "bytes": 28672
+          },
+          {
+            "name": "idx_actions_email_history_created",
+            "bytes": 28672
+          },
+          {
+            "name": "idx_actions_external_key",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_actions_history_public_id",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_actions_sync_work_todo_dingtalk_links_0",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_actions_sync_work_todo_dingtalk_links_2",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_actions_intent_authorization",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_actions_memory_public_order",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_actions_signal_inline_source",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_actions_td_task_due",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_actions_td_task_lease",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_actions_td_task_memory_unique",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_actions_audit_run",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_consumer_run",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_memory_status",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_memory_unique",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_reviews_candidate",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_signal_shared",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_sync_task_todo_sync_outbox_1",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_td_meeting_due",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_td_meeting_lease",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_actions_memory_attempt",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_actions_observer_identity",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_actions_signal_inline_key",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_actions_sync_task_todo_sync_outbox_0",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_actions_sync_work_todo_dingtalk_links_1",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_actions_td_meeting_memory_unique",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_actions_attempt_sequence",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_attention_events_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_attention_proposal_tasks_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_attention_proposal_tasks_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_attention_tasks_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_attention_tasks_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_project_evidence_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_task_anchor_links_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_task_anchor_links_task_id",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_task_date_evidence_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_task_relations_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_task_relations_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_task_relations_reverse",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_work_cluster_tasks_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_business_work_cluster_tasks_lookup",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_direct_retry_requests_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_reply_dispatch_claims_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_reply_dispatch_claims_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_reply_dispatch_claims_2",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_reply_receipts_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_reply_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_cancellations_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_email_unsubscribe_continuations_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_operation_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_email_operation_processing",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_errors_unresolved",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_execution_candidate",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_execution_receipt_run",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_decision_feedback_round",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_decision_item",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_event_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_event_token",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_transition_batch_round",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_transition_feedback",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_fb_transition_round",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_intent_run",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_operation_public_id",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_selection_candidate",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_dingtalk_links_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_dingtalk_links_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_follow_up_send_attempts_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_follow_up_send_attempts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_follow_ups_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_follow_ups_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_todo_sync_outbox_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_business_task_todo_sync_outbox_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_follow_up_send_attempts_0",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_follow_up_send_attempts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_sync_follow_up_send_attempts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_td_wechat_actual_unique",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_td_wechat_status",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_actions_td_wechat_task_generation",
+            "bytes": 4096
+          }
+        ],
+        "rows": 99229
+      },
+      "business": {
+        "table_bytes": 10498048,
+        "index_bytes": 1212416,
+        "unused_within_pages": 1427616,
+        "indexes": [
+          {
+            "name": "idx_business_work_todo_follow_up",
+            "bytes": 131072
+          },
+          {
+            "name": "idx_business_typed_anchor",
+            "bytes": 126976
+          },
+          {
+            "name": "idx_business_typed_id",
+            "bytes": 122880
+          },
+          {
+            "name": "idx_business_public_id",
+            "bytes": 106496
+          },
+          {
+            "name": "idx_business_work_todo_project_status",
+            "bytes": 57344
+          },
+          {
+            "name": "idx_business_work_todo_public_id",
+            "bytes": 53248
+          },
+          {
+            "name": "idx_business_anchor_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_attention_item_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_project_candidate_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_project_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_task_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_wechat_memory_candidate_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_work_cluster_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_work_project_public_id",
+            "bytes": 49152
+          },
+          {
+            "name": "idx_business_task_stage",
+            "bytes": 40960
+          },
+          {
+            "name": "idx_business_work_project_status_priority",
+            "bytes": 40960
+          },
+          {
+            "name": "idx_business_task_relevance",
+            "bytes": 36864
+          },
+          {
+            "name": "idx_business_task_updated",
+            "bytes": 32768
+          },
+          {
+            "name": "idx_business_anchor_identity",
+            "bytes": 12288
+          },
+          {
+            "name": "idx_business_anchor_public_type",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_attention_list",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_attention_stable_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_bugfix_feedback_event_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_bugfix_status",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_context_project",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_project_anchor",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_project_candidate_cluster",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_todo_evidence_dedupe_key",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_todo_evidence_project",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_todo_evidence_status",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_todo_evidence_todo",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_todo_evidence_work_input",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_business_wechat_candidate_identity",
+            "bytes": 4096
+          }
+        ],
+        "rows": 5135
+      },
+      "configs": {
+        "table_bytes": 7442432,
+        "index_bytes": 1347584,
+        "unused_within_pages": 537839,
+        "indexes": [
+          {
+            "name": "idx_configs_schedule_snapshot",
+            "bytes": 380928
+          },
+          {
+            "name": "idx_configs_typed_public",
+            "bytes": 229376
+          },
+          {
+            "name": "idx_configs_legacy",
+            "bytes": 221184
+          },
+          {
+            "name": "idx_configs_public",
+            "bytes": 212992
+          },
+          {
+            "name": "idx_configs_binding_config_order",
+            "bytes": 61440
+          },
+          {
+            "name": "idx_configs_binding_order",
+            "bytes": 61440
+          },
+          {
+            "name": "idx_configs_binding_skill",
+            "bytes": 61440
+          },
+          {
+            "name": "idx_configs_schedule_snapshot_public_id",
+            "bytes": 53248
+          },
+          {
+            "name": "idx_configs_revision_identity",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_configs_snapshot_digest",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_configs_binding_active_provider",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_configs_binding_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_configs_revision_number",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_configs_schedule_ref_position",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_configs_skill_name",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_configs_wechat_scope",
+            "bytes": 4096
+          }
+        ],
+        "rows": 6028
+      },
+      "email_schema_migrations": {
+        "table_bytes": 4096,
+        "index_bytes": 0,
+        "unused_within_pages": 2827,
+        "indexes": [],
+        "rows": 39
+      },
+      "emails": {
+        "table_bytes": 47312896,
+        "index_bytes": 4034560,
+        "unused_within_pages": 11825743,
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_emails_3",
+            "bytes": 1110016
+          },
+          {
+            "name": "idx_emails_class_account_locator",
+            "bytes": 835584
+          },
+          {
+            "name": "idx_emails_class_account_status",
+            "bytes": 675840
+          },
+          {
+            "name": "idx_emails_class_status",
+            "bytes": 561152
+          },
+          {
+            "name": "idx_emails_message_account_locator",
+            "bytes": 483328
+          },
+          {
+            "name": "sqlite_autoindex_emails_1",
+            "bytes": 212992
+          },
+          {
+            "name": "sqlite_autoindex_emails_2",
+            "bytes": 155648
+          }
+        ],
+        "rows": 9403
+      },
+      "runs": {
+        "table_bytes": 85291008,
+        "index_bytes": 46084096,
+        "unused_within_pages": 3361715,
+        "indexes": [
+          {
+            "name": "idx_scheduled_task_runs_dispatch",
+            "bytes": 9183232
+          },
+          {
+            "name": "idx_scheduled_task_runs_claim",
+            "bytes": 8978432
+          },
+          {
+            "name": "idx_runs_public_id",
+            "bytes": 7778304
+          },
+          {
+            "name": "idx_scheduled_task_runs_event",
+            "bytes": 7589888
+          },
+          {
+            "name": "idx_scheduled_task_runs_scheduled_instant",
+            "bytes": 6602752
+          },
+          {
+            "name": "idx_scheduled_task_runs_latest",
+            "bytes": 2506752
+          },
+          {
+            "name": "idx_agent_runs_turn_identity",
+            "bytes": 921600
+          },
+          {
+            "name": "idx_runtime_attempt_identity",
+            "bytes": 864256
+          },
+          {
+            "name": "idx_agent_runs_status",
+            "bytes": 823296
+          },
+          {
+            "name": "idx_agent_runtime_attempts_run",
+            "bytes": 176128
+          },
+          {
+            "name": "idx_task_agent_runs_input",
+            "bytes": 155648
+          },
+          {
+            "name": "idx_runs11_sample_model_id",
+            "bytes": 122880
+          },
+          {
+            "name": "idx_meeting_alignment_runs_created",
+            "bytes": 86016
+          },
+          {
+            "name": "idx_meeting_alignment_runs_job",
+            "bytes": 45056
+          },
+          {
+            "name": "idx_runs11_metadata_session",
+            "bytes": 36864
+          },
+          {
+            "name": "idx_runs11_metadata_id",
+            "bytes": 32768
+          },
+          {
+            "name": "idx_runs11_metadata_source",
+            "bytes": 28672
+          },
+          {
+            "name": "idx_runs11_sample_id",
+            "bytes": 28672
+          },
+          {
+            "name": "idx_workbench_events_event_type",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_agent_run_state_events_run",
+            "bytes": 20480
+          },
+          {
+            "name": "idx_workbench_events_id_turn_id",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_workbench_events_sequence",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_workbench_events_turn_id_id",
+            "bytes": 16384
+          },
+          {
+            "name": "idx_meeting_alignment_runs_active_job",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_runs11_setup_id",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_runs11_setup_step_id",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_runtime_attempt_active_lease",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_runtime_attempt_active_route",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_scheduled_task_runs_reply_execution",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task_agent_runs_active_input",
+            "bytes": 4096
+          }
+        ],
+        "rows": 248599
+      },
+      "provenance": {
+        "table_bytes": 90112,
+        "index_bytes": 45056,
+        "unused_within_pages": 23079,
+        "indexes": [
+          {
+            "name": "idx_provenance_source",
+            "bytes": 28672
+          },
+          {
+            "name": "sqlite_autoindex_provenance_1",
+            "bytes": 16384
+          }
+        ],
+        "rows": 141
+      },
+      "provider_state": {
+        "table_bytes": 14368768,
+        "index_bytes": 11399168,
+        "unused_within_pages": 526635,
+        "indexes": [
+          {
+            "name": "idx_provider_state_observation_identity",
+            "bytes": 9134080
+          },
+          {
+            "name": "idx_provider_state_observation_folder",
+            "bytes": 2260992
+          },
+          {
+            "name": "idx_provider_state_generation_identity",
+            "bytes": 4096
+          }
+        ],
+        "rows": 72333
+      },
+      "schedules": {
+        "table_bytes": 16384,
+        "index_bytes": 8192,
+        "unused_within_pages": 14509,
+        "indexes": [
+          {
+            "name": "idx_schedules_enabled",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_schedules_migration_key",
+            "bytes": 4096
+          }
+        ],
+        "rows": 15
+      },
+      "state": {
+        "table_bytes": 6561792,
+        "index_bytes": 2396160,
+        "unused_within_pages": 305127,
+        "indexes": [
+          {
+            "name": "idx_state_source_rowid",
+            "bytes": 778240
+          },
+          {
+            "name": "idx_state_dispatcher_terminal",
+            "bytes": 561152
+          },
+          {
+            "name": "idx_state_seen_messages_pk",
+            "bytes": 262144
+          },
+          {
+            "name": "idx_state_dispatcher_expiry",
+            "bytes": 258048
+          },
+          {
+            "name": "idx_state_dispatcher_claim_leases_pk",
+            "bytes": 249856
+          },
+          {
+            "name": "idx_state_conversation_runtime_sessions_pk",
+            "bytes": 176128
+          },
+          {
+            "name": "idx_state_conversations_pk",
+            "bytes": 32768
+          },
+          {
+            "name": "idx_state_service_state_pk",
+            "bytes": 28672
+          },
+          {
+            "name": "idx_state_channel_login_reservations_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_codex_session_locks_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_daily_scan_state_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_email_historical_traversals_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_email_scan_cursors_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_org_cache_metadata_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_org_name",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_org_open_id",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_org_user_profiles_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_runtime_route_pauses_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_setup_wizard_steps_pk",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_state_wechat_read_state_pk",
+            "bytes": 4096
+          }
+        ],
+        "rows": 23596
+      },
+      "tasks": {
+        "table_bytes": 42471424,
+        "index_bytes": 9424896,
+        "unused_within_pages": 3991244,
+        "indexes": [
+          {
+            "name": "idx_task20_published_6",
+            "bytes": 1249280
+          },
+          {
+            "name": "idx_task20_batch_endpoint",
+            "bytes": 1175552
+          },
+          {
+            "name": "idx_task20_numeric_identity",
+            "bytes": 1110016
+          },
+          {
+            "name": "idx_task20_published_4",
+            "bytes": 860160
+          },
+          {
+            "name": "idx_task20_published_3",
+            "bytes": 778240
+          },
+          {
+            "name": "idx_task20_native_0",
+            "bytes": 774144
+          },
+          {
+            "name": "idx_task20_published_0",
+            "bytes": 733184
+          },
+          {
+            "name": "idx_task20_endpoint_feedback_iteration_decisions",
+            "bytes": 331776
+          },
+          {
+            "name": "idx_task20_endpoint_feedback_processing_items",
+            "bytes": 331776
+          },
+          {
+            "name": "idx_task20_endpoint_feedback_processing_rounds",
+            "bytes": 331776
+          },
+          {
+            "name": "idx_task20_published_8",
+            "bytes": 290816
+          },
+          {
+            "name": "idx_task20_published_2",
+            "bytes": 196608
+          },
+          {
+            "name": "idx_task20_native_4",
+            "bytes": 172032
+          },
+          {
+            "name": "idx_task20_published_7",
+            "bytes": 163840
+          },
+          {
+            "name": "idx_task20_native_1",
+            "bytes": 151552
+          },
+          {
+            "name": "idx_task20_native_3",
+            "bytes": 139264
+          },
+          {
+            "name": "idx_task20_native_2",
+            "bytes": 135168
+          },
+          {
+            "name": "idx_task20_published_1",
+            "bytes": 131072
+          },
+          {
+            "name": "idx_task20_published_5",
+            "bytes": 131072
+          },
+          {
+            "name": "idx_task20_published_9",
+            "bytes": 53248
+          },
+          {
+            "name": "idx_task20_published_10",
+            "bytes": 40960
+          },
+          {
+            "name": "idx_task20_published_13",
+            "bytes": 24576
+          },
+          {
+            "name": "idx_task20_active_turn",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_10",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_11",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_12",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_13",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_14",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_15",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_16",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_17",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_18",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_19",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_20",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_21",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_22",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_23",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_5",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_6",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_7",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_8",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_native_9",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_11",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_12",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_14",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_15",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_16",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_17",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_18",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_published_19",
+            "bytes": 4096
+          },
+          {
+            "name": "idx_task20_text_identity",
+            "bytes": 4096
+          }
+        ],
+        "rows": 36251
+      },
+      "sqlite_sequence": {
+        "table_bytes": 4096,
+        "index_bytes": 0,
+        "unused_within_pages": 2371,
+        "indexes": [],
+        "rows": 51
+      }
+    },
+    "schema_bytes": 2146304,
+    "freelist_bytes": 0,
+    "total_bytes": 457007104,
+    "quick_check": "ok",
+    "real_sends": 0,
+    "production_writes": false,
+    "retained_email_originals": {
+      "body_rows": 1853,
+      "body_bytes": 7053406,
+      "model_rows": 3902,
+      "model_bytes": 8480437
+    },
+    "email_reference_components": {
+      "body": 7424,
+      "model": 5501
+    }
+  },
+  "final_owner_cold_rebuild": {
+    "passed": true,
+    "owner_examples": 956,
+    "retired_owner_inputs_before_read": 152,
+    "all_features_and_labels_exact_to_same_source_backup": true,
+    "seconds": 100.618,
+    "scope": "Cold rebuild of all956 current owner examples after bounded historical source audit;152 references+804 retained inputs. Not an all-inputs-retired benchmark.",
+    "real_sends": 0,
+    "production_writes": false,
+    "expected_original_rows_and_distinct_identities": [
+      956,
+      956
+    ]
+  },
+  "final_upstream_increment": {
+    "merged_commit": "6dc9067f6",
+    "origin_main": "fa119306b",
+    "schema_or_retention_change": false,
+    "focused_passed": 181,
+    "focused_old_column_fixture_failed": 1,
+    "corrected_oa_and_email_index_check": {
+      "passed": 4,
+      "seconds": 6.97
+    },
+    "production_checkout_readback": "2246d5184de62a4f629967fc0effbdb2b6504d10"
+  },
+  "final_regression_after_fixture_closure": {
+    "status": "running_failures_observed",
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-after-fixtures.log",
+    "session": 35413,
+    "pid": 54829,
+    "temp_root": "/private/tmp/final-redesign-regression.vEWKT0",
+    "command": "nice -n10 python -m pytest -q -n6 --maxschedchunk=2 --maxfail=6 -k excluding_two_already_passed_large_history_cases",
     "production_writes": false
   }
 }
