@@ -1735,3 +1735,31 @@ violations, Reply/Work Item/Meeting queues had no processing item, Attention
 contained four existing records, and History returned successfully. Scheduled
 work resumed after the deploy. This verifies installed code and service health;
 no natural production Claude Consumer result has yet been observed.
+
+## Meeting prompt schema duplication: fixed-case no-go (2026-10-19)
+
+The 12 complete Codex OAuth Meeting trajectories saved on 2026-10-19 each
+submitted the same 7,188-character `MeetingAlignmentDecision` schema once in
+the service prompt. The Meeting runner also supplied its schema through native
+`--output-schema`. Their main service-submitted messages ranged from 113,784
+to 342,350 characters. This is repeated representation overhead, but a shorter
+prompt alone does not establish an equivalent Meeting decision.
+
+The finite acceptance gate required the same Pydantic-valid result, action,
+audience, exact business target and assigned-owner mentions, both time zones
+in a personal meeting, and no sensitive personnel hint in a business group.
+Using the configured `gpt-5.6-luna` model, native output schema, no business
+MCP and the existing anonymous Meeting fixtures, I compared the complete
+prompt with one that removed only the in-prompt schema. The three candidate
+prompts were each 7,188 characters shorter. Both arms passed the personal
+time-zone and mixed-sensitive cases, with no tool calls. Both arms returned
+Pydantic-valid business-alignment decisions and selected the same group, but
+only the full-prompt arm passed the fixture's assigned-owner mention check.
+
+The candidate therefore fails the predeclared business gate and is **no-go**.
+One paired sample does not prove that schema removal caused the mention change;
+model variance is still possible. It does prove that native structural validity
+alone cannot authorize this deletion under the current fixed-case standard.
+No runtime, prompt, Skill, route, delivery code or setting was changed or
+deployed. A later candidate needs to resolve exact-owner behavior on fixed
+repeats before reconsidering this reduction.
