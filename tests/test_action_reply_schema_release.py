@@ -1,6 +1,7 @@
 """Store18/19 paired publication of Attempt and Memory actions."""
 
 from contextlib import closing
+import json
 import sqlite3
 
 import pytest
@@ -20,6 +21,115 @@ from tests.test_reply_attempt_action_migration import _database
 
 ORIGINAL = ("2026-10-13.4", " original\x00timestamp ")
 TARGET = "2026-10-13.5"
+
+
+def _insert_text_reply_action(db, kind, values, *, ignore=False):
+    """Explicit historical TEXT representation; original writer mechanics retained."""
+    from app import action_storage as actions
+
+    variant = actions._reply_variant_for(db)
+    if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & actions._ATTEMPT_HISTORICAL:
+        raise ValueError("historical attempt fields absent from fresh variant")
+    now = db.execute("select current_timestamp").fetchone()[0]
+    if kind == "reply_attempts":
+        data = actions._ATTEMPT_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in actions._REPLY_FIELDS[kind]}
+        data["audit_tool_events_json"] = actions._audit_markers(data["audit_tool_events_json"])
+        if variant == "fresh_memory_fk":
+            data = {field: value for field, value in data.items() if field not in actions._ATTEMPT_HISTORICAL}
+    else:
+        data = actions._MEMORY_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in actions._REPLY_FIELDS[kind]}
+    attempt_id = data.pop("attempt_id", None) if kind == "memory_write_events" and variant == "fresh_memory_fk" else None
+    payload_json = actions._native_payload(data)
+    if actions._reply_auto_id(values):
+        maximum = actions._autoincrement_high_water(db, kind)
+        if maximum == 2**63 - 1:
+            if db.in_transaction:
+                db.execute("rollback")
+            actions._raise_autoincrement_full()
+        public_id = maximum + 1
+    else:
+        public_id = actions._native_integer_primary_key(values["id"])
+    if ignore and db.execute("select 1 from actions where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone():
+        # Source INSERT OR IGNORE resolves its public-key uniqueness before FK
+        # evaluation, but still advances AUTOINCREMENT on an explicit ID.
+        # A legal public-key UPDATE can put this ID above the saved sequence.
+        name = actions.REPLY_SEQUENCE_NAMES[kind]
+        db.execute("insert into main.sqlite_sequence(name,seq) select ?,0 where not exists(select 1 from main.sqlite_sequence where name=?)", (name, name))
+        db.execute("update main.sqlite_sequence set seq=max(seq,?) where name=?", (public_id, name))
+        return actions.ActionWriteResult(None, 0)
+    parent_ref = None
+    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+        required = (attempt_id, *(data.get(field) for field in ("event_type", "status", "attempts",
+                                                          "last_error", "memory_episode_id", "created_at", "updated_at")))
+        if all(not actions._source_bound_null(value) for value in required):
+            parent_ref = actions._reply_parent(db, attempt_id)
+    columns = ["record_type", "legacy_key", "payload_json"]
+    arguments = [kind, str(public_id), payload_json]
+    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+        columns.append("memory_attempt_ref")
+        arguments.append(parent_ref)
+    cursor = db.execute(
+        f"insert {'or ignore ' if ignore else ''}into actions({','.join(columns)}) "
+        f"values({','.join('?' for _ in arguments)}) returning cast(legacy_key as integer)", arguments,
+    )
+    row = cursor.fetchone()
+    cursor.fetchall()
+    return actions.ActionWriteResult(row[0] if row else None, cursor.rowcount)
+
+
+def _update_text_reply_action(db, kind, public_id, values, *, where_sql="", parameters=()):
+    """Explicit historical TEXT representation; original writer mechanics retained."""
+    from app import action_storage as actions
+
+    variant = actions._reply_variant_for(db)
+    if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & actions._ATTEMPT_HISTORICAL:
+        raise ValueError("historical attempt fields absent from fresh variant")
+    if not values or kind == "memory_write_events" and set(values) == {"payload_json"}:
+        raise ValueError("action update requires fields")
+    predicate = actions._identity_predicate(kind)
+    identity_arguments = list(actions._identity_arguments(kind, public_id))
+    if where_sql:
+        projection = actions.reply_action_projection(kind, variant)
+        predicate += f" and cast(legacy_key as integer) in (select id from ({projection}) where id=? and ({where_sql}))"
+        identity_arguments.extend((public_id, *parameters))
+    # Bind through a write statement: SQLite opens its deferred transaction,
+    # binds every SET/WHERE input, then takes the writer lock when it executes.
+    # The zero-row write keeps that lock through the scan and actual UPDATE.
+    bound = (*values.values(), *identity_arguments)
+    db.execute("update main.sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
+    if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
+        return db.execute("update actions set legacy_key=legacy_key where 0")
+    assignments, arguments, paths = [], [], []
+    for field, value in values.items():
+        if field == "id":
+            column = "legacy_key"
+            value = str(actions._native_integer_primary_key(value, update=True))
+        elif kind == "memory_write_events" and field == "payload_json":
+            continue
+        elif kind == "memory_write_events" and field == "attempt_id" and variant == "fresh_memory_fk":
+            column, value = "memory_attempt_ref", actions._reply_parent(db, value)
+        elif kind == "reply_attempts" and field == "audit_tool_events_json":
+            paths.extend(('$.audit_tool_events_json', json.dumps(actions._audit_markers(value))))
+            continue
+        else:
+            paths.extend((("$." + field), json.dumps(actions._encoded_native_sqlite_value(value), ensure_ascii=False,
+                                                   allow_nan=False, separators=(",", ":"))))
+            continue
+        assignments.append(column + "=?")
+        arguments.append(value)
+    if paths:
+        assignments.append("payload_json=json_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
+        arguments.extend(paths)
+    if not assignments:
+        raise ValueError("action update requires fields")
+    arguments.extend(identity_arguments)
+    return db.execute(f"update actions set {','.join(assignments)} where {predicate}", arguments)
+
+
+@pytest.fixture(autouse=True)
+def _historical_reply_text_writers(monkeypatch):
+    monkeypatch.setattr(storage, "_insert_reply_action", _insert_text_reply_action)
+    monkeypatch.setattr(storage, "_update_reply_action", _update_text_reply_action)
 
 
 @pytest.mark.parametrize("variant", ("actual", "fresh_candidate17"))
