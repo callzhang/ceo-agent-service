@@ -33884,5 +33884,12 @@
     "session": 32167,
     "log": "/tmp/db-redesign-final-guard.3LeMgv/final-regression-after-delivery-fixtures.log",
     "scope": "Parallel broader Python regression, excluding two previously passed unchanged large backfill cases; verbose node IDs; maxfail6."
+  },
+  "final_workbench_real_browser": {
+    "status": "passed",
+    "passed": 2,
+    "seconds": 106.23,
+    "log": "/tmp/db-redesign-final-guard.3LeMgv/final-workbench-browser.log",
+    "scope": "Real Chrome browser, isolated synthetic WorkbenchStore, non-executing executor; no real external dispatch."
   }
 }
