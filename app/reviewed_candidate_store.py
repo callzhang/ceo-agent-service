@@ -8,6 +8,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from app.run_storage import AGENT_RUN_SQL
+from app.model_action_schema import candidate_option, selected_branch
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
@@ -40,6 +41,15 @@ def _json(value: Any) -> str:
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
+
+
+def _derived_selection(db, row, *, selection_key="selection_id"):
+    """Preserve the response key; derive its value from the exact candidate FK."""
+    result = _row(row)
+    if result is not None:
+        result["branch_json"] = (_json(selected_branch(db, result[selection_key]))
+                                 if result[selection_key] is not None else None)
+    return result
 
 
 def _utc() -> datetime:
@@ -220,7 +230,7 @@ class ReviewedCandidateStoreMixin:
     def current_reviewed_candidate(self, task_id: int, generation: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(f"""select c.*, r.id as review_id, r.audit_run_id, r.decision, s.id as selection_id,
-                s.option_key, s.branch_json, s.status as selection_status
+                s.option_key, s.status as selection_status
                 from ({REVIEW_CANDIDATE_SQL}) c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
                 join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
                 left join ({CANDIDATE_SELECTION_SQL}) s on s.candidate_id=c.id
@@ -228,27 +238,33 @@ class ReviewedCandidateStoreMixin:
                 and c.invalidated_at='' and r.decision='approve'
                 and c.id=(select max(id) from ({REVIEW_CANDIDATE_SQL}) where task_id=? and execution_generation=?)
                 order by r.id desc limit 1""", (task_id, generation, generation, task_id, generation)).fetchone()
-            return _row(row)
+            return _derived_selection(db, row)
+
+    def get_candidate_selection(self, candidate_id: int) -> dict[str, Any] | None:
+        """Read the selection of this immutable candidate, including old stages."""
+        with self._connect() as db:
+            row = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?",
+                             (candidate_id,)).fetchone()
+            return _derived_selection(db, row, selection_key="id")
 
     def select_candidate_option(self, candidate_id: int, review_id: int, option_key: str) -> dict[str, Any]:
         with self._immediate_write_transaction() as db:
             candidate, _ = self._review_context(db, candidate_id, review_id)
             if db.execute(f"select max(id) from ({REVIEW_CANDIDATE_SQL}) where task_id=? and execution_generation=?", (candidate["task_id"], candidate["execution_generation"])).fetchone()[0] != candidate_id:
                 raise ValueError("stale candidate")
-            options = json.loads(candidate["candidate_json"]).get("decision_options", [])
-            branch = next((option for option in options if option.get("key") == option_key), None)
-            if branch is None or (branch.get("plan") is None and branch.get("terminal_outcome") != "skipped"):
+            branch = candidate_option(candidate["candidate_json"], option_key)
+            if branch.get("plan") is None and branch.get("terminal_outcome") != "skipped":
                 raise ValueError("unbound option")
             prior = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone()
             if prior is not None:
                 if prior["review_id"] != review_id or prior["option_key"] != option_key:
                     raise ValueError("selection_conflict")
-                return dict(prior)
+                return _derived_selection(db, prior, selection_key="id")
             insert_action(db, "candidate_selections", {
                 "candidate_id": candidate_id, "review_id": review_id,
-                "option_key": option_key, "branch_json": _json(branch),
-            })
-            return dict(db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone())
+                "option_key": option_key,
+            }, selection_references=True)
+            return _derived_selection(db, db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone(), selection_key="id")
 
     def record_candidate_supplement(self, candidate_id: int, instruction: str) -> dict[str, Any]:
         if not instruction.strip():
@@ -310,10 +326,10 @@ class ReviewedCandidateStoreMixin:
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone()
             if data.get("outcome") == "needs_human" and selection is None:
                 return None
-            selected_branch = json.loads(selection["branch_json"]) if selection else None
+            branch = selected_branch(db, selection["id"]) if selection else None
             is_stop = data.get("outcome") == "no_action" or (
-                isinstance(selected_branch, dict)
-                and selected_branch.get("terminal_outcome") == "skipped"
+                isinstance(branch, dict)
+                and branch.get("terminal_outcome") == "skipped"
             )
             if not is_stop:
                 self._check_historical_runtime_refusal(db, candidate["business_object_key"])
@@ -383,7 +399,7 @@ class ReviewedCandidateStoreMixin:
             candidate = db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where id=?", (execution["candidate_id"],)).fetchone()
             data = json.loads(candidate["candidate_json"])
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (execution["selection_id"],)).fetchone() if execution["selection_id"] else None
-            branch = json.loads(selection["branch_json"]) if selection else None
+            branch = selected_branch(db, selection["id"]) if selection else None
             plan = branch.get("plan") if branch else data.get("proposal")
             if status == "skipped" and not (
                 (branch is not None and branch.get("terminal_outcome") == "skipped")
@@ -413,7 +429,7 @@ class ReviewedCandidateStoreMixin:
             candidate = self._candidate_context(db, execution["candidate_id"])
             data = json.loads(candidate["candidate_json"])
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (execution["selection_id"],)).fetchone() if execution["selection_id"] else None
-            plan = json.loads(selection["branch_json"]).get("plan") if selection else data.get("proposal")
+            plan = selected_branch(db, selection["id"]).get("plan") if selection else data.get("proposal")
             actions = plan.get("actions", []) if isinstance(plan, dict) else []
             if action_index >= len(actions):
                 raise ValueError("action index outside approved plan")
@@ -507,7 +523,7 @@ class ReviewedCandidateStoreMixin:
                 f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
                 (prior_execution["selection_id"],),
             ).fetchone() if prior_execution["selection_id"] else None
-            prior_plan = (json.loads(prior_selection["branch_json"]).get("plan")
+            prior_plan = (selected_branch(db, prior_selection["id"]).get("plan")
                           if prior_selection else prior_data.get("proposal"))
             prior_actions = prior_plan.get("actions", []) if isinstance(prior_plan, dict) else []
             if prior["action_index"] >= len(prior_actions):
@@ -518,7 +534,7 @@ class ReviewedCandidateStoreMixin:
                 f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
                 (execution["selection_id"],),
             ).fetchone() if execution["selection_id"] else None
-            plan = json.loads(selection["branch_json"]).get("plan") if selection else data.get("proposal")
+            plan = selected_branch(db, selection["id"]).get("plan") if selection else data.get("proposal")
             actions = plan.get("actions", []) if isinstance(plan, dict) else []
             if action_index >= len(actions):
                 raise ValueError("action index outside approved plan")
@@ -592,7 +608,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("action dispatch identity mismatch")
             data = json.loads(candidate["candidate_json"])
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (execution["selection_id"],)).fetchone() if execution["selection_id"] else None
-            plan = json.loads(selection["branch_json"]).get("plan") if selection else data.get("proposal")
+            plan = selected_branch(db, selection["id"]).get("plan") if selection else data.get("proposal")
             action = plan["actions"][action_index]
             if action.get("operation") != operation or action.get("target") != target_identifiers:
                 raise ValueError("approved action mismatch")
@@ -632,8 +648,8 @@ class ReviewedCandidateStoreMixin:
     def get_verified_action_source(self, external_action_key: str) -> dict[str, Any] | None:
         """Resolve a successful ledger key to the branch actually dispatched."""
         with self._connect() as db:
-            return _row(db.execute(f"""select c.id as candidate_id, c.candidate_json,
-                    a.action_index, s.branch_json, e.selection_id
+            return _derived_selection(db, db.execute(f"""select c.id as candidate_id, c.candidate_json,
+                    a.action_index, s.option_key, e.selection_id
                 from ({EXTERNAL_ACTION_RESULT_SQL}) r
                 join ({REVIEW_CANDIDATE_SQL}) c on c.consumer_run_id=r.first_agent_run_id
                 join ({CANDIDATE_EXECUTION_SQL}) e on e.candidate_id=c.id
@@ -673,7 +689,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("task does not exist")
             rows = db.execute(f"""select * from (
                 select 'selection' as kind, s.id as source_record_id,
-                s.created_at, s.option_key, s.branch_json, '' as instruction,
+                s.created_at, s.option_key, '' as instruction,
                 c.id as candidate_id, c.execution_generation, c.stage_index,
                 c.candidate_digest, c.candidate_json, c.invalidated_at,
                 c.invalidation_reason, r.id as review_id, r.audit_run_id
@@ -685,7 +701,7 @@ class ReviewedCandidateStoreMixin:
                 where t.business_object_key=?
                 union all
                 select 'supplement' as kind, supplement.id as source_record_id,
-                supplement.created_at, '' as option_key, '' as branch_json,
+                supplement.created_at, '' as option_key,
                 supplement.instruction,
                 c.id as candidate_id, c.execution_generation, c.stage_index,
                 c.candidate_digest, c.candidate_json, c.invalidated_at,
@@ -717,7 +733,7 @@ class ReviewedCandidateStoreMixin:
                 "needs_human_reason": question.get("needs_human_reason", ""),
                 "decision_basis": question.get("decision_basis"),
                 "option_key": row["option_key"] or None,
-                "selected_branch": json.loads(row["branch_json"]) if row["branch_json"] else None,
+                "selected_branch": candidate_option(row["candidate_json"], row["option_key"]) if row["kind"] == "selection" else None,
                 "instruction": row["instruction"] or None,
                 "invalidated_at": row["invalidated_at"],
                 "invalidation_reason": row["invalidation_reason"],

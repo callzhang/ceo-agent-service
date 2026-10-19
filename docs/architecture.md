@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-14.1`／Email52 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.1`／Email52 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -24,6 +24,21 @@ Reply、Email、Sync、delivery、Errors、Feedback、Business evidence、Email 
 及 Skill receipt 调用方均使用这一结构；原事务、CAS、claim/lease、约束顺序和
 幂等回执合同保留。Errors 的 ID/时间读取和 Attention 的未解决项使用其既有局部索引。
 Email Attention 先在 Tasks 的现有类型／状态索引上筛选 failed 的公开 ROWID，再读取这些任务的内容；不通过通用完整投影扫描成功任务的输入。
+
+Store `2026-10-19.1` 的 `candidate_selections` 保留物理 ID、公开 legacy key、
+candidate／review FK，以及 `option_key`、status、created_at 三个 payload 槽位；
+`branch_json` 槽位和生成列退休。执行、回执核对、Worker OA 历史及 Console 详情
+均从选择所绑定的不可变 candidate 和唯一 option_key 读取分支。旧 API 中的
+`branch_json` 仅为请求内派生值；后来的候选不替换原选择或历史回执的分支。
+
+既有 `prepare_database_schema_release` 只将准确 Store `2026-10-14.1`／Email52
+发布为 `2026-10-19.1`／Email52；两种已有 Reply FK 声明均保留。
+普通构造器只接受新声明或正常空库，不自动升级旧 pair。发布事务一起转换选择
+布局和 Store marker，再由既有冷启动入口验证；Email DDL 及所有 Email marker
+不变。失败回滚按当时的候选和选择重建旧分支，包括发布后新增的选择，并恢复
+原 Store marker 的值、时间及 SQLite 类型。公开／物理身份、水位及原 FK finding
+保留。inverse 元数据只保存声明 variant、marker 和 FK finding，不保存业务行副本；
+历史 action_email 发布的来源、目标和默认工厂仍保持原声明。
 
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
@@ -1520,7 +1535,7 @@ Audit 当前任务除完整候选外，还收到服务从同一候选 JSON 确�
 
 规则问题也先经过 Audit。Audit 检查：适用规则是否确有缺口、规则/代码/Skill/记忆/会话/读取是否可自行解决、当前事实是否应由来源人补充、是否把技术失败或当前实例决定伪装成规则选择、上下文和理由是否充分、2–4 个规则选项是否互斥可行且确有差异、每个执行分支是否完整并有依据。仅当前版本 approve 后才进入 `needs_human` 并通知；审核通过不等于业务 done。
 
-选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化的规则分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。反馈可以同时标记一次性应用与 Skill 更新；只有明确获选的 Skill 更新才进入受控 Skill 发布流程。
+选择接口提交 candidate_id、review_id 和 option_key，服务从该不可变候选中读取唯一匹配的选项；选择记录只保留引用和选项键，不复制分支正文。首次选择独立记录并将原 execution_generation 唤醒；既有 generation、review、失效及最新候选校验通过后，相同选择幂等，冲突选择拒绝。较新候选不会改变历史选择绑定，但旧候选的再次选择仍按原校验拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。反馈可以同时标记一次性应用与 Skill 更新；只有明确获选的 Skill 更新才进入受控 Skill 发布流程。
 
 旧长期规则问题仅通过显式单项命令 `python -m app.rule_question_retirement --attempt-id <id> --authority <confirmed-contract>` 退役，默认只读预览；应用另加 `--apply --verified-backup <path>`。资格限定为当前业务对象、当前执行代、最新 Attempt 所绑定的已完成 Consumer、done 任务、完整无技术错误的 task_class 问题，且该任务没有新候选；不批量排除旧结果。应用只原子写入 resolved_at、resolution 与包含原结果 SHA256/任务/运行/执行代/契约依据的退役回执，保留原 send_status、模型结果、任务状态和外部回执。详情、History 和队列将该已退役问题显示为 skipped 并解释依据，重试 POST 拒绝。它不是人工选择、Audit 通过或业务完成；未退役和当前无效问题继续由原质量检查报错。预览及应用均不初始化或迁移数据库。
 
@@ -2806,9 +2821,9 @@ acceptance remain separate gates.
 
 ### Coupled Email29 and Configs candidate defaults (unpublished)
 
-This local candidate supersedes the E1/E2 staging boundaries above: default
-AutoReplyStore now selects Store `2026-10-14.1` (program Store20), and EmailStore
-selects Email52 with the single 34-kind actions schema, including two typed Skill
+The earlier Store14.1/Email52 candidate superseded the E1/E2 staging boundaries
+above: AutoReplyStore selected Store `2026-10-14.1` (program Store20), and EmailStore
+selected Email52 with the single 34-kind actions schema, including two typed Skill
 receipt kinds. This is local candidate
 selection, not publication or a claim that the whole service can be deployed.
 

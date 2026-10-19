@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
 from app.email_store import EmailStore
-from app.final_action_schema import final_action_schema_is_current
+from app.selection_schema_release import publication_action_schema_is_current
 
 
 @pytest.mark.parametrize("first", ("store", "email"))
@@ -17,7 +17,7 @@ def test_blank_and_cold_constructors_select_final_graph(tmp_path, first):
     store = AutoReplyStore(path)
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        assert final_action_schema_is_current(db)
+        assert publication_action_schema_is_current(db, STORE_SCHEMA_VERSION)
         assert {row[0] for row in db.execute("select name from sqlite_schema where type='table' and name not glob 'sqlite_*'")} == {
             "tasks", "runs", "actions", "business", "emails", "provenance", "configs",
             "provider_state", "schedules", "state", "email_schema_migrations"}
@@ -31,7 +31,7 @@ def test_blank_and_cold_constructors_select_final_graph(tmp_path, first):
     EmailStore(path)
     assert cold.get_business_task_signal(signal_id) == store.get_business_task_signal(signal_id)
     with sqlite3.connect(path) as db:
-        assert final_action_schema_is_current(db)
+        assert publication_action_schema_is_current(db, STORE_SCHEMA_VERSION)
         assert db.execute("select count(*) from configs").fetchone()[0] == before
         assert db.execute("pragma foreign_key_check").fetchall() == []
 
@@ -50,7 +50,7 @@ def test_known_auxiliary_repair_keeps_final_facts(tmp_path):
     EmailStore(path)
     assert repaired.get_business_task_signal(signal_id) == fact
     with sqlite3.connect(path) as db:
-        assert final_action_schema_is_current(db)
+        assert publication_action_schema_is_current(db, STORE_SCHEMA_VERSION)
         assert db.execute("select 1 from sqlite_schema where name='trg_configs_skill_revision_update'").fetchone()
         assert not db.execute("select 1 from sqlite_schema where name='business_source_documents'").fetchone()
 

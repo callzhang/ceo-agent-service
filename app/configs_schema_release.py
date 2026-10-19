@@ -61,6 +61,7 @@ def _actions(
     inline_legacy_owner: bool = False,
     physical_provenance: bool = False,
     compact_payload: bool = False,
+    selection_references: bool = False,
 ) -> list[dict]:
     return action_storage._current_objects(
         include_reply=True, reply_variant=variant, include_email=True,
@@ -74,6 +75,7 @@ def _actions(
         include_email_history=include_email_history,
         inline_legacy_owner=inline_legacy_owner,
         physical_provenance=physical_provenance, compact_payload=compact_payload,
+        selection_references=selection_references,
     )
 
 
@@ -253,6 +255,7 @@ def configs_content_schema_is_current(
     inline_legacy_owner: bool = False,
     physical_provenance: bool = False,
     compact_payload: bool = False,
+    selection_references: bool = False,
 ) -> bool:
     """Read-only config/action predicate, independent of the Runs source profile."""
     if action_variant not in _ACTION_VARIANTS:
@@ -268,6 +271,7 @@ def configs_content_schema_is_current(
         include_email_history=include_email_history,
         inline_legacy_owner=inline_legacy_owner,
         physical_provenance=physical_provenance, compact_payload=compact_payload,
+        selection_references=selection_references,
     )
     if canonical_email:
         expected_actions = [({**obj, 'sql': obj['sql'].replace(
@@ -288,7 +292,8 @@ def configs_content_schema_is_current(
                 include_email_history=include_email_history,
                 canonical_email=canonical_email,
                 inline_legacy_owner=inline_legacy_owner,
-                physical_provenance=physical_provenance, compact_payload=compact_payload)
+                physical_provenance=physical_provenance, compact_payload=compact_payload,
+                selection_references=selection_references)
             and all(_source_declaration(db, kind)['sql'] is None
                     for kind in (*SOURCE_TABLES, _OBSERVATIONS)))
 

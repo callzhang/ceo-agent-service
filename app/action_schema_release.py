@@ -7,7 +7,9 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from app.final_action_schema import final_action_schema_is_current
+from app.selection_schema_release import (
+    SOURCE_STORE_VERSION, TARGET_STORE_VERSION, publication_action_schema_is_current,
+)
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     action_schema_is_current,
@@ -26,7 +28,8 @@ VERSION_KEY = "store_schema_version"
 
 def publication_candidate_source(db: sqlite3.Connection) -> str:
     """Read the declared previous or target layout during the deploy window."""
-    version = publication_store_version(db, current_version="2026-10-14.1")
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=(SOURCE_STORE_VERSION,))
     if version == SOURCE_ACTION_VERSION:
         capture_action_schema(db)
         return "select * from review_candidates"
@@ -40,7 +43,7 @@ def publication_candidate_source(db: sqlite3.Connection) -> str:
         return REVIEW_CANDIDATE_SQL
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return REVIEW_CANDIDATE_SQL
-    if version == "2026-10-14.1" and final_action_schema_is_current(db):
+    if publication_action_schema_is_current(db, version):
         return REVIEW_CANDIDATE_SQL
     raise ValueError("unknown or mixed action publication source schema")
 

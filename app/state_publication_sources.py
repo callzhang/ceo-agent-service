@@ -5,7 +5,8 @@ from app.state_definitions import state_projection
 from app.state_schema_release import state_schema_is_current
 
 
-def publication_store_version(db: sqlite3.Connection, *, current_version: str) -> str | None:
+def publication_store_version(db: sqlite3.Connection, *, current_version: str,
+                              previous_versions: tuple[str, ...] = ()) -> str | None:
     """Read the selected marker without repairing or falling back across schemas."""
     current = db.execute(
         "select 1 from main.sqlite_schema where name='state' collate nocase"
@@ -18,7 +19,7 @@ def publication_store_version(db: sqlite3.Connection, *, current_version: str) -
             "where key='store_schema_version'"
         ).fetchone()
         version = row[0] if row else None
-        if version != current_version:
+        if version not in (current_version, *previous_versions):
             raise ValueError("unknown or mixed State publication version")
         return version
     native = db.execute(
@@ -31,14 +32,15 @@ def publication_store_version(db: sqlite3.Connection, *, current_version: str) -
         "select value from main.service_state where key='store_schema_version'"
     ).fetchone()
     version = row[0] if row else None
-    if version == current_version:
+    if version in (current_version, *previous_versions):
         raise ValueError("current publication version requires State schema")
     return version
 
 
-def publication_dispatcher_source(db: sqlite3.Connection, *, current_version: str) -> str:
+def publication_dispatcher_source(db: sqlite3.Connection, *, current_version: str,
+                                  previous_versions: tuple[str, ...] = ()) -> str:
     """Select the existing dispatcher facts for the same publication role."""
-    version = publication_store_version(db, current_version=current_version)
-    if version == current_version:
+    version = publication_store_version(db, current_version=current_version, previous_versions=previous_versions)
+    if version in (current_version, *previous_versions):
         return state_projection("dispatcher_claim_leases")
     return "select * from main.dispatcher_claim_leases"

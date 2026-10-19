@@ -13,7 +13,7 @@ def _candidate(*, outcome="proposal", actions=None, options=None):
     }], "sourced_facts": [], "authored_judgment": "Supported"}
     return ConsumerAgentResult.model_validate({
         "outcome": outcome, "summary": "Do work", "proposal": plan if outcome == "proposal" else None,
-        "decision_options": options or [], "needs_human_reason": "Choose" if outcome == "needs_human" else None,
+        "decision_options": [{"applies_to": "task_class", **option} for option in (options or [])], "needs_human_reason": "Choose" if outcome == "needs_human" else None,
         "decision_basis": {"verified_facts": [{"assertion": "Fact", "references": ["source:1"]}],
             "rule_evidence": [{"assertion": "Rule", "references": ["rule:1"]}],
             "quality_explanation": "Need choice", "no_external_action_evidence": [{"assertion": "None", "references": ["attempt:1"]}],
@@ -46,7 +46,7 @@ class FakeStore:
             "proposal_revision": 0, "stage_index": 0, "predecessor_review_id": None,
             "audit_run_id": 8,
             "selection_id": 3 if self.selected else None,
-            "branch_json": json.dumps(self.selected) if self.selected else None}
+            "option_key": self.selected["key"] if self.selected else None}
 
     def get_reply_task(self, task_id):
         return type("Task", (), {"id": task_id, "business_object_key": "object:1", "execution_generation": "gen-1", "conversation_id": "cid", "trigger_message_id": "trigger"})()
@@ -613,7 +613,7 @@ def test_prior_success_uses_persisted_selected_branch_not_other_option():
     store.previous_receipt = {"first_agent_run_id": 7, "external_action_key": "stable-key"}
     store.verified_source = {
         "candidate_json": prior.model_dump_json(),
-        "branch_json": json.dumps(prior.decision_options[1].model_dump(mode="json")),
+        "selection_id": 3, "option_key": prior.decision_options[1].key,
         "action_index": 0,
     }
     handler = Handler()
@@ -622,7 +622,7 @@ def test_prior_success_uses_persisted_selected_branch_not_other_option():
     )
     assert result.error.code == "completed_action_content_conflict"
     assert handler.calls == []
-    store.verified_source["branch_json"] = json.dumps(prior.decision_options[0].model_dump(mode="json"))
+    store.verified_source["option_key"] = prior.decision_options[0].key
     result = SystemExecutor(store, {("test", "act"): handler}, owner="worker").execute(
         store.get_reply_task(1), 1, 2,
     )

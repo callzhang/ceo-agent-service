@@ -1,0 +1,134 @@
+{
+  "baseline": {
+    "size_bytes": 472539136,
+    "table_facts": {
+      "actions": {
+        "rows": 100561,
+        "sha256": "8ade5e379a551be2dea5494430ae28ec15eaaefa12f549f9a59279f87291fd0e"
+      },
+      "business": {
+        "rows": 5171,
+        "sha256": "cffcabe3ea01f3e611b58ef24f66e0aae075b89039e89c918e44501a6d033256"
+      },
+      "configs": {
+        "rows": 6115,
+        "sha256": "989241b1124953e8697e1054eaff4ac663c70a1dc5753e5464d6079d9feb8b74"
+      },
+      "email_schema_migrations": {
+        "rows": 39,
+        "sha256": "2ce6320209cba7fb1551929fb0fc9549fa4c3644cfff4dfc1d79830cc115b6db"
+      },
+      "emails": {
+        "rows": 9487,
+        "sha256": "c66ffc884a675d610e07142b62cba10640ed928288d4a25b1217f535b5fd55cb"
+      },
+      "provenance": {
+        "rows": 148,
+        "sha256": "248f4eaffe5e0de6465852071c0ec1968b396f5a62b94a6032a62380a82cb6f3"
+      },
+      "provider_state": {
+        "rows": 72349,
+        "sha256": "b1d69da3d0d65731b04703b713d3da25b39b8afa7d36b51bc76076eeaadc6e92"
+      },
+      "runs": {
+        "rows": 254889,
+        "sha256": "234586db442ce120ca04aba7a7e99f066093d1821e6de4cc1d3108b423f51fae"
+      },
+      "schedules": {
+        "rows": 15,
+        "sha256": "18c02df8d3a423f26a07b88ad53655bf088b415ff0337ddf88acbd10cc352b45"
+      },
+      "sqlite_sequence": {
+        "rows": 51,
+        "sha256": "a0e9d7d8311a2f2952b1441b25e0393b0dc46112f3e31f55e72fafe54d5a884e"
+      },
+      "state": {
+        "rows": 23672,
+        "sha256": "581c8272c6017013ca1a5513da0637970ce982b71138dee627315d19721e4cea"
+      },
+      "tasks": {
+        "rows": 36582,
+        "sha256": "228c582c58333cd2e040004361f0ff546ba7cfb920221d03f590b2a4842bb16a"
+      }
+    },
+    "foreign_key_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ]
+  },
+  "forward": {
+    "seconds": 44.62,
+    "metadata": {
+      "reply_variant": "actual_no_memory_fk"
+    }
+  },
+  "new_current_fact": {
+    "public_id": 1,
+    "count": 100562
+  },
+  "inverse": {
+    "source_schema_exact": true,
+    "new_selection_preserved": true,
+    "quick_check": "ok",
+    "foreign_key_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ]
+  },
+  "published_old_code": {
+    "old_store_cold_open": true,
+    "manifest_current": true,
+    "loaded_module": "/private/tmp/ceo-model-simplification-0zjph5co/published-old/app/store.py"
+  },
+  "reforward": {
+    "all_current_stored_facts_exact": true,
+    "quick_check": "ok"
+  },
+  "final_integrity": {
+    "integrity_check": "ok",
+    "seconds": 20.39,
+    "foreign_key_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ]
+  },
+  "final_code_inverse": {
+    "code_sha256": "0c815aea4ff006f6bac9d1876b8865031096fedd0905ba29b2f42d1d3c8e5825",
+    "source_schema_exact": true,
+    "new_fact_preserved": true
+  },
+  "final_code_old_cold_open": {
+    "manifest_current": true,
+    "new_branch_readable": true,
+    "loaded_module": "/private/tmp/ceo-model-simplification-0zjph5co/published-old/app/store.py"
+  },
+  "final_code_reforward": {
+    "all_current_stored_facts_exact": true,
+    "integrity_check": "ok",
+    "foreign_key_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ]
+  },
+  "source_lineage": "d6a1b024ca38aa25ec444a06fea7ef31512b9a56",
+  "source_schema_sha256": "052ac4fcff4540471376b5700da4db6aac6099548da7ab5c8f85b8dcb99d9e51",
+  "component_commit": "cd3337696",
+  "source_file_sha256_after_acceptance": "37d84652b8fa4c4900bf58b573b3b2293d5b2921d1934ff93ef4f39ba1b0b78e",
+  "evidence_boundary": "Unselected A1 component copy/inverse acceptance; no runtime activation, providers, publication or production migration."
+}
