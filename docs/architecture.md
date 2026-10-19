@@ -71,6 +71,7 @@ Emails 把原 classification 与 message 存成一行，公开 ID 仍各自独�
 Console 与执行上下文从准确来源读取完整消息并验证引用版本；body-only 原生字段
 不能冒充 To／Cc，角色标头取真实邮件来源。模型输入、全文搜索及历史批量退休仍按
 主验收清单列明差项，未把局部来源成功当作全量完成。
+Console 全文成员判定按固定50条候选分批、批内按账号读取原始来源，独立于页面limit；这与native exact IMAP的50条上限一致，避免小页面退化成逐封来源会话。匹配仍为Unicode casefold连续子串，准确total／顺序／offset／limit及来源变化检查不变；原文只在请求内使用。会话数下降不等于全库来源延迟验收通过。
 
 两类 Email history 已并入 Actions，保留原二十四字段、公开 TEXT key、可空 key 的
 隐藏 ROWID 和原六个 API 的去重／processing-only 更新合同。Provider_state 存账号

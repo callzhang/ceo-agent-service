@@ -35285,5 +35285,58 @@
     "read_only": true,
     "publish_called": false,
     "seconds": 6.794
+  },
+  "email_search_page_batch_decoupling_20261019": {
+    "red": {
+      "failed": 1,
+      "seconds": 0.36,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/email-search-page-batch-red.log",
+      "actual": "503 source leases for503 candidates at page limit1; expected <=11 native50 bounded batches"
+    },
+    "green": {
+      "passed": 85,
+      "seconds": 48.58,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/email-search-page-batch-green2.log",
+      "files": [
+        "tests/test_email_classification_reader.py",
+        "tests/test_email_source_web_api.py",
+        "tests/test_email_source_reader.py",
+        "tests/test_email_exact_source.py"
+      ]
+    },
+    "operation_count": {
+      "scope": "Current real classification_source_candidates on final paired copy; readonly metadata/operation counts only, no provider or original reads and no latency claim",
+      "eligible_rows": 9402,
+      "query": "合同",
+      "page_sizes": {
+        "1": {
+          "account_source_leases": 9376,
+          "original_membership_reads": 9376
+        },
+        "2": {
+          "account_source_leases": 5054,
+          "original_membership_reads": 9376
+        },
+        "25": {
+          "account_source_leases": 502,
+          "original_membership_reads": 9376
+        },
+        "50": {
+          "account_source_leases": 269,
+          "original_membership_reads": 9376
+        },
+        "100": {
+          "account_source_leases": 142,
+          "original_membership_reads": 9376
+        }
+      },
+      "fixed_search_batch_50": {
+        "account_source_leases": 269,
+        "original_membership_reads": 9376
+      }
+    },
+    "independent_readonly_review": "No concrete correctness/privacy issue; total/order/page/filter/source errors and request-local bodies preserved. No cache/schema change.",
+    "scope": "Runtime search scan batch now fixed50 rather than UI page limit. Existing HTTP fake wire response corrected to UID-set protocol; unchanged no-query listing previously returned502 from scalar fake. Full-catalog latency remains open; no inference from metadata counts.",
+    "production_changed": false
   }
 }

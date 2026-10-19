@@ -262,7 +262,7 @@ def test_detail_and_page_use_actual_exact_source_view_without_database_body(cata
     )
 
 
-def test_search_uses_page_sized_account_batches_without_single_source_reads(catalog):
+def test_search_uses_bounded_account_batches_without_single_source_reads(catalog):
     from types import SimpleNamespace
     from app.email_classification_reader import EmailClassificationReader
 
@@ -271,7 +271,7 @@ def test_search_uses_page_sized_account_batches_without_single_source_reads(cata
 
     def batch(account, identities):
         assert account == "account"
-        assert len(identities) <= 2
+        assert len(identities) <= 50
         batches.append(list(identities))
         return {identity: original_views[identity] for identity in identities}
 
@@ -283,7 +283,7 @@ def test_search_uses_page_sized_account_batches_without_single_source_reads(cata
     )
     options = dict(status=None, q="world", limit=2, offset=0)
     assert view.list_classifications(**options) == StoredEmailListingOracle(store).list_classifications(**options)
-    assert len(batches) == 3 and sum(map(len, batches)) == 6
+    assert len(batches) == 1 and sum(map(len, batches)) == 6
 
 
 def test_source_listing_works_without_retired_store_original_interfaces(catalog):
@@ -320,3 +320,37 @@ def test_stable_identity_lookup_does_not_read_original_or_model_input(catalog, m
     assert store.has_stable_classification(identity)
     assert store.get_classification_by_stable_identity("missing") is None
     assert forbidden_reads == []
+
+
+@pytest.mark.parametrize('limit', [1, 2, 25])
+def test_full_source_scan_batch_is_independent_of_page_size(limit):
+    from app.email_classification_reader import EmailClassificationReader
+
+    candidates = [
+        {'id': 503 - rank, 'account_id': 'account',
+         'stable_message_identity': str(rank), 'sender': 'sender@example.test',
+         'subject': 'message'}
+        for rank in range(503)
+    ]
+    reads = []
+    matching_ranks = {3, 57, 499, 502}
+
+    def read_views(account, identities):
+        assert account == 'account'
+        reads.append(tuple(identities))
+        return {
+            identity: {'message_text': 'needle' if int(identity) in matching_ranks else 'ordinary body'}
+            for identity in identities
+        }
+
+    store = SimpleNamespace(classification_source_candidates=lambda **kwargs: (candidates, 503))
+    view = EmailClassificationReader(store, message_reader=SimpleNamespace(read_views=read_views))
+    rows, total = view.list_classifications(status=None, q='needle', limit=limit, offset=1)
+    assert total == 4
+    assert [row['id'] for row in rows] == [446, 4, 1][:limit]
+    assert all(row['message_text'] == 'needle' for row in rows)
+    assert sum(map(len, reads)) == 503
+    # Native exact IMAP reads already use at most50 messages per batch.
+    # A small results page must not multiply source leases beyond that bound.
+    assert len(reads) <= 11
+    assert max(map(len, reads)) <= 50

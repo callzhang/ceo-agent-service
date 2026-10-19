@@ -59,12 +59,17 @@ def source_client(catalog, monkeypatch, *, unavailable=False):
             original = session.uid
 
             def uid(command, *args):
-                if command == "FETCH":
-                    identity = args[0].decode()
+                if command != "FETCH":
+                    return original(command, *args)
+                records = []
+                for requested_uid in args[0].split(b','):
                     session.headers = HEADERS.replace(
-                        b"source@example.test", f"{identity}@example.test".encode()
+                        b"source@example.test", requested_uid + b"@example.test"
                     )
-                return original(command, *args)
+                    status, data = original(command, requested_uid, args[1])
+                    assert status == 'OK'
+                    records.extend(data)
+                return 'OK', records
 
             session.uid = uid
             adapter = ImapReadonlyAdapter(session, account_id="account")
@@ -74,6 +79,7 @@ def source_client(catalog, monkeypatch, *, unavailable=False):
                     raise LookupError("exact original unavailable")
 
                 adapter.fetch_message = missing
+                adapter.fetch_messages = missing
             opened.append(session)
             return session, adapter
 
@@ -123,11 +129,11 @@ def test_default_routes_use_exact_source_for_list_detail_and_body_search(
     assert searched.status_code == 200, searched.text
     assert searched.json()["meta"]["total"] == 6
     assert [item["id"] for item in searched.json()["items"]] == ["4", "3"]
-    assert len(opened) == 4  # Three source batches, not six per-mail leases.
+    assert len(opened) == 2  # One complete source batch, independent of the two-row page.
     detail = client.get("/api/console/email/classifications/1")
     assert detail.status_code == 200, detail.text
     assert detail.json()["item"]["message_text"] == "provider-only token"
-    assert len(opened) == 5 and closed == opened and len(constructions) == 1
+    assert len(opened) == 3 and closed == opened and len(constructions) == 1
     unsubscribe = client.get(
         "/api/console/email/classifications",
         params={"status": "unsubscribe", "q": "provider-only"},
@@ -135,9 +141,9 @@ def test_default_routes_use_exact_source_for_list_detail_and_body_search(
     assert unsubscribe.status_code == 200, unsubscribe.text
     assert unsubscribe.json()["meta"]["total"] == 1
     assert [item["id"] for item in unsubscribe.json()["items"]] == ["1"]
-    assert len(opened) == 6 and closed == opened
+    assert len(opened) == 4 and closed == opened
     missing = client.get("/api/console/email/classifications/1000")
-    assert missing.status_code == 404 and len(opened) == 6
+    assert missing.status_code == 404 and len(opened) == 4
     assert all(session.calls[-1] == ("logout",) for session in opened)
 
 

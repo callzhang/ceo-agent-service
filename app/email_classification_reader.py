@@ -5,6 +5,9 @@ import imaplib
 from app.email_classifier_contracts import EmailClassificationStatus
 
 
+_SOURCE_SEARCH_BATCH_SIZE = 50
+
+
 class EmailClassificationReadError(LookupError):
     """A complete source-backed classification response could not be read."""
 
@@ -53,8 +56,8 @@ class EmailClassificationReader:
             ]
         else:
             total = 0
-            for start in range(0, len(candidates), limit):
-                batch = candidates[start : start + limit]
+            for start in range(0, len(candidates), _SOURCE_SEARCH_BATCH_SIZE):
+                batch = candidates[start : start + _SOURCE_SEARCH_BATCH_SIZE]
                 body_rows = [
                     row
                     for row in batch
