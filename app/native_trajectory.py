@@ -594,6 +594,8 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
                             item['type'] = 'agent_message'
                         elif item.get('type') == 'Reasoning':
                             item['type'] = 'reasoning'
+                        elif item.get('type') == 'McpToolCall':
+                            item['type'] = 'mcp_tool_call'
                         events.append({'type': str(body.get('type') or '').replace('_', '.'), 'item': item})
                     elif body.get('type') in ('item_started', 'item_completed'):
                         available = False
