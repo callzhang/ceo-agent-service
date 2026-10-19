@@ -3015,7 +3015,8 @@ and byte count without an original-body table. Semantic replay/import,
 Project context, Attention and minutes owner backfill use the current provenance
 projection rather than the historical source-document projection. The isolated
 Task replay tool also uses current Task/Run, Business candidate, Business Action
-and sync projections. Its domain comparison includes shared Business relations
+and sync projections. Its CLI applies the selected code root before application
+imports; each comparison revision runs its matching script in a separate process. Its domain comparison includes shared Business relations
 and provenance, excludes run bookkeeping, and counts source versions by their
 existing identity keys. One case carries exact supplied originals in a transient
 PreparedSources object through seeding, execution and final readback. Binding,

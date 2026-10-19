@@ -34709,5 +34709,19 @@
     "fixture_only_native_helper": "tests/support/task_native.py imports current public Task Agent Run projection; native-only fixture writes unchanged",
     "real_model_and_provider_calls": 0,
     "production_writes": 0
+  },
+  "final_replay_cli_code_root": {
+    "first_red": "Existing --code-root was applied after top-level App imports; unrelated PYTHONPATH package loaded before selecting requested root",
+    "red_log": "/tmp/db-redesign-final-guard.3LeMgv/final-replay-code-root-red.log",
+    "green": {
+      "passed": 1,
+      "deselected": 27,
+      "seconds": 1.27,
+      "exit_code": 0,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-replay-code-root-green.log"
+    },
+    "scope": "Select existing --code-root before importing App; test launches --help in isolated child with foreign PYTHONPATH and verifies no database created",
+    "schema_or_model_or_provider_changes": false,
+    "reused": "27 final replay module controls unchanged, already passed/73.35s"
   }
 }

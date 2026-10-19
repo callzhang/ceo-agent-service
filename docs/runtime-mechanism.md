@@ -585,8 +585,10 @@ source for execution and evidence readback. Missing or changed material is
 rejected without changing the input. Frozen multi-version cases advance only
 after the preceding turn completes and compare-and-swap its prior source hash;
 this is a database-copy evaluation operation, not a production semantic import.
-Readback uses the current typed Task/Run, Business, Action and provenance
-projections. Domain comparisons include Business relations held in shared
+The CLI selects its existing `--code-root` before importing application modules;
+run each comparison revision's matching script in a separate process so the
+reported revision describes the imported code. Readback uses the current typed
+Task/Run, Business, Action and provenance projections. Domain comparisons include Business relations held in shared
 Actions and their provenance, excluding run bookkeeping; source versions use
 the existing source identity key. Each case retains its supplied originals only
 in one transient PreparedSources instance through seeding, each turn and final

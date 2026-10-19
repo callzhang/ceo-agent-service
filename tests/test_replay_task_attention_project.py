@@ -625,3 +625,26 @@ def test_replay_exact_cas_rejects_each_changed_source_field(tmp_path, monkeypatc
     lease = acquire(store)
     assert lease is not None
     lease.close()
+
+
+def test_cli_selects_code_root_before_importing_application(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    foreign = tmp_path / "foreign"
+    (foreign / "app").mkdir(parents=True)
+    (foreign / "app" / "__init__.py").write_text(
+        "raise RuntimeError('foreign application imported')\n", encoding="utf-8",
+    )
+    database = tmp_path / "unopened.sqlite3"
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/replay_task_attention.py"),
+         "--code-root", str(root), "--db", str(database), "--input-id", "1", "--help"],
+        cwd=tmp_path, env=os.environ | {"PYTHONPATH": str(foreign)},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+    assert not database.exists()

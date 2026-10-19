@@ -1,10 +1,8 @@
 """One native Task Agent turn on a database copy, or one fixed semantic case.
 
-Run baseline and candidate in separate processes with explicit --code-root and
-CEO_SKILLS_ROOT. Expected labels are evaluated only after persisted readback.
+Run each revision's matching script in a separate process with explicit
+--code-root and CEO_SKILLS_ROOT. Expected labels are evaluated only after persisted readback.
 """
-from app.business_definitions import BUSINESS_PROJECTIONS
-
 import argparse
 import hashlib
 import json
@@ -12,6 +10,17 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+
+if __name__ == "__main__":
+    # Select the requested package before Python caches any app modules.
+    _bootstrap_parser = argparse.ArgumentParser(add_help=False)
+    _bootstrap_parser.add_argument(
+        "--code-root", type=Path, default=Path(__file__).resolve().parents[1],
+    )
+    _bootstrap_args, _ = _bootstrap_parser.parse_known_args()
+    sys.path.insert(0, str(_bootstrap_args.code_root.resolve()))
+
+from app.business_definitions import BUSINESS_PROJECTIONS
 from app.store import (
     BUSINESS_ACTION_SQL, RUNTIME_ATTEMPT_SQL, TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL,
 )
@@ -1174,7 +1183,6 @@ def main():
     parser.add_argument("--source-payload", type=Path,
                         help="exact original UTF-8 WorkItem payload for a compacted input")
     args = parser.parse_args()
-    sys.path.insert(0, str(args.code_root.resolve()))
     from app.config import load_env_file, workspace_path
 
     load_env_file()
