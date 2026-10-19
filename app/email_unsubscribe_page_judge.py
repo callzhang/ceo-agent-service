@@ -170,6 +170,7 @@ def build_page_judge(
                 developer_instructions=_DEVELOPER_INSTRUCTIONS,
                 use_output_schema=False,
                 skill_names=(),
+                project_doc_max_bytes=0,
             ),
             parser=lambda raw: parse_page_judgement(raw).model_dump_json(),
             result_codec=_RESULT_CODEC,

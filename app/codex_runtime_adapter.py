@@ -131,6 +131,7 @@ class CodexRuntimeAdapter:
         reasoning_effort: str | None = None,
         skill_names: tuple[str, ...] | None = None,
         inlined_skill_names: tuple[str, ...] = (),
+        project_doc_max_bytes: int | None = None,
         tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
@@ -156,6 +157,7 @@ class CodexRuntimeAdapter:
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,
             reasoning_effort=reasoning_effort,
+            project_doc_max_bytes=project_doc_max_bytes,
             skill_exclusion_override=codex_skill_config_override(
                 skill_names, inlined_names=inlined_skill_names
             )

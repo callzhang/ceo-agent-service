@@ -261,6 +261,8 @@ through the existing native per-path Skill configuration. Unspecified standard
 turns retain the native default catalog, while an explicit selection (including
 empty) filters the catalog through the existing per-path helper. Existing
 always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page-judgement Codex command also sets `project_doc_max_bytes=0`, omitting
+the unrelated checkout `AGENTS.md` project document from this no-file task.
 The page states, verbatim evidence contract, route, approval, sandbox and
 unsubscribe execution rules are unchanged. Native global memory and AGENTS
 instructions remain CLI-owned and are not represented as service prompt text.
