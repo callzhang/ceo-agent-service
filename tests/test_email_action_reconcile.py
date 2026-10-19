@@ -32,7 +32,13 @@ from app.email_action_reconcile import (
 )
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
 from app.email_provider_actions import ImapDeterministicProvider
-from app.email_store import EMAIL_ATTEMPT_SQL, EMAIL_DIRECT_ACTION_SQL, EmailStore
+from app.email_store import (
+    EMAIL_ATTEMPT_SQL,
+    EMAIL_CLASSIFICATION_SQL,
+    EMAIL_DIRECT_ACTION_SQL,
+    EMAIL_MESSAGE_SQL,
+    EmailStore,
+)
 from tests.test_email_provider_actions import FakeWritableImapSession
 from tests.test_email_store import _classification, _persist_scan
 
@@ -150,8 +156,8 @@ def _snapshot(path: Path) -> list[tuple]:
             for query in (
                 f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by 1",
                 f"select * from ({EMAIL_ATTEMPT_SQL}) order by 1",
-                "select * from email_classifications order by 1",
-                "select * from email_messages order by 1",
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) order by id",
+                f"select * from ({EMAIL_MESSAGE_SQL}) order by id",
             )
             for row in db.execute(query)
         ]
@@ -216,7 +222,7 @@ def test_message_verified_in_target_is_recorded_done_with_reconciliation_evidenc
     assert attempts[0]["error"] == FAILED_ERROR
     with sqlite3.connect(db_path) as db:
         folder, uidvalidity, uid = db.execute(
-            "select folder, uidvalidity, uid from email_classifications"
+            f"select folder, uidvalidity, uid from ({EMAIL_CLASSIFICATION_SQL})"
         ).fetchone()
     assert (folder, uidvalidity, uid) == ("Projects", 126, 31)
     assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
