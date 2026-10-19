@@ -34527,5 +34527,33 @@
     },
     "runtime_changes": false,
     "whole_file_rerun_claimed": false
+  },
+  "final_status_and_quality_cost_fixtures": {
+    "runtime_changes": false,
+    "status_attempt": {
+      "passed": 3,
+      "seconds": 64.02,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-status-attempt-cost.log",
+      "unchanged_limits": [
+        "800000 VM steps",
+        "8 * 4080 status reads"
+      ],
+      "first_red": "Fixture attempted json.loads on current JSONB"
+    },
+    "quality_gate": {
+      "passed": 22,
+      "seconds": 10.6,
+      "log": "/tmp/db-redesign-final-guard.3LeMgv/final-quality-cost.log",
+      "unchanged_vm_bound": "history_count * 120",
+      "first_red": "Current _kind writer against intermediate TEXT fixture"
+    },
+    "fixture_changes": "Use actual public reply projection and current typed writer; preserve exact source values, public IDs and history distributions"
+  },
+  "final_runs11_current_inventory": {
+    "passed": 8,
+    "seconds": 40.26,
+    "runtime_changes": false,
+    "scope": "All six constructor orders, exact final ten core tables plus ledger, reopen, retired object absence, current declaration, FK, migration version and existing repair/refusal controls",
+    "first_red": "Obsolete intermediate table count 51; actual final 11"
   }
 }

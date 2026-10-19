@@ -1,4 +1,4 @@
-"""Unselected current51 integration probes; run only against an isolated code copy."""
+"""Current Runs declarations and cold constructors; use isolated code copies."""
 from itertools import permutations
 from pathlib import Path
 import sqlite3
@@ -16,10 +16,14 @@ from app.runs11_definitions import RUN11_NEW_KINDS
 
 CONSTRUCTORS = (AutoReplyStore, EmailStore, WorkbenchStore)
 RETIRED = (*RUN11_NEW_KINDS, 'codex_session_search_fts')
+FINAL_TABLES = {
+    'tasks', 'runs', 'actions', 'business', 'emails', 'provenance', 'configs',
+    'provider_state', 'schedules', 'state', 'email_schema_migrations',
+}
 
 
 @pytest.mark.parametrize('order', tuple(permutations(CONSTRUCTORS)))
-def test_cold_orders_and_reopen_are_current51(tmp_path: Path, order):
+def test_cold_orders_and_reopen_are_final_inventory(tmp_path: Path, order):
     path = tmp_path / 'current.sqlite3'
     for constructor in order:
         constructor(path)
@@ -28,7 +32,7 @@ def test_cold_orders_and_reopen_are_current51(tmp_path: Path, order):
     with sqlite3.connect(path) as db:
         tables = {name for (name,) in db.execute(
             "select name from sqlite_schema where type='table' and name not like 'sqlite_%'")}
-        assert len(tables) == 51
+        assert tables == FINAL_TABLES
         assert not tables.intersection(RETIRED)
         assert current_run11_schema_is_current(db)
         assert db.execute('pragma foreign_key_check').fetchall() == []

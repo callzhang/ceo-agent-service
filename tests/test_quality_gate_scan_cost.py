@@ -1,4 +1,3 @@
-import json
 import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
@@ -7,7 +6,7 @@ import pytest
 
 from app import leak_check, quality_gate
 from app.run_storage import create_run_schema, insert_run
-from app.action_storage import create_action_schema, insert_action
+from app.action_storage import create_action_schema, insert_action, reply_action_projection
 
 
 def runtime_history(*, count=30, model="model"):
@@ -186,24 +185,23 @@ def test_latest_reply_candidates_bound_terminal_and_repeated_candidate_history(
     create_run_schema(db)
     create_action_schema(db, include_receipts=True, include_postfix=True,
                          include_delivery=True, include_reply=True,
-                         reply_variant="fresh_memory_fk")
+                         reply_variant="fresh_memory_fk", compact_payload=True)
     insert_action(db, "reply_attempts", {
         "id": 1, "conversation_id": "chat", "conversation_title": "Chat",
         "trigger_message_id": "seed", "trigger_sender": "Sender", "trigger_text": "text",
         "action": "send_reply", "sensitivity_kind": "normal", "send_status": "sent",
         "updated_at": "2026-10-14 00:00:00",
     })
-    payload = json.loads(db.execute("select payload_json from actions where legacy_key='1'").fetchone()[0])
+    cursor = db.execute("select * from (" + reply_action_projection("reply_attempts", "fresh_memory_fk") + ") where id=1")
+    payload = dict(zip([column[0] for column in cursor.description], cursor.fetchone(), strict=True))
     repeated_candidates = history_shape == "repeated_candidates"
     history_count = 200 if repeated_candidates else 2000
     first_failure = history_count - 48 if history_shape == "many_candidate_keys" else history_count + 1
-    history = []
     for identity in range(2, history_count + 2):
-        item = {**payload, "trigger_message_id": "seed" if repeated_candidates else f"message-{identity}"}
+        item = {**payload, "id": identity, "trigger_message_id": "seed" if repeated_candidates else f"message-{identity}"}
         if repeated_candidates or identity >= first_failure:
             item["send_status"] = "failed"
-        history.append((str(identity), json.dumps(item)))
-    db.executemany("insert into actions(record_type,legacy_key,payload_json) values('reply_attempts',?,?)", history)
+        insert_action(db, "reply_attempts", item)
     cte = _current_latest_cte(monkeypatch)
     steps = 0
 
