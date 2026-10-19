@@ -43,8 +43,7 @@ HEADLESS_SOURCE_TIMEOUT_SECONDS = 110
 HEADLESS_SOURCE_SHUTDOWN_SECONDS = 5
 LOCAL_SSO_CURRENT_PAGE = ".app-page.app-page-curr"
 LOCAL_SSO_DIRECT_BUTTON = (
-    f"{LOCAL_SSO_CURRENT_PAGE} "
-    ".module-confirm-button.base-comp-button-type-primary"
+    ".module-confirm > .module-confirm-button.base-comp-button-type-primary"
     ":not(.base-comp-button-disabled)"
 )
 LOCAL_SSO_ACCOUNT_AVATAR = f"{LOCAL_SSO_CURRENT_PAGE} .module-qrcode-user-avatar"
@@ -132,54 +131,53 @@ def _confirm_local_dingtalk_login() -> None:
     )
 
 
-def _submit_local_dingtalk_account(page) -> None:
-    direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
-    direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
-    direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
-
-    page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
+def _submit_local_dingtalk_account(page, *, allow_direct_login: bool = True) -> None:
     corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
         has_text=LOCAL_SSO_CORP_NAME
     ).first
-    # The organization chooser shares the login URL but needs no native prompt.
-    if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
-        _confirm_local_dingtalk_login()
+    if not corp.is_visible():
+        if allow_direct_login:
+            direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
+            direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+            direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
-    try:
-        corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
-        corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
-    except Exception:
-        # A single-organization account navigates directly to Dingteam.
+            page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
+            # The organization chooser shares the login URL but needs no native prompt.
+            if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
+                _confirm_local_dingtalk_login()
+
         redirected = urlsplit(getattr(page, "url", ""))
         entry = urlsplit(browser.ENTRY_URL)
-        if (redirected.scheme, redirected.netloc, redirected.path) != (
-            entry.scheme, entry.netloc, entry.path
+        if (redirected.scheme, redirected.netloc, redirected.path) == (
+            entry.scheme,
+            entry.netloc,
+            entry.path,
         ):
-            raise
+            return
+
+    corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+    corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
 
 def _attempt_local_dingtalk_sso(page) -> bool:
     """Use the logged-in desktop DingTalk account to recover the web session."""
     if not _is_dingtalk_login_url(getattr(page, "url", "")):
         return False
-    try:
-        _submit_local_dingtalk_account(page)
-        return True
-    except Exception:
-        pass
-    try:
-        qr_tab = page.locator(LOCAL_SSO_QR_TAB).filter(has_text="QR Code").first
-        qr_tab.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+    qr_tab = page.locator(LOCAL_SSO_QR_TAB).filter(has_text="扫码登录").first
+    if qr_tab.is_visible():
         qr_tab.click(timeout=LOCAL_SSO_TIMEOUT_MS)
         avatar = page.locator(LOCAL_SSO_ACCOUNT_AVATAR).first
         avatar.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
         avatar.click(timeout=LOCAL_SSO_TIMEOUT_MS)
         page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
         _confirm_local_dingtalk_login()
-        _submit_local_dingtalk_account(page)
+        _submit_local_dingtalk_account(page, allow_direct_login=False)
         return True
-    except Exception:
-        return False
+
+    direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
+    direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+    _submit_local_dingtalk_account(page)
+    return True
 
 
 def _maybe_attempt_local_dingtalk_sso(page, *, attempted: bool) -> bool:
