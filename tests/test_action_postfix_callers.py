@@ -2,6 +2,8 @@
 import sqlite3
 
 from app.action_storage import action_schema_is_current
+from app.current_database_schema import FINAL_ACTION_OPTIONS
+from app.state_definitions import state_projection
 from app.store import AutoReplyStore
 
 
@@ -9,8 +11,8 @@ def test_fresh_store_keeps_postfix_types_and_no_retired_postfix_tables(tmp_path)
     path = tmp_path / 'store.sqlite3'
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ('2026-10-14.1',)
-        assert action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+        assert db.execute(f"select value from ({state_projection('service_state')}) where key='store_schema_version'").fetchone() == ('2026-10-14.1',)
+        assert action_schema_is_current(db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS)
         assert not db.execute("select name from sqlite_schema where name in ('outbound_postfixes','outbound_postfix_receipts','native_reply_dispatches')").fetchall()
 
 
