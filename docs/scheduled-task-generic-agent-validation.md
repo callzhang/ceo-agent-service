@@ -361,3 +361,5 @@ with synthetic provider IO and an independent native audit/correction. Its faile
 probes, current status, root causes, and real publication readback are recorded in
 [OKR composite acceptance](scheduled-okr-agent-acceptance.md). It does not replace
 production orchestrator acceptance or future natural scheduled execution.
+
+Final OKR composite status (2026-10-20 UTC): **4/4 passed**, with real application artifact/document callbacks and simulated provider IO. The final record preserves original first-turn and feedback failures, same-output observer rescoring, the exact source/contract hashes, and cleanup. See the [composite acceptance record](scheduled-okr-agent-acceptance.md); real historical publication and future natural execution remain separate.

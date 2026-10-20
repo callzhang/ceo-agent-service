@@ -58,6 +58,109 @@ def application_contract_hashes():
             for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names}
 
 
+def fully_read(trace, work, name):
+    text = (work / name).read_text()
+    expected = digest(text.encode())
+    intervals = []
+    for call in trace:
+        if call["tool"] != "read_task_artifact" or call["arguments"]["name"] != name:
+            continue
+        result = call["result"]
+        if result.get("sha256") == expected:
+            start = call["arguments"].get("offset", 0)
+            intervals.append((start, start + len(result["content"])))
+    end = 0
+    for start, stop in sorted(intervals):
+        if start > end:
+            return False
+        end = max(end, stop)
+    return end == len(text)
+
+
+def readback_observed(trace, work, node, doc):
+    last_write = max(i for i,c in enumerate(trace)
+                     if c["tool"] == "consumer_document_write" and c["result"]["node_id"] == node)
+    following = trace[last_write + 1:]
+    expected = digest((work / doc["readback_name"]).read_bytes())
+    return fully_read(following, work, doc["readback_name"]) or any(
+        call["tool"] == "read_dingtalk_document"
+        and call["arguments"]["node_id"] == node
+        and call["result"].get("complete") is True
+        and call["result"].get("status") == "success"
+        and call["result"]["content"]["nodeId"] == node
+        and call["result"]["content"]["revision"] == doc["revision"]
+        and digest(json.dumps(call["result"], ensure_ascii=False).encode()) == expected
+        for call in following)
+
+
+def restore_accepted_candidate(saved, case, work, prior=None):
+    """Restore actual saved bytes/receipts for stricter checks and a new Audit."""
+    if saved["cases_sha256"] != digest(CASES_PATH.read_bytes()):
+        raise ValueError("Saved fixed facts or expectations changed")
+    row = next(r for r in saved["cases"] if r["case_id"] == case["id"])
+    if row["final_audit"]["output"]["verdict"] != "approve":
+        raise ValueError("A failed candidate cannot be reused")
+    fixture = Fixture(case["facts"], work)
+    for call in row["raw_tool_trace"]:
+        tool, args, result = call["tool"], call["arguments"], call["result"]
+        if tool == "consumer_artifact_write":
+            name, content = args["name"], args["content"]
+        elif tool == "read_task_artifact":
+            name, content = args["name"], result["content"]
+        elif tool == "read_dingtalk_document":
+            content = json.dumps(result, ensure_ascii=False)
+            name = digest(content.encode()) + ".readback.json"
+            (work / name).write_text(content)
+            continue
+        else:
+            continue
+        if digest(content.encode()) != result["sha256"]:
+            continue  # A paginated slice is not a complete file.
+        if Path(name).name != name:
+            raise ValueError("Saved artifact name is not flat")
+        (work / name).write_text(content)
+    fixture.write_json("okr-roster.json", case["facts"]["roster"])
+    for member in case["facts"]["roster"]["managers"]:
+        fixture.write_json("okr-member-" + digest(member["user_id"].encode()) + ".json",
+                           member_payload(member, case["facts"]))
+    load_script("report").prepare(roster_file=work / "okr-roster.json", members_dir=work,
+        period_label=case["facts"]["period_label"], report_date=case["facts"]["report_date"], output_dir=work)
+    infos = {c["arguments"]["node_id"]: c["result"]["data"]["document"]
+             for c in row["raw_tool_trace"] if c["tool"] == "read_dingtalk_document_info"}
+    docs = {}
+    latest = {c["result"]["node_id"]: c for c in row["raw_tool_trace"] if c["tool"] == "consumer_document_write"}
+    for call in latest.values():
+        result = call["result"]
+        node, name = result["node_id"], result["readback"]["artifact_name"]
+        payload = read_json(work / name)["content"]
+        if digest((work / name).read_bytes()) != result["readback"]["sha256"]:
+            raise ValueError("Saved provider receipt bytes changed")
+        body = payload["markdown"].encode()
+        if digest(body) != result["content_sha256"]:
+            raise ValueError("Provider body does not match the actual submitted artifact SHA")
+        (work / call["arguments"]["artifact_name"]).write_bytes(body)
+        docs[node] = {"title": payload["title"], "content": payload["markdown"],
+            "parent_id": infos[node]["folderId"], "revision": payload["revision"],
+            "artifact_name": call["arguments"]["artifact_name"], "readback_name": name}
+    fixture.docs_path.write_text(json.dumps(docs, ensure_ascii=False))
+    fixture.trace_path.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in row["raw_tool_trace"]))
+    output = (row["correction"] or row["consumer"])["output"]
+    (work / "full.md").write_text(row["final_grade"]["rendered_full"])
+    (work / "summary.md").write_text(output["payload"]["actions"][0]["payload"]["content"])
+    manifest = read_json(work / "manifest.json")
+    main_id = next(node for node, doc in docs.items() if doc["title"] == manifest["title"])
+    body_names = ["full.md", "main.md", "summary.md", *[a["artifact_name"] for a in manifest["appendices"]]]
+    before = {name: digest((work / name).read_bytes()) for name in body_names}
+    load_script("report").render(source_file=work / "source.json", analysis_dir=work, output_dir=work,
+        appendix_links_file=work / "appendix-links.json", document_url=infos[main_id]["docUrl"])
+    if before != {name: digest((work / name).read_bytes()) for name in body_names}:
+        raise ValueError("Current renderer changes saved published body bytes")
+    checked = grade(case, work, output, prior)
+    if not checked["passed"] or checked["analysis_hashes"] != row["final_grade"]["analysis_hashes"]:
+        raise ValueError("Saved candidate fails current checks: " + str([k for k,v in checked["checks"].items() if not v]))
+    return row
+
+
 
 def behavior_checks(reviews, expected):
     return {
@@ -119,6 +222,9 @@ def _grade(case, work, output, prior=None):
     source, plan, manifest = (
         read_json(work / name) for name in ("source.json", "plan.json", "manifest.json")
     )
+    manifest_paths = [manifest["main_file"], manifest["full_file"], manifest["summary_file"],
+                      *[a["path"] for a in manifest["appendices"]]]
+    checks["manifest_artifact_binding"] = all(Path(path).parent.resolve() == work.resolve() for path in manifest_paths)
     analysis, managers = report._analysis_from_files(source, work)
     cards = report._manager_scorecards(analysis, source["managers"])
     checks.update(
@@ -146,6 +252,9 @@ def _grade(case, work, output, prior=None):
         ),
     )
     checks.update(behavior_checks([r.model_dump() for r in analysis.manager_reviews], expected))
+    duplicate_names = {m.name for m in managers if sum(n.name == m.name for n in managers) > 1}
+    checks["same_name_owners_disambiguated"] = all(
+        owner not in duplicate_names for item in analysis.ceo_attention_items for owner in item.owner_names)
     oracle = {}
     for review in analysis.manager_reviews:
         # These fixtures each have one business KR of weight100x100; the oracle
@@ -243,14 +352,8 @@ def _grade(case, work, output, prior=None):
             receipts[node]["content_sha256"] == digest(doc["content"].encode())
             and receipts[node]["readback"]["artifact_name"] == doc["readback_name"]
             for node, doc in published.items())
-        consumed = {
-            c["arguments"]["name"]
-            for c in trace
-            if c["tool"] == "read_task_artifact"
-            and not c["result"].get("has_more", False)
-        }
         checks["full_readbacks_consumed"] = all(
-            doc["readback_name"] in consumed for doc in published.values()
+            readback_observed(trace, work, node, doc) for node, doc in published.items()
         )
         checks["provider_receipt_payloads_match"] = all(
             (payload := read_json(work / doc["readback_name"])).get("complete") is True
@@ -259,6 +362,15 @@ def _grade(case, work, output, prior=None):
             and payload["content"]["revision"] == doc["revision"]
             and digest((work / doc["readback_name"]).read_bytes()) + ".readback.json" == doc["readback_name"]
             for doc in published.values())
+        checks["canonical_render_artifacts"] = False
+        if checks["all_canonical_urls_observed"]:
+            with tempfile.TemporaryDirectory(prefix="okr-canonical-check-", dir="/tmp") as directory:
+                canonical = Path(directory)
+                report.render(source_file=work / "source.json", analysis_dir=work, output_dir=canonical,
+                              appendix_links_file=work / "appendix-links.json", document_url=infos[main_id])
+                names = ["full.md", "main.md", "summary.md", *[a["artifact_name"] for a in manifest["appendices"]]]
+                checks["canonical_render_artifacts"] = all(
+                    (canonical / name).read_bytes() == (work / name).read_bytes() for name in names)
     full_text = (work / "full.md").read_text()
     summary_text = (work / "summary.md").read_text()
     if expected.get("preserve_unscored_roster_titles"):
@@ -503,6 +615,8 @@ def native(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
+    parser.add_argument("--recheck-accepted-prefix-from", help="Verify accepted bytes and rerun only Audit under current tools/Skill")
+    parser.add_argument("--resume-reviewed-from", help="Rescore unchanged reviewed native outputs after an evaluator-only repair")
     args = parser.parse_args()
     destination = HERE / args.output
     if not destination.parent.is_dir():
@@ -528,6 +642,12 @@ def main():
     ]
     settings["ignore_user_config"] = True
     settings["ignore_rules"] = True
+    if args.recheck_accepted_prefix_from and args.resume_reviewed_from:
+        raise ValueError("Select one checkpoint mode")
+    saved_name = args.recheck_accepted_prefix_from or args.resume_reviewed_from
+    saved = read_json(HERE / saved_name) if saved_name else None
+    if saved and saved["settings"] != settings:
+        raise ValueError("Saved native model/runtime settings changed")
     result = {
         "version": 1,
         "created_at": datetime.now(UTC).isoformat(),
@@ -558,6 +678,9 @@ def main():
         },
         "cases": [],
     }
+    if args.resume_reviewed_from and (saved["source_sha256"] != result["source_sha256"]
+            or saved["application_contract_sha256"] != result["application_contract_sha256"]):
+        raise ValueError("Reviewed outputs require unchanged Skill and production tool sources")
     directory = None
     try:
         with tempfile.TemporaryDirectory(
@@ -584,7 +707,23 @@ def main():
                     artifacts.mkdir()
                 facts = root / "facts.json"
                 facts.write_text(json.dumps(case["facts"], ensure_ascii=False))
-                consumer = native(
+                previous = next((r for r in saved["cases"] if r["case_id"] == case["id"]
+                    and r["final_audit"]["output"]["verdict"] == "approve"), None) if saved else None
+                rechecked = restore_accepted_candidate(saved, case, artifacts, prior) if previous else None
+                if rechecked and args.resume_reviewed_from:
+                    row = dict(rechecked)
+                    row["evaluator_rescore"] = {"source_result": saved_name,
+                        "sha256": digest((HERE / saved_name).read_bytes()),
+                        "original_passed": row["passed"], "original_final_grade": row["final_grade"],
+                        "consumer_rerun": False, "audit_rerun": False, "additional_corrections": 0}
+                    row["final_grade"] = grade(case, artifacts, (row["correction"] or row["consumer"])["output"], prior)
+                    row["passed"] = row["final_grade"]["passed"]
+                    result["cases"].append(row)
+                    completed[case["id"]] = artifacts
+                    destination.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
+                    print(case["id"], "PASS (same native outputs rescored)", flush=True)
+                    continue
+                consumer = rechecked["consumer"] if rechecked else native(
                     "consumer", facts, artifacts, root / "consumer", flags
                 )
                 if consumer["output"] is None:
@@ -597,8 +736,8 @@ def main():
                         }
                     )
                     break
-                first = grade(case, artifacts, consumer["output"], prior)
-                audit = native(
+                first = rechecked["first_grade"] if rechecked else grade(case, artifacts, consumer["output"], prior)
+                audit = rechecked["audit"] if rechecked else native(
                     "audit",
                     facts,
                     artifacts,
@@ -606,8 +745,8 @@ def main():
                     flags,
                     previous=consumer["output"],
                 )
-                correction = None
-                if audit["output"]["verdict"] == "revise":
+                correction = rechecked["correction"] if rechecked else None
+                if not rechecked and audit["output"]["verdict"] == "revise":
                     correction = native(
                         "consumer",
                         facts,
@@ -618,7 +757,7 @@ def main():
                         feedback=audit["output"],
                     )
                 final_audit = audit
-                if correction:
+                if correction or rechecked:
                     final_audit = native(
                         "audit",
                         facts,
@@ -638,7 +777,8 @@ def main():
                 phases = [
                     consumer,
                     audit,
-                    *([correction, final_audit] if correction else []),
+                    *([correction] if correction else []),
+                    *([final_audit] if final_audit is not audit else []),
                 ]
                 passed = (
                     final["passed"]
@@ -670,6 +810,12 @@ def main():
                     ],
                     "raw_tool_trace": [persisted_call(c) for c in calls(artifacts)],
                 }
+                if rechecked:
+                    row["rechecked_saved_candidate"] = {"result": args.recheck_accepted_prefix_from,
+                        "sha256": digest((HERE / args.recheck_accepted_prefix_from).read_bytes()),
+                        "consumer_rerun": False, "additional_corrections": 0,
+                        "producer_source_sha256": saved["source_sha256"],
+                        "original_final_audit": rechecked["final_audit"]["output"]}
                 result["cases"].append(row)
                 del result["pending_case"]
                 completed[case["id"]] = artifacts

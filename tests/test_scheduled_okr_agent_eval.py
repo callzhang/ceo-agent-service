@@ -153,7 +153,8 @@ def complete_fixture(tmp_path, case=None):
                 {
                     "tool": "read_task_artifact",
                     "arguments": {"name": name, "offset": 0},
-                    "result": {"has_more": False},
+                    "result": {"offset": 0, "total_chars": len(raw.decode()), "next_offset": None,
+                               "sha256": okr_eval.digest(raw), "content": raw.decode()},
                 },
             ]
         )
@@ -212,6 +213,79 @@ def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
         assert result["readback"]["artifact_name"].endswith(".readback.json")
 
 
+def test_actual_artifact_reader_reports_zero_based_ranges_on_full_reads(tmp_path):
+    f = Fixture(CASES[0]["facts"], tmp_path)
+    text = "## Heading\n"
+    (tmp_path / "sample.md").write_text(text)
+    with f.production_tools("audit") as tools:
+        whole = tools["read_task_artifact"]("sample.md")
+        assert whole["offset"] == 0 and whole["total_chars"] == len(text)
+        assert whole["next_offset"] is None and whole["content"] == text
+        cropped = tools["read_task_artifact"]("sample.md", offset=1)
+        assert cropped["offset"] == 1 and cropped["content"] == text[1:]
+        assert whole["sha256"] == cropped["sha256"] == okr_eval.digest(text.encode())
+        assert "zero-based" in tools["read_task_artifact"].__doc__
+
+
+def test_cropped_artifact_page_is_not_a_full_readback(tmp_path):
+    text = "## Heading\n"
+    (tmp_path / "sample.md").write_text(text)
+    trace = [{"tool": "read_task_artifact", "arguments": {"name": "sample.md", "offset": 1},
+              "result": {"sha256": okr_eval.digest(text.encode()), "content": text[1:]}}]
+    assert not okr_eval.fully_read(trace, tmp_path, "sample.md")
+    trace.append({"tool": "read_task_artifact", "arguments": {"name": "sample.md", "offset": 0},
+                  "result": {"sha256": okr_eval.digest(text.encode()), "content": text[:1]}})
+    assert okr_eval.fully_read(trace, tmp_path, "sample.md")
+
+
+def test_prepared_schema_gives_the_subject_unique_owner_label(tmp_path):
+    complete_fixture(tmp_path)
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    for entry in plan["managers"]:
+        if entry["outcome"] == "collected":
+            assert entry["subject_label"] == f"林辰 [{entry['user_id']}]"
+            schema = json.loads(Path(entry["schema_file"]).read_text())
+            assert entry["subject_label"] in json.dumps(schema,ensure_ascii=False)
+
+
+def test_hand_editing_canonical_summary_does_not_make_a_proposal_valid(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    path = tmp_path / "summary.md"
+    path.write_text(path.read_text()[1:])
+    output["payload"]["actions"][0]["payload"]["content"] = path.read_text()
+    result = okr_eval.grade(case, tmp_path, output)
+    assert not result["passed"]
+    assert not result["checks"]["canonical_render_artifacts"]
+
+
+def test_accepted_bytes_survive_stricter_canonical_and_owner_recheck(tmp_path):
+    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v13.json").read_text())
+    row = okr_eval.restore_accepted_candidate(saved, CASES[0], tmp_path)
+    result = okr_eval.grade(CASES[0], tmp_path, row["correction"]["output"])
+    assert result["passed"]
+    assert result["analysis_hashes"] == row["final_grade"]["analysis_hashes"]
+    assert result["checks"]["canonical_render_artifacts"]
+
+
+def test_failed_saved_candidate_cannot_be_reused(tmp_path):
+    import pytest
+
+    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v13.json").read_text())
+    with pytest.raises(ValueError, match="failed candidate"):
+        okr_eval.restore_accepted_candidate(saved, CASES[2], tmp_path)
+
+
+def test_manifest_paths_must_belong_to_current_artifact_directory(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    path = tmp_path / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["main_file"] = "/tmp/another-execution/main.md"
+    path.write_text(json.dumps(manifest))
+    result = okr_eval.grade(case, tmp_path, output)
+    assert not result["passed"]
+    assert result["checks"]["manifest_artifact_binding"] is False
+
+
 def test_publication_cannot_assume_canonical_urls_without_provider_info(tmp_path):
     case, output = complete_fixture(tmp_path)
     f = Fixture(case["facts"], tmp_path)
@@ -226,6 +300,29 @@ def test_collection_without_real_prepare_call_fails(tmp_path):
     trace = [c for c in okr_eval.calls(tmp_path) if c["tool"] != "consumer_run_skill_script"]
     f.trace_path.write_text("".join(json.dumps(c) + "\n" for c in trace))
     assert okr_eval.grade(case, tmp_path, output)["checks"]["collect_before_prepare"] is False
+
+
+def test_exact_full_provider_reads_are_equivalent_to_receipt_artifact_reads(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    f = Fixture(case["facts"], tmp_path)
+    trace = [c for c in okr_eval.calls(tmp_path) if c["tool"] != "read_task_artifact"]
+    for node, doc in f.documents().items():
+        trace.append({"tool": "read_dingtalk_document", "arguments": {"node_id": node},
+                      "result": json.loads((tmp_path / doc["readback_name"]).read_text())})
+    f.trace_path.write_text("".join(json.dumps(c) + "\n" for c in trace))
+    assert okr_eval.grade(case, tmp_path, output)["passed"]
+
+
+def test_stale_or_partial_direct_provider_reads_do_not_count(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    f = Fixture(case["facts"], tmp_path)
+    trace = [c for c in okr_eval.calls(tmp_path) if c["tool"] != "read_task_artifact"]
+    for node, doc in f.documents().items():
+        payload = json.loads((tmp_path / doc["readback_name"]).read_text())
+        payload["content"]["revision"] -= 1
+        trace.append({"tool": "read_dingtalk_document", "arguments": {"node_id": node}, "result": payload})
+    f.trace_path.write_text("".join(json.dumps(c) + "\n" for c in trace))
+    assert not okr_eval.grade(case, tmp_path, output)["checks"]["full_readbacks_consumed"]
 
 
 def test_fixture_trace_is_not_a_business_artifact(tmp_path):
@@ -412,6 +509,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     second = root / "okr_cases.v2.json"
     assert hashlib.sha256(second.read_bytes()).hexdigest() == "646a1857f50fd16a45d2f9520df906ee9dafbf0bb7864f4cd1226c961469bf04"
     assert [c["facts"] for c in json.loads(second.read_text())["cases"]] == [c["facts"] for c in CASES]
+    assert hashlib.sha256((root / "okr_cases.v3.json").read_bytes()).hexdigest() == "c8ed2093242a7cef57f3025a2f062a7aa4a82da3b67901fcb92a7843b8569438"
     for before, after in zip(first, CASES, strict=True):
         assert before["facts"] == after["facts"]
         if "base_score_ranges" in before["expected"]:

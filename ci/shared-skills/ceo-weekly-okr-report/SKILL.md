@@ -3,7 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
-  version: 3
+  version: 4
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -58,7 +58,11 @@ ceo_attention_items, manager_reviews, source_coverage and warnings. The schema
 contains every nested field. Each analysis has exactly one manager review and
 exactly one KR review per live KR in the original source order. Preserve KR IDs
 and objective/KR titles. Private ownership comes from the plan's userId-bound
-file, not an identity invented in model output. Do not add `user_id` or member gaps to the model JSON. Save the plan
+file, not an identity invented in model output. Do not add `user_id` or member gaps to the model JSON.
+Use the plan's `subject_label` for authored ownership references to this person;
+the prepared schema states that exact label, including stable identity when names collide.
+Keep the manager review's source name unchanged.
+Save the plan
 entry source_sha256 as `_source_sha256` alongside the analysis JSON. On recovery,
 read the existing analysis when the plan marks `analysis_reusable=true` and
 preserve that file verbatim. Analyze only missing or changed entries; a changed
@@ -130,7 +134,9 @@ After its receipt, run render with that same links file and
 `--document-url <main-url>` to produce summary.md. This final `summary.md` is the
 canonical notification artifact: preserve its text and Markdown verbatim in the
 proposal content. Audit compares the proposal directly with that artifact, not
-with a separately rewritten message draft. Propose that body and the roster's
+with a separately rewritten message draft. Correct analysis inputs and rerender
+to change generated reports; do not hand-edit the generated canonical files.
+Propose that body and the roster's
 conversation ID through the existing `dingtalk-chat`
 message action. Publication and sending are normal controlled actions reviewed
 by Audit; keep document and message receipts in the task result.

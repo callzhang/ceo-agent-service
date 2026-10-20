@@ -4,8 +4,8 @@
 
 2026-10-20 UTC。原七案例的决策与独立正文/动作草稿验收已通过，详见
 [原验收记录](scheduled-task-generic-agent-validation.md)。本记录补充 OKR 的完整
-Skill 工作流、恢复、部分来源失败和真实报告读回。四场景原生验收仍在执行，
-最终结果不得以代码测试或独立 Audit 的 approve 替代。
+Skill 工作流、恢复、部分来源失败和真实报告读回。最终四场景 **4/4 通过**，
+每项同时满足全部机械核查与独立 Audit approve。新版自然发布仍待到期。
 
 原生探针运行生产配置选定的 `gpt-5.6-luna`、reasoning `high`，使用真实 Codex CLI、
 真实 Skill prepare/render/destination 脚本与生产 purpose-output parser；provider IO
@@ -89,7 +89,51 @@ v12 曾逐字恢复 v11 两个初步通过的场景，重新核对当前来源�
   prepare、必须读取规范URL、正文提交摘要和完整JSON读回的机械断言。
 - v13 在相同冻结事实、模型/runtime、一次修订预算上重跑全部四场景；不复用旧
   Consumer/Audit。旧的临时复核/前缀复用入口因业务标准变化已退出当前 runner，
-  历史代码与结果保存在先前提交中。该最终运行仍在执行。
+  历史代码与结果保存在先前提交中。v13 的主流程和来源恢复通过；日期场景仍失败。
+
+v13 的日期轨迹进一步证明：首次 Audit 对 summary.md 使用 offset=1，删掉首个#，
+却将该尾部当作全文；其返回 sha256 仍正确指向完整文件。Consumer 随后手改生成的
+summary.md 来迎合错误反馈，后续审核还发现同名 owner_names 未消歧。新增回归
+复现这两个问题：公共接口明确0起字符偏移，整页也返回范围元数据；Skill准备结果
+给出稳定subject_label及owner字段说明；核查器重跑真实渲染并逐字比较所有生成文件，
+按实际offset/完整文件SHA合并分页，拒绝手改canonical及同名裸负责人。修订预算不变。
+
+v14 的只读复核因评测恢复后manifest仍指向旧临时目录而失败；发布正文与分析字节
+没有变化。恢复步骤现用真实脚本重建当前目录的plan/schema/manifest，同时断言
+分析摘要及全部发布正文逐字不变，并加入manifest目录绑定回归。v15将对已通过且
+满足新增严格检查的两个原候选只读复审，不重采样Consumer、不增加修订；失败日期
+场景与共享故障场景随后执行。旧失败均保留。v15诊断复核四项通过，但最终生成行为
+仍另以当前Skill4/工具代码从零运行v16。
+
+v16主流程首轮通过；来源恢复首轮将仍有原型进展者误评0，独立Audit要求按低档
+部分进展修正，Consumer在原有一次修订内改为40。最终评分、公式、身份、全部
+provider正文与层级及通知提案均通过，Audit approve；核查器却只统计本地回执文件
+读取，漏认了完整直接provider读回。逐项重序列化这5份实际MCP返回，其SHA均与
+对应写入回执SHA完全相同，且发生在最新写入之后。
+
+读回观察器现同时识别完整回执文件与上述完全相同的provider快照；节点、版本、
+complete/status、全文与SHA要求未放宽。新增先RED后GREEN的等价通道回归及旧
+版本拒绝回归。v16原失败文件保持不变。v17在调用模型前因恢复缺少未被单独读取的
+本地附录而停止，现用实际写入SHA与完整provider回执的双重SHA证明恢复原正文，
+不从猜测或摘要生成内容。
+
+v18保持v16的全部原始Consumer/Audit/修订输出，前两案例只用修正后的观察器重评，
+不重采样、不加修订；当前Skill、实际工具函数、模型/runtime和冻结事实均与v16
+完全一致。原错误检查和新检查分开保存。日期与共享故障案例随后新执行。v17的恢复前置错误未调用模型；最终结果保存在
+[okr_results.v18.json](../evals/scheduled_task_generic/okr_results.v18.json)，状态passed，
+四案例全部通过，临时目录清理确认true。
+
+| 最终场景 | Consumer/Audit与核查结果 |
+| --- | --- |
+| 主流程 | 当前Skill4/工具代码的v16原始Consumer输出；Audit首轮approve；原观察器只认本地文件而误判读回，新观察器对原输出重评通过，29项机械断言通过 |
+| 来源变化恢复 | v16原始首轮把原型误评0，原一轮修订后40；Audit approve；按相同完整JSON SHA重评，31项机械断言通过，未变化分析逐字保留 |
+| 日期变化恢复 | v18新Consumer与Audit首轮通过；31项机械断言通过，两份分析按新日期失效重做 |
+| 共享认证失败 | v18新Consumer正确failed；Audit approve，4项机械断言通过；无渲染、发布或通知提案 |
+
+前两项当前工具、Skill、模型/runtime、冻结事实与v16完全一致；仅修正观察器，
+原始判定、首轮错误、原审核和修订均保留，未增加反馈预算或重采样Consumer。
+分数/身份/来源/正文/公式/层级标准均未改变。当前读取契约和Skill源码摘要已与
+最终结果逐项核对；合并后还须核对实际工具函数AST摘要。
 
 每次修改前核对实际输入、工具返回与模型结果。所有 failed JSON 留存，未用反复
 抽样掩盖失败。Codex 内置资源目录查询仅记录为 native_inventory_calls；所有真正
@@ -98,7 +142,7 @@ provider 工具必须属于唯一合成服务器，外部同名工具仍被回�
 ## 定向测试
 
 最新一次相关运行：`test_scheduled_okr_agent_eval.py`、`test_weekly_okr_report.py`、
-`test_scheduled_task_generic_eval.py` 共 **120 passed**。渲染两项回归与新增
+`test_scheduled_task_generic_eval.py` 共 **129 passed**。渲染两项回归与新增
 恢复/当前来源两项回归均先 RED 后 GREEN。原七案例的 13 项保护保持通过。
 发布整文件 `test_consumer_system_release.py` 最近一次 **27 passed**；其中旧
 finance 预置摘要错误地与已更新的安装文件比较，改为固定原有批准摘要，保留全部

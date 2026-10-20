@@ -837,11 +837,17 @@ def _roster_members(roster: dict[str, Any]) -> list[ManagerIdentity]:
     return managers
 
 
-def _member_schema(kr_count: int) -> dict[str, Any]:
+def _member_schema(kr_count: int, subject_label: str, subject_name: str) -> dict[str, Any]:
     schema = _read_json(Path(__file__).with_name("analysis.schema.json"))
     managers = schema["properties"]["manager_reviews"]
     managers.update(minItems=1, maxItems=1)
     properties = managers["items"]["properties"]
+    properties["name"]["const"] = subject_name
+    schema["properties"]["ceo_attention_items"]["items"]["properties"]["owner_names"]["description"] = (
+        f"This analysis concerns {subject_label}. When this subject owns an item, "
+        f"use the exact label {subject_label!r}; do not drop its stable identity. "
+        "Other owners require independently sourced, unambiguous identities."
+    )
     properties["kr_reviews"].update(minItems=kr_count, maxItems=kr_count)
     culture = json.loads(json.dumps(schema["$defs"]["dimensions"]))
     culture.update(minItems=3, maxItems=3)
@@ -937,6 +943,7 @@ def prepare(
         entry = {
             "user_id": member.user_id,
             "name": member.name,
+            "subject_label": f"{member.name} [{member.user_id}]",
             "key": key,
             "outcome": item["sourceOutcome"]["kind"],
             "source_sha256": _member_source_digest(item, period_label, end.isoformat()),
@@ -949,7 +956,8 @@ def prepare(
                 {**payload, "managers": [item], "roster": [asdict(member)]},
             )
             _write_json(
-                schema_file, _member_schema(len(_live_kr_rows([item], member.user_id)))
+                schema_file, _member_schema(len(_live_kr_rows([item], member.user_id)),
+                                            entry["subject_label"], member.name)
             )
             entry.update(
                 source_file=str(manager_source.resolve()),
