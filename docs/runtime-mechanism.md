@@ -2639,7 +2639,16 @@ the repository lock, normal service stop before database backup and checkout
 changes, verification, restart, health check, and rollback behavior still
 apply. Work interrupted by that stop is handled by the existing startup
 recovery and claim logic.
-The same flag on `python -m app.deploy --restart` skips only the quiet wait
+An optional `--target-commit <full 40-character SHA>` pins a deploy to a commit
+object in the current `origin/main` ancestry. The target must fast-forward the
+production checkout. A normal advance of main while the deploy waits does not
+change the pinned target; a main rewrite that drops it fails before the normal
+service stop and backup. If new work starts during the post-wait fetch, the
+deployer waits for quiet again within the original 30-minute deadline before
+stopping the service. The updater merges the literal commit, so a later ref
+change cannot expand an exact-SHA approval. Omitting the flag retains the
+ordinary current-main deploy path; `--restart` does not accept a target SHA.
+`--skip-quiet-wait` on `python -m app.deploy --restart` skips only the quiet wait
 before a settings-only service restart.
 If fast-forward fails before a replacement revision is installed, the updater
 starts the original service again and checks its health. A settings-only

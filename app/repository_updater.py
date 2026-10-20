@@ -562,6 +562,7 @@ class RepositoryUpdater:
         publication: Callable[[], UpgradePublication] | None = None,
         database_publication: Callable[[Path | None], UpgradePublication | None] | None = None,
         pre_checkout_cleanup: Callable[[], None] | None = None,
+        pin_target_commit: bool = False,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -577,6 +578,7 @@ class RepositoryUpdater:
         self.publication = publication
         self.database_publication = database_publication
         self.pre_checkout_cleanup = pre_checkout_cleanup
+        self.pin_target_commit = pin_target_commit
 
     @property
     def target_ref(self) -> str:
@@ -608,8 +610,9 @@ class RepositoryUpdater:
                     records = self.repository.status_records()
                 if records:
                     self._preserve_local_changes(operation)
+                merge_ref = operation.target_commit if self.pin_target_commit else self.remote_ref
                 self.repository._run(
-                    ["merge", "--ff-only", self.remote_ref],
+                    ["merge", "--ff-only", merge_ref],
                     category="upgrade_merge",
                 )
                 if self.database_publication is not None:
@@ -715,9 +718,17 @@ class RepositoryUpdater:
     def _recheck(self, operation: UpgradeOperation) -> list[object]:
         current = self.repository.resolve_ref(self.target_ref)
         remote = self.repository.resolve_ref(self.remote_ref)
-        if current != operation.original_commit or remote != operation.target_commit:
+        if current != operation.original_commit:
             raise UpgradePreconditionError("repository revision changed")
-        if not self.repository.is_ancestor(current, remote):
+        if self.pin_target_commit:
+            if not self.repository.is_ancestor(operation.target_commit, remote):
+                raise UpgradePreconditionError("target commit is not in origin/main")
+            selected_target = operation.target_commit
+        else:
+            if remote != operation.target_commit:
+                raise UpgradePreconditionError("repository revision changed")
+            selected_target = remote
+        if not self.repository.is_ancestor(current, selected_target):
             raise UpgradePreconditionError("repository target is diverged")
         records = self.repository.status_records()
         if records and not operation.branch_name.strip():
@@ -725,7 +736,7 @@ class RepositoryUpdater:
         fingerprint = self.repository.fingerprint(
             self.branch,
             current,
-            remote,
+            selected_target,
             records,
         )
         if fingerprint != operation.expected_fingerprint:
