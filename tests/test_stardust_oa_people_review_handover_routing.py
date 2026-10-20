@@ -93,16 +93,16 @@ def test_ordinary_approval_is_not_a_reserved_personal_decision_and_wrong_recipie
         assert "Only an explicit discretionary choice outside the normal approval decision" in text
 
 
-def test_org_change_does_not_repeat_a_verified_return_after_the_same_approver_reapproves_without_new_facts() -> None:
+def test_org_change_returns_again_when_a_prior_approver_reapproves_without_resolving_the_gap() -> None:
     path = Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")
     text = path.read_text(encoding="utf-8")
-    assert "prior verified return for the same unresolved facts" in text
-    assert "the responsible approver again approves without supplying new evidence" in text
-    assert "do not repeat the return or send a duplicate comment" in text
-    assert "Keep the current OA task pending with `no_action`" in text
-    assert "until new material or an explicit instruction changes the facts" in text
-    assert "takes precedence over the generic rule to return an unresolved issue again" in text
-    assert "A second action requires new submitted evidence" in text
+    assert "If a prior approver approves again without supplying evidence that resolves the same material gap" in text
+    assert "return the OA to that approving node" in text
+    assert "State the exact unresolved fact and the readable, source-verified evidence that remains insufficient" in text
+    assert "do not substitute a duplicate comment for the return" in text
+    assert "Count only verified returns for the same material gap" in text
+    assert "Reviewer-side read or OCR failures are not applicant-resolvable gaps" in text
+    assert "Keep the current OA task pending with `no_action`" not in text
 
 
 def test_algorithm_department_compensation_authority_is_documented_in_the_people_skill() -> None:

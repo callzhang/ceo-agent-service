@@ -903,6 +903,7 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     implementations = {
         option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS
     }
+    skill_revision = 1
     class CurrentSkillOptions:
         def list_managed_skill_options(self):
             return ()
@@ -910,8 +911,8 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
         def resolve_operation_skill(self, name):
             return SimpleNamespace(
                 path=Path(f"/current/{name}/SKILL.md"),
-                sha256=f"current-{name}",
-                content=f"current body for {name}",
+                sha256=f"current-{name}-{skill_revision}",
+                content=f"current body for {name}, revision {skill_revision}",
             )
 
     implementations["scan-oa-approvals"] = lambda: str(
@@ -942,6 +943,23 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     ]
     assert dws.task_reads == ["proc-1"]
     task = store.claim_reply_tasks(limit=1)[0]
+    unchanged_skill_scan = int(
+        ServiceCommandRegistry(implementations).run(
+            "scan-oa-approvals",
+            consumer_context=context,
+        )
+    )
+    assert unchanged_skill_scan == 0
+
+    skill_revision = 2
+    changed_skill_scan = int(
+        ServiceCommandRegistry(implementations).run(
+            "scan-oa-approvals",
+            consumer_context=context,
+        )
+    )
+    assert changed_skill_scan == 0
+    assert len(store.list_reply_tasks()) == 1
     # One conversation per approval: a shared session let a later
     # approval inherit an earlier one's transcript and skip its work.
     assert task.conversation_id == "oa_pending_scan:proc-1"
@@ -966,7 +984,7 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert [item["name"] for item in bound_context["skill_materials"]] == list(skill_names)
     assert [item["content"] for item in bound_context["skill_materials"]] == [
         f"## Operation Skill: {name}\nsource: /current/{name}/SKILL.md\n"
-        f"sha256: current-{name}\n\ncurrent body for {name}"
+            f"sha256: current-{name}-1\n\ncurrent body for {name}, revision 1"
         for name in skill_names
     ]
     assert context.skill_materials[0].content == "approval material"
@@ -982,6 +1000,24 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
             bound_context
         ).skill_materials:
             assert read(material.name)["content"] == material.content
+
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+    changed_skill_scan = int(
+        ServiceCommandRegistry(implementations).run(
+            "scan-oa-approvals",
+            consumer_context=context,
+        )
+    )
+    assert changed_skill_scan == 1
+    refreshed_task = next(
+        row for row in store.list_reply_tasks()
+        if row.trigger_message_id != task.trigger_message_id
+    )
+    assert refreshed_task.trigger_message_id != task.trigger_message_id
+    assert "revision 2" in refreshed_task.trigger_message_json
 
 
 def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_path):
