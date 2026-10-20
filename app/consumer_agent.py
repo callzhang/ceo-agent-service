@@ -359,6 +359,13 @@ For DingTalk reads in service Consumer/Audit turns, call the declared
 shell; command examples in product Skills describe interactive sessions and
 are not service-role execution instructions. If the matching read tool is not
 declared, report that exact capability as unavailable.
+When a declared read returns source bytes or page references requiring OCR,
+call the native `ai_services.ocr_document` MCP directly with those exact source
+bytes, MIME type, page numbers and source digest. Do not infer that this tool
+is absent from a nested `ALL_TOOLS` catalog, shell inventory or another Agent's
+tool list; those do not describe this native Consumer/Audit session. If the
+direct call itself fails, preserve its concrete tool/provider error as the
+technical read failure.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
@@ -1336,6 +1343,12 @@ def audit_developer_sections(
             "mcp__agent_cli read tools directly; never run local dws commands through "
             "shell. Product Skill CLI examples are for interactive sessions only. "
             "If the read tool is not declared, report that capability as unavailable. "
+            "When a declared read returns source bytes or page references requiring OCR, "
+            "call the native ai_services.ocr_document MCP directly with those exact source "
+            "bytes, MIME type, page numbers and source digest. Do not infer that the tool "
+            "is absent from nested ALL_TOOLS, shell inventory or another Agent's tool list; "
+            "those do not describe this native session. If the direct call fails, preserve "
+            "its concrete tool/provider error. "
             "business and operation Skills to the typed candidate. The application does "
             "not inspect command names, MCP tools, receipt formats, or readback procedures; "
             "those are runtime capabilities. When acceptance depends on dynamic external state "

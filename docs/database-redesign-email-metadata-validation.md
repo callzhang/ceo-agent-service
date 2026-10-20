@@ -209,3 +209,9 @@ changed. No app/scripts file changed from the reviewed B1 source. The focused
 release-manifest test passed1/0.28s. Its1,196-file app/tests/scripts aggregate
 is`eddfb6b9d58dce8fdee8f68dc95ec13cd3be120289cf7f6e074c9243bc38207d`, recorded separately in the publication freeze; the prior1195
 and1196 source evidence labels remain unchanged.
+
+## B1 production readback
+
+Standard quiet-wait deploy completed `a4ceb7a6 -> 8221466b`; actual production includes B1 `40666e521` plus independently published Consumer natural-readback documentation. Earlier A2 readback PID63376; B1 readback PID75700. The earlier A2 PID is not an immediate predeploy PID baseline. Production pair is Store19.3/Email53, all five duplicate class columns absent, all9544 message previews checked with Python Unicode `len` at most1000 (including embedded-NUL-safe length), production file474292224bytes. Health/status/Attention/History200, system violations0, original Runs190042→Tasks FK finding retained. Attention snapshot total2. No synthetic task or test send was created in production. Body-free readback is in `validation/2026-10-19-email-metadata-live.json`.
+
+Failure counts are **not** described as unchanged: against the earlier A2 snapshot, Reply tasks4→5 and Reply attempts5→6. Task405641 has `dependency_read_unavailable`, updated2026-10-20 01:14:00UTC, before this supervisor started at18:16:44PDT (01:16:44UTC). This older snapshot is not an immediate predeploy baseline; the existing failure is recorded separately from B1 storage acceptance.

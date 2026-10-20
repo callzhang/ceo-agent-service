@@ -1,0 +1,342 @@
+{
+  "production_head": "8221466b1e1e8526d8e3190979214553fa4ff712",
+  "pid": "75700",
+  "pair": "Store19.3/Email53",
+  "five_duplicate_class_columns_absent": true,
+  "python_unicode_preview_bounds_verified": true,
+  "emails": 9544,
+  "bytes": 474292224,
+  "fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "health": {
+    "http": 200,
+    "body": {
+      "ok": true,
+      "status": "ok"
+    }
+  },
+  "system_violations": 0,
+  "attention": {
+    "http": 200,
+    "meta": {
+      "snapshot_at": "2026-10-20T01:16:53.151132Z",
+      "page": null,
+      "page_size": null,
+      "total": 2,
+      "next_cursor": "",
+      "has_more": false
+    },
+    "items": 2
+  },
+  "history": {
+    "http": 200,
+    "meta": {
+      "snapshot_at": "2026-10-20T01:16:53.857166Z",
+      "page": 1,
+      "page_size": 5,
+      "total": 36384,
+      "next_cursor": "2",
+      "has_more": true
+    },
+    "items": 5
+  },
+  "queues": [
+    {
+      "name": "Reply tasks",
+      "table": "reply_tasks (current business-object projection)",
+      "counts": {
+        "done": 7376,
+        "failed": 5,
+        "skipped": 109
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 5,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-20 01:20:13",
+      "latest_error": "dependency_read_unavailable"
+    },
+    {
+      "name": "Reply attempts",
+      "table": "reply_attempts (current trigger state)",
+      "counts": {
+        "calendar": 14,
+        "commented": 27,
+        "completed": 1274,
+        "decision_selected": 5,
+        "failed": 6,
+        "reacted": 367,
+        "recovered": 74,
+        "sent": 1721,
+        "skipped": 3909
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 6,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-20 01:20:13",
+      "latest_error": "dependency_read_unavailable"
+    },
+    {
+      "name": "Work items",
+      "table": "work_summary_inputs",
+      "counts": {
+        "done": 4718,
+        "skipped": 4402
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-19 16:07:36",
+      "latest_error": ""
+    },
+    {
+      "name": "Email classifications",
+      "table": "email_agent_classification_tasks",
+      "counts": {
+        "done": 1382,
+        "pending": 1,
+        "running": 1
+      },
+      "pending": 1,
+      "processing": 1,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-20T01:20:20.266455+00:00",
+      "latest_error": ""
+    },
+    {
+      "name": "Follow-ups",
+      "table": "follow_up_drafts",
+      "counts": {
+        "cancelled": 20,
+        "completed": 162,
+        "sent": 1085,
+        "skipped": 1210
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-09-25 05:09:46",
+      "latest_error": ""
+    },
+    {
+      "name": "Meeting jobs",
+      "table": "meeting_alignment_jobs",
+      "counts": {
+        "no_action": 85,
+        "sent": 608,
+        "skipped": 80
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-20 01:20:38",
+      "latest_error": ""
+    },
+    {
+      "name": "OKR reviews",
+      "table": "okr_review_requests",
+      "counts": {
+        "done": 19,
+        "skipped": 1
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-08-25 17:50:49",
+      "latest_error": ""
+    },
+    {
+      "name": "Memory writes",
+      "table": "memory_write_events",
+      "counts": {
+        "skipped": 164,
+        "written": 312
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-07-26 14:21:00",
+      "latest_error": ""
+    },
+    {
+      "name": "Meeting Memory writes",
+      "table": "meeting_memory_write_events",
+      "counts": {
+        "done": 608
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-19 12:21:32",
+      "latest_error": ""
+    },
+    {
+      "name": "DingTalk Todos",
+      "table": "work_todo_dingtalk_links",
+      "counts": {
+        "active": 540,
+        "cancelled": 5,
+        "done": 330
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-09-25 03:16:01",
+      "latest_error": ""
+    },
+    {
+      "name": "WeChat deliveries",
+      "table": "wechat_deliveries (delivery outcome)",
+      "counts": {
+        "sent": 54,
+        "skipped": 6,
+        "superseded": 66
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-15 05:30:00",
+      "latest_error": ""
+    },
+    {
+      "name": "Email provider actions",
+      "table": "email_actions",
+      "counts": {
+        "done": 10635,
+        "pending": 7,
+        "skipped": 2
+      },
+      "pending": 7,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-20T01:17:33+00:00",
+      "latest_error": ""
+    },
+    {
+      "name": "Email unsubscribe tasks",
+      "table": "reply_tasks (channel=email, unsubscribe)",
+      "counts": {
+        "done": 1053,
+        "failed": 4,
+        "skipped": 57
+      },
+      "pending": 0,
+      "processing": 0,
+      "failed": 4,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-19 22:15:45",
+      "latest_error": "unsubscribe_operation_rejected:TimeoutError"
+    }
+  ],
+  "dispatcher_queues": [
+    {
+      "name": "scheduled",
+      "pending": 2,
+      "due": 2,
+      "oldest_available_at": "2026-10-20T01:20:00+00:00",
+      "running": 2,
+      "latest_error": ""
+    },
+    {
+      "name": "scheduled_execution",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "reply",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "meeting",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "work_summary",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "okr_review",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "business_task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_memory_write",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    }
+  ],
+  "failure_count_delta_since_earlier_a2_snapshot": [
+    {
+      "queue": "Reply tasks",
+      "before": 4,
+      "now": 5
+    },
+    {
+      "queue": "Reply attempts",
+      "before": 5,
+      "now": 6
+    }
+  ],
+  "existing_failure_boundary": {
+    "task_id": 405641,
+    "error": "dependency_read_unavailable",
+    "updated_at_utc": "2026-10-20 01:14:00",
+    "current_supervisor_started_local": "2026-10-19 18:16:44",
+    "note": "Failure timestamp predates B1 restart. Earlier A2 baseline is not an immediate predeploy baseline; no unchanged-failure-count claim."
+  },
+  "earlier_a2_snapshot_pid": "63376"
+}

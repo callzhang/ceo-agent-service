@@ -1,0 +1,13 @@
+# Consumer/Audit OCR tool visibility, 2026-10-20
+
+The selected failure was repeated `dependency_read_unavailable` on scanned OA materials. Read-only inspection of the complete Consumer trajectory for task 405641 found that the attachment reader returned the original page identity and a bounded JPEG OCR payload, but the Agent could not find `ai_services.ocr_document`. From 2026-10-19 through the pre-fix sample, tasks 405641, 405464 and 405439 had 222, 34 and 17 failed Consumer runs with this error code. These counts describe the observed failure pattern, not an OA business outcome.
+
+The service manifest and role approval options already configured AI Services. The final Codex role command in `app/wechat/codex_safety.py` nevertheless set `mcp_servers.ai_services.enabled_tools=[]`, overriding tool visibility for both Consumer and Audit. PR [#170](https://github.com/callzhang/ceo-agent-service/pull/170) changes that final list to `['ocr_document']` only. Other AI Services tools remain unavailable; the change does not alter OA decisions, retry policy, Audit gates or external actions. The concurrently merged OCR call guidance in `app/consumer_agent.py` was preserved during integration.
+
+Acceptance and evidence:
+
+- The role-command regression failed on the missing OCR entry before the code change. After integration with current main, 113 focused tests and Ruff passed; the final PR diff contains one behavior line plus its regression and architecture/runtime documentation.
+- With a restored existing Codex OAuth session, a direct read-only OCR call on an anonymous image returned `TEST 4821`. A separate native Codex run called `ai_services.ocr_document` with a smaller anonymous JPEG and returned `A482` with completed tool status. No production attachment or Work Profile was sent in these checks.
+- PR #170 merged as `d88c9395f625dfe12b57e99ba40c4ffbd7721eea`. The repository deploy command reported that a concurrent deploy had already moved production to that exact commit. Readback found launchd PID 86147 (the earlier observed PID was 75700), `/healthz` healthy, the production Consumer and Audit commands each enabling only `['ocr_document']`, zero work in flight, zero processing reply tasks and work-summary inputs, four Attention groups, and a readable History list with 36,387 records.
+
+At readback there had been no new post-deploy Consumer/Audit role run. This verifies release and the OCR tool chain, not that task 405641 reached a business decision. Its failed OA task was not replayed, and no approval, return, comment or other external action was performed by this validation. GitHub's `test` check was still queued at the last read; local and native behavior checks supplied the release evidence.
