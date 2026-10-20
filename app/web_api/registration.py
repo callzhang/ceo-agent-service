@@ -967,7 +967,8 @@ def register_console_routes(
         from app.audit_web import handle_needs_human_decision_post
         form = urlencode({key: str(value) for key, value in payload.items()}).encode("utf-8")
         status, _headers, body = handle_needs_human_decision_post(
-            store_factory(), attempt_id, form, return_to="/history"
+            store_factory(), attempt_id, form, return_to="/history",
+            skill_options_factory=scheduled_task_option_service_factory,
         )
         if status >= 400:
             return JSONResponse({"ok": False, "code": "decision_failed", "message": "无法提交人工决策", "details": {"technical": normalize_display_value(body)}}, status_code=status)

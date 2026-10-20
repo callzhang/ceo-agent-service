@@ -8,7 +8,11 @@ from app.agent_cron.commands import (
     ServiceCommandSkillMaterial,
 )
 from app.agent_cron.models import ScheduledTaskSkillRef
-from app.audit_web import handle_rerun_attempt_post, refresh_oa_rerun_skill_snapshot
+from app.audit_web import (
+    handle_reviewed_message_reply,
+    handle_rerun_attempt_post,
+    refresh_oa_rerun_skill_snapshot,
+)
 from app.dws_client import DingTalkMessage
 from app.store import AutoReplyStore
 
@@ -105,6 +109,96 @@ def test_manual_oa_rerun_refuses_to_copy_a_snapshot_when_refresh_is_unavailable(
             store=SimpleNamespace(get_scheduled_task=lambda _: None),
             skill_options=None,
         )
+
+
+def test_reviewed_oa_supplement_refreshes_selected_skill_snapshot_before_queueing():
+    ref = ScheduledTaskSkillRef(
+        skill_source="managed",
+        skill_name="stardust-oa-people-review",
+        managed_skill_id=7,
+        managed_revision_id=11,
+        position=0,
+    )
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=20,
+        prompt="Review this OA event.",
+        skill_names=("stardust-oa-people-review",),
+        skill_protocol="read exact frozen Skills",
+        skill_materials=(ServiceCommandSkillMaterial(
+            name="stardust-oa-people-review",
+            content="old people rules revision 11",
+        ),),
+        skill_protocol_source="generated_discovery",
+    )
+    message = DingTalkMessage(
+        open_conversation_id="oa_pending_scan:proc-1",
+        open_message_id="oa-pending:proc-1:revision-1:2026-10-19",
+        conversation_title="审批待办",
+        single_chat=True,
+        sender_name="Derek OA",
+        create_time="2026-10-19T10:00:00Z",
+        content="Review this OA process.",
+        raw_payload={"source": "oa_pending_scan", "scheduled_consumer": context.to_payload()},
+    )
+    task = SimpleNamespace(
+        conversation_id=message.open_conversation_id,
+        conversation_title=message.conversation_title,
+        single_chat=message.single_chat,
+        trigger_message_id=message.open_message_id,
+        trigger_create_time=message.create_time,
+        trigger_sender=message.sender_name,
+        trigger_text=message.content,
+        trigger_message_json=message.model_dump_json(),
+        input_compacted=False,
+    )
+    attempt = SimpleNamespace(
+        id=15739,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        trigger_create_time=task.trigger_create_time,
+        channel="dingtalk",
+        action="send_reply",
+        oa_process_instance_id="proc-1",
+        reviewer_feedback="Apply the current OA Skill.",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    scheduled_task = SimpleNamespace(
+        id=3,
+        command="scan-oa-approvals",
+        prompt=context.prompt,
+        skill_refs=(ref,),
+    )
+    captured = {}
+    store = SimpleNamespace(
+        get_reply_attempt=lambda attempt_id: attempt if attempt_id == attempt.id else None,
+        get_reply_task_for_message=lambda *_args, **_kwargs: task,
+        get_scheduled_task=lambda task_id: scheduled_task if task_id == 3 else None,
+        record_actionable_attempt_decision=lambda _attempt_id, **kwargs: (
+            captured.update(kwargs) or (attempt.id, task)
+        ),
+    )
+
+    handle_reviewed_message_reply(
+        store,
+        attempt_id=attempt.id,
+        reply_text="",
+        reviewer_feedback="Apply the current OA Skill.",
+        actionable_source_attempt_id=attempt.id,
+        review_candidate_id=1077,
+        supplement_instruction="Apply the current OA Skill.",
+        skill_options_factory=Options,
+    )
+
+    refreshed = json.loads(captured["trigger_message_json"])
+    new_context = ServiceCommandConsumerContext.from_payload(
+        refreshed["raw_payload"]["scheduled_consumer"]
+    )
+    assert new_context is not None
+    assert new_context.skill_materials[0].content.endswith("People rules revision 12")
 
 
 def test_compacted_oa_scan_rerun_restores_saved_run_without_reading_synthetic_message(
