@@ -93,9 +93,9 @@ Audit 自己的 return/reject 仍属于审核反馈协议。
 }
 ```
 
-`receipt:` 是 Consumer 证据引用的标记；服务会在匹配前剥离这一个前缀，再与
-已存储的原始 `external_action_key` 做精确比较。原始 key 形式仍可读取以兼容旧候选；
-不得省略或额外改写 key 的其余部分。最终必须解析为当前任务恰好一条已核实的权限申请动作，
+Consumer 可按证据来源返回原始 key，也可能带 `receipt:` 或
+`prior_receipt_id=` 标记。服务只剥离一个已知标记，再与已存储的原始
+`external_action_key` 做精确比较；不得省略或额外改写 key 的其余部分。最终必须解析为当前任务恰好一条已核实的权限申请动作，
 且原候选 action 确为 `request_access`。普通评论、模型自行声明、未知 key、其他任务回执以及
 uncertain 动作均不能启动权限等待。仅输出 `reason: access requested` 不满足条件。
 `retry` 不是技术错误，不能同时携带非空技术错误码或置真的技术错误标志。

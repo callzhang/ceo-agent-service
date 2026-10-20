@@ -97,6 +97,29 @@ def test_retry_accepts_canonical_receipt_evidence_reference():
     assert requested_at == NOW
 
 
+def test_retry_accepts_prior_receipt_id_evidence_reference():
+    class Store:
+        def list_verified_candidate_actions(self, _task_id):
+            return [{
+                'external_action_key': '11b23bef911e60d1048d41d02cfc0bab',
+                'candidate_id': 'candidate-1',
+                'created_at': NOW.isoformat(),
+            }]
+
+        def get_review_candidate(self, _candidate_id):
+            return {'candidate_json': json.dumps({
+                'purpose_output': {'action': 'request_access'},
+            })}
+
+    receipt, requested_at = verified_access_request(
+        Store(), SimpleNamespace(id=42),
+        ['prior_receipt_id=11b23bef911e60d1048d41d02cfc0bab'],
+    )
+
+    assert receipt == '11b23bef911e60d1048d41d02cfc0bab'
+    assert requested_at == NOW
+
+
 def test_retry_does_not_fuzzily_strip_receipt_reference():
     class Store:
         def list_verified_candidate_actions(self, _task_id):

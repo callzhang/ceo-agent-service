@@ -61,7 +61,15 @@ task identity, unique verified-action selection and `request_access` candidate
 checks remain required. A focused regression reproduces the previously rejected
 canonical reference. This parser fix does not broaden which receipts are trusted.
 After this change, the focused purpose retry/orchestration/output/action-contract
-group passed 38 tests; Ruff and the scoped diff check passed.
+group passed 39 tests; Ruff and the scoped diff check passed.
+
+The first production rerun after the `receipt:` fix exposed another emitted
+reference label: `prior_receipt_id=<external_action_key>`. The Consumer's retry
+decision was otherwise valid, but the service rejected this label as unbound.
+The validator now strips exactly one of the two observed labels (`receipt:` or
+`prior_receipt_id=`) before exact key matching; unknown or repeated labels remain
+invalid. This second regression was observed failing before the alias fix. The
+rerun did not reach Audit or System Execution and generated no external action.
 
 These probes demonstrate model/schema interoperability on two fixed synthetic
 cases. The persistent limits are established by controlled-clock SQLite tests;
