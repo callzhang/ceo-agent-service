@@ -69,10 +69,14 @@ def _runtime_metadata(db: sqlite3.Connection, now: str) -> dict[int, dict]:
             or (runtime.workload_kind='task' and domain.record_type='task_agent_runs'))
         where runtime.record_type='agent_runtime_attempts'
           and runtime.status in ('starting','running')
-          and runtime.lease_owner<>'' and datetime(runtime.lease_expires_at)>datetime(?)
+          and ((runtime.lease_owner<>'' and datetime(runtime.lease_expires_at)>datetime(?))
+            or (parent.task_id is not null and exists(
+              select 1 from tasks live where live.id=parent.task_id
+                and live.lifecycle_lease_owner<>''
+                and datetime(live.lifecycle_lease_expires_at)>datetime(?))))
         order by runtime.id
     """,
-        (now,),
+        (now, now),
     ).fetchall()
     result = {}
     for row in rows:

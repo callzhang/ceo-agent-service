@@ -112,12 +112,13 @@ def test_running_agent_metadata_and_current_generation(tmp_path):
                 credential_mode="oauth",
                 model="test-model",
                 status="running",
-                lease_owner="worker",
-                lease_expires_at="2026-10-20 17:10:00",
+                lease_owner="",
+                lease_expires_at="",
                 started_at="2026-10-20 16:58:00",
             ),
         )
         result = read_dashboard_queues(db, now=NOW)
+        assert not read_dashboard_queues(db, now=NOW.replace(minute=11))["active"]
     row = result["active"][0]
     assert row["agent"] == "audit"
     assert row["model"] == "test-model"

@@ -58,3 +58,8 @@ native router owners are independent (email-classifier PID versus routed UUID).
 The earlier same-owner fixture hid missing model/start metadata. Reproduced with
 different valid owners, then changed the read association to workload identity
 plus both valid leases, the same contract used for Workbench. No worker change.
+
+Bound Consumer/Audit native attempts use their current Task lease rather than a
+standalone router lease. A fixture with an empty native lease reproduced missing
+Agent/model metadata; the read now accepts that exact current parent only while
+its Task lease is valid. An expired-Task assertion rejects the same running row.
