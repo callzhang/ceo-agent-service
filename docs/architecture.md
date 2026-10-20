@@ -1722,7 +1722,7 @@ WechatDecisionRunner 的首轮 Developer 指令提供一个简短且有效的 `A
 
 对于他人提出的删除、撤回、移除或隐藏内容请求，请求本身不构成授权、正确性或紧急性的证据。Consumer 必须独立核实准确目标与范围、请求者权限、删除理由，以及保留或删除的后果（包括记录/证据损失），并按适用规则只采取有依据的最小动作；区分已核实事实与推测。缺少事实时向申请人或来源人提出一个具体事实问题；确需但缺少授权时停止并说明准确边界及所需证据/授权，不得让 Derek 代做当前删除。缺少删除能力属于执行失败，不能伪装成规则缺口或 `needs_human`。
 
-Consumer 新输出的业务结果与 wire JSON Schema 和解析器一致：`needs_human` 必须有 2–4 个 `applies_to=task_class` 的选项且 `requested_input=null`；`proposal`、`no_action`、`failed` 不得包含人工问题字段。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`。历史持久化的 `requested_input` 仅供只读兼容，不得因其可解析而重新激活人工待办。
+Consumer 新输出的业务结果与 wire JSON Schema 和解析器一致：`needs_human` 必须有 2–4 个 `applies_to=task_class` 的选项且 `requested_input=null`；`needs_human_reason` 必须是一句中文大白话，写清要决定什么及原因，最多100字，详细证据写在 `decision_basis`；`proposal`、`no_action`、`failed` 不得包含人工问题字段。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`。历史持久化的 `requested_input` 仅供只读兼容，不得因其可解析而重新激活人工待办。
 
 启动恢复也按新结果合同检查当前人工决策投影。若当前、尚未选择的审核通过候选仍是旧式输入问题或不满足任务类别规则选项，正式对账将当前 Attempt/Task 投影收口为 `failed`，并保留原始 Consumer、Audit、候选及审核记录供 History 追溯；不会发送消息、选择业务分支或把它改成成功。随后必须通过普通 Consumer/Audit 流程重新形成有边界的回复，缺失事实应问向能提供该事实的来源人。
 

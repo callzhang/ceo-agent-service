@@ -140,7 +140,7 @@ function HumanDecisionBasis({ detail }: { detail: AttemptDetail }) {
   const basis = decision.basis;
   const factList = (items: Array<{ assertion: string; references: string[] }>) => items.map((item) => <li key={`${item.assertion}-${item.references.join(",")}`}>{item.assertion}{item.references.length > 0 && <small>依据：{item.references.join("、")}</small>}</li>);
   return <section className="console-card attempt-decision-basis" aria-label="人工判断依据">
-    <h2>为什么需要你判断</h2>
+    <h2>这次要你决定什么</h2>
     <p>{decision.reason}</p>
     <h3>已核验事实</h3><ul>{factList(basis.verified_facts)}</ul>
     <h3>适用规则</h3><ul>{factList(basis.rule_evidence)}</ul>

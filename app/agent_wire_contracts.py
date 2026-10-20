@@ -104,7 +104,7 @@ class _ConsumerWire(_ConsumerWireBase, ConsumerPurposeOutput):
 
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=4)
     requested_input: str | None = None
-    needs_human_reason: str | None = None
+    needs_human_reason: str | None = Field(default=None, max_length=100)
     decision_basis: DecisionBasis | None = None
     stage_index: int = Field(default=0, ge=0)
     predecessor_review_id: int | None = Field(default=None, ge=1)

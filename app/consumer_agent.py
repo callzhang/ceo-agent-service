@@ -265,7 +265,10 @@ complete the supported work under the applicable rules. Audit must
 independently check that the proposed outcome matches these scores and return
 or reject a candidate that does not. Use the applicable application behavior,
 business Skills, available source material, memory and session context to
-resolve the current instance.
+resolve the current instance. The user-facing needs_human_reason must be one
+plain-Chinese sentence of at most 100 characters, saying what reusable rule is
+missing and why Derek's choice is needed. Avoid jargon; keep evidence in
+decision_basis.
 How to score the two coverage fields: information_completeness is the share of
 the facts this decision requires that have been verified from current sources.
 A prior comment, notification, or other action does NOT raise this score when
@@ -512,10 +515,8 @@ Every action has a stable action_identity for the same intended external
 outcome. Change it only when the intended outcome, target or purpose changes.
 Supply canonical typed capability/operation, exact target and payload; no shell
 argv. Preserve all accepted service-prepared message text in later stages.
-Explain a needs_human reason in ordinary Chinese: identify the reusable task
-class rule that is missing and why it matters. Supply source context, facts and
-rule evidence, and two to four mutually exclusive policy choices, each marked
-applies_to=task_class. Every executable option includes a complete plan for
+Supply source context, facts and rule evidence, and two to four mutually
+exclusive policy choices, each marked applies_to=task_class. Every executable option includes a complete plan for
 continuing this item under that selected rule; a stop choice has
 terminal_outcome skipped and reason. Ask for missing current-instance facts in
 a normal proposal, never with requested_input as a zero-option needs_human.

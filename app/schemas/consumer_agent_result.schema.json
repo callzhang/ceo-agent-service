@@ -747,6 +747,7 @@
           "type": "null"
         },
         "needs_human_reason": {
+          "maxLength": 100,
           "minLength": 1,
           "type": "string"
         },
@@ -819,6 +820,7 @@
     "needs_human_reason": {
       "anyOf": [
         {
+          "maxLength": 100,
           "type": "string"
         },
         {
