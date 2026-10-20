@@ -1,6 +1,6 @@
 """Exact 11.2 -> 11.3 paired task-schema publication and business-write inverse."""
 from app.state_publication_sources import publication_store_version
-from app.email_metadata_schema_release import (
+from app.execution_owner_schema_release import (
     TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 

@@ -52,7 +52,7 @@ def migrate_scheduled_configs(db: sqlite3.Connection) -> None:
 def publication_scheduled_source(db: sqlite3.Connection) -> str:
     """Read the exact scheduled layout for the paired publication quiet wait."""
     from app.run_storage import SCHEDULED_RUN_SQL
-    from app.email_metadata_schema_release import (
+    from app.execution_owner_schema_release import (
         TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
     )
     from app.action_storage import action_schema_is_current, reply_schema_is_current

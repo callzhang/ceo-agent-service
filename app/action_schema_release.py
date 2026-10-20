@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from app.email_metadata_schema_release import (
+from app.execution_owner_schema_release import (
     TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
