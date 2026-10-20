@@ -9,7 +9,7 @@ import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
 const ATTENTION_REFRESH_INTERVAL_MS = 10_000;
 
-export function AttentionPanel({ onCountChange }: { onCountChange?: (count: number) => void } = {}) {
+export function AttentionPanel({ onCountChange, refreshKey, compact=false }: { onCountChange?: (count: number) => void; refreshKey?: number; compact?: boolean } = {}) {
   const [rows, setRows] = useState<AttentionItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -31,22 +31,23 @@ export function AttentionPanel({ onCountChange }: { onCountChange?: (count: numb
   }, [onCountChange]);
   useEffect(() => {
     void load();
+    if (refreshKey !== undefined) return;
     const refreshTimer = window.setInterval(() => { void load(); }, ATTENTION_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(refreshTimer);
-  }, [load]);
+  }, [load, refreshKey]);
 
   return (
-    <section className="console-card attention-panel">
+    <section className={`console-card attention-panel${compact ? " attention-panel-compact" : ""}`}>
       <div className="attention-panel-header">
         <div>
-          <p className="eyebrow">ACTION REQUIRED</p>
+          {!compact && <p className="eyebrow">ACTION REQUIRED</p>}
           <h2>待处理问题</h2>
           <p className="muted">按根因聚合未解决问题；摘要先展示影响，完整错误和命令放在详情中。</p>
         </div>
-        <div className="attention-panel-actions">
+        {!compact && <div className="attention-panel-actions">
           <div className="attention-snapshot"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><button type="button" className="secondary-button" onClick={() => void load()} disabled={state === "loading"}>{state === "loading" ? "刷新中…" : "刷新"}</button></div>
           {rows.length > 0 && <div className="attention-count-summary"><span className="attention-count-badge" aria-label={`${unresolvedCount} 个未解决问题`}>{unresolvedCount}</span><span>个未解决</span></div>}
-        </div>
+        </div>}
       </div>
       {state === "error" && <div className="page-state page-state-error" role="alert">{error}</div>}
       {state === "loading" && rows.length === 0 && <div className="page-state" role="status">正在加载…</div>}
@@ -62,7 +63,7 @@ export function AttentionPanel({ onCountChange }: { onCountChange?: (count: numb
             : (displayValue(row.detail_label) || "状态");
           return <article className={`attention-card${expanded ? " is-expanded" : ""}`} key={row.id} role="listitem">
             <div className="attention-card-head">
-              <div className="attention-card-title"><span className="attention-category">{displayValue(row.category)}</span><StatusBadge value={row.severity} /></div>
+              <div className="attention-card-title"><span className="attention-category">{displayValue(row.category)}</span><StatusBadge value={row.severity} />{compact && row.statuses?.map(status => <StatusBadge key={status} value={status} />)}</div>
               <span className="attention-group-count" aria-label={`${row.count} 个同类问题`}>{row.count}</span>
             </div>
             <div className="attention-card-body">

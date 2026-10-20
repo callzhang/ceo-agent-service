@@ -1,0 +1,226 @@
+.dashboard-page {
+  display: grid;
+  gap: 18px;
+}
+.dashboard-service {
+  padding: 11px 16px;
+}
+.dashboard-service-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
+}
+.dashboard-service-up {
+  color: var(--accent);
+}
+.dashboard-service-up::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 8px;
+}
+.dashboard-service-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-left: auto;
+}
+.dashboard-service-detail {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.dashboard-service-detail > div {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.dashboard-queues {
+  padding: 0;
+  overflow: hidden;
+}
+.dashboard-tabs {
+  display: flex;
+  gap: 22px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+.dashboard-tabs > button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 16px 0 13px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+}
+.dashboard-tabs > button[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.dashboard-count,
+.dashboard-count-failed {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.dashboard-count-failed {
+  background: var(--status-danger-surface);
+  color: var(--status-danger-ink);
+}
+.dashboard-queue-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 18px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.dashboard-queue-columns,
+.dashboard-task-row {
+  display: grid;
+  grid-template-columns: 1.05fr 2fr 1fr 1.1fr;
+  gap: 16px;
+  padding: 14px 18px;
+}
+.dashboard-queue-columns {
+  background: var(--surface-muted);
+  border-block: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-soft);
+  padding-block: 8px;
+}
+.dashboard-task {
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.dashboard-task:last-child {
+  border-bottom: 0;
+}
+.dashboard-task-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dashboard-task-row small {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+.dashboard-task-title {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+}
+.dashboard-task-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.dashboard-task-detail {
+  background: var(--surface-muted);
+  padding: 14px 18px;
+  overflow-wrap: anywhere;
+}
+.dashboard-task-detail dl {
+  display: grid;
+  grid-template-columns: 85px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.dashboard-task-detail dt {
+  color: var(--ink-soft);
+}
+.dashboard-task-detail dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.dashboard-retry {
+  color: var(--warning);
+}
+.dashboard-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.dashboard-queues .attention-panel-compact {
+  padding: 16px 18px;
+  border: 0;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.dashboard-queues .attention-panel-compact h2 {
+  font-size: 13px;
+}
+.dashboard-queues .attention-panel-compact .attention-panel-header {
+  margin-bottom: 12px;
+}
+.dashboard-queues .attention-panel-compact .attention-panel-header .muted {
+  font-size: 12px;
+}
+.dashboard-page [hidden] {
+  display: none !important;
+}
+@media (max-width: 800px) {
+  .dashboard-service-snapshot {
+    display: none;
+  }
+  .dashboard-queue-columns {
+    display: none;
+  }
+  .dashboard-task-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .dashboard-task-row > div:nth-child(2) {
+    grid-column: 1/-1;
+    grid-row: 2;
+  }
+}
+@media (max-width: 520px) {
+  .dashboard-service {
+    padding: 10px 12px;
+  }
+  .dashboard-service-line {
+    gap: 8px;
+    font-size: 12px;
+  }
+  .dashboard-health {
+    display: none;
+  }
+  .dashboard-service-actions {
+    gap: 8px;
+  }
+  .dashboard-tabs {
+    gap: 16px;
+    padding-inline: 12px;
+  }
+  .dashboard-tabs > button {
+    font-size: 12px;
+    gap: 5px;
+  }
+  .dashboard-task-row {
+    padding-inline: 12px;
+  }
+}

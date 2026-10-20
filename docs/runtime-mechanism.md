@@ -4535,3 +4535,23 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 10 次。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 10 次或 72 小时后不再刷新来源或启动新 Consumer，结果为 failed_terminal，错误 consumer_purpose_retry_exhausted。未读取到新事实不等于业务不合格；预算耗尽本身不会自动执行 return、reject 或发送消息。Consumer 若核实无法申请权限，可形成正常 OA return 候选；实际执行仍经现有完整审核和节点读回。
 
 Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。字段、动作表、JSON 示例和计数边界见 [Consumer purpose 输出与权限重试](consumer-purpose-output.md)；发布证据见 [验证记录](consumer-purpose-actions-validation.md)。
+
+
+## Dashboard execution projection (2026-10-20)
+
+/history now renders Dashboard: one Service status row, Failed / Active tasks /
+Queued tabs, then the unchanged execution chart and History filters. Failed is
+exactly the current Attention projection, including pending OA and persisted
+human choices, with original states retained. Counts of problems and execution
+tasks are independent. The initial successful read chooses Failed if nonempty,
+otherwise Active; background refresh never overrides manual selection.
+
+/api/console/dashboard/queues is a read-only metadata projection with active and
+queued totals plus pagination. It reads current source counters, generations,
+business-object ownership, leases and runtime model/role metadata without native
+trajectory hydration. Queued includes initial work and source-scheduled retries;
+Active includes current valid Task/runtime leases and current provider-action
+processing. Expired/superseded execution records do not become live Agents.
+Retry ordinals exclude first execution and remain unknown where the source has
+no execution counter; Audit content revisions are not retries. Source state,
+retry/recovery policy, authorization and execution mechanisms do not change.

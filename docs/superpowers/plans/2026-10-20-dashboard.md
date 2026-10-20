@@ -1,0 +1,54 @@
+# Dashboard Implementation Plan
+
+> **For agentic workers:** Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Implement the approved Dashboard with one Service row, Failed/Active/Queued tabs and retained History.
+
+**Architecture:** Add a read-only Dashboard queue projection and endpoint in app/web_api/dashboard.py; register in app/audit_web.py. Reuse existing Attention and Status APIs. Embed the existing History content under a Dashboard component, without duplicating its fetch/filter logic. Preserve all runtime and Attention semantics.
+
+**Tech Stack:** Python/FastAPI/SQLite, React/TypeScript, Vitest/Testing Library.
+
+## Task 1: Read-only queue projection
+
+- [x] Add tests/test_console_dashboard.py covering initial queue, retry ordinals, current leases/generations, superseded objects, expired leases, pagination, metadata-only reads and read-only behavior.
+- [x] Run the tests before implementation; missing Dashboard API/projection must fail.
+- [x] Implement app/web_api/dashboard.py using current Task/Run source projections. Use current metadata only, no native transcript reads. Register endpoint in app/audit_web.py.
+- [x] Run `python -m pytest tests/test_console_dashboard.py -q`; all focused assertions must pass.
+
+## Task 2: Dashboard presentation
+
+- [x] Add frontend/src/pages/DashboardPage.test.tsx and frontend/src/api/dashboard.test.ts. Cover Failed-first, empty Failed -> Active, explicit user tab preserved after refresh, queue pagination/retry labels, failures/loading and detail links.
+- [x] Run focused tests and observe missing Dashboard failures.
+- [x] Implement DashboardPage.tsx, api/dashboard.ts, Dashboard CSS; reuse AttentionPanel with optional chrome/refresh integration and the embedded HistoryPage. Change GlobalNav label and router at /history; preserve deep links.
+- [x] Run Dashboard, API, navigation, router, Attention and History tests, and `npm run build`.
+
+## Task 3: Review, release and live verification
+
+- [x] Update docs/architecture.md and docs/runtime-mechanism.md with the Dashboard contract in the same feature commit.
+- [x] Review the complete diff, check git diff --check and run focused backend/frontend coverage.
+- [x] Verify desktop/mobile rendering and tab/detail behavior against the approved mockup.
+- [ ] Commit only this worktree's feature, reconcile remote increments without rewriting others, push and use `python -m app.deploy`.
+- [ ] Read back deployed commit/PID/healthz/queue/Attention/History before reporting deployed.
+
+## Execution ledger
+
+Worktree created from origin/main; unrelated shared-tree edits are excluded.
+The user approved the mockup and explicitly requested development; no additional
+design approval or deployment confirmation is needed.
+
+
+Validation before release: 12 focused backend tests and 95 frontend tests passed;
+TypeScript/Vite build, scoped Ruff and diff checks passed. Independent review
+found no Critical issues. Corrected reply detail identity, meeting delivery wait
+and eligible/backoff time, source-specific retry counters, Workbench runtime
+ownership/title/start, refresh detail persistence and shrinking-page pagination;
+regressions cover these behaviors. Independent OKR/WeChat import runtime metadata
+is included, with unknown counters kept unknown. Browser plugin unavailable;
+used built-in CUA browser for a rendered 1280px desktop and 390px mobile check:
+Failed/Active/Queued switching, original issue statuses, History presence and no
+app error overlay; console had no warnings/errors. The temporary QA server served
+the built frontend and read queue metadata from the live database in read-only
+mode; existing Console GETs came from the running service. No provider action.
+Queued IDs were moved into details; absent eligibility no longer shows creation
+as execution time. Mobile health remains available under system details to keep
+the Service row on one line. This is an intentional compact layout difference.

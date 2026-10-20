@@ -3588,3 +3588,30 @@ Consumer 的业务核心输出统一为 `action/reason/target/payload/evidence_r
 从原请求发出时刻起最多 72 小时、最多启动 10 次后续 Consumer 调用，先达到任一限制即停止。请求发出时间只从已验证动作记录取值，不信任模型时间；以 dispatch 记录时间作保守边界。退避从 5 分钟指数增长、单次封顶 12 小时，预约不晚于期限。每次重读前事务预留次数；重复检查同一预约不递增。崩溃时已预留的次数保留，不会突破上限。到期检查在刷新来源和调用 Consumer 之前完成。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
 
 Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。字段、动作表、JSON 示例和计数边界见 [Consumer purpose 输出与权限重试](consumer-purpose-output.md)；发布证据见 [验证记录](consumer-purpose-actions-validation.md)。
+
+
+## Dashboard console (2026-10-20)
+
+The /history workspace and navigation label are Dashboard. A single Service row
+precedes Failed / Active tasks / Queued tabs; there is no visible page/date title.
+Failed reuses the existing Attention API unchanged, including current unresolved
+OA processes and persisted business choices; original states remain visible. It
+counts problems, while Active/Queued count execution tasks, so counts are not
+additive. First successful Attention read selects Failed when nonempty, otherwise
+Active; manual selection survives refresh. Attention read failure is not zero.
+
+The read-only /api/console/dashboard/queues endpoint provides current Task,
+WeChat Memory import, Memory/Todo outbox, email-action and scheduled-dispatch metadata, with separate
+counts and paginated rows. Task/Run generation, business-object identity and
+existing lease facts determine the current execution view; expired Task leases
+are not presented as running. Native runtime metadata adds Agent role/model and
+start/update times without loading trajectories. Email provider operations use
+their existing current-plan processing state and native retry predicate. Unknown
+attempt counts remain unknown; first execution is zero retries, a queued item
+with two prior executions is about to retry twice, and a running third execution
+is in its second retry. Audit proposal revisions are separate. Existing queue
+eligibility/recovery/Attention rules and all provider actions are unchanged.
+
+Execution trends and searchable, paginated History remain below the queue.
+Dashboard polls while visible; per-request cancellation prevents stale tab/page
+responses from replacing newer reads. Service/queue errors remain explicit.

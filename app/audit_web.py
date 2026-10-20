@@ -10872,6 +10872,9 @@ def create_audit_app(
                 )
             return email_learning_service
 
+    from app.web_api.dashboard import register_dashboard_routes
+    register_dashboard_routes(app, store_factory=lambda: audit_store)
+
     register_console_routes(
         app,
         # Console routes are served by this long-lived audit process.  Reuse
