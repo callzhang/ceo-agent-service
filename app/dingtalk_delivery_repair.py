@@ -1,5 +1,7 @@
 """Explicit repair of historical reply receipts using provider task readback."""
 
+from app.model_action_schema import selected_branch
+
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -267,7 +269,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             f"""select c.*, r.id as review_id, r.decision, r.candidate_digest as review_digest,
                        e.id as execution_id, e.status as execution_status,
                        e.lease_owner, e.lease_expires_at, e.selection_id, e.result_json,
-                       s.branch_json, a.id as action_attempt_id, a.status as action_status
+                       s.option_key, a.id as action_attempt_id, a.status as action_status
                 from ({CANDIDATE_EXECUTION_SQL}) e
                 join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
                 join ({CANDIDATE_REVIEW_SQL}) r on r.id=e.review_id
@@ -382,7 +384,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             raise ValueError("original Agent run identity is not settled")
 
         candidate_json = json.loads(candidate["candidate_json"])
-        selection = json.loads(candidate["branch_json"]) if candidate["branch_json"] else None
+        selection = selected_branch(db, candidate["selection_id"]) if candidate["selection_id"] is not None else None
         plan = selection.get("plan") if selection else candidate_json.get("proposal")
         actions = plan.get("actions") if isinstance(plan, dict) else None
         if not isinstance(actions, list) or len(actions) != 1:

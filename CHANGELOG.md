@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-19 — 定时任务 Agent 验收协议修复
+
+- 统一离线评测 Consumer、Audit 和修订的字段及结果标签，区分最终内容与排除说明的来源追踪。
+- 原七案例和评分函数冻结；原失败结果完整保留，schema 约束只接受原标签及输入身份，不提供标准答案。
+- 增加回归测试及实际正文/生产动作解析探针，分别记录首轮、审核修订、代码解析与真实外部执行的证据边界。
+- 本次只修改评测与文档，生产服务与业务 Skill 无变更。
+
+## 2026-10-19 — 定时任务业务逻辑迁入 Skill
+
+- 14 项默认任务改为声明配置；保留 ID、周期、启停、自定义 prompt 与历史快照。
+- 增加通用触发历史、活动事实、Skill 脚本与显式文档接口，支持分页产物和完整文档读回。
+- 日报/周报窗口、目标解析、渲染及 OKR 精确公式进入 Skill；业务要求由 Skill/Audit 判断，系统不再强制 publishable。
+- OKR 报告使用普通 Agent 生命周期，实时读取按成员完成；部署记录并回滚报告配置迁移及新增 Skill 文件。
+
 ## 2026-10-19 — Consumer purpose actions and bounded permission retries
 
 - Use ordinary Consumer `action/reason/target/payload/evidence_refs` output, with

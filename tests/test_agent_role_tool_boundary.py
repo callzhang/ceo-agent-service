@@ -11,7 +11,6 @@ from app.agent_runtime_contracts import (
 )
 from app.dws_client import DwsClient
 from app.consumer_agent import AGENT_CAPABILITY_INSTRUCTIONS, audit_developer_sections
-from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
 from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command
@@ -311,12 +310,9 @@ def test_report_document_client_has_only_fixed_dws_commands() -> None:
     ]
 
 
-def test_consumer_document_write_requires_a_bound_scheduled_report(tmp_path) -> None:
-    with pytest.raises(AgentReadOnlyViolationError, match="report_task_invalid"):
-        agent_cli._write_bound_report_document(
-            db_path=tmp_path / "empty.sqlite3", task_id=1,
-            content="# Unbound report", expected_revision=None,
-        )
+def test_consumer_document_write_requires_a_bound_scheduled_task(tmp_path) -> None:
+    with pytest.raises(ValueError, match="scheduled task required"):
+        agent_cli._bound_scheduled_run(tmp_path / "empty.sqlite3", 1)
 
 
 def test_consumer_resume_uses_global_cwd_and_keeps_session_prompt_positions(tmp_path, monkeypatch):

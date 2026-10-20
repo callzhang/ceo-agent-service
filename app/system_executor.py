@@ -15,6 +15,7 @@ from app.agent_contracts import (
 )
 from app.external_action_identity import expected_external_action
 from app.reviewed_candidates import candidate_digest
+from app.model_action_schema import candidate_option
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,8 @@ class SystemExecutor:
         actual = action.model_dump(include={"capability", "operation", "target", "payload", "effect"}, mode="json")
         if source is not None:
             prior_candidate = json.loads(source["candidate_json"])
-            branch = json.loads(source["branch_json"]) if source["branch_json"] else None
+            branch = (candidate_option(source["candidate_json"], source["option_key"])
+                      if source["selection_id"] is not None else None)
             plan = branch.get("plan") if branch else prior_candidate.get("proposal")
             actions = plan.get("actions") if isinstance(plan, dict) else None
             index = source["action_index"]
@@ -206,7 +208,7 @@ class SystemExecutor:
         if candidate.outcome.value == "needs_human":
             if row["selection_id"] is None:
                 return self._failure("decision_not_selected", "A reviewed choice is still required")
-            branch = json.loads(row["branch_json"])
+            branch = candidate_option(row["candidate_json"], row["option_key"])
             option = next((item for item in candidate.decision_options if item.key == branch.get("key")), None)
             if option is None or option.model_dump(mode="json") != branch:
                 return self._failure("selection_mismatch", "Selected branch differs from reviewed candidate")

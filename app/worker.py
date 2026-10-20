@@ -2826,11 +2826,10 @@ class DingTalkAutoReplyWorker:
         if candidate is None:
             return {}
         data = parse_persisted_consumer_result(candidate["candidate_json"])
-        current = self.store.current_reviewed_candidate(task.id, task.execution_generation)
+        selection = self.store.get_candidate_selection(candidate["id"])
         plan = data.proposal
-        if current and current["selection_id"]:
-            branch = json.loads(current["branch_json"])
-            plan = next((option.plan for option in data.decision_options if option.key == branch["key"]), None)
+        if selection is not None:
+            plan = next((option.plan for option in data.decision_options if option.key == selection["option_key"]), None)
         if plan is None:
             return {}
         receipts = {row["action_identity"]: row for row in self.store.list_verified_candidate_actions(task.id)}

@@ -11,8 +11,9 @@ from scripts.report_contract import (
     validate_metric,
     validate_privacy,
 )
-from scripts.render_dingtalk_jsonml import render_managed_sections
-from scripts.validate_run import FIXED_METRICS, validate_run
+from scripts.validate_run import validate_render_input
+
+FIXED_METRICS = ("example_a", "example_b")
 
 
 class ReportContractTests(unittest.TestCase):
@@ -323,149 +324,32 @@ class ReportContractTests(unittest.TestCase):
             validate_issue(issue),
         )
 
-    def test_complete_run_blocks_missing_fixed_metric(self):
+    def test_missing_business_metrics_are_a_skill_review_decision(self):
         report = self.complete_report()
         report["company_metrics"] = []
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertFalse(result["publishable"])
-        self.assertIn(
-            "fixed metric new_signed_orders is missing", result["errors"]
-        )
+        self.assertEqual(validate_render_input(report), [])
 
-    def test_complete_run_requires_fields_used_by_company_metric_renderer(self):
+    def test_missing_renderer_field_is_a_mechanical_error(self):
         report = self.complete_report()
         del report["company_metrics"][0]["name"]
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn(
-            "company_metrics[0] is missing renderer field name", result["errors"]
-        )
+        self.assertIn("company_metrics[0] is missing renderer field name", validate_render_input(report))
 
-    def test_complete_run_requires_fields_used_by_issue_renderer(self):
+    def test_issue_owner_and_fields_are_checked(self):
         report = self.complete_report()
-        report["issues"] = [{
-            "id": "COMP-ANON-1", "status": "open", "as_of": "2026-09-27",
-            "severity": "yellow", "deadline": None, "owner": {},
-            "weeks_without_gate_movement": 0, "weeks_without_evidence": 0,
-            "management_decision": "continue",
-        }]
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn("issues[0] is missing renderer field question", result["errors"])
-        self.assertIn("issues[0].owner is missing renderer field name", result["errors"])
+        report["issues"] = [{"owner": {}}]
+        errors = validate_render_input(report)
+        self.assertIn("issues[0] is missing renderer field question", errors)
+        self.assertIn("issues[0].owner is missing renderer field name", errors)
 
-    def test_complete_run_requires_business_line_renderer_fields(self):
+    def test_no_fixed_business_line_list_is_required_for_meeting_render(self):
+        report = {"ceo_judgment": [], "company_metrics": [], "issues": []}
+        self.assertEqual(validate_render_input(report), [])
+
+    def test_company_metric_shape_is_checked_without_business_thresholds(self):
         report = self.complete_report()
-        report["business_lines"]["Friday"]["metrics"] = [
-            {"name": "synthetic metric", "current": "无数据"}
-        ]
-        report["business_lines"]["Friday"]["milestones"] = [{"owner": {}}]
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn(
-            "business_lines.Friday.metrics[0] is missing renderer field target",
-            result["errors"],
-        )
-        self.assertIn(
-            "business_lines.Friday.milestones[0] is missing renderer field date",
-            result["errors"],
-        )
-        self.assertIn(
-            "business_lines.Friday.milestones[0].owner is missing renderer field name",
-            result["errors"],
-        )
-
-    def test_business_line_metric_does_not_require_company_only_columns(self):
-        report = self.complete_report()
-        report["business_lines"]["Friday"]["metrics"] = [{
-            "name": "synthetic metric",
-            "target": "10",
-            "current": "8",
-            "status": "on track",
-            "data_date": "2026-09-27",
-            "source": "synthetic source",
-            "definition": "synthetic definition",
-            "definition_evidence": "synthetic source",
-        }]
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertTrue(result["publishable"], result["errors"])
-        self.assertTrue(render_managed_sections(report))
-
-    def test_invalid_issue_deadline_returns_validation_error(self):
-        errors = validate_issue({
-            "id": "COMP-ANON-1", "status": "open", "deadline": "无数据",
-            "as_of": "2026-09-27",
-        })
-        self.assertIn(
-            "issue COMP-ANON-1 deadline must be an ISO date", errors
-        )
-
-    def test_complete_run_requires_all_business_line_views(self):
-        report = self.complete_report()
-        report["business_lines"].pop("MorningStar")
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn(
-            "business line MorningStar is missing from report",
-            result["errors"],
-        )
-
-    def test_complete_run_limits_exception_metrics(self):
-        report = self.complete_report()
-        report["company_metrics"].extend(
-            {"key": f"exception_{index}", "current": "无数据"}
-            for index in range(4)
-        )
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn(
-            "company report has more than 3 exception metrics",
-            result["errors"],
-        )
-
-    def test_complete_run_is_publishable(self):
-        result = validate_run(
-            self.complete_manifest(), self.complete_report(), []
-        )
-        self.assertEqual(result, {"publishable": True, "errors": []})
-
-    def test_cockpit_item_must_be_plain_text(self):
-        # 2026-09-26: an object here rendered into a text leaf and the
-        # document service rejected the whole overwrite.
-        report = self.complete_report()
-        report["cockpit"] = [
-            "正常一句话",
-            {"status": "⚠️", "text": "对象不是合法的段落文本"},
-        ]
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertFalse(result["publishable"])
-        self.assertIn("cockpit[1] must be a string, got dict", result["errors"])
-
-    def test_discussion_and_judgment_shapes_are_checked(self):
-        report = self.complete_report()
-        report["discussion"] = [{"text": "x"}]
-        report["ceo_judgment"] = ["缺少状态的裸字符串"]
-        report["root_causes"] = [{"status": "⚠️"}]
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertIn("discussion[0] must be a string, got dict", errors)
-        self.assertIn(
-            "ceo_judgment[0] must be an object with string status/text", errors
-        )
-        self.assertIn("root_causes[0] must be an object with string text", errors)
-
-    def test_business_line_source_nodes_must_be_valid_jsonml(self):
-        report = self.complete_report()
-        report["business_lines"]["Friday"]["full_report_jsonml"] = [
-            ["p", {}, ["span", {"data-type": "leaf"}, {"text": "x"}]]
-        ]
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertTrue(
-            any(e.startswith("Friday full_report_jsonml[0] $[2][2]") for e in errors)
-        )
-
-    def test_business_line_source_must_be_a_list_of_block_nodes(self):
-        report = self.complete_report()
-        report["business_lines"]["Friday"]["full_report_jsonml"] = '["root",{}]'
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertIn("Friday full_report_jsonml must be an array", errors)
-        report["business_lines"]["Friday"]["full_report_jsonml"] = ["x"]
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertIn("Friday full_report_jsonml[0] must be a block node", errors)
+        self.assertEqual(validate_render_input(report), [])
+        report["company_metrics"] = {"metric": {}}
+        self.assertIn("company_metrics must be an array", validate_render_input(report))
 
 
 if __name__ == "__main__":

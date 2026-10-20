@@ -1526,14 +1526,13 @@ def test_parser_supports_process_okr_reviews():
     assert args.max_batches == 1
 
 
-def test_parser_supports_forced_weekly_okr_report():
-    args = build_parser().parse_args(
-        ["weekly-okr-report", "--force", "--period-label", "2026 Q3"]
-    )
-
-    assert args.command == "weekly-okr-report"
-    assert args.force is True
-    assert args.period_label == "2026 Q3"
+def test_parser_supports_okr_source_reads_instead_of_hidden_report_workflow():
+    args = build_parser().parse_args(["weekly-okr-roster", "--group-name", "Team"])
+    assert args.command == "weekly-okr-roster" and args.group_name == "Team"
+    member = build_parser().parse_args(["weekly-okr-member", "--user-id", "u1", "--name", "A", "--period-label", "2026 Q3"])
+    assert member.command == "weekly-okr-member" and member.user_id == "u1"
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["weekly-okr-report"])
 
 
 def test_parser_supports_refresh_okr_archive():
@@ -8656,7 +8655,6 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "request-minutes-access",
         "sync-chrome-cookies",
         "sync-minutes-once",
-        "weekly-okr-report",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"

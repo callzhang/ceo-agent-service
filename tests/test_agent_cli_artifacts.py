@@ -7,7 +7,11 @@ import pytest
 from app.agent_cli import MAX_CLI_OUTPUT_BYTES, build_role_server
 from app import task_artifacts
 from app.task20_current_schema import create_current_task20_schema
-from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
+from app.task8_storage import (
+    register_task8_functions,
+    task8_insert_parts,
+    task8_set_parts,
+)
 
 
 def _task_db(path, generation="first"):
@@ -162,17 +166,19 @@ def test_task_artifact_list_omits_atomic_write_temporary_files(tmp_path, monkeyp
     assert [item["name"] for item in server._tool_manager.get_tool("list_task_artifacts").fn()["files"]] == ["ready.md"]
 
 
-def test_old_consumer_server_cannot_write_report_after_generation_changes(tmp_path, monkeypatch):
+def test_old_consumer_server_cannot_write_report_after_generation_changes(
+    tmp_path, monkeypatch
+):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
     called = []
     monkeypatch.setattr(
-        "app.agent_cli._write_bound_report_document",
+        "app.agent_cli._write_document_artifact",
         lambda **kwargs: called.append(kwargs) or {"operation": "updated"},
     )
     monkeypatch.setattr(
-        "app.agent_cli._bound_report",
-        lambda db_path, task_id: (object(), object(), "daily"),
+        "app.agent_cli._bound_scheduled_run",
+        lambda db_path, task_id: (object(), object()),
     )
     old = build_role_server("consumer", task_id=7, db_path=db)
     write_report = old._tool_manager.get_tool("consumer_document_write").fn
@@ -180,19 +186,25 @@ def test_old_consumer_server_cannot_write_report_after_generation_changes(tmp_pa
     with sqlite3.connect(db) as connection:
         _set_generation(connection, "second")
     with pytest.raises(ValueError, match="generation changed"):
-        write_report("# Report")
+        write_report(artifact_name="report.md", title="Any")
     assert called == []
 
     current = build_role_server("consumer", task_id=7, db_path=db)
-    assert current._tool_manager.get_tool("consumer_document_write").fn("# Report") == {
-        "operation": "updated"
-    }
+    assert current._tool_manager.get_tool("consumer_document_write").fn(
+        artifact_name="report.md", title="Any"
+    ) == {"operation": "updated"}
     assert len(called) == 1
 
 
-@pytest.mark.parametrize("content", ["x" * MAX_CLI_OUTPUT_BYTES, "\n" * (MAX_CLI_OUTPUT_BYTES // 2)])
-def test_task_artifact_rejects_content_that_cannot_fit_complete_tool_output(
-    tmp_path, monkeypatch, content,
+@pytest.mark.parametrize(
+    "content",
+    ["x" * MAX_CLI_OUTPUT_BYTES, "\n" * (MAX_CLI_OUTPUT_BYTES // 2)],
+    ids=["plain", "escaped"],
+)
+def test_task_artifact_returns_large_content_in_complete_pages(
+    tmp_path,
+    monkeypatch,
+    content,
 ):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
@@ -200,13 +212,21 @@ def test_task_artifact_rejects_content_that_cannot_fit_complete_tool_output(
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     server = build_role_server("consumer", task_id=7, db_path=db)
     write = server._tool_manager.get_tool("consumer_artifact_write").fn
-    with pytest.raises(ValueError, match="too large"):
-        write("large.md", content)
-    assert not (task_artifact_root / "7/first/large.md").exists()
+    first = write("large.md", content)
+    chunks = [first["content"]]
+    next_offset = first["next_offset"]
+    read = server._tool_manager.get_tool("read_task_artifact").fn
+    while next_offset is not None:
+        page = read("large.md", offset=next_offset)
+        chunks.append(page["content"])
+        next_offset = page["next_offset"]
+    assert "".join(chunks) == content
+    assert (task_artifact_root / "7/first/large.md").read_text() == content
 
 
-def test_task_artifact_read_rejects_external_file_whose_escaped_content_exceeds_budget(
-    tmp_path, monkeypatch,
+def test_task_artifact_read_pages_escaped_content_within_output_budget(
+    tmp_path,
+    monkeypatch,
 ):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
@@ -214,8 +234,10 @@ def test_task_artifact_read_rejects_external_file_whose_escaped_content_exceeds_
     root.mkdir(parents=True)
     (root / "large.md").write_text("\n" * (MAX_CLI_OUTPUT_BYTES // 2))
     read = _tool("audit", "read_task_artifact", db)
-    with pytest.raises(ValueError, match="too large"):
-        read("large.md")
+    page = read("large.md")
+    assert page["content"] == "\n" * 20000
+    assert page["next_offset"] == 20000
+    assert page["total_chars"] == MAX_CLI_OUTPUT_BYTES // 2
 
 
 def test_role_startup_cannot_rebind_an_old_claim_to_new_generation(tmp_path):

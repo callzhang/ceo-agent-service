@@ -1,0 +1,1910 @@
+{
+  "source": "frontend/src/app/router.tsx",
+  "boundary": "Actual copy-UI evidence is recorded per scenario. All other scenarios remain not_run; no production acceptance implied.",
+  "routes": [
+    {
+      "route": "*",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "redirect_or_not_found",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "query_parameters",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "back_navigation",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "counts_current_vs_history",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "filters_pagination_order",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "failure_recovery",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/attempts/:attemptId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "passed",
+          "evidence": [
+            "docs/business-model-a1-runtime-validation.md",
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "passed",
+          "evidence": [
+            "docs/business-model-a1-runtime-validation.md",
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/attempts/:attemptId/execution/:role",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/attention",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "counts_current_vs_history",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "filters_pagination_order",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "failure_recovery",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/codex",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_present_missing",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "exact_range",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "search",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "terminal_status",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/codex/:sessionId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_present_missing",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "exact_range",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "search",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "terminal_status",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/config",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "redirect_or_not_found",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "query_parameters",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "back_navigation",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/developer-prompt",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "redirect_or_not_found",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "query_parameters",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "back_navigation",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/email",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "pagination_filters",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "preview_search_no_provider",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "full_search_exact_source",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "unicode_1000_preview",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "source_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "classification_feedback_new_plan",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "move_mark_delete_fake_provider",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "reply_unsubscribe_fake_provider",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "history_scan_no_replay",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "training_model_versions",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/errors",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "redirect_or_not_found",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "query_parameters",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "back_navigation",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/errors/:errorId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "real_data_navigation",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/history",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "counts_current_vs_history",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "filters_pagination_order",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "failure_recovery",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "passed",
+          "evidence": [
+            "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
+          ]
+        }
+      ]
+    },
+    {
+      "route": "/history/attempts/:attemptId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/history/errors/:errorId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "real_data_navigation",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/history/meeting-attempts/:runId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/history/oa-approvals/:processInstanceId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/logs",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "redirect_or_not_found",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "query_parameters",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "back_navigation",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/meeting-attempts/:runId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/notifications",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "real_data_navigation",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/oa-approvals/:processInstanceId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "consumer_audit_revision",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "selected_original_candidate",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "receipt_and_unknown_effect",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "native_range_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_public_vs_physical_id",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/scheduled-tasks",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "create_edit_enable_disable_copy_only",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "manual_run_fake_provider",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "config_version",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "overlap_pause_missed_occurrence",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "run_history_link",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/settings",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "runtime_routes",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "email_categories",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "skills_versions",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "secret_reference_no_secret_value",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/status",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "counts_current_vs_history",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "filters_pagination_order",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "failure_recovery",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/tasks",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "candidate_formal_distinction",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "task_stage_commitment_status",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "owner_deadline_evidence",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "merge_lineage",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "project_registry_identity",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "attention_resolution",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "source_unavailable",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/tasks/attention/:attentionId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "candidate_formal_distinction",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "task_stage_commitment_status",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "owner_deadline_evidence",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "merge_lineage",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "project_registry_identity",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "attention_resolution",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "source_unavailable",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/tasks/item/:taskId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "candidate_formal_distinction",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "task_stage_commitment_status",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "owner_deadline_evidence",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "merge_lineage",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "project_registry_identity",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "attention_resolution",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "source_unavailable",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/tasks/legacy-project/:legacyProjectId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_id_unique_mapping",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "old_id_multiple_targets",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "retired_id_explicit_unavailable",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "provider_links_receipts",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/tasks/project/:projectId",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "candidate_formal_distinction",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "task_stage_commitment_status",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "owner_deadline_evidence",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "merge_lineage",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "project_registry_identity",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "attention_resolution",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "source_unavailable",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/tutorial",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "real_data_navigation",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/user-feedback",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "pending_processing_resolved",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "batch_claim",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "reopen_round",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "current_round_evidence",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "commit_test_restart_receipt",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/wechat/conversations",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cursor_input",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "review_delivery_state",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "memory_receipt",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cross_revision_link",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "provider_substitute",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/wechat/deliveries",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cursor_input",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "review_delivery_state",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "memory_receipt",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cross_revision_link",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "provider_substitute",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/wechat/memory-review",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cursor_input",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "review_delivery_state",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "memory_receipt",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cross_revision_link",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "provider_substitute",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/wechat/review",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cursor_input",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "review_delivery_state",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "memory_receipt",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "cross_revision_link",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "provider_substitute",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "route": "/workers",
+      "scenarios": [
+        {
+          "name": "loading",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "empty",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "populated",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "api_error",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "refresh_back",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "counts_current_vs_history",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "filters_pagination_order",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "failure_recovery",
+          "result": "not_run",
+          "evidence": []
+        },
+        {
+          "name": "detail_links",
+          "result": "not_run",
+          "evidence": []
+        }
+      ]
+    }
+  ]
+}

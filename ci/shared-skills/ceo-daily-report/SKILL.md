@@ -13,15 +13,16 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
 
 ## Inputs
 
-- **Service facts**: call the task-bound `agent_cli.daily_report_facts` read
-  operation. The service works out the report window:
-  from the end of the last report that went out to this trigger, so missed days
-  are folded in. Its `report_date` is the document date and its `window_utc` is
-  the span every other source is read over. Do not ask anyone to confirm either.
-  It also returns the meetings and their follow-up messages, the Tasks that
-  changed with their events, every active business attention item, the mail
-  the service flagged important, the items the service handled, the items
-  waiting on Derek and the principal user id. This is the only required input.
+- **Service facts**: call `agent_cli.read_scheduled_context`, save its exact JSON
+  as `context.json` using `consumer_artifact_write`. Run this Skill's
+  `scripts/window.py --context context.json` with `consumer_run_skill_script`.
+  Its report date and window preserve missed days and same-day reruns. Call
+  `read_service_activity(start, end)` using that window. This is the required
+  service input; use `principal_user_id` from scheduled context.
+  The activity contains `meetings`, `tasks`, `attention`, `important_emails`,
+  `attempts` and `waiting`. Select completed handled items from `attempts`;
+  skipped/no-action records are counts, not handled work. The source timestamps
+  and status are facts; judge management relevance yourself.
 - **Important mail** is what the mailbox flagged, not a verdict: report only the
   messages with management meaning (a request, approval, customer, partner,
   legal or money matter) and count the rest, such as sign-in codes.
@@ -40,17 +41,17 @@ Missing optional material never turns the run into a question for Derek.
 
 ## Report
 
-Title: `CEO 每日总结 YYYY-MM-DD`, using the facts' `report_date`. Sections, in order:
+Title: `CEO 每日总结 YYYY-MM-DD`, using the window script's `report_date`. Sections, in order:
 
 1. **今日要点** — three to five lines Derek should know if he reads nothing else.
 2. **重要事项进展** — what moved today, by project or topic.
 3. **风险** — fact, impact, suggested action for each.
 4. **需要你介入** — the decisions or actions only Derek can take, most urgent
-   first; include every item in the facts' `waiting_on_derek` and every active
-   `business_attention` item whose category is `decision`, and say what each
+   first; include every item in the facts' `waiting` and every active
+   `attention` item whose category is `decision`, and say what each
    one needs from him.
 5. **需关注** — not yet his move, but getting worse or drifting; start from the
-   active `business_attention` items of category `push` and `watch`.
+   active `attention` items of category `push` and `watch`.
 6. **管理建议** — judgment drawn from the sections above; mark it as judgment.
 7. **覆盖说明** — what was read (counts per source), what failed or was partial.
 
@@ -60,10 +61,14 @@ with nothing in it says `无`; never pad it.
 
 ## Deliver
 
-1. Use the task-bound `agent_cli.consumer_document_write` operation. The
-   service resolves the wiki `🎯  目标与执行`, the `CEO 每日总结` folder, and the
-   exact document title from this scheduled run; it creates or overwrites only
-   that report document. Compare the returned readback with the submitted body.
+1. Save the Markdown as `daily-report.md` with `consumer_artifact_write`.
+   Run `scripts/destination.py --date YYYY-MM-DD` with `consumer_run_skill_script`.
+   It resolves wiki `🎯  目标与执行` / `CEO 每日总结`, creates that folder if
+   missing and returns the exact same-day target. Call `consumer_document_write`
+   with artifact_name, title and doc_format="markdown"; use node_id for an
+   existing document, or parent_id + workspace_id for creation. Read the
+   returned readback artifact and compare it with your submitted body. Reuse
+   the resolved folder URL in the direct message.
 2. Send Derek (磊哥) one direct message from his own account, not a bot:
    propose it as a `dingtalk-chat` action with a direct-message operation,
    `target: {"user_id": <principal_user_id>}` and the body in

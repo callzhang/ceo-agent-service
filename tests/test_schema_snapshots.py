@@ -76,14 +76,6 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
         "same fields, types and constraints; differs only in the per-property "
         "and top-level `title` strings pydantic v2 emits",
     ),
-    "weekly_okr_report.schema.json": (
-        "app.weekly_okr_report",
-        "WeeklyOkrAnalysis",
-        "file requires six top-level fields where the model requires two, and "
-        "keeps a flat `dimensions` definition the model has split into "
-        "CeoAttentionItem, DimensionScoreReview, KrScoreReview and "
-        "ManagerReportAnalysis",
-    ),
 }
 
 # Hand-authored envelopes with no single root model: each wraps a list of an
@@ -91,8 +83,7 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
 # top-level schema of its own, so there is nothing to compare them against.
 NO_SINGLE_MODEL: dict[str, str] = {
     "wechat_memory_candidates.schema.json": (
-        "envelope around a list of app.wechat.memory_import."
-        "ExtractedMemoryCandidate"
+        "envelope around a list of app.wechat.memory_import.ExtractedMemoryCandidate"
     ),
     "wechat_memory_dedupe.schema.json": (
         "envelope around a list of app.wechat.memory_import.DurableMemoryMatch"

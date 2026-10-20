@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from scripts.jsonml_check import check_document
+from scripts.validate_run import validate_render_input
 
 
 LINE_LABELS = {
@@ -105,8 +106,7 @@ def table(headers: list[str], rows: list[list]) -> list:
         ]
     )
     result.extend(
-        ["tr", {"uuid": node_id()}, *[cell(value) for value in row]]
-        for row in rows
+        ["tr", {"uuid": node_id()}, *[cell(value) for value in row]] for row in rows
     )
     return result
 
@@ -122,8 +122,7 @@ def node_text(node) -> str:
 def render_managed_sections(report: dict) -> list:
     nodes: list = [heading(1, "一、CEO本周判断")]
     nodes.extend(
-        paragraph(f"{item['status']} {item['text']}")
-        for item in report["ceo_judgment"]
+        paragraph(f"{item['status']} {item['text']}") for item in report["ceo_judgment"]
     )
 
     nodes.append(heading(1, "二、公司级重点指标"))
@@ -190,8 +189,7 @@ def render_managed_sections(report: dict) -> list:
 
     nodes.append(heading(1, "四、经营驾驶舱与CRM"))
     nodes.extend(
-        paragraph(item)
-        for item in report["cockpit"] or ["无需要管理层介入的异常"]
+        paragraph(item) for item in report["cockpit"] or ["无需要管理层介入的异常"]
     )
 
     nodes.append(heading(1, "五、四条业务线"))
@@ -263,14 +261,11 @@ def render_managed_sections(report: dict) -> list:
     nodes.append(heading(1, "六、根因判断与管理指导"))
     nodes.extend(
         paragraph(item["text"])
-        for item in report.get("root_causes", [])
-        or [{"text": "无新增判断"}]
+        for item in report.get("root_causes", []) or [{"text": "无新增判断"}]
     )
 
     nodes.append(heading(1, "七、需讨论与决策"))
-    nodes.extend(
-        paragraph(item) for item in report["discussion"] or ["无"]
-    )
+    nodes.extend(paragraph(item) for item in report["discussion"] or ["无"])
     return nodes
 
 
@@ -352,7 +347,9 @@ def _append_tracking_rows(document: list, report: dict) -> None:
         raise ValueError(
             f"expected one tracking table under {MEETING_TRACKING_SECTION!r}, found {len(tables)}"
         )
-    rows = [child for child in tables[0][2:] if isinstance(child, list) and child[0] == "tr"]
+    rows = [
+        child for child in tables[0][2:] if isinstance(child, list) and child[0] == "tr"
+    ]
     if not rows:
         raise ValueError("tracking table has no header row")
     headers = [
@@ -364,7 +361,11 @@ def _append_tracking_rows(document: list, report: dict) -> None:
         raise ValueError("tracking table has no ID column")
     id_column = headers.index("ID")
     existing = {
-        _compact(node_text([c for c in row[2:] if isinstance(c, list) and c[0] == "tc"][id_column]))
+        _compact(
+            node_text(
+                [c for c in row[2:] if isinstance(c, list) and c[0] == "tc"][id_column]
+            )
+        )
         for row in rows[1:]
         if len([c for c in row[2:] if isinstance(c, list) and c[0] == "tc"]) > id_column
     }
@@ -375,34 +376,54 @@ def _append_tracking_rows(document: list, report: dict) -> None:
             [
                 "tr",
                 {"uuid": node_id()},
-                *[cell(_tracking_row(header, issue, report["as_of"])) for header in headers],
+                *[
+                    cell(_tracking_row(header, issue, report["as_of"]))
+                    for header in headers
+                ],
             ]
         )
 
 
 def _judgment_nodes(report: dict) -> list:
     nodes = [
-        paragraph(f"{item['status']} {item['text']}")
-        for item in report["ceo_judgment"]
+        paragraph(f"{item['status']} {item['text']}") for item in report["ceo_judgment"]
     ]
     nodes.append(heading(3, "跨周问题与行动"))
     nodes.append(
         table(
-            ["ID", "原始问题", "当前根因", "上周状态", "新增证据", "当前状态",
-             "持续周数", "下次检查点", "协同牵头", "关闭标准"],
+            [
+                "ID",
+                "原始问题",
+                "当前根因",
+                "上周状态",
+                "新增证据",
+                "当前状态",
+                "持续周数",
+                "下次检查点",
+                "协同牵头",
+                "关闭标准",
+            ],
             [
                 [
-                    issue["id"], issue["question"], issue["current_root_cause"],
-                    issue["prior_state"], issue["new_evidence"], issue["status_icon"],
-                    issue["weeks_open"], issue["next_checkpoint"],
-                    [mention(issue["owner"])], issue["closure_standard"],
+                    issue["id"],
+                    issue["question"],
+                    issue["current_root_cause"],
+                    issue["prior_state"],
+                    issue["new_evidence"],
+                    issue["status_icon"],
+                    issue["weeks_open"],
+                    issue["next_checkpoint"],
+                    [mention(issue["owner"])],
+                    issue["closure_standard"],
                 ]
                 for issue in report["issues"]
             ],
         )
     )
     nodes.append(heading(3, "经营驾驶舱与CRM"))
-    nodes.extend(paragraph(item) for item in report["cockpit"] or ["无需要管理层介入的异常"])
+    nodes.extend(
+        paragraph(item) for item in report["cockpit"] or ["无需要管理层介入的异常"]
+    )
     nodes.append(heading(3, "根因判断与管理指导"))
     nodes.extend(
         paragraph(item["text"])
@@ -415,11 +436,25 @@ def _judgment_nodes(report: dict) -> list:
 
 def _metrics_table(report: dict) -> list:
     return table(
-        ["指标", "季度目标", "上周", "本周", "变化/差距", "状态", "数据截止", "口径与证据"],
+        [
+            "指标",
+            "季度目标",
+            "上周",
+            "本周",
+            "变化/差距",
+            "状态",
+            "数据截止",
+            "口径与证据",
+        ],
         [
             [
-                metric["name"], metric["target"], metric["previous"], metric["current"],
-                metric["change"], metric["status"], metric["data_date"],
+                metric["name"],
+                metric["target"],
+                metric["previous"],
+                metric["current"],
+                metric["change"],
+                metric["status"],
+                metric["data_date"],
                 metric_evidence(metric),
             ]
             for metric in report["company_metrics"]
@@ -464,6 +499,12 @@ def main() -> int:
 
     before = json.loads(Path(args.before).read_text(encoding="utf-8"))
     report = json.loads(Path(args.report).read_text(encoding="utf-8"))
+    input_errors = validate_render_input(
+        report, draft=bool(args.draft_output) or not args.meeting_document
+    )
+    if input_errors:
+        print("\n".join(input_errors), file=sys.stderr)
+        return 1
     rendered = (
         render_meeting_document(before, report)
         if args.meeting_document

@@ -656,15 +656,13 @@ def _system_execution_payload(
     """Project the bound plan and canonical verified receipts independently."""
     if reviewed is None:
         return None
+    from app.model_action_schema import candidate_option
+
     candidate = _stored_json(reviewed["candidate_json"], {})
-    branch = _stored_json(reviewed.get("branch_json"), {})
+    branch = (candidate_option(reviewed["candidate_json"], reviewed["option_key"])
+              if reviewed.get("selection_id") else None)
     if candidate.get("outcome") == "needs_human" and not reviewed.get("selection_id"):
         return None
-    if not branch and reviewed.get("selection_id"):
-        # Historical review projections retain the selected key, while the
-        # immutable candidate holds that key's exact reviewed action plan.
-        branch = next((option for option in candidate.get("decision_options", [])
-                       if option.get("key") == reviewed.get("option_key")), {})
     plan = branch.get("plan") if branch else candidate.get("proposal")
     actions = plan.get("actions", []) if isinstance(plan, dict) else []
     execution = store.get_candidate_execution(reviewed["id"])

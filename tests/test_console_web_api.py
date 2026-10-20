@@ -242,6 +242,69 @@ def test_console_api_reuses_the_initialized_audit_store(
     assert len(constructions) == constructed_for_app
 
 
+def test_console_oa_approval_projects_latest_attempt_from_current_task_generation(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa-projection-conversation",
+        conversation_title="OA approval",
+        trigger_message_id="oa-projection-message",
+        trigger_sender="Derek OA",
+        trigger_text="Review the OA approval",
+        action="oa_approval",
+        sensitivity_kind="general",
+        codex_reason="The comment was verified in the current task generation.",
+        draft_reply_text="Access was requested.",
+        oa_process_instance_id="oa-projection-process",
+        oa_task_id="oa-projection-task",
+        oa_action="comment",
+        oa_remark="Access was requested.",
+        send_status="failed",
+    )
+    assert store.enqueue_reply_task(
+        conversation_id="oa-projection-conversation",
+        conversation_title="OA approval",
+        single_chat=False,
+        trigger_message_id="oa-projection-message",
+        trigger_create_time="2026-10-19T18:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="Review the OA approval",
+    )
+    task = store.get_reply_task_for_message(
+        "oa-projection-conversation", "oa-projection-message"
+    )
+    assert task is not None
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    with _client(tmp_path) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+        response = client.get(
+            "/api/console/oa-approvals/oa-projection-process"
+        )
+
+    assert response.status_code == 200
+    approval = response.json()["item"]
+    assert approval["status"] == detail["status"]["raw"] == "done"
+    assert approval["attempts"] == [
+        {
+            "id": attempt_id,
+            "status": "done",
+            "recorded_status": "failed",
+            "action": "comment",
+            "remark": "Access was requested.",
+            "created_at": approval["attempts"][0]["created_at"],
+        }
+    ]
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+
 def test_console_tutorial_run_persists_resulting_step_and_uses_sync_endpoint(
     tmp_path: Path, monkeypatch
 ):
@@ -3548,7 +3611,11 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=1")
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
+        )
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     sends = []
     monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
@@ -3580,8 +3647,12 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update tasks set execution_generation=?,status='pending' where record_type='reply_tasks' and cast(legacy_key as integer)=1", (generation,))
-        db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
+        parts = task8_set_parts("reply_tasks", {"execution_generation": generation, "status": "pending"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
+        )
+        update_task_delivery_action(db, "wechat_deliveries", delivery_id, {"conversation_id": conversation})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     with _client(tmp_path) as client:
         item = client.get(f"/api/console/history/{attempt_id}").json()["item"]
