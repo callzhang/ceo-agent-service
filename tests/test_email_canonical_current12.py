@@ -15,7 +15,7 @@ from tests.test_email_store import _classification, _persist_scan
 
 
 CURRENT11_ORDINARY_TABLES = {
-    "actions", "business", "business_source_documents",
+    "actions", "business", "provenance",
     "configs", "emails", "email_schema_migrations", "provider_state",
     "runs", "schedules", "state", "tasks",
 }

@@ -1,6 +1,7 @@
 from pathlib import Path
 from app.store import AutoReplyStore
-from app.email_store import EmailStore
+from app.store import STORE_SCHEMA_VERSION
+from app.email_store import EMAIL_SCHEMA_VERSION, EmailStore
 from scripts.validate_native_copy_lifecycle import _publish_email_pair
 
 
@@ -9,6 +10,8 @@ def test_native_harness_accepts_verified_final_input_without_remigration(tmp_pat
     AutoReplyStore(path)
     EmailStore(path)
     result = _publish_email_pair(Path(__file__).resolve().parents[1], path)
+    assert result['store'] == STORE_SCHEMA_VERSION
+    assert result['email'] == EMAIL_SCHEMA_VERSION
     assert result['core_tables'] == 10
     assert result['source_body_table_present'] is False
     assert result['action_types'] > 29

@@ -1,4 +1,4 @@
-"""Opt-in canonical Email conversion; callers select current13 until a later unit."""
+"""Historical Email52 conversion and selected Email53 runtime writes."""
 
 import sqlite3
 import json
@@ -12,8 +12,8 @@ from app.action_email_storage import (
 from app.action_task_delivery_storage import _hash, _quote, _source_declaration
 from app.business_schema_release import _snapshot, _restore_rows
 from app.email_canonical_definitions import (
-    CLASS_FIELDS, MESSAGE_FIELDS, SHARED_FIELDS, EMAILS_TABLE_SQL,
-    EMAILS_INDEX_SQL, EMAILS_TRIGGER_SQL, canonical_column, email_projection,
+    CLASS_FIELDS, MESSAGE_FIELDS, SHARED_FIELDS, canonical_column, email_projection,
+    MESSAGE_METADATA_FIELDS, email_metadata_declaration,
 )
 
 
@@ -54,7 +54,7 @@ CLASS_DEFAULTS = {
 
 
 def email_classification_projection() -> str:
-    return email_projection(KINDS[0])
+    return email_projection(KINDS[0], metadata_owner=True)
 
 
 def email_message_projection() -> str:
@@ -97,10 +97,10 @@ def _source_profile(declarations):
                  if hashes == expected), None)
 
 
-@lru_cache(maxsize=1)
-def _target_hash():
+@lru_cache(maxsize=2)
+def _target_hash(*, metadata_owner: bool = False):
     with closing(sqlite3.connect(":memory:")) as scratch:
-        _create_emails(scratch)
+        _create_emails(scratch, metadata_owner=metadata_owner)
         return _hash(_source_declaration(scratch, "emails"))
 
 
@@ -217,11 +217,12 @@ def _create_actions(db, objects):
                 db.execute(obj["sql"])
 
 
-def _create_emails(db):
-    db.execute(EMAILS_TABLE_SQL)
-    for sql in EMAILS_INDEX_SQL:
+def _create_emails(db, *, metadata_owner: bool = False):
+    table, indexes, triggers = email_metadata_declaration(metadata_owner=metadata_owner)
+    db.execute(table)
+    for sql in indexes:
         db.execute(sql)
-    for sql in EMAILS_TRIGGER_SQL:
+    for sql in triggers:
         db.execute(sql)
 
 
@@ -374,11 +375,12 @@ def insert_email_classification(db: sqlite3.Connection, values: dict) -> int:
     if any(shared[field] != (target[index], target_types[index])
            for index, field in enumerate(("account_id", "uidvalidity", "uid"))):
         raise ValueError("classification locator differs from message")
-    mapped = {canonical_column(KINDS[0], field): value for field, value in values.items()
+    mapped = {canonical_column(KINDS[0], field, metadata_owner=True): value for field, value in values.items()
               if field != "id" and field not in SHARED_FIELDS}
     supplied = ",".join(_quote(col) + "=?" for col in ("classification_id", *mapped))
-    defaults = ",".join(_quote(canonical_column(KINDS[0], field)) + "=" + expression
-                        for field, expression in CLASS_DEFAULTS.items() if field not in values)
+    defaults = ",".join(_quote(canonical_column(KINDS[0], field, metadata_owner=True)) + "=" + expression
+                        for field, expression in CLASS_DEFAULTS.items()
+                        if field not in values and field not in MESSAGE_METADATA_FIELDS)
     assignments = ",".join(part for part in (supplied, defaults) if part)
     db.execute("update emails set " + assignments + " where stable_message_identity=?",
                (classification_id, *mapped.values(), stable))
@@ -410,14 +412,14 @@ def update_email_message(db: sqlite3.Connection, message_id: int, values: dict) 
 
 def update_email_classification(db: sqlite3.Connection, classification_id: int,
                                 values: dict) -> int:
-    """Apply source Classification UPDATE without changing message-only facts."""
+    """Apply classification fields, with metadata written to its message owner."""
     if not values:
         return 0
     if set(values) - set(CLASS_FIELDS):
         raise ValueError("unsupported Email classification fields")
     if SHARED_FIELDS & set(values):
         actions._email_lock(db)
-    mapped = {canonical_column(KINDS[0], field):
+    mapped = {canonical_column(KINDS[0], field, metadata_owner=True):
               actions._native_integer_primary_key(value, update=True) if field == "id" else value
               for field, value in values.items()}
     shared = _shared_with_native_affinity({field: values[field] for field in SHARED_FIELDS & set(values)})
@@ -452,8 +454,10 @@ def update_email_paired_locator(
     Optional old locator values are the caller's existing conditional WHERE
     values. A failed match returns zero for the caller's current conflict path.
     """
-    assignments = ["class_folder=?", "message_folder=?", "uidvalidity=?", "uid=?"]
-    bindings = [class_folder, message_folder, uidvalidity, uid]
+    if class_folder != message_folder or type(class_folder) is not type(message_folder):
+        raise ValueError("paired Email folder differs from its message owner")
+    assignments = ["message_folder=?", "uidvalidity=?", "uid=?"]
+    bindings = [message_folder, uidvalidity, uid]
     for column, value in (("class_thread_id", class_thread_id),
                           ("class_updated_at", class_updated_at),
                           ("message_updated_at", message_updated_at)):
@@ -462,7 +466,7 @@ def update_email_paired_locator(
             bindings.append(value)
     where = ["classification_id=?", "account_id=?", "stable_message_identity=?"]
     bindings.extend((classification_id, account_id, stable_message_identity))
-    for column, value in (("class_folder", expected_class_folder),
+    for column, value in (("message_folder", expected_class_folder),
                           ("message_folder", expected_message_folder),
                           ("uidvalidity", expected_uidvalidity), ("uid", expected_uid)):
         if value is not _UNSET:
@@ -475,8 +479,8 @@ def update_email_paired_locator(
 
 def delete_email_classification(db: sqlite3.Connection, classification_id: int) -> int:
     """Remove only the optional classification projection."""
-    columns = tuple(canonical_column(KINDS[0], field) for field in CLASS_FIELDS
-                    if field not in SHARED_FIELDS)
+    columns = tuple(canonical_column(KINDS[0], field, metadata_owner=True) for field in CLASS_FIELDS
+                    if field not in SHARED_FIELDS and field not in MESSAGE_METADATA_FIELDS)
     cursor = db.execute("update emails set "
                         + ",".join(_quote(column) + "=null" for column in columns)
                         + " where classification_id=?", (classification_id,))

@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "failure_class": "evaluation_result_persistence",
+  "diagnostic": "Caller supplied evals/scheduled_task_generic/okr_results.v8.json to a filename relative to HERE. Missing nested output parent caused FileNotFoundError at first case checkpoint and final save. Native first-case Consumer/Audit/correction ran; final grades and raw artifacts were not retained, so no semantic acceptance is claimed. Added preflight directory regression before model configuration; rerun required.",
+  "cases": [],
+  "temporary_artifacts_cleaned": true
+}

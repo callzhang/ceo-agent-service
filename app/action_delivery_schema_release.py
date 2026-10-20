@@ -11,8 +11,8 @@ from app.action_delivery_storage import (
     capture_action_delivery_schema,
     restore_action_delivery_schema,
 )
-from app.selection_schema_release import (
-    SOURCE_STORE_VERSION, TARGET_STORE_VERSION, publication_action_schema_is_current,
+from app.specialized_action_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
     ACTION_PROJECTIONS,
@@ -33,7 +33,7 @@ VERSION_KEY = "store_schema_version"
 def publication_delivery_sources(db):
     """Exact source/target delivery reads during the paired deploy window."""
     version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=(SOURCE_STORE_VERSION,))
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_DELIVERY_VERSION:
         capture_action_delivery_schema(db)
         return {

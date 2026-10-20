@@ -67,9 +67,9 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
         ".agents/skills/stardust-oa-finance-review/SKILL.md"
     )
 
-    assert entries[finance_source]["old_sha256"] == _digest(
-        Path.home().joinpath(".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md").read_bytes()
-    )
+    # This is the approved pre-publication digest, not mutable installed state.
+    # After deployment the installed file correctly matches new_sha256.
+    assert entries[finance_source]["old_sha256"] == "2e5cc31fecc272549b6854b120790935d82d33368dc178e7743327ab061afeb5"
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
     assert entries[finance_skill_source]["old_sha256"] == _digest(
         installed_finance_skill.read_bytes()
@@ -87,7 +87,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "0668fa0d76e0a97c059a078501cbae62d7a45fecc1fd8808a57494f7267813c8",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
     }
 
 

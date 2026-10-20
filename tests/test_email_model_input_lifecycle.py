@@ -65,7 +65,8 @@ def test_terminal_inputs_retire_without_changing_facts_or_training_inclusion(bod
     assert reference['utf8_bytes'] == len(text.encode())
     assert reference['representation'] == CpuTfidfLogisticClassifier.FEATURE_VERSION
     assert after | {key: before[key] for key in (
-        'class_model_text', 'message_normalized_text', 'message_source_reference_json')} == before
+        'class_model_text', 'message_normalized_text', 'message_source_reference_json', 'message_preview')} == before
+    assert after['message_preview'] == 'complete body'
     assert store.count_unincluded_training_examples() == pending
     assert store.owner_labelled_examples(source_reader=_reader(message)) == (examples, stamp)
     assert len(calls) == 1

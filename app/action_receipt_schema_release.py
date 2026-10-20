@@ -11,8 +11,8 @@ from app.action_receipt_storage import (
     capture_action_receipt_schema,
     restore_action_receipt_schema,
 )
-from app.selection_schema_release import (
-    SOURCE_STORE_VERSION, TARGET_STORE_VERSION, publication_action_schema_is_current,
+from app.specialized_action_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
     ACTION_PROJECTIONS,
@@ -32,7 +32,7 @@ VERSION_KEY = "store_schema_version"
 def publication_receipt_sources(db):
     """The exact previous/target declarations used only in the deploy window."""
     version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=(SOURCE_STORE_VERSION,))
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_RECEIPT_VERSION:
         capture_action_receipt_schema(db)
         return {kind: f"select * from {kind}" for kind in RECEIPT_ACTION_TYPES}

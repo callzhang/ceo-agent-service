@@ -17,7 +17,19 @@ def email_preview(normalized_text: str) -> str:
 
 
 def populate_email_previews(db) -> int:
-    """Explicit publication backfill before originals retire; caller owns transaction."""
+    """Refresh the one current preview; caller owns the transaction and input."""
+    rows = db.execute("select id,message_normalized_text,message_preview from emails").fetchall()
+    changed = 0
+    for row_id, original, previous in rows:
+        preview = email_preview(original) if original else previous[:PREVIEW_CHARACTERS]
+        if previous != preview:
+            db.execute("update emails set message_preview=? where id=?", (preview, row_id))
+            changed += 1
+    return changed
+
+
+def populate_email52_previews(db) -> int:
+    """Frozen Email52 publication before originals retire; caller owns transaction."""
     rows = db.execute(
         "select id,classification_id,message_normalized_text,class_preview,message_preview "
         "from emails"

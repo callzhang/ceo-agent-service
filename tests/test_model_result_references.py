@@ -1,0 +1,308 @@
+"""Confirmed provider bodies have one owner; inverse uses current receipts."""
+import sqlite3
+
+import pytest
+
+from app import action_storage as actions
+from app.action_email_storage import _fingerprint
+from app.model_action_schema import migrate_selection_references, selection_action_objects
+from tests.test_model_action_schema import _add, _raw, _seed, _snapshot
+from tests.test_provenance_vector_storage import db as db
+
+
+SOURCE_HASHES = {
+    'actual_no_memory_fk': '317eb42c3c0a24e2f210d5ba52d11888b3c1a1cf74217979e3bce2a240893f04',
+    'fresh_memory_fk': 'ad99aad17823c90a058947ba61d261e6da6ffbf9c9290a8a67b8aa825d9190ad',
+}
+BODY = ' { "receipt": "exact provider bytes α" } '
+
+
+def _receipt(db, key, body=BODY):
+    actions.insert_action(db, 'external_action_results', dict(external_action_key=key,
+        business_object_key='object', action_identity=key, operation='send',
+        target_identifiers_json='{}', provider_result_json=body, result_digest='digest',
+        first_agent_run_id=2))
+
+
+def _attempt(db, physical, public, status, body, key, index):
+    _add(db, 'candidate_action_attempts', physical, public,
+         dict(action_index=index, external_action_key=key, status=status,
+              result_json=body, created_at='created', updated_at='updated'),
+         references={'execution_id': 601}, target=True)
+
+
+def _source(db):
+    _seed(db)
+    migrate_selection_references(db)
+    _receipt(db, 'equal')
+    _receipt(db, 'distinct')
+    _attempt(db, 1001, 71, 'verified', BODY, 'equal', 0)
+    _attempt(db, 1002, 72, 'verified', '{}', 'distinct', 1)
+    _attempt(db, 1003, 73, 'failed', ' { "error": 1 } ', 'failure', 2)
+    _attempt(db, 1004, 74, 'uncertain', '{"unknown":true}', 'uncertain', 3)
+    _attempt(db, 1005, 75, 'verified', '{}', 'missing-receipt', 4)
+
+
+def test_frozen_14_and_19_1_factories_and_opt_in_nullable_target():
+    from app.model_result_schema import result_action_objects
+    from tests.test_model_action_schema import test_frozen_source_factories_and_opt_in_target
+    test_frozen_source_factories_and_opt_in_target()
+    for variant, digest in SOURCE_HASHES.items():
+        assert _fingerprint(selection_action_objects(variant)) == digest
+        assert result_action_objects(variant, result_references=False) == selection_action_objects(variant)
+        source = next(o['sql'] for o in selection_action_objects(variant) if o['type'] == 'table')
+        target = next(o['sql'] for o in result_action_objects(variant) if o['type'] == 'table')
+        marker = "check(record_type<>'candidate_action_attempts'"
+        prefix, attempt_check = source.split(marker, 1)
+        owned_body = "json_type(payload_json,'$[3]') is 'text'"
+        reference_body = "(json_type(payload_json,'$[3]') is 'text' or json_type(payload_json,'$[3]') is 'null')"
+        assert target == prefix + marker + attempt_check.replace(owned_body, reference_body, 1)
+        assert [o for o in result_action_objects(variant) if o['type'] != 'table'] == [
+            o for o in selection_action_objects(variant) if o['type'] != 'table']
+    assert actions.NULLABLE_PAYLOAD_FIELDS.get('candidate_action_attempts') is None
+
+
+def test_forward_nulls_only_byte_equal_verified_body_and_preserves_other_facts(db):
+    from app.model_result_schema import migrate_result_references
+    _source(db)
+    before = _raw(db)
+    water = _snapshot(db)[2]
+    foreign = sorted(db.execute('pragma foreign_key_check').fetchall())
+    metadata = migrate_result_references(db)
+    assert metadata == {'reply_variant': actions._reply_variant_for(db)}
+    assert db.execute('select result_json from actions where id=1001').fetchone() == (None,)
+    assert [r for r in _raw(db) if r[0] != 1001] == [r for r in before if r[0] != 1001]
+    assert _snapshot(db)[2] == water
+    assert sorted(db.execute('pragma foreign_key_check').fetchall()) == foreign
+    assert db.execute('pragma quick_check').fetchone() == ('ok',)
+    assert db.execute("select result_json from actions where id=601").fetchone() == (' { "kept": 1 } ',)
+
+
+def test_inverse_reconstructs_new_current_attempts_and_preserves_all_current_waters(db):
+    from app.model_result_schema import migrate_result_references, restore_result_references
+    _source(db)
+    source = _snapshot(db)
+    metadata = migrate_result_references(db)
+    _receipt(db, 'later', '{"new":2}')
+    _attempt(db, 1101, 81, 'verified', None, 'later', 5)
+    _attempt(db, 1102, 82, 'verified', '{}', 'later', 6)
+    db.execute("update sqlite_sequence set seq=987655 where name='actions:unrelated-water'")
+    target = _snapshot(db)
+    restore_result_references(db, metadata)
+    assert actions._objects(db, 'actions') == source[0]
+    assert db.execute('select result_json from actions where id=1001').fetchone() == (BODY,)
+    assert db.execute('select result_json from actions where id=1101').fetchone() == ('{"new":2}',)
+    assert db.execute('select result_json from actions where id=1102').fetchone() == ('{}',)
+    assert _snapshot(db)[2] == target[2]
+    assert [r for r in _raw(db) if r[0] not in (1101, 1102) and r[0] <= 1005] == [r for r in source[1] if r[0] <= 1005]
+    migrate_result_references(db)
+    assert _snapshot(db) == target
+
+
+def test_missing_owner_for_null_inverse_refuses_before_mutation(db):
+    from app.model_result_schema import migrate_result_references, restore_result_references
+    _source(db)
+    metadata = migrate_result_references(db)
+    db.execute("delete from actions where record_type='external_action_results' and legacy_key='equal'")
+    before = _snapshot(db)
+    with pytest.raises(ValueError, match='receipt'):
+        restore_result_references(db, metadata)
+    assert _snapshot(db) == before
+
+
+@pytest.mark.parametrize('dependency', ['create view receipt_extra as select result_json from actions',
+    'create table other(x)', 'create trigger other_update after update on configs begin select result_json from actions; end'])
+def test_dependent_objects_refused_and_unrelated_objects_preserved(db, dependency):
+    from app.model_result_schema import migrate_result_references
+    _source(db)
+    db.execute(dependency)
+    before = _snapshot(db)
+    if dependency.startswith('create table'):
+        migrate_result_references(db)
+        assert db.execute("select name from sqlite_schema where name='other'").fetchone() == ('other',)
+    else:
+        with pytest.raises(ValueError, match='depend|trigger|view'):
+            migrate_result_references(db)
+        assert _snapshot(db) == before
+
+
+def test_requires_caller_transaction_and_fk_off(db):
+    from app.model_result_schema import migrate_result_references
+    _source(db)
+    db.commit()
+    with pytest.raises(ValueError, match='transaction'):
+        migrate_result_references(db)
+    db.execute('pragma foreign_keys=on')
+    db.execute('begin')
+    with pytest.raises(ValueError, match='FK-off'):
+        migrate_result_references(db)
+
+
+def test_writer_stores_reference_but_public_reader_preserves_body(tmp_path):
+    from app.store import AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    store = AutoReplyStore(tmp_path/'runtime.sqlite3')
+    task, candidate, review, _ = _reviewed(store, options=False)
+    execution = store.claim_candidate_execution(candidate['id'], review['id'], 'worker', 60)
+    attempt = store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')
+    receipt = store.record_candidate_external_action(execution['id'], 'worker', 0,
+        'receipt', 'send', {'user_id': 'x'}, {'receipt': 'substitute'})
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] is None
+    assert store.list_candidate_action_attempts(execution['id'])[0]['result_json'] == receipt['provider_result_json']
+    assert store.get_prior_candidate_action_attempt('receipt', execution['id'] + 1)['result_json'] == receipt['provider_result_json']
+    assert store.list_verified_candidate_actions(task.id)[0]['result_json'] == receipt['provider_result_json']
+    saved = store.record_candidate_action_outcome(execution['id'], 'worker', 0, 'verified', {})
+    assert saved['result_json'] == '{}'
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] == '{}'
+    saved = store.record_candidate_action_outcome(execution['id'], 'worker', 0, 'verified', {'receipt': 'substitute'})
+    assert saved['result_json'] == receipt['provider_result_json']
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] is None
+        connection.execute("delete from actions where record_type='external_action_results'")
+    with pytest.raises(sqlite3.IntegrityError, match='receipt'):
+        store.list_candidate_action_attempts(execution['id'])
+    from types import SimpleNamespace
+    from app.attempt_what_happened import _verified_system_receipts
+    with pytest.raises(sqlite3.IntegrityError, match='receipt'):
+        _verified_system_receipts([SimpleNamespace(reply_task_id=task.id,
+            execution_generation=task.execution_generation)], store=store)
+    assert attempt['id'] == saved['id']
+
+
+def test_receipt_correction_preserves_other_attempts_original_meaning(tmp_path):
+    from app.store import AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    store = AutoReplyStore(tmp_path/'corrected.sqlite3')
+    task, candidate, review, _ = _reviewed(store, options=False)
+    execution = store.claim_candidate_execution(candidate['id'], review['id'], 'worker', 60)
+    attempt = store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')
+    old = {'provider_result': {'message': 'same'}, 'verification': {'state': 'ambiguous'}}
+    receipt = store.record_candidate_external_action(execution['id'], 'worker', 0,
+        'receipt', 'send', {'user_id': 'x'}, old)
+    # A prior attempt already derived this exact body; a later correction of
+    # this receipt must not rewrite that prior attempt's historical meaning.
+    with store._immediate_write_transaction() as connection:
+        extra = actions.insert_action(connection, 'candidate_action_attempts', dict(
+            execution_id=execution['id'], action_index=1, external_action_key='receipt',
+            status='verified', result_json=None))
+    new = {'provider_result': {'message': 'same'}, 'verification': {'state': 'sent'}}
+    changed = store.record_candidate_external_action(execution['id'], 'worker', 0,
+        'receipt', 'send', {'user_id': 'x'}, new)
+    rows = store.list_candidate_action_attempts(execution['id'])
+    assert rows[0]['id'] == attempt['id']
+    assert rows[0]['result_json'] == changed['provider_result_json']
+    assert rows[1]['id'] == extra.lastrowid
+    assert rows[1]['result_json'] == receipt['provider_result_json']
+    with store._connect() as connection:
+        bodies = connection.execute("select result_json from actions where record_type='candidate_action_attempts' order by action_index").fetchall()
+        assert bodies[0][0] is None
+        assert bodies[1][0] == receipt['provider_result_json']
+
+
+def test_receipt_correction_rolls_back_reference_materialization(tmp_path, monkeypatch):
+    from app import reviewed_candidate_store
+    from app.store import AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    store = AutoReplyStore(tmp_path/'atomic.sqlite3')
+    _, candidate, review, _ = _reviewed(store, options=False)
+    execution = store.claim_candidate_execution(candidate['id'], review['id'], 'worker', 60)
+    store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')
+    old = {'provider_result': {'message': 'same'}, 'verification': {'state': 'ambiguous'}}
+    store.record_candidate_external_action(execution['id'], 'worker', 0,
+        'receipt', 'send', {'user_id': 'x'}, old)
+    with store._connect() as connection:
+        before = _snapshot(connection)
+    update = reviewed_candidate_store.update_action
+    def fail_after_receipt(db, kind, public_id, values, **kwargs):
+        if kind == 'candidate_action_attempts' and values.get('status') == 'verified':
+            raise RuntimeError('attempt assignment failed')
+        return update(db, kind, public_id, values, **kwargs)
+    monkeypatch.setattr(reviewed_candidate_store, 'update_action', fail_after_receipt)
+    with pytest.raises(RuntimeError, match='assignment'):
+        store.record_candidate_external_action(execution['id'], 'worker', 0,
+            'receipt', 'send', {'user_id': 'x'},
+            {'provider_result': {'message': 'same'}, 'verification': {'state': 'sent'}})
+    with store._connect() as connection:
+        assert _snapshot(connection) == before
+
+
+@pytest.mark.parametrize('status', ['failed', 'uncertain', 'confirmed_no_effect'])
+def test_nonverified_outcome_retains_body_even_when_equal_to_receipt(tmp_path, status):
+    from app.store import AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    store = AutoReplyStore(tmp_path/'local-fact.sqlite3')
+    _, candidate, review, _ = _reviewed(store, options=False)
+    execution = store.claim_candidate_execution(candidate['id'], review['id'], 'worker', 60)
+    store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')
+    store.record_candidate_external_action(execution['id'], 'worker', 0,
+        'receipt', 'send', {'user_id': 'x'}, {'receipt': 'substitute'})
+    saved = store.record_candidate_action_outcome(execution['id'], 'worker', 0, status, {'receipt': 'substitute'})
+    assert saved['result_json'] == '{"receipt":"substitute"}'
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] == saved['result_json']
+
+
+def test_prior_reconciliation_writes_one_owner_in_same_transaction(tmp_path):
+    from app.store import AgentRole, AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    store = AutoReplyStore(tmp_path/'prior.sqlite3')
+    task, candidate, review, body = _reviewed(store, options=False)
+    execution = store.claim_candidate_execution(candidate['id'], review['id'], 'first', 60)
+    prior = store.begin_candidate_action(execution['id'], 'first', 0, 'receipt')
+    store.record_candidate_action_outcome(execution['id'], 'first', 0, 'failed',
+        {'reason': 'reviewed_message_preparation_mismatch', 'independent': 'original failure'})
+    store.finish_candidate_execution(execution['id'], 'first', 'failed', {})
+    later = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=1, turn_attempt=0, parent_agent_run_id=review['audit_run_id'],
+        operation_id='', owner='later').run
+    store.complete_agent_run(later.id, body, owner='later')
+    later_candidate = store.persist_review_candidate(task, later, body)
+    audit = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=1, turn_attempt=0, parent_agent_run_id=later.id,
+        operation_id='later-audit', owner='audit').run
+    verdict = {'outcome':'approve','candidate_digest':later_candidate['candidate_digest']}
+    store.complete_agent_run(audit.id, verdict, owner='audit')
+    later_review = store.record_candidate_review(later_candidate['id'], audit.id, verdict)
+    current = store.claim_candidate_execution(later_candidate['id'], later_review['id'], 'later', 60)
+    saved = store.record_prior_candidate_action_reconciliation(current['id'], 'later', 0,
+        'receipt', 'verified', {'receipt':'readback substitute'})
+    assert saved['id'] == prior['id']
+    assert saved['result_json'] == '{"receipt":"readback substitute"}'
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] is None
+        assert connection.execute("select count(*) from actions where record_type='external_action_results'").fetchone()[0] == 1
+
+
+def test_unknown_inbound_action_dependency_refuses_before_mutation(db):
+    from app.model_result_schema import migrate_result_references
+    _source(db)
+    db.execute('create table extra_action_owner(action_id integer references actions(id))')
+    before = _snapshot(db)
+    with pytest.raises(ValueError, match='dependency'):
+        migrate_result_references(db)
+    assert _snapshot(db) == before
+
+
+@pytest.mark.parametrize('provider_body', ['{}', '{"receipt":"substitute"}'])
+def test_existing_receipt_reuse_preserves_distinct_default_only(tmp_path, provider_body):
+    from app.store import AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    store = AutoReplyStore(tmp_path/'reuse.sqlite3')
+    task, candidate, review, _ = _reviewed(store, options=False)
+    execution = store.claim_candidate_execution(candidate['id'], review['id'], 'worker', 60)
+    with store._immediate_write_transaction() as connection:
+        actions.insert_action(connection, 'external_action_results', dict(external_action_key='receipt',
+            business_object_key=task.business_object_key, action_identity='a', operation='send',
+            target_identifiers_json='{"user_id":"x"}', provider_result_json=provider_body,
+            result_digest='fixture', first_agent_run_id=candidate['consumer_run_id']))
+    attempt = store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')
+    assert attempt['status'] == 'verified'
+    assert attempt['result_json'] == '{}'
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] == (None if provider_body == '{}' else '{}')
+    store.record_candidate_action_outcome(execution['id'], 'worker', 0, 'failed', {})
+    assert store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')['result_json'] == '{}'
+    with store._connect() as connection:
+        assert connection.execute("select result_json from actions where record_type='candidate_action_attempts'").fetchone()[0] == (None if provider_body == '{}' else '{}')

@@ -72,6 +72,7 @@ def current_configs_schema_is_current(
     physical_provenance: bool = False,
     compact_payload: bool = False,
     selection_references: bool = False,
+    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False,
 ):
     """Use unchanged config/action facts with the one current Runs11 binding."""
     return (configs_content_schema_is_current(
@@ -87,6 +88,6 @@ def current_configs_schema_is_current(
                 canonical_email=canonical_email,
                 inline_legacy_owner=inline_legacy_owner,
                 physical_provenance=physical_provenance, compact_payload=compact_payload,
-                selection_references=selection_references,
+                selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims,
             )
             and current_run11_schema_is_current(db))

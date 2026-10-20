@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "created_at": "2026-10-20T04:13:39.618919+00:00",
+  "cases_sha256": "c8ed2093242a7cef57f3025a2f062a7aa4a82da3b67901fcb92a7843b8569438",
+  "grader_sha256": "624eb690f0014b30a6fecf9aeab506b75e1b4aaa3201c862331df78cf90e1f5d",
+  "fixture_sha256": "88534b614f944ad7cae5d584fe37d72fe0453e70cf50cde3396d6b9055fbe816",
+  "application_contract_sha256": {
+    "_task_file_path": "4090d38235e2d153def7877c67672903a88dea56c2e7b2c0c199ee06e238b1a6",
+    "_read_task_file": "136d671455171e5c118f6bf7819a4ca0c83ddc4f914afc75b36683cd5fa4a5e8",
+    "_write_document_artifact": "d43a64e331db01922cf1b7593e0f8b2d253ee37e1fbabd0ddb217a9e72e3e8f7",
+    "read_task_artifact": "e8f6826fe05a005bc1fc9767a177e8d7e08395f709001102ad583735069d30ba",
+    "list_task_artifacts": "bf388f5c263cc5101c9d8f8cca1b7bc2a15b34106d230621f187b68027769221",
+    "read_dingtalk_document": "262dc32ab913eceb305ad6a4f2b219134bec706fb766783439999f0682dbf859",
+    "read_dingtalk_document_info": "a402785da2b0ccbc3f3ba42da9db787565c4166ee6b33e9c07dc62eed10694ee",
+    "consumer_artifact_write": "d2ae03dbfd61c7446a80d6eaf2ab4d77c93bed29bab7d8a6c383b734c1766ae2",
+    "consumer_document_write": "548a2c7d9da550fe0e45878e41b7f9b0f91d41086196df88ab699d78fba84c6f"
+  },
+  "cli_version": "codex-cli 0.154.0",
+  "candidate_git_ref": "4aeda06e250b9d0071162b833675ebcdadc9eb28",
+  "settings": {
+    "configured_default_model": "gpt-6.1-sol",
+    "configured_reasoning_effort": "high",
+    "model_override": "gpt-5.6-luna",
+    "disabled_mcp_server_names": [
+      "ai_services",
+      "brightdata",
+      "computer-use",
+      "crm_connector",
+      "fundflow",
+      "memory_connector",
+      "node_repl",
+      "xiaoqing_interview"
+    ],
+    "features_disabled": [
+      "shell_tool",
+      "apps",
+      "plugins",
+      "hooks",
+      "multi_agent"
+    ],
+    "sandbox": "read-only",
+    "ephemeral": true,
+    "web_search": "disabled",
+    "project_doc_max_bytes": 0,
+    "model_source": "production-config",
+    "ignore_user_config": true,
+    "ignore_rules": true
+  },
+  "synthetic_only": true,
+  "external_executor_available": false,
+  "source_sha256": {
+    "ci/shared-skills/ceo-weekly-okr-report/SKILL.md": "31556e311ef63d718a0ff444d166179befb9e7a27ba0af721727a1d16b5a35d3",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py": "abfd4143323e5d4c86f37e34b29f63cf384818ae127b33fa550c0f63827ead1b",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/destination.py": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a",
+    "operation/dingtang-okr-review/SKILL.md": "a92b9a068f5b76f98f1cfa61475043a394df93b5d760d3124b2f308b2b644ed2"
+  },
+  "cases": [],
+  "temporary_artifacts_cleaned": true,
+  "status": "failed"
+}

@@ -190,7 +190,7 @@ class DingTalkMessageHandler:
                 and verification.get("reason") == "complete_readback_no_exact_match"
                 and verification.get("readback_verification", {}).get("completeWindowReadback") is True):
             prior_attempt = candidate.get("action_attempt") or {}
-            prior_result = json.loads(prior_attempt.get("result_json") or "{}")
+            prior_result = json.loads(prior_attempt.get("result_json", "{}"))
             if (prepared is None
                     and prior_result.get("reason") == "reviewed_message_preparation_mismatch"):
                 return ActionOutcome("confirmed_no_effect", result.provider_result)
@@ -406,7 +406,7 @@ class OaRevertHandler(OaDecisionHandler):
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
         attempt = candidate.get("action_attempt")
-        prior = json.loads(attempt.get("result_json") or "{}") if isinstance(attempt, dict) else {}
+        prior = json.loads(attempt.get("result_json", "{}")) if isinstance(attempt, dict) else {}
         unresolved = ActionOutcome("uncertain", {**prior, "reason": "oa_return_evidence_unverified"})
         boundary = self._boundary(candidate, action_key)
         response = prior.get("provider_response")

@@ -10,6 +10,7 @@ from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, stopped_because
+from app.history_actions import can_reopen_skipped_oa_review
 from app.web_api.common import json_safe, normalize_display_value
 from app.run_storage import AGENT_RUN_SQL
 from app.agent_contracts import parse_persisted_consumer_result
@@ -540,7 +541,10 @@ def _action_links(
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
     return {
-        "can_rerun": status == "failed" and not rerun_block_reason,
+        "can_rerun": (
+            (status == "failed" and not rerun_block_reason)
+            or can_reopen_skipped_oa_review(attempt, reply_task)
+        ),
         "rerun_label": rerun.label,
         "rerun_confirmation": rerun.confirmation,
         "rerun_block_reason": rerun_block_reason,

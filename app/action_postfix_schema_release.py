@@ -11,8 +11,8 @@ from app.action_postfix_storage import (
     capture_action_postfix_schema,
     restore_action_postfix_schema,
 )
-from app.selection_schema_release import (
-    SOURCE_STORE_VERSION, TARGET_STORE_VERSION, publication_action_schema_is_current,
+from app.specialized_action_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
     ACTION_PROJECTIONS,
@@ -33,7 +33,7 @@ VERSION_KEY = "store_schema_version"
 def publication_postfix_sources(db):
     """The exact previous/target declarations used only in the deploy window."""
     version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=(SOURCE_STORE_VERSION,))
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_POSTFIX_VERSION:
         capture_action_postfix_schema(db)
         return {kind: f"select {','.join(SOURCE_COLUMNS[kind])} from {kind}" for kind in POSTFIX_ACTION_TYPES}

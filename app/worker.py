@@ -3300,7 +3300,10 @@ class DingTalkAutoReplyWorker:
             or payload.get("url")
         )
         source_text = f" resource {source}" if source else ""
-        return f"{message.open_message_id}:{source_text} error {error}"
+        source_message_id = (
+            payload.get("source_message_id") or message.open_message_id
+        )
+        return f"{source_message_id}:{source_text} error {error}"
 
     def _resolve_message_image(
         self,
@@ -3321,9 +3324,12 @@ class DingTalkAutoReplyWorker:
             suffix = self._decoded_image_suffix(data)
             return self._write_message_image(task_id, message, suffix, data)
         elif kind == "media_id":
+            source_message_id = payload.get("source_message_id")
+            if not source_message_id:
+                raise DwsError("quoted media source message id unavailable")
             download = self.dws.get_resource_download_url(
                 message.open_conversation_id,
-                message.open_message_id,
+                source_message_id,
                 payload["media_id"],
                 "mediaId",
             )
@@ -5458,14 +5464,21 @@ class DingTalkAutoReplyWorker:
         message: DingTalkMessage,
     ) -> list[tuple[str, dict[str, str]]]:
         sources: list[tuple[str, dict[str, str]]] = []
-        for text in (message.content, message.quoted_content or ""):
+        for text, source_message_id in (
+            (message.content, message.open_message_id),
+            (message.quoted_content or "", message.quoted_message_id or ""),
+        ):
             for match in IMAGE_MESSAGE_MEDIA_ID_PATTERN.finditer(text):
                 media_id = match.group("media_id").strip()
                 if media_id:
                     sources.append(
                         (
-                            f"media:{message.open_message_id}:{media_id}",
-                            {"kind": "media_id", "media_id": media_id},
+                            f"media:{source_message_id}:{media_id}",
+                            {
+                                "kind": "media_id",
+                                "media_id": media_id,
+                                "source_message_id": source_message_id,
+                            },
                         )
                     )
         for download_code in self._download_codes_from_payload(message.raw_payload):
