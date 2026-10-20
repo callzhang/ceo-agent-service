@@ -6813,7 +6813,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.9 schema"
+                    "or the current 2026-10-19.10 schema"
                 )
             return True
         finally:

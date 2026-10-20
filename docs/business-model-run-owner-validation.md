@@ -2,8 +2,11 @@
 
 本切片把三种真实专业运行历史归入已有 `runs[agent_runs]`。准确来源是
 `45f3324be3c568b9f91709c25306e19d73a15087` 的 Store `2026-10-19.9`／Email53，
-目标是 Store `2026-10-19.10`／Email53。当前是局部实现与定向验证候选；未提交、
-未推送、未部署，也没有从实现 worktree 调用原生 Agent CLI 或真实 provider。
+目标是 Store `2026-10-19.10`／Email53。当前仍是局部实现与定向验证候选。
+原工作树消失后，从启动清理 snapshot `6a863f1bb7872a9a6b3bc5c5b2583c65d7ed05c6`
+恢复；该 snapshot 直接基于上述45f，包含原候选字节，不代表正式发布。
+本轮 SPEC 修复未 stage／commit／push／deploy；实现者没有调用原生 Agent CLI、
+真实 provider 或生产库。
 父线程负责独立 SPEC→QUALITY、全量副本、真实 native／UI、标准发布及生产读回。
 
 实现范围仅为 Run 归属。C1 的 Task 单一生命周期、A5a 的 prepared Action
@@ -48,8 +51,10 @@ Run105／public2298 → absentTask9901／job4908，并验证两向 FK multiset
 ## 身份、约束和分配器
 
 共同物理 ID 不等于旧公共 Run ID。专业读写以准确的
-`(source_type, cast(legacy_key as integer))` 定位，DTO 同时公开 `common_run_id`
-和原 `source_key`。三来源和 Consumer／Audit 同号可以并存；错误 namespace
+`(source_type, cast(legacy_key as integer))` 定位。Task／OKR 字典 DTO 同时公开
+原公开 `.id`、原 `source_key` 及共同物理 `common_run_id`；MeetingAlignmentRun
+保留原公开 `.id` 和 `common_run_id`，没有 `source_key` 字段。三来源和
+Consumer／Audit 同号可以并存；错误 namespace
 不能读到另一个来源。`idx_runs_public_id` 保持源的整数 cast 唯一性语义，
 仅把原专业 namespace 纳入共同 owner 的唯一性键。
 
@@ -98,7 +103,12 @@ metadata-get；原三套状态 UPDATE 合并至共同恢复写入器。九个 ig
 终态关闭、History／search／codex session index hydration；Web Meeting 详情与
 History card、Console API、Task project repair、inspect／replay 脚本及相关 eval
 读取。Consumer／Audit 的 Store、native trajectory、Email、adoption、rerun、
-deferral、recovery、质量与发布读者统一使用角色专用投影。
+deferral、recovery、质量与当前发布读者统一使用角色专用投影。
+发布的 `publication_run_sources` 先读明确 marker；仅19.10且当前 Run 声明匹配
+时选择现有 `source_type IS NULL` 投影。11.1原生表、11.2等不含 `source_type`
+的早期声明仍使用历史投影；`AGENT_RUN_SQL` 历史常量及 factory 不改。
+quiet 和 maintenance 的四处 dispatcher 读取共用该 release 的 target／previous
+版本常量，包含准确19.10／前序19.9；未知版本继续拒绝，原等待与租约条件不变。
 
 模型正文仍从原生 trajectory 读取。`latest_task_ref`、`latest_standalone_ref`、
 `exact_standalone_ref` 和原选择顺序不变；没有可用 native 源时仍返回原 unavailable
@@ -153,10 +163,44 @@ WorkbenchStore 冷启动后，使用当前代码再次正迁，要求事实和 a
 
 ## 验证与证据边界
 
-全部原始失败及绿灯日志、实际 source archive、临时 SQLite 和 DDL 存于
-`/private/tmp/ceo-c2-run-owner.i77CCm`，按照父线程要求保留到 fresh review 结束。
-只执行定向测试，没有运行整个测试套件。以下数字以各文件原始结尾为准；
-不同批次可能覆盖同一 case，不把累计执行数当作不同用例数。
+原工作树与 `/private/tmp/ceo-c2-run-owner.i77CCm` 已消失，原 raw 日志、
+archive 和临时 SQLite／DDL 目前不可回查。旧 source-freeze 中的日志 SHA256
+和以下历史记录仍在；它们不构成此次重新执行的证据。root 已逐字节核对恢复
+snapshot 与原 manifest 的全部1,232文件相同。以下原批次数只作为历史记录，
+尤其 `core5.log` 的18 passed 不能称为已重验；不同批次也不累计为独立用例数。
+本轮仍只执行定向测试，没有运行整个测试套件。
+
+### 恢复后重新取证
+
+恢复树为 `/Users/derek/.codex/worktrees/business-model-run-owner-resume/ceo-agent-service`，
+HEAD 为上述6a snapshot。root 的原始恢复证据在
+`/tmp/ceo-run-owner-resume.hNYHlS/resumption-evidence.json`：
+`core.log` 为17 passed／87.23s；`fixture-red.log` 为6 failed／3.43s。
+这两个文件未覆盖，也未把它们称为原18项重验。
+
+本轮 fresh SPEC 修复的 raw、独立 actual45f archive 和临时库在
+`/tmp/ceo-c2-run-owner-resume.AsVSoz`，保留给父线程 fresh SPEC→QUALITY。
+下列批次有重叠，按各批独立解释，不累加测试数：
+
+| 本轮证据 | 结果与范围 |
+| --- | --- |
+| `publication-red.log` | 11 failed／2 passed，23.87s。先观察当前 role 投影包含三种专业 Run；四处 dispatcher 版本选择拒绝19.10。11.1原生与11.2无 `source_type` 声明两项仍通过 |
+| `source-error-baseline.log` | actual45f 原文件、原输入两节点：2 failed，1.82s；均在旧 Task fixture 写入生成 `record_type` 前置失败，未进入迁移逻辑 |
+| `source-error-equivalent.log` | actual45f 另一个临时测试文件仅把 Task 准备／读取改为该源已有 task8／task20，保留旧 Meeting Run writer 和全部9条断言：2 passed，2.61s |
+| `current-error-red.log` | 当前同样 Task fixture 准备后：1 failed／1 passed，4.64s；剩余失败是仍插入退休 Meeting Run kind |
+| `publication-green.log` | 改为真实共同 logical writer、保留 public job700／run900 后：15 passed，27.21s；包含三种专业 namespace 同号与 Consumer／Audit边界、两种早期 Run 来源、五种原 quiet状态、live claim／过期／终态及 maintenance 实际 owner读取 |
+| `publication-regressions.log` | 96 passed，101.93s；完整受影响的 Run publication、repository updater、maintenance、State marker、error migration五个测试文件，包含前述15项 |
+| `core.log` | 本轮独立重跑17 passed，99.42s；两个核心测试文件，包含actual45f DAO／lease differential、两种source variant、typed parent、原NULL／SQL类型、orphan／allocator、未知DDL、load-failed新事实inverse、旧Store／strictEmail／Workbench冷启动与reforward。不是原18项重验 |
+| `frozen-verification.log` | current／独立actual45f／原manifest的16个源文件及7个factory输出SHA256完全相同；原error节点9条assert的AST在原文件、等价源fixture及当前文件完全相同 |
+| `lint.log` | 本轮8个Python文件Ruff通过；`git diff --check`通过 |
+
+`source-baseline-inputs.json`记录原source archive与文件hash；旧源原失败文件
+未修改，等价夹具另存 `tests/test_error_code_migration_c2_equivalent.py` 于该临时
+archive。当前fixture只调整Task写入／读取与共同Run准备路径；错误投影迁移的
+runtime代码未变，原dry-run、结果计数、错误代码和历史error断言全部保留。
+原失败证明的是历史fixture失效；等价夹具通过不改写这一历史结论。
+
+### 原候选历史验证记录（raw 已缺失）
 
 - 新 owner／迁移的 RED：`red-owner-corrected.log`、`parent-red-corrected.log`、
   `reservation-red.log`、`absent-red.log`；guard、预留身份与源缺字段均先观察
@@ -197,7 +241,7 @@ WorkbenchStore 冷启动后，使用当前代码再次正迁，要求事实和 a
 | `tests/test_meeting_storage_readers.py::test_historical_orphan_preserves_public_job_id_without_a_ghost_parent` | `source-orphan-baseline.log`，exit1；原 helper 将 Store13.5／Email51 直接交给 current release，缺少多段旧 paired transition，不能仅补 C2 一跳修复 |
 
 上述旧节点没有改为 skip／xfail，也没有降低原断言。其源文件 hash 与原始 exit1
-在来源清单中保留。C2 的 orphan、原缺父 FK 及两个真实19.9源变体另由
+记录在旧来源清单中保留，但对应 raw 日志已缺失，本轮没有重新执行这三个节点。C2 的 orphan、原缺父 FK 及两个真实19.9源变体另由
 `test_actual_source_collisions_orphan_and_current_fact_inverse_cold_reforward`
 完整覆盖；这不替代从13.5开始的整条历史链。
 
@@ -208,6 +252,13 @@ WorkbenchStore 冷启动后，使用当前代码再次正迁，要求事实和 a
 来源冻结清单见
 [`2026-10-20-run-owner-frozen-sources.json`](superpowers/specs/2026-10-20-run-owner-frozen-sources.json)，
 包含 16 个逐字节冻结的历史／attempt／native 文件、7 种 Factory 输出 SHA256、
-三个原失败节点的源文件与函数 hash、原始 exit1 日志 hash。最终候选文件清单见
+三个原失败节点的源文件与函数 hash、原始 exit1 日志 hash。原候选文件清单见
 [`2026-10-20-run-owner-source-freeze.json`](superpowers/specs/2026-10-20-run-owner-source-freeze.json)；
 冻结只证明评审输入固定，不代表 native／全量副本／生产门槛已通过。
+
+本轮评审输入与raw日志hash分别见
+[`2026-10-20-run-owner-resume-source-freeze.json`](superpowers/specs/2026-10-20-run-owner-resume-source-freeze.json)
+和[`2026-10-20-run-owner-resume-evidence.json`](superpowers/specs/2026-10-20-run-owner-resume-evidence.json)。
+新freeze明确区分45f真实业务源、6a恢复snapshot和本轮修改；原清单不覆盖。
+实现工作结束后已删除本代理claim行，其他代理行不改；本记录承接验收历史。
+当前待fresh SPEC→QUALITY和父级后续副本／native／发布证明，不能据此称为已上线。

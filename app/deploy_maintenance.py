@@ -1,6 +1,7 @@
 """Explicit maintenance for authorized, effect-free interrupted reply work."""
 from __future__ import annotations
 from app.state_publication_sources import publication_dispatcher_source
+from app.logical_run_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 from app.scheduled_config_storage import publication_scheduled_source
 
 from dataclasses import dataclass
@@ -96,7 +97,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
                 if not available:
                     raise UpgradePreconditionError('maintenance native event source unavailable')
         owners = {row[0] for row in db.execute(
-            f"select distinct owner_pid from ({publication_dispatcher_source(db, current_version='2026-10-19.9', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5', '2026-10-19.6', '2026-10-19.7', '2026-10-19.8'))}) where claim_active and owner_pid>0 "
+            f"select distinct owner_pid from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)}) where claim_active and owner_pid>0 "
             "and julianday(lease_expires_at)>julianday('now')")}
     lines = subprocess.run(['ps', '-axo', 'pid=,ppid='], check=True, capture_output=True, text=True).stdout.splitlines()
     parents = [(int(pid), int(parent)) for pid, parent in (line.split() for line in lines)]

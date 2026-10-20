@@ -432,9 +432,8 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
     from app.store import AutoReplyStore
 
     path = tmp_path / "meeting-quiet.sqlite3"
-    AutoReplyStore(path)
+    store = AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        from app.run_storage import insert_run
         from app.task8_storage import task8_insert_parts, register_task8_functions
 
         register_task8_functions(db)
@@ -442,11 +441,9 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
             "legacy_key": 42, "meeting_id": "meeting", "status": status,
             "locked_at": locked_at,
         })
-        cursor = db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
-        if status == "processing":
-            insert_run(db, "meeting_alignment_runs", {
-                "task_id": cursor.lastrowid, "status": "running",
-            })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+    if status == "processing":
+        store.claim_logical_run("meeting_alignment_runs", 42)
     assert in_flight_work(path) == expected
 
 

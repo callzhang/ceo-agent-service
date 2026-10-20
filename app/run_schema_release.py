@@ -5,7 +5,9 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
+from app.logical_run_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, RUN_TYPES, capture_run_schema, restore_run_schema
+from app.state_publication_sources import publication_store_version
 
 OLD_RUN_VERSION = '2026-10-11.1'
 RUN_VERSION = '2026-10-11.2'
@@ -23,8 +25,16 @@ def publication_run_sources(db: sqlite3.Connection) -> tuple[str, str]:
     Runtime readers use only runs. Deploy must also read the still-running
     pre-migration source to reach the existing quiet condition.
     """
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
     if 'runs' in tables:
+        if version == TARGET_STORE_VERSION:
+            from app.logical_run_current_schema import current_run11_schema_is_current
+            from app.logical_run_storage import AGENT_RUN_SQL as LOGICAL_AGENT_RUN_SQL
+            if not current_run11_schema_is_current(db):
+                raise ValueError('unknown logical Run publication declaration')
+            return LOGICAL_AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
         return AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
     if {'agent_runs', 'agent_runtime_attempts'} <= tables:
         return 'select * from agent_runs', 'select * from agent_runtime_attempts'

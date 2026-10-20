@@ -1,0 +1,166 @@
+{
+  "source_candidate_sha256": "a4ff249f01bb8ba8fd99eec047ddc7265a546c047a9499bd01d40e971906fa48",
+  "source_app_sha256": "b6d03aea7aaac1e99df9d811f1f83056673b9daa8944798dc63026925fdb230d",
+  "source_SPEC": "PASS, independently checked source only",
+  "source_QUALITY": "PASS, independently checked source and frozen evidence only",
+  "evidence_root": "/tmp/ceo-run-owner-fullcopy.5WMdJ0",
+  "source_origin": "Chained fresh production19.8 copy -> verified prepared19.9 migration and one explicit copy-only synthetic prepared fact; not a production19.9 snapshot",
+  "source_sha256": "bb0fe05f61c6b913b4ef4e8acbdbcf0568b372082c951ccd6cbe84b1794f53b1",
+  "source_bytes": 483659776,
+  "upstream_sha256": "387366e59676736dc94afd3ed745a6f49bbdecc1540b8e5dce700fa64b46ade8",
+  "forward": {
+    "source_runs": 256591,
+    "source_kind_counts": {
+      "agent_run_state_events": 1159,
+      "agent_runs": 23835,
+      "agent_runtime_attempts": 25296,
+      "codex_session_search_index": 747,
+      "email_classifier_runtime_samples": 2048,
+      "meeting_alignment_runs": 2612,
+      "okr_review_runs": 22,
+      "scheduled_task_runs": 189273,
+      "setup_wizard_events": 22,
+      "task_agent_runs": 10767,
+      "workbench_events": 810
+    },
+    "target_kind_counts": {
+      "agent_run_state_events": 1159,
+      "agent_runs": 37236,
+      "agent_runtime_attempts": 25296,
+      "codex_session_search_index": 747,
+      "email_classifier_runtime_samples": 2048,
+      "scheduled_task_runs": 189273,
+      "setup_wizard_events": 22,
+      "workbench_events": 810
+    },
+    "run_columns": [
+      81,
+      79
+    ],
+    "run_objects": [
+      52,
+      49
+    ],
+    "all_retained_typed_stored_cells_exact": true,
+    "integrity": "ok",
+    "original_fk_preserved": true,
+    "seconds": 105.74649408299956
+  },
+  "current_fact_inverse_cold_reforward": {
+    "synthetic_fixture_key": "synthetic-copy-only:3e111e6f29394a888b351456cdae0111",
+    "new_professional_public_run_ids": [
+      387720,
+      387721,
+      387722
+    ],
+    "new_source_task_public_ids": [
+      416291,
+      416292,
+      416293
+    ],
+    "new_runs_have_no_fictitious_native_sessions": true,
+    "inverse_all_current_typed_cells_exact": true,
+    "actual_predecessor": "45f3324be3c568b9f91709c25306e19d73a15087",
+    "cold_read": {
+      "Store": true,
+      "strictEmail": true,
+      "Workbench": true,
+      "three_new_professional_runs_read": true,
+      "native_session_ids_empty": true
+    },
+    "old_worker_not_run": true,
+    "reforward_all_current_typed_cells_exact": true,
+    "full_integrity": "ok",
+    "source_sha_unchanged": true,
+    "native_or_provider_calls": 0,
+    "production_modified": false,
+    "release_ready": false
+  },
+  "fresh_copy_QUALITY": {
+    "result": "PASS storage/evidence only",
+    "independent_Python_inverse_projection_not_application_helper": true,
+    "all_retained_original_typed_rows_and_rowids_exact": true,
+    "independent_full_integrity_source_target": "ok",
+    "actual45f_app_files_byte_equal": 441,
+    "current_target_sha256": "c94b49833f9cc8eb47e2f14043ec2412e35206bee92b64d7cb227841084f09f9",
+    "did_not_rerun_migration_or_cold_constructors": true,
+    "did_not_read_native_clone_or_production": true
+  },
+  "capacity": {
+    "source19-9.sqlite3": {
+      "runs_and_index_bytes": 138022912,
+      "main_bytes": 483659776,
+      "wal_bytes": 0
+    },
+    "target19-10.sqlite3": {
+      "runs_and_index_bytes": 138326016,
+      "main_bytes": 483659776,
+      "wal_bytes": 0
+    },
+    "runs_and_index_bytes_delta": 303104
+  },
+  "capacity_scope": "Current target includes three new Task/Run fixtures and multiple transitions; not pure first-forward size difference. No file shrink claimed.",
+  "native_failure": {
+    "case": "current OKR production factory with authentic Codex CLI",
+    "outcome": "FAIL before model generation: provider rejected output schema",
+    "attempt": {
+      "id": 387723,
+      "workload_kind": "structured",
+      "workload_key": "416297",
+      "status": "failed",
+      "failure_class": "result",
+      "failure_code": "codex_output_schema_invalid",
+      "session_id": "01a15b3b-a17b-7ee0-b18b-82ddd6c593ee",
+      "transcript_start": 0,
+      "transcript_end": 10
+    },
+    "original_native_jsonl": "/Users/derek/.codex/sessions/2026/10/20/rollout-2026-10-20T14-33-17-01a15b3b-a17b-7ee0-b18b-82ddd6c593ee.jsonl",
+    "error_event_line_0based": 9,
+    "error": "schema.properties.domain_payload.properties is required for object schemas",
+    "model_output_generated": false,
+    "new_OKR_logical_run_created": false,
+    "prepared_sent_global_receipt_counts_unchanged": {
+      "outbound_postfixes": [
+        1384,
+        1384
+      ],
+      "sent_replies": [
+        2470,
+        2470
+      ],
+      "external_action_results": [
+        530,
+        530
+      ]
+    },
+    "real_external_sends": 0,
+    "substitute_send_not_reached": true,
+    "production_modified": false,
+    "native_business_acceptance": false,
+    "release_ready": false,
+    "driver_sha256": "d14ec9ec5a711511f24c632e9139144f47dd66e17d36b68166fbdbc885dd7298",
+    "log_sha256": "3b2d6106a38275a9133b0b9a5bafff328c3f99766dadc9fb829d34e1aec48060",
+    "readback_no_new_logical_run_or_business_items": {
+      "logical_runs": 0,
+      "items": 0
+    }
+  },
+  "inherited_schema_diagnosis": "Actual OKR factory supplies generic AgentEnvelope schema with unconstrained domain_payload. Native provider rejected missing properties before generation. Same shape in45f,b6,development main and local origin/main; separate functional fix in isolated worktree, not yet accepted.",
+  "known_A5_semantic_failures_unchanged": true,
+  "release_ready": false,
+  "production_modified": false,
+  "raw_pins": {
+    "verify_forward.py": "1dd0cc96b74dfe9db4e3c90d32a93d0e3049af81452a21166b7ff410348725ad",
+    "verify_inverse.py": "0dcf37ee462c49fb25a7143bfaf034a53335bdd75c4c6acc4c5b8bc922539be8",
+    "source-facts.json": "9d2f08e22bf0d6f49fb0cc2f1a18f7076626e3fb86da942a1c58d5ae212fbaf3",
+    "forward-result.json": "79a99799805212f2399d74fe655a08fc096c33fb4f3a6906f3c4d9d9a119978c",
+    "inverse-result.json": "daea8b46841f4b9de694687ed03a5305645acbe3642a827d448584c8e9482e1d",
+    "forward.log": "41a854552ae9484cef0fdda0cfeb5ea188f2a3010e980166f61239cdb8e4a62a",
+    "inverse.log": "234fe6d9b41d72bf4ab2408623f5ca6d1f2d9c47ec1fe0a05005730ae5286790",
+    "predecessor-cold.log": "0a38ef5c720ac4fdae38682e3424aaac94788ee9fe1d252d6d3b1b49a53b5f4c",
+    "capacity-result.json": "a572715523cbb3dd61e3c2cc3694fe9f225d3a5dde5f2da90f807a9f56704aac",
+    "native_okr.py": "d14ec9ec5a711511f24c632e9139144f47dd66e17d36b68166fbdbc885dd7298",
+    "native.log": "3b2d6106a38275a9133b0b9a5bafff328c3f99766dadc9fb829d34e1aec48060",
+    "native-failure-result.json": "6e9080e715be280b62261889283d18e0d337f4d5b56ba297eeedbddd0b5278b8"
+  }
+}

@@ -13,6 +13,33 @@ from app.deploy import deploy
 REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 
+@pytest.mark.parametrize('lease,expected_owners', [
+    ('2999-01-01T00:00:00+00:00', (9999001,)),
+    ('2000-01-01T00:00:00+00:00', ()),
+])
+def test_maintenance_reads_current_dispatcher_owners(tmp_path, monkeypatch, lease, expected_owners):
+    import sqlite3
+    from types import SimpleNamespace
+    from app import deploy_maintenance
+    from app.email_store import EmailStore
+    from app.task_lifecycle_storage import acquire_claim
+    from tests.test_reply_task_deferral import native_events, ready
+
+    path, task_id, _ = ready(tmp_path)
+    EmailStore(path)
+    native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
+    with sqlite3.connect(path) as db:
+        register_task8_functions(db)
+        acquire_claim(db, adapter_name='reply', source_id=str(task_id), owner='maintenance',
+                      owner_pid=9999001, lease_expires_at=lease, now='1999-01-01 00:00:00')
+    monkeypatch.setattr(deploy_maintenance.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(stdout='9999001 1\n9999002 9999001\n'))
+    snapshot = deploy_maintenance.check_maintenance(path, (task_id,))
+    assert snapshot.owners == expected_owners
+    assert snapshot.processes == ((9999001, 9999002) if expected_owners else ())
+    assert [binding[0] for binding in snapshot.task_bindings] == [task_id]
+
+
 @pytest.mark.parametrize('missing', [False, True])
 def test_native_tool_or_missing_source_blocks_maintenance(tmp_path, monkeypatch, missing):
     from app.deploy_maintenance import check_maintenance

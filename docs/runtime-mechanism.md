@@ -62,6 +62,8 @@ adoption 入口只选这一分支；Run logical-parent 和四类 Actions Run 引
 旧深链、API 与 workload key 用 `(source_type, legacy_key)` 读取真实共同 owner，
 不能直接把同号公开键当作物理 ID。新 Run 使用已有 runs AUTOINCREMENT、公开键
 触发器与 `runs:published` 水位，不增加分配器、编码或持久旧行副本。
+Task／OKR 的字典 DTO 保留原公开 `.id`、`source_key` 和 `common_run_id`；
+MeetingAlignmentRun 的 `.id` 仍是原公开键，另有 `common_run_id`，没有 `source_key` 字段。
 
 三个专业来源共同使用 `create_logical_run`／`claim_logical_run`／
 `finish_logical_run`／`get_logical_run` 与同一恢复写入器。旧三套 begin／record／
@@ -92,6 +94,10 @@ C2 的配对发布只接受准确 Store19.9／Email53，目标 Store19.10／Emai
 及原 FK multiset。历史 Runs8／Runs11 Factory 输出冻结；当前 constructor、native、
 History、search、UI 和实际业务 handler 选择共同 owner。字段映射、拒绝边界、
 实际旧 DAO 对照及未完成发布门槛见 [C2 Run 归属验收](business-model-run-owner-validation.md)。
+发布 quiet 与 maintenance 使用该配对 release 的准确当前版本及前序版本集合
+（包含19.9）；State 未知版本仍拒绝。Run publication 仅在明确19.10且当前
+Run 声明匹配时使用 `source_type IS NULL` 的 Consumer／Audit 投影；早期没有
+`source_type` 的声明保持原投影。已有等待、活跃 claim、租约和锁判断不改变。
 
 Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 类型只存 `_kind`，业务值使用声明的 JSONB 槽位及 prepared Action 的三个源限定列；公开字段按其唯一 owner 读取。
