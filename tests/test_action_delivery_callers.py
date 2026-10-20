@@ -1,5 +1,7 @@
 """Real Store18 sent callers preserve the delivery and feedback contracts."""
 
+from tests.sent_fixtures import historical_sent_delivery
+
 import sqlite3
 import threading
 import time
@@ -51,7 +53,7 @@ def test_duplicate_delivery_keeps_first_fact_records_new_observer_and_burns_id(t
     task = store.get_reply_task(task_id)
     assert task is not None
     first_run = _claim_audit_run(store, task_id, task.execution_generation, owner="first").run
-    first = store.record_agent_message_delivery(
+    first = historical_sent_delivery(store,
         agent_run_id=first_run.id, external_action_key="shared-send",
         conversation_id="original", trigger_message_id="m1", reply_text="Delivered",
         provider_result={"receipt": "first"},
@@ -64,7 +66,7 @@ def test_duplicate_delivery_keeps_first_fact_records_new_observer_and_burns_id(t
     second_task = store.claim_reply_tasks(limit=1)[0]
     second_run = _claim_audit_run(store, second_task.id, second_task.execution_generation,
                                   owner="second").run
-    duplicate = store.record_agent_message_delivery(
+    duplicate = historical_sent_delivery(store,
         agent_run_id=second_run.id, external_action_key="shared-send",
         conversation_id="different", trigger_message_id="m2", reply_text="Delivered",
         provider_result={"receipt": "later"},
@@ -182,6 +184,7 @@ def test_sent_external_key_caller_seeks_existing_partial_index(tmp_path, monkeyp
     task = store.get_reply_task(task_id)
     assert task is not None
     run = _claim_audit_run(store, task_id, task.execution_generation, owner="plan").run
+    store.complete_agent_run(run.id, {"outcome": "executed"}, owner="plan")
     original_connect = store._connect
     statements = []
 
@@ -192,13 +195,15 @@ def test_sent_external_key_caller_seeks_existing_partial_index(tmp_path, monkeyp
             yield db
 
     monkeypatch.setattr(store, "_connect", traced_connect)
-    store.record_agent_message_delivery(
+    store.record_completed_agent_message_delivery(
+        business_object_key=task.business_object_key, action_identity="reply",
+        operation="send", target_identifiers={"conversation_id": "conversation"},
         agent_run_id=run.id, external_action_key="plan-key",
         conversation_id="conversation", trigger_message_id="message",
         reply_text="Delivered", provider_result={"receipt": "accepted"},
     )
     lookups = [sql for sql in statements if sql.startswith("select * from (select ")
-               and "external_action_key='plan-key'" in sql]
+               and "external_action_key='plan-key'" in sql and "a.record_type='sent_replies'" in sql]
     assert len(lookups) == 1
     with sqlite3.connect(store.path) as db:
         plan = [row[3] for row in db.execute("explain query plan " + lookups[0])]

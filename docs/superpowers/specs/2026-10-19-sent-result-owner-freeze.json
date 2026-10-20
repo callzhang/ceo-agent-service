@@ -1,0 +1,26 @@
+{
+  "schema": "ceo-sent-result-owner-source-freeze-v1",
+  "base_commit": "10c1baa14a5f9f6b7447ec7b18bb86fb106e7ef3",
+  "branch": "codex/business-model-sent-owner-20261019",
+  "working_tree_changes": "unstaged implementation; parent owns commits and integration",
+  "source_pair": "2026-10-19.4/53",
+  "target_pair": "2026-10-19.5/53",
+  "files": 1208,
+  "sha256": "3a1495a0fba960a0d04851c19b00a514ad8ee1a08ceaa525f2edb49347396413",
+  "digest_format": "sorted unique path UTF-8 + NUL + raw SHA256(file bytes) + NUL",
+  "path_selection": "git ls-files -z --cached --others --exclude-standard -- app tests scripts",
+  "source_actions_sha256": {
+    "actual_no_memory_fk": "829ed4f2f5e9fcb3d0eb3b780c6e5857e3e4e050255fbaf18a64ce6db5598e3e",
+    "fresh_memory_fk": "7862eb54c651e272bb8c917c9232d91ec3b3663200eeedaf865b3b72d26a0bc4"
+  },
+  "target_actions_sha256": {
+    "actual_no_memory_fk": "25790ebc80564660e643ed3ac6ea5d157912fe1e5f8cfb169423c797df619373",
+    "fresh_memory_fk": "c9da6469aa1eccc80d6f2e74feb642c2b9470b02e5439f25651465dc6b10f6e7"
+  },
+  "actual_old_code_cold_open": "passed; current Sent, corrected owner, recall, IDs, waters, original BLOB marker time, FK and integrity",
+  "same_database_reforward": "passed; current Store19.5/Email53 cold-open, FK and integrity",
+  "task_temp_cleanup": "fixed owned root removed and absence checked",
+  "independent_review": "pending parent SPEC then QUALITY",
+  "production_acceptance": "pending parent full-copy/native/live proof",
+  "full_a_complete": false
+}
