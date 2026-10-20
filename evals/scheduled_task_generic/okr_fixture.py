@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager, ExitStack
+from functools import wraps
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "ci/shared-skills/ceo-weekly-okr-report"
@@ -101,6 +105,54 @@ def member_payload(member, facts):
     }
 
 
+class DocumentProvider:
+    """Synthetic provider IO behind the real application tool callbacks."""
+
+    dws_bin = "synthetic-dws"
+
+    def __init__(self, fixture):
+        self.fixture = fixture
+
+    def run_json(self, command):
+        if command[1:3] != ["wiki", "+node-list"]:
+            raise ValueError("Unconfigured synthetic provider operation")
+        parent = command[command.index("--folder") + 1]
+        return {"data": {"hasMore": False, "nodes": [
+            {"nodeId": node, "name": doc["title"]}
+            for node, doc in self.fixture.documents().items() if doc["parent_id"] == parent]}}
+
+    def create_report_document(self, *, name, content, doc_format, folder_id):
+        if doc_format != "markdown":
+            raise ValueError("This frozen workflow submits Markdown artifacts")
+        docs = self.fixture.documents()
+        node = "eval-doc-" + str(len(docs) + 1)
+        docs[node] = {"title": name, "content": content, "parent_id": folder_id, "revision": 1}
+        self.fixture.docs_path.write_text(json.dumps(docs, ensure_ascii=False))
+        return {"ok": True, "data": {"nodeId": node, "success": True}}
+
+    def overwrite_report_document(self, *, node_id, content, doc_format, expected_revision=None):
+        if doc_format != "markdown":
+            raise ValueError("This frozen workflow submits Markdown artifacts")
+        docs = self.fixture.documents()
+        docs[node_id].update(content=content, revision=docs[node_id]["revision"] + 1)
+        self.fixture.docs_path.write_text(json.dumps(docs, ensure_ascii=False))
+        return {"ok": True, "data": {"nodeId": node_id, "success": True}}
+
+    def read_doc(self, node_id):
+        doc = self.fixture.documents()[node_id]
+        return {"complete": True, "status": "success", "content": {
+            "markdown": doc["content"], "nodeId": node_id, "title": doc["title"],
+            "revision": doc["revision"], "success": True,
+            "docUrl": "https://docs.example.invalid/" + node_id}}
+
+    def doc_info(self, node_id):
+        doc = self.fixture.documents()[node_id]
+        return {"complete": True, "ok": True, "status": "success", "data": {"document": {
+            "nodeId": node_id, "name": doc["title"], "folderId": doc["parent_id"],
+            "workspaceId": "eval-workspace", "success": True,
+            "docUrl": "https://docs.example.invalid/" + node_id}}}
+
+
 class Fixture:
     def __init__(self, facts, work):
         self.facts, self.work = facts, Path(work)
@@ -126,12 +178,42 @@ class Fixture:
         p = self.work / name
         return {
             "artifact_name": name,
-            "size_bytes": p.stat().st_size,
+            "bytes": p.stat().st_size,
+            "path": str(p),
             "sha256": digest(p.read_bytes()),
         }
 
     def documents(self):
         return json.loads(self.docs_path.read_text()) if self.docs_path.exists() else {}
+
+    @contextmanager
+    def production_tools(self, role):
+        from app import agent_cli
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(agent_cli, "_current_task_generation", return_value="fixture"))
+            stack.enter_context(patch.object(agent_cli, "_task_file_root", return_value=self.work))
+            stack.enter_context(patch.object(agent_cli, "_bound_scheduled_run", return_value=(None, None)))
+            stack.enter_context(patch("app.dws_client.DwsClient", return_value=DocumentProvider(self)))
+            bound = agent_cli.build_role_server(role, task_id=1, db_path=Path("/unused-fixture-db"), execution_generation="fixture")
+            names = ["read_task_artifact", "list_task_artifacts", "read_dingtalk_document", "read_dingtalk_document_info"]
+            if role == "consumer":
+                names += ["consumer_artifact_write", "consumer_document_write"]
+
+            def recorded(name, callback):
+                @wraps(callback)
+                def call(*args, **kwargs):
+                    arguments = dict(inspect.signature(callback).bind(*args, **kwargs).arguments)
+                    result = callback(*args, **kwargs)
+                    if name == "consumer_document_write":
+                        docs = self.documents()
+                        docs[result["node_id"]].update(artifact_name=arguments["artifact_name"],
+                            readback_name=result["readback"]["artifact_name"])
+                        self.docs_path.write_text(json.dumps(docs, ensure_ascii=False))
+                    return self.record(name, arguments, result)
+                return call
+
+            yield {name: recorded(name, bound._tool_manager.get_tool(name).fn) for name in names}
 
     def destination(self, args):
         module = load_script("destination")
@@ -173,7 +255,7 @@ class Fixture:
             "stderr": "",
         }
 
-    def serve(self, role):
+    def build_server(self, role, production):
         from mcp.server.fastmcp import FastMCP
         from app.action_contract_catalog import read_system_action_contract
 
@@ -202,52 +284,19 @@ class Fixture:
                 {},
                 {
                     "scheduled_for": self.facts["report_date"] + "T10:00:00Z",
-                    "timezone": "Asia/Shanghai",
+                    "timezone_name": "Asia/Shanghai",
+                    "run_id": 1, "scheduled_task_id": 1, "task_version": 1,
+                    "principal_user_id": "fixture-principal", "history": [],
                     "artifact_directory": str(self.work),
-                    "artifacts": [p.name for p in self.work.iterdir() if p.is_file()],
                 },
             )
 
-        @server.tool()
-        def read_task_artifact(
-            name: str, offset: int = 0, max_chars: int = 20000
-        ) -> dict:
-            """Read the exact current run artifact with pagination."""
-            if Path(name).name != name:
-                raise ValueError("Use a flat artifact file name")
-            text = (self.work / name).read_text()
-            return self.record(
-                "read_task_artifact",
-                {"name": name, "offset": offset, "max_chars": max_chars},
-                {
-                    "name": name,
-                    "content": text[offset : offset + max_chars],
-                    "offset": offset,
-                    "total_chars": len(text),
-                    "has_more": offset + max_chars < len(text),
-                },
-            )
-
-        @server.tool()
-        def read_dingtalk_document_info(node_id: str) -> dict:
-            """Read the canonical synthetic provider URL and document revision."""
-            doc = self.documents()[node_id]
-            return self.record(
-                "read_dingtalk_document_info",
-                {"node_id": node_id},
-                {
-                    "node_id": node_id,
-                    "title": doc["title"],
-                    "parent_id": doc["parent_id"],
-                    "revision": doc["revision"],
-                    "url": "https://docs.example.invalid/" + node_id,
-                },
-            )
+        for name, callback in production.items():
+            server.add_tool(callback, name=name)
 
         server.add_tool(read_system_action_contract)
         if role == "audit":
-            server.run(transport="stdio")
-            return
+            return server
 
         @server.tool()
         def read_okr_roster(group_name: str) -> dict:
@@ -289,17 +338,7 @@ class Fixture:
             return self.record(
                 "read_okr_member",
                 {"user_id": user_id, "period_label": period_label},
-                {**self.artifact(filename), "outcome": payload["sourceOutcome"]},
-            )
-
-        @server.tool()
-        def consumer_artifact_write(name: str, content: str) -> dict:
-            """Save exact text in the current run's flat artifact directory."""
-            if Path(name).name != name:
-                raise ValueError("Use a flat artifact file name")
-            (self.work / name).write_text(content)
-            return self.record(
-                "consumer_artifact_write", {"name": name}, self.artifact(name)
+                {**self.artifact(filename), "user_id": user_id, "source_outcome": payload["sourceOutcome"]},
             )
 
         @server.tool()
@@ -334,57 +373,11 @@ class Fixture:
                 result,
             )
 
-        @server.tool()
-        def consumer_document_write(
-            artifact_name: str,
-            title: str,
-            doc_format: str = "markdown",
-            node_id: str = "",
-            parent_id: str = "",
-            workspace_id: str = "",
-            expected_revision: int | None = None,
-        ) -> dict:
-            """Mock provider: write exact artifact, persist revision and provide full readback."""
-            docs = self.documents()
-            if node_id:
-                doc = docs[node_id]
-                if expected_revision != doc["revision"]:
-                    raise ValueError("Synthetic document revision conflict")
-                revision = doc["revision"] + 1
-                parent_id = doc["parent_id"]
-            else:
-                if not parent_id or workspace_id != "eval-workspace":
-                    raise ValueError("Explicit provider parent/workspace is required")
-                node_id, revision = "eval-doc-" + str(len(docs) + 1), 1
-            content = (self.work / artifact_name).read_text()
-            docs[node_id] = {
-                "title": title,
-                "parent_id": parent_id,
-                "revision": revision,
-                "content": content,
-                "artifact_name": artifact_name,
-            }
-            self.docs_path.write_text(json.dumps(docs, ensure_ascii=False, indent=2))
-            readback = "readback-" + node_id + ".md"
-            (self.work / readback).write_text(content)
-            return self.record(
-                "consumer_document_write",
-                {
-                    "artifact_name": artifact_name,
-                    "title": title,
-                    "node_id": node_id,
-                    "expected_revision": expected_revision,
-                },
-                {
-                    "success": True,
-                    "node_id": node_id,
-                    "revision": revision,
-                    "readback_artifact": self.artifact(readback),
-                    "synthetic_provider": True,
-                },
-            )
+        return server
 
-        server.run(transport="stdio")
+    def serve(self, role):
+        with self.production_tools(role) as production:
+            self.build_server(role, production).run(transport="stdio")
 
 
 if __name__ == "__main__":

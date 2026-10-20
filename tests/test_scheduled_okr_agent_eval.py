@@ -5,7 +5,7 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v2.json").read_text())[
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v3.json").read_text())[
     "cases"
 ]
 
@@ -33,22 +33,23 @@ def complete_fixture(tmp_path, case=None):
         report_date=facts["report_date"],
         output_dir=tmp_path,
     )
+    trace.append({"tool": "consumer_run_skill_script", "arguments": {"arguments": ["prepare"]}, "result": {"exit_code": 0}})
     for entry in plan["managers"]:
         if entry["outcome"] != "collected":
             continue
         uid = entry["user_id"]
 
-        def dims(n, score):
+        def dims(names, score):
             return [
                 {
-                    "dimension": str(i),
+                    "dimension": dimension,
                     "required_behavior": "Current level standard",
                     "positive_evidence": "behavior-review",
                     "missing_or_contrary_evidence": "No exemplar scope",
                     "score": score,
                     "next_band_evidence": "Need independently verified extra effect",
                 }
-                for i in range(n)
+                for dimension in names
             ]
 
         score = 100 if uid == "eval-a" else 40
@@ -86,8 +87,8 @@ def complete_fixture(tmp_path, case=None):
                             "improvement": "Verify effects",
                         }
                     ],
-                    "leadership_dimensions": dims(4, 70),
-                    "culture_dimensions": dims(3, 80),
+                    "leadership_dimensions": dims(case["expected"]["leadership_dimensions"], 75),
+                    "culture_dimensions": dims(case["expected"]["culture_dimensions"], 75),
                 }
             ],
         }
@@ -124,8 +125,12 @@ def complete_fixture(tmp_path, case=None):
         }
     f.docs_path.write_text(json.dumps(docs))
     for node, doc in docs.items():
-        name = "readback-" + node + ".md"
-        (tmp_path / name).write_text(doc["content"])
+        payload = {"complete": True, "status": "success", "content": {
+            "markdown": doc["content"], "nodeId": node, "revision": doc["revision"]}}
+        raw = json.dumps(payload, ensure_ascii=False).encode()
+        name = okr_eval.digest(raw) + ".readback.json"
+        doc["readback_name"] = name
+        (tmp_path / name).write_bytes(raw)
         trace.extend(
             [
                 {
@@ -136,8 +141,14 @@ def complete_fixture(tmp_path, case=None):
                     },
                     "result": {
                         "node_id": node,
-                        "readback_artifact": {"artifact_name": name},
+                        "content_sha256": okr_eval.digest(doc["content"].encode()),
+                        "readback": {"artifact_name": name},
                     },
+                },
+                {
+                    "tool": "read_dingtalk_document_info",
+                    "arguments": {"node_id": node},
+                    "result": {"data": {"document": {"nodeId": node, "docUrl": "https://docs.example.invalid/" + node}}},
                 },
                 {
                     "tool": "read_task_artifact",
@@ -146,6 +157,7 @@ def complete_fixture(tmp_path, case=None):
                 },
             ]
         )
+    f.docs_path.write_text(json.dumps(docs))
     f.trace_path.write_text("\n".join(json.dumps(c) for c in trace) + "\n")
     output = {
         "action": "plan",
@@ -176,6 +188,46 @@ def test_complete_actual_skill_output_passes_okr_acceptance(tmp_path):
     assert okr_eval.grade(case, tmp_path, output)["passed"]
 
 
+def test_preliminary_native_pass_does_not_satisfy_formal_behavior_rubric():
+    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v12.json").read_text())
+    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v3.json").read_text())["cases"][0]
+    reviews = [r for a in saved["cases"][0]["final_grade"]["analyses"].values()
+               for r in a["manager_reviews"]]
+    checks = okr_eval.behavior_checks(reviews, case["expected"])
+    assert not checks["formal_behavioral_dimensions"]
+    assert not checks["behavioral_standard_band"]
+
+
+def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
+    f = Fixture(CASES[0]["facts"], tmp_path)
+    body = "# Synthetic report\n\nExact body.\n"
+    (tmp_path / "report.md").write_text(body)
+    with f.production_tools("consumer") as tools:
+        result = tools["consumer_document_write"](
+            "report.md", "Protocol report", parent_id="eval-folder", workspace_id="eval-workspace")
+        assert result["content_sha256"] == okr_eval.digest(body.encode())
+        assert result["operation"] == "created"
+        receipt = tools["read_task_artifact"](result["readback"]["artifact_name"])
+        assert json.loads(receipt["content"])["content"]["markdown"] == body
+        assert result["readback"]["artifact_name"].endswith(".readback.json")
+
+
+def test_publication_cannot_assume_canonical_urls_without_provider_info(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    f = Fixture(case["facts"], tmp_path)
+    trace = [c for c in okr_eval.calls(tmp_path) if c["tool"] != "read_dingtalk_document_info"]
+    f.trace_path.write_text("".join(json.dumps(c) + "\n" for c in trace))
+    assert okr_eval.grade(case, tmp_path, output)["checks"]["all_canonical_urls_observed"] is False
+
+
+def test_collection_without_real_prepare_call_fails(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    f = Fixture(case["facts"], tmp_path)
+    trace = [c for c in okr_eval.calls(tmp_path) if c["tool"] != "consumer_run_skill_script"]
+    f.trace_path.write_text("".join(json.dumps(c) + "\n" for c in trace))
+    assert okr_eval.grade(case, tmp_path, output)["checks"]["collect_before_prepare"] is False
+
+
 def test_fixture_trace_is_not_a_business_artifact(tmp_path):
     f = Fixture(CASES[0]["facts"], tmp_path)
     f.record("read_okr_member", {"user_id": "eval-a"}, {"ok": True})
@@ -198,35 +250,6 @@ def test_saved_trace_skill_redaction_is_idempotent():
     first = okr_eval.persisted_call(call)
     assert first["result"] == {"skill_source_sha256": okr_eval.digest(b"exact selected Skill")}
     assert okr_eval.persisted_call(first) == first
-
-
-def test_fixture_repair_rechecks_exact_saved_candidate_without_new_consumer(tmp_path):
-    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v9.json").read_text())
-    row = okr_eval.restore_saved_case(saved, CASES[0], tmp_path)
-    result = okr_eval.grade(CASES[0], tmp_path, row["correction"]["output"])
-    assert result["passed"]
-    assert result["analysis_hashes"] == saved["cases"][0]["final_grade"]["analysis_hashes"]
-    assert not (tmp_path / "tool-calls.jsonl").exists()
-
-
-def test_saved_candidate_recheck_rejects_changed_skill_source(tmp_path):
-    import pytest
-
-    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v9.json").read_text())
-    saved["source_sha256"]["ci/shared-skills/ceo-weekly-okr-report/SKILL.md"] = "changed"
-    with pytest.raises(ValueError, match="Skill source changed"):
-        okr_eval.restore_saved_case(saved, CASES[0], tmp_path)
-
-
-def test_accepted_recovery_prefix_keeps_original_analysis_and_provider_bytes(tmp_path):
-    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v11.json").read_text())
-    prior = saved["cases"][0]["final_grade"]["analysis_hashes"]
-    row = okr_eval.restore_saved_case(saved, CASES[1], tmp_path, prior)
-    result = okr_eval.grade(CASES[1], tmp_path, row["correction"]["output"], prior)
-    assert result["passed"]
-    assert result["checks"]["unchanged_analysis_reused"]
-    assert result["checks"]["changed_analysis_replaced"]
-    assert result["checks"]["complete_provider_state"]
 
 
 def test_native_output_directory_is_checked_before_model_configuration(monkeypatch):
@@ -386,6 +409,9 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         == "b85fb6cc46628683f3bc18d8dc8def3760fd128543240b6ce9a1b76ade05d92a"
     )
     first = json.loads(old.read_text())["cases"]
+    second = root / "okr_cases.v2.json"
+    assert hashlib.sha256(second.read_bytes()).hexdigest() == "646a1857f50fd16a45d2f9520df906ee9dafbf0bb7864f4cd1226c961469bf04"
+    assert [c["facts"] for c in json.loads(second.read_text())["cases"]] == [c["facts"] for c in CASES]
     for before, after in zip(first, CASES, strict=True):
         assert before["facts"] == after["facts"]
         if "base_score_ranges" in before["expected"]:
@@ -428,7 +454,7 @@ def test_actual_summary_body_cannot_be_substituted(tmp_path):
 def test_shared_failure_cannot_be_an_unscored_success_or_publish(tmp_path):
     case = CASES[-1]
     f = Fixture(case["facts"], tmp_path)
-    f.record("read_okr_member", {"user_id": "eval-a"}, {"outcome": {"scope": "shared"}})
+    f.record("read_okr_member", {"user_id": "eval-a"}, {"source_outcome": {"scope": "shared"}})
     wire = {
         "action": "failed",
         "reason": "Shared source unavailable",

@@ -70,10 +70,26 @@ v11 主流程和来源变化恢复均通过机械核查与独立审核。日期�
 回归，将 provider 状态也移出产物目录；核查器只读该独立状态，业务同名文件不能
 伪造或破坏 provider 事实。
 
-v12 逐字恢复 v11 已通过的两个场景，重新核对当前来源、分析摘要、全部读回/公式/
+v12 曾逐字恢复 v11 两个初步通过的场景，重新核对当前来源、分析摘要、全部读回/公式/
 父子关系和新 provider 状态检查；不重新调用这两个场景的 Consumer 或 Audit。
-失败的日期场景在隔离 provider 状态后重新执行，仍使用原固定输入与一次修订预算；
-共享失败场景随后执行。旧 v11 失败完整保留。
+日期场景在隔离 provider 状态后重跑，与共享失败场景通过当时的断言。旧 v11 失败
+完整保留。然而日期 Audit 同时揭示此前未覆盖的评分标准缺陷，因此 v12 的4/4
+仅为当时检查结果，不能作为最终完整验收。
+
+- 权威 operation Skill 明确 80–89 要有超出职级标准的具体案例，70–79 才是
+  符合标准。managed Skill 把边界写为 above80/above90，且未明确正式维度，
+  导致模型用观察项代替正式四项领导力/三项文化，前两次 Audit 也未抓全。
+  修正为 inclusive80/90 并列出正式维度；公式没有改变。
+- v3 案例保留 v2 全部事实和业务 KR 分数要求，新增正式维度和当前标准70–79
+  的严格断言。回归证明旧初步通过答案不满足新增核查；不复用这些答案为最终通过。
+- 再核对实际工具代码发现，旧模拟写入返回 Markdown readback，真实服务返回
+  SHA命名的 JSON 回执。最终夹具直接调用真实 app.agent_cli 的产物读写、列表、
+  文档写入和文档读取回调，仅模拟任务绑定和 provider IO；规范URL与父节点使用
+  实际 inspect 的 data.document 结构。增加真实回调/JSON回执回归，及必须执行
+  prepare、必须读取规范URL、正文提交摘要和完整JSON读回的机械断言。
+- v13 在相同冻结事实、模型/runtime、一次修订预算上重跑全部四场景；不复用旧
+  Consumer/Audit。旧的临时复核/前缀复用入口因业务标准变化已退出当前 runner，
+  历史代码与结果保存在先前提交中。该最终运行仍在执行。
 
 每次修改前核对实际输入、工具返回与模型结果。所有 failed JSON 留存，未用反复
 抽样掩盖失败。Codex 内置资源目录查询仅记录为 native_inventory_calls；所有真正
@@ -82,7 +98,7 @@ provider 工具必须属于唯一合成服务器，外部同名工具仍被回�
 ## 定向测试
 
 最新一次相关运行：`test_scheduled_okr_agent_eval.py`、`test_weekly_okr_report.py`、
-`test_scheduled_task_generic_eval.py` 共 **119 passed**。渲染两项回归与新增
+`test_scheduled_task_generic_eval.py` 共 **120 passed**。渲染两项回归与新增
 恢复/当前来源两项回归均先 RED 后 GREEN。原七案例的 13 项保护保持通过。
 发布整文件 `test_consumer_system_release.py` 最近一次 **27 passed**；其中旧
 finance 预置摘要错误地与已更新的安装文件比较，改为固定原有批准摘要，保留全部

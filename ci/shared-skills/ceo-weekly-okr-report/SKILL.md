@@ -3,7 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
-  version: 2
+  version: 3
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -68,14 +68,19 @@ identified analysis, preserving other valid members' files.
 Score each commitment using actual effects, independent evidence and completion
 time. Classify each KR as 业务OKR, 领导力 or 文化价值观; explain base_score and
 deadline-discounted score. Use current contact title to establish role level;
-unresolved roles remain 职级待确认. Managers have four leadership dimensions;
-all members have three culture dimensions. For individual contributors,
+unresolved roles remain 职级待确认. Use the formal dimensions from
+`dingtang-okr-review`: leadership is 战略能力、团队赋能能力、组织协同能力、创新能力;
+culture is AI时代原生能力、I Can I Up、简单可信赖. Map observed behaviors to these
+dimensions with evidence; observation labels do not replace the policy dimensions.
+For individual contributors,
 leadership candidate scores apply only when explicitly assigned and never
 enter their final formula. Business KRs use the completion bands in
 `dingtang-okr-review`: 100 means the committed outcome is fully met with evidence;
 it does not require a behavioral exemplar. For leadership and culture dimensions,
-above 80 requires concrete behavior beyond the standard; above 90 requires the
-applicable exemplar scope; below 70 names the unmet behavior or contrary case.
+70–79 means meeting the current role standard. A score of 80 or more requires a
+concrete case beyond that standard; 90 or more requires the applicable exemplar
+scope; 100 requires a company-level exemplar. Below 70 names the unmet behavior
+or contrary case.
 Do not substitute business outcomes for these behavioral scores.
 
 Keep progress, risks, next checkpoints and CEO decisions concise. Explain what
