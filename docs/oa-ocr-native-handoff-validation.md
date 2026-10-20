@@ -48,16 +48,33 @@ requires separate post-deploy trajectory and receipt readback.
   after the OA key retained that prefix; a matching OA session still resumes.
   The post-correction OA role/session/attachment/PDF group passed 46 tests.
 
-## Release boundary
+## Release and production readback
 
-The proposed command keeps ordinary Consumer and Audit direct-only. OA Codex
+The released command keeps ordinary Consumer and Audit direct-only. OA Codex
 Consumer gets `mcp__agent_cli` and `mcp__ai_services` as nested tools in
 CodeMode, with the same allowed tool names and provider approval settings.
 Its selected-Skill session key incorporates this OA-only instruction so an
 existing OA session with contradictory direct-call guidance is refreshed once;
 unaffected task sessions keep their prior key. Audit still excludes functions.
 
-The production task has not been replayed by this branch. Long DingTalk comment
-images rejected as `image_material_ocr_input_too_large` remain a separate
-source-size issue and are not addressed here. Merge, formal deployment and
-production readback are pending.
+PR [#174](https://github.com/callzhang/ceo-agent-service/pull/174)
+merged at 2026-10-20 02:48 UTC as `296b6d82f0b9b374f1caa64e9ec223d8e6c7207b`.
+The normal `python -m app.deploy` command waited for in-flight work and
+reported `deployed cee038b1 -> 296b6d82`; no quiet-wait bypass or manual
+restart was used. The production checkout is clean at the merge commit, and
+the installed source contains the OA CodeMode instruction and
+`selected-skills:oa-ocr-handoff:` session key. The replacement supervisor PID
+is `33501` (started 2026-10-20 02:55 UTC).
+
+Postdeploy `/healthz`, Console Status, Attention and History each returned
+HTTP 200. Status reported the launchd job running, system health `healthy`,
+zero quality-gate violations and 13 queues. The readback snapshot showed
+10 pending and 3 processing items; Attention had 2 groups and History returned
+5 requested items. These queue counts are live observations and may change.
+No real OA task was replayed for this release, so production installation and
+health are verified while a natural OA OCR/business outcome remains unproved.
+The anonymous native cross-MCP case above is the behavior evidence for the
+byte-handoff mechanism. Long DingTalk comment images rejected as
+`image_material_ocr_input_too_large` remain a separate source-size issue and
+are not addressed here. GitHub's automatic Quality check was queued at merge;
+it was not used as the behavior gate.
