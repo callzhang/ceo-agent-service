@@ -312,3 +312,13 @@ All B2a core source/test files match6ad34bcd2 byte-for-byte. The separate
 [publication freeze](superpowers/specs/2026-10-19-shared-actions-publication-freeze.json)
 binds this merged tree without overwriting earlier acceptance freezes. Fresh
 publication SPEC/QUALITY and production readback remain pending.
+
+Independent final publication SPEC and then QUALITY approvedf49106507. Both
+independently recomputed the1217-file publication digest and found no concrete
+merge/evidence blocker; neither reran tests, CLI or providers. Parent has also
+verified a fresh predeployment production backup:479813632bytes, Store19.5/Email53,
+full integrityok, original FKfinding, source migration preflight eligible, CEOB
+stamp, SHA91c6664401edb953e0ab3f2df7a142e50249125f1e15e950f809c04a990c8492.
+It replaced the previous daily workflow backup atomically only after all checks;
+the active acceptance source is separate disposable working data. Standard
+production deployment and live readback are the remaining B2a gates.
