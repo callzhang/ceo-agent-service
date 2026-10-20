@@ -1197,8 +1197,8 @@ Producer 只根据消息来源、会话类型、明确的 @、稳定卡片类型
 Skill。Consumer A 根据完整上下文使用 Codex 原生 Skill discovery，按需读取业务 Skill 和操作
 Skill。
 
-Consumer 新会话的 developer instructions 携带已安装业务 Skill 的精确名称和路径，并把
-至少一次业务 Skill 读取定义为返回任何业务结论之前的协议前置条件。目录只声明可用能力，不替 Agent
+Consumer 新会话的 Developer 只给出通用 Skill 使用指令；当前 Task 中的目录携带已安装业务
+Skill 的名称、读取入口和至少一次业务 Skill 读取的协议前置条件。目录只声明可用能力，不替 Agent
 选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源兼容、且原生会话保存的 Pydantic wire schema 与本轮 purpose schema 相同时续用该路线 session；旧 schema 或无法核实来源时，在该路线开启带完整当前输入的新 session。普通 prompt 文案和目录展示变化不因此重置兼容会话；Audit 会话不受此 Consumer 判断影响。
 
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、

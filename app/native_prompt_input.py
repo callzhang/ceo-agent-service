@@ -32,6 +32,8 @@ def codex_session_wire_schema(session_id: str) -> dict[str, object] | None:
         with path.open(encoding="utf-8") as stream:
             for line in islice(stream, 32):
                 record = json.loads(line)
+                if not isinstance(record, dict):
+                    return None
                 developer = _codex_text(
                     record, role="developer", kind="generic.developer_instructions"
                 )

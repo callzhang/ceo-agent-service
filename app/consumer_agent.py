@@ -612,7 +612,7 @@ class ConsumerAgentRunner:
         """Return live route sessions for one continuous business conversation.
 
         Selected Skill turns reuse only the exact Skill-compatible session. Other
-        Consumer contract edits retain the existing continuous-conversation behavior.
+        prompt edits retain continuity unless the saved Codex wire schema differs.
         """
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():

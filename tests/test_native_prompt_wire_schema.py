@@ -50,3 +50,11 @@ def test_codex_session_wire_schema_does_not_infer_missing_developer(monkeypatch,
     monkeypatch.setattr(native_prompt_input.native, "find_codex_session_path", lambda *_args, **_kwargs: session)
 
     assert native_prompt_input.codex_session_wire_schema("old") is None
+
+
+def test_codex_session_wire_schema_rejects_non_object_native_record(monkeypatch, tmp_path):
+    session = tmp_path / "session.jsonl"
+    session.write_text("null\n")
+    monkeypatch.setattr(native_prompt_input.native, "find_codex_session_path", lambda *_args, **_kwargs: session)
+
+    assert native_prompt_input.codex_session_wire_schema("old") is None
