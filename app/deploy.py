@@ -29,7 +29,7 @@ import stat
 import time
 from uuid import uuid4
 
-from app.deployment_drain import deployment_drain
+from app.deployment_drain import DeploymentDrainTimeout, deployment_drain
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
 from app.consumer_system_release import prepare_consumer_system_contracts
 from app.prompt_template_release import prepare_prompt_templates
@@ -370,7 +370,7 @@ def deploy(
                     if execute_locked is not None
                     else updater.execute(operation)
                 )
-            except UpgradePreconditionError as exc:
+            except (UpgradePreconditionError, DeploymentDrainTimeout) as exc:
                 moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
                 if moved != current:
                     # Another session deployed while this one waited for the lock.

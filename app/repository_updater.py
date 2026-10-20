@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.deployment_drain import deployment_drain
+from app.deployment_drain import QUIET_WAIT_SECONDS, deployment_drain
 from app.task20_definitions import task20_projection
 from app.state_publication_sources import publication_dispatcher_source
 from app.scheduled_config_storage import publication_scheduled_source
@@ -388,7 +388,6 @@ def _default_health() -> bool:
 #: under load that took eight minutes on 2026-09-25, so one ten-second probe
 #: would roll back a healthy upgrade.
 HEALTH_WAIT_SECONDS = 15 * 60
-QUIET_WAIT_SECONDS = 30 * 60
 POLL_SECONDS = 5.0
 
 

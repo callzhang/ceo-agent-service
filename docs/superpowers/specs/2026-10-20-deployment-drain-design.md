@@ -30,3 +30,9 @@ existing normal release path because old processes do not yet read the lock.
 Quiet means current execution. An unleased runtime whose parent generation is
 explicitly superseded by the current Task is historical and does not block;
 a valid independent native lease still blocks. Preserve historical rows.
+
+Admission/drain flock acquisition is also bounded by30minutes. A stalled
+already-admitted claim transaction therefore cannot hold admission indefinitely
+before the ordinary in-flight quiet timer starts. Timeout closes both descriptors
+and leaves the Service and pending work untouched; the existing in-flight wait
+retains its own30-minute timeout after the claim boundary is acquired.

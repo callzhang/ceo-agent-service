@@ -595,3 +595,22 @@ def test_quiet_excludes_only_superseded_runtime_without_live_ownership(
             },
         )
     assert in_flight_work(store.path) == expected
+
+
+def test_stalled_admitted_transaction_times_out_and_reopens_admission(tmp_path):
+    from app.deployment_drain import (
+        claim_connection,
+        deployment_drain,
+        DeploymentDrainTimeout,
+    )
+
+    store = AutoReplyStore(tmp_path / "worker.db")
+    with claim_connection(store) as existing:
+        assert existing is not None
+        with pytest.raises(DeploymentDrainTimeout):
+            with deployment_drain(store.path, timeout_seconds=0.02):
+                pytest.fail("exclusive drain passed a still-admitted transaction")
+        # The first transaction can still finish. A failed deploy released
+        # its admission turnstile even before that transaction completes.
+        with claim_connection(store) as resumed:
+            assert resumed is not None

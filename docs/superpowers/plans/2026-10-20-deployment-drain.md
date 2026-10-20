@@ -76,3 +76,13 @@ explicitly superseded, unleased history; no persisted history/recovery change.
 
 Final historical-counter regression batch: 73 passed (30 feature cases and
 43 repository-updater cases); Ruff/compile/diff checks pass.
+
+Post-merge native-lock check: admitted transaction waiting was not deadline
+bounded. Added regression retaining a live shared claim across deployment,
+expecting timeout and immediate admission recovery before the claim finishes.
+Use the same existing30-minute timeout constant for native lock acquisition;
+ordinary quiet timer remains unchanged. No policy, recovery or Task-state change.
+
+Bounded lock acquisition and merged optional-SHA paths:85 passed; Ruff, compile
+and diff checks pass. Final normal deployment is waiting for another task's
+existing repository mutex holder to finish; no Service interruption performed.

@@ -3660,3 +3660,9 @@ parent AgentRun generation has been explicitly superseded by the current Task
 generation. A runtime with a valid independent native lease still counts, as do
 current-generation and unbound runtimes. This is a passive read: historical Run
 records and recovery state are unchanged.
+
+Admission/drain flock acquisition is also bounded by30minutes. A stalled
+already-admitted claim transaction therefore cannot hold admission indefinitely
+before the ordinary in-flight quiet timer starts. Timeout closes both descriptors
+and leaves the Service and pending work untouched; the existing in-flight wait
+retains its own30-minute timeout after the claim boundary is acquired.
