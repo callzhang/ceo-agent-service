@@ -114,7 +114,9 @@ def render_runtime_context(
     lines.append("- 来源与普通工作入口（参数以本轮工具 schema 为准）：")
     for server, names in sorted(tools.items()):
         for name in names:
-            lines.append(f"  - {server}.{name}")
+            callable_name = (f"mcp__{server}__{name}" if route.runtime_kind is RuntimeKind.CODEX_CLI
+                             else f"{server}.{name}")
+            lines.append(f"  - {callable_name}")
     if not any(tools.values()):
         lines.append("  - 本轮未声明来源读取入口；不能由个人安装或历史会话推断。")
     if role == "consumer":

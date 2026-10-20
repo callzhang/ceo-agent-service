@@ -55,7 +55,7 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     assert "实际 runtime：" not in consumer["runtime_context"]
     assert "日历任务与参与者时区" not in consumer["developer_instructions"]
     assert "不用机器时区、公司所在地、姓名或消息时间戳代替对方时区" not in consumer["developer_instructions"]
-    assert "agent_cli.consumer_artifact_write" in consumer["runtime_context"]
+    assert "mcp__agent_cli__consumer_artifact_write" in consumer["runtime_context"]
     assert "agent_cli.consumer_artifact_write" not in audit["runtime_context"]
     assert "只读审核" in audit["runtime_context"]
     assert "<developer-instructions>" in audit["submitted_input"]
