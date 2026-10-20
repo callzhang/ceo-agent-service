@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.2`／Email52 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.3`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -41,16 +41,22 @@ failed、uncertain 和独立的结果（包括不同于 receipt 的 `{}`）仍�
 先把此前引用它的历史尝试还原为原正文，再将本次实际修正的尝试指向新正文；
 因此未被修正的历史事实不会随 receipt 改写。原有身份、幂等和状态合同不变。
 
-既有 `prepare_database_schema_release` 当前将准确 Store `2026-10-19.1`／Email52
-发布为 `2026-10-19.2`／Email52；历史 `2026-10-14.1` 到 `2026-10-19.1` 的选择
-发布入口和声明工厂冻结。两种已有 Reply FK 声明均保留，普通构造器只接受当前
-声明或正常空库，不自动升级旧 pair。发布事务一起转换 result 声明和 Store marker，
-再由既有冷启动入口验证；Email DDL 及所有 Email marker 不变。A2 失败回滚从当前
-receipt 恢复所有当前 verified／NULL attempt 的正文，包括发布后新建的 receipt
-和 attempt；A1 的历史逆迁仍从当前绑定候选重建选择分支。两者恢复原 Store marker
-的值、时间及 SQLite 类型，保留当前公开／物理身份、水位及原 FK finding 的多重集合。
-inverse 元数据只保存声明 variant、marker 和 FK finding，不保存业务行副本；
-历史 action_email 发布的来源、目标和默认工厂仍保持原声明。
+既有 `prepare_database_schema_release` 当前将准确 Store `2026-10-19.2`／Email52
+发布为 `2026-10-19.3`／Email53。B1 只退休五个重复的 classification 元数据列，
+以现有 message 列为唯一 owner；发布前逐行检查四对标量的 SQLite 值及类型完全
+相等、classified 的旧 message_preview 为空且 class_preview 为至多1000字符的文本。
+message-only 的五个旧分类槽位必须为 NULL，有界预览保持原值；任何来源差异
+明确拒绝，不清洗、不读取 provider 或原文。源 Email52 的默认
+声明工厂、A1／A2 的版本常量与历史发布入口冻结；Email53 必须显式选择。
+普通构造器只接受当前声明或正常空库，不自动升级 predecessor 或 mixed pair。
+发布事务同时重建 Emails、更新 Store marker 并追加 Email53 marker，然后用既有
+冷启动入口验证。B1 失败回滚从当前 message owner 重建五个 class 字段，classified
+的旧 message_preview 恢复为空，message-only 行的 class 字段恢复 NULL；包括发布
+后新建、改址及改元数据的行。公开／物理 ID、独立分配水位、SQLite 类型、原 marker
+时间及 FK finding 多重集合保留。逆迁仅保存声明 variant、marker 和 FK finding，
+不保存业务行副本；两种已有 Reply FK 及 Action 到 classification_id 的 FK 保留。
+A2 的历史逆迁仍从当前 receipt 恢复 verified／NULL attempt 的正文；A1 仍从绑定
+candidate 重建选择分支。B1 的局部证据见[Email 元数据验收](database-redesign-email-metadata-validation.md)。
 
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
@@ -87,8 +93,12 @@ Worker、语义服务和 Web 在域写事务之外使用同一准确来源读取
 业务来源可从链接事件事实取得，不建立原文缓存。
 
 Emails 把原 classification 与 message 存成一行，公开 ID 仍各自独立；账号、稳定
-身份、UIDVALIDITY／UID 共享，分类与原邮件各自的 raw folder、thread、时间等字段
-保留，message-only 行合法。当前计划和条件移位事务保持。
+身份、UIDVALIDITY／UID 共享。folder、sender、subject、received_at、preview 只由
+现有 message 列持有，分类公开投影从同一 owner 读取；没有双写或旧列回退。
+两个 RFC Message-ID、thread、创建／更新时间、分类 model_text 与原文
+message_normalized_text 仍独立。message-only 行合法；没有 message 的分类插入
+及分类仍在时删除 message 保持明确拒绝。删除分类只清空分类事实，保留 message
+元数据。配对 folder CAS 在一列上检查原两侧条件，只写一个新 folder，保留两个时钟。
 单次完整原文引用内联在 `message_source_reference_json`：原生／provider 定位、实际
 序列化形式、完整 hash 和字节数。显式退休及正常完成回调只有在 processed、没有
 未完成分类／回复／邮箱动作／dispatch 输入依赖且完整来源相等时清空原文，CAS 再核对
@@ -99,7 +109,7 @@ Emails 把原 classification 与 message 存成一行，公开 ID 仍各自独�
 Console 与执行上下文从准确来源读取完整消息并验证引用版本；body-only 原生字段
 不能冒充 To／Cc，角色标头取真实邮件来源。模型输入、全文搜索及历史批量退休仍按
 主验收清单列明差项，未把局部来源成功当作全量完成。
-Derek于2026-10-19批准每封邮件保留最多1000个Unicode字符的纯文本预览。复用既有字段：classified行只填class_preview并清空message_preview，message-only行只填message_preview；不增加表、字段或完整原文缓存。扫描写入、显式配对迁移（在原文退休前）及两种正文退休入口使用相同预览规则；已退休原文不重建，仅保留既有预览的有界值。完整正文和模型输入的hash／来源、非终态执行与恢复输入不变。
+Derek于2026-10-19批准每封邮件保留最多1000个Unicode字符的纯文本预览。Email53 的 classified 与 message-only 行均只填现有 message_preview，DDL 约束字符上限；class_preview 物理列退休。扫描及两种正文退休入口写入同一 owner；Email52→53 只移动已存的有界预览，原文已退休时不重建。完整正文和模型输入的hash／来源、非终态执行与恢复输入不变，预览不会成为完整模型输入或完整正文。
 Console默认列表及搜索只读取本地发件人、主题和预览，使用Unicode casefold连续子串，保留原过滤／total／顺序／分页；列表返回preview，不将片段作为message_text。界面标明范围，普通输入默认预览搜索，显式“全文检索”发送search_scope=full并显示加载状态；不新增后台job、轮询或进度百分比。详情及显式全文查询仍从准确来源读取完整消息，来源失败明确报错。
 Console 全文成员判定按固定50条候选分批、批内按账号读取原始来源，独立于页面limit；这与native exact IMAP的50条上限一致，避免小页面退化成逐封来源会话。匹配仍为Unicode casefold连续子串，准确total／顺序／offset／limit及来源变化检查不变；原文只在请求内使用。会话数下降不等于全库来源延迟验收通过。
 

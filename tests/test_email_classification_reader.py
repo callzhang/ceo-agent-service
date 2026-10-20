@@ -201,7 +201,7 @@ def test_source_io_has_no_write_lock_and_candidate_change_is_explicit(catalog):
             with sqlite3.connect(store.path, timeout=0) as db:
                 db.execute("begin immediate")
                 db.execute(
-                    "update emails set class_subject='changed' where classification_id=1"
+                    "update emails set message_subject='changed' where classification_id=1"
                 )
             changed = True
         return views[identity]

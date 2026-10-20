@@ -125,6 +125,22 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
         prepare_action_email_schema_release, _migrate_pair,
     )
     target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
+    from app.email_metadata_schema_release import (
+        TARGET_STORE_VERSION as METADATA_STORE_VERSION, TARGET_EMAIL_VERSION as METADATA_EMAIL_VERSION,
+        prepare_email_metadata_schema_release,
+    )
+    if target == (METADATA_STORE_VERSION, METADATA_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (METADATA_STORE_VERSION,):
+            require_current_email_pair(path, store_version=METADATA_STORE_VERSION,
+                email_version=METADATA_EMAIL_VERSION, selection_references=True, result_references=True, metadata_owner=True)
+            return None
+        return prepare_email_metadata_schema_release(root, path)
     from app.result_schema_release import (
         TARGET_STORE_VERSION as RESULT_STORE_VERSION, EMAIL_VERSION as RESULT_EMAIL_VERSION,
         prepare_result_schema_release,

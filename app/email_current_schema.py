@@ -458,7 +458,7 @@ def create_current_email_migration_ledger(db: sqlite3.Connection) -> None:
     _create_missing(db, "table", "email_schema_migrations", _LEDGER_SQL)
 
 
-def current_canonical_email_parent_is_current(db: sqlite3.Connection) -> bool:
+def current_canonical_email_parent_is_current(db: sqlite3.Connection, *, metadata_owner: bool = False) -> bool:
     """Accept only the selected physical Email parent and its exact auxiliaries."""
     from app.action_task_delivery_storage import _hash, _source_declaration
     from app.email_canonical_storage import _target_hash
@@ -468,7 +468,7 @@ def current_canonical_email_parent_is_current(db: sqlite3.Connection) -> bool:
         _schema_identifier(name, field="sqlite_master object name")
         _schema_identifier(owner, field="sqlite_master object owner")
     return (
-        _hash(declaration) == _target_hash()
+        _hash(declaration) == _target_hash(metadata_owner=metadata_owner)
         and db.execute(
             "select 1 from main.sqlite_schema where name in "
             "('email_classifications','email_messages') limit 1"

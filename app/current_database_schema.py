@@ -35,7 +35,7 @@ def create_current_database_schema(db):
     create_current_task20_schema(db)
     create_current_run11_schema(db)
     create_provenance_schema(db)
-    _create_emails(db)
+    _create_emails(db, metadata_owner=True)
     create_action_schema(db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS)
     business = _business_declaration(target=True)
     db.execute(business["sql"])

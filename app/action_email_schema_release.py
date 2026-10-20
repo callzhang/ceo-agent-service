@@ -299,7 +299,8 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
 
 
 def require_current_email_pair(path: Path, *, store_version: str, email_version: int,
-                               selection_references: bool = False, result_references: bool = False) -> None:
+                               selection_references: bool = False, result_references: bool = False,
+                               metadata_owner: bool = False) -> None:
     """Read-only source selection before constructor caches or journal changes."""
     path = Path(path).resolve()
     if not path.exists():
@@ -330,7 +331,7 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
             return
         if store == store_version:
             if email == email_version:
-                if (current_canonical_email_parent_is_current(db)
+                if (current_canonical_email_parent_is_current(db, metadata_owner=metadata_owner)
                         and state_current_or_known_dispatcher_index_repair(db)
                         and provider_state_schema_is_current(db) and any(
                     configs_current_or_known_skill_guard_repair(db, action_variant=variant,
@@ -342,7 +343,7 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
                 )):
                     return
                 raise sqlite3.IntegrityError("malformed current provider/config declaration")
-            if email is None and current_canonical_email_parent_is_current(db):
+            if email is None and current_canonical_email_parent_is_current(db, metadata_owner=metadata_owner):
                 if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant,
                                                                                   include_business_actions=True,
                                                                                   include_email_history=True, canonical_email=True,
@@ -657,8 +658,8 @@ class ActionEmailSchemaRelease:
                 migrate_email_history_schema(db, history_inverse)
                 canonical_inverse = capture_email_canonical_source(db)
                 migrate_email_canonical_schema(db, canonical_inverse)
-                from app.email_preview import populate_email_previews
-                populate_email_previews(db)
+                from app.email_preview import populate_email52_previews
+                populate_email52_previews(db)
                 legacy_owner_inverse = capture_legacy_owner_source(db)
                 migrate_legacy_owner(db, legacy_owner_inverse)
                 final_inverse = migrate_final_actions(db, bindings=self.source_bindings)

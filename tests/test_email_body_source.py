@@ -205,10 +205,9 @@ def test_terminal_body_retirement_preserves_facts_and_one_bounded_preview(body_s
     assert after["message_normalized_text"] == ""
     ref = json.loads(after["message_source_reference_json"])
     assert ref["sha256"] == sha256(b"complete body").hexdigest()
-    assert after["class_preview"] == "complete body"
-    assert after["message_preview"] == ""
+    assert after["message_preview"] == "complete body"
     assert after | {key: before[key] for key in (
-        "message_normalized_text", "message_source_reference_json", "class_preview", "message_preview"
+        "message_normalized_text", "message_source_reference_json", "message_preview"
     )} == before
     assert not store.compact_email_message_body(101, source_reader=SimpleNamespace(read=read))
     assert len(reads) == 1

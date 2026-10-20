@@ -165,7 +165,7 @@ EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection(
     "email_actions", include_rowid=True
 )
 
-EMAIL_SCHEMA_VERSION = 52
+EMAIL_SCHEMA_VERSION = 53
 EMAIL_CLASSIFICATION_SQL = _canonical_classifications()
 EMAIL_MESSAGE_SQL = _canonical_messages()
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
@@ -3061,7 +3061,7 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, metadata_owner=True)
         if self.path.exists():
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("begin")
@@ -3074,7 +3074,7 @@ class EmailStore:
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
-            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True)
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, metadata_owner=True)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:
@@ -6995,7 +6995,7 @@ class EmailStore:
                                      "email_historical_classification_history",
                                      "email_historical_operations",
                                      "email_classifications", "email_messages"}
-            if not current_canonical_email_parent_is_current(db):
+            if not current_canonical_email_parent_is_current(db, metadata_owner=True):
                 raise EmailPersistenceCorruption(
                     "required canonical Email declaration is missing or malformed"
                 )
@@ -13544,7 +13544,7 @@ class EmailStore:
         from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
 
         fields = ",".join(
-            f'{canonical_column("email_classifications", field)} as "{field}"'
+            f'{canonical_column("email_classifications", field, metadata_owner=True)} as "{field}"'
             for field in CLASS_FIELDS if field != "model_text"
         )
         with self._connect() as db:
@@ -13581,7 +13581,7 @@ class EmailStore:
             return db.execute(
                 """
                 select classification_id, account_id, stable_message_identity,
-                       class_sender as sender, class_subject as subject,
+                       message_sender as sender, message_subject as subject,
                        class_model_text as model_text,
                        class_confirmed_category as confirmed_category,
                        class_updated_at as updated_at, message_source_reference_json
@@ -13647,7 +13647,7 @@ class EmailStore:
         from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
 
         fields = ",".join(
-            f'{canonical_column("email_classifications", field)} as "{field}"'
+            f'{canonical_column("email_classifications", field, metadata_owner=True)} as "{field}"'
             for field in CLASS_FIELDS if field != "model_text"
         )
         with self._connect() as db:
@@ -15128,7 +15128,7 @@ class EmailStore:
             return False
         reference = json.loads(original['message_source_reference_json'] or '{}') | reference
         with self._connect() as db:
-            cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=?,class_preview=?,message_preview='' "
+            cursor = db.execute("update emails set message_normalized_text='',message_source_reference_json=?,message_preview=? "
                 "where id=? and message_normalized_text=? and message_source_reference_json is ? and message_updated_at is ? "
                 "and class_updated_at is ? and class_current_action_plan_id is ? and " + eligible,
                 (_json_dump(reference), email_preview(original["message_normalized_text"]), original["id"], original["message_normalized_text"], original['message_source_reference_json'],

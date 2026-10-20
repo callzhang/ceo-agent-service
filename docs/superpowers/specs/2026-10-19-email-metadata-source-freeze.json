@@ -1,0 +1,142 @@
+{
+  "schema": "ceo-email-metadata-source-freeze-v1",
+  "recorded_at": "2026-10-20T00:12:02.576388+00:00",
+  "base_commit": "cd30f80f56768b90eda7a2b343fc9087b5589735",
+  "source_pair": [
+    "2026-10-19.2",
+    52
+  ],
+  "target_pair": [
+    "2026-10-19.3",
+    53
+  ],
+  "declaration_sha256": {
+    "email52": "ea47fb6f57d0a32fce49daa5982b44e1ef978d2ec0f2a167c81e77c21d425f15",
+    "email53": "31e85fdabd1c49a89159da136caebcae04cdc00bfa547dbefa4acfa62f641eaf"
+  },
+  "all_source": {
+    "paths_command": "git ls-files -z --cached --others --exclude-standard -- app tests scripts",
+    "file_count": 1195,
+    "sha256": "e6041ee817c0be27ec5f30c6caba18d48bbbcb459ff20f3d21647e5e8c98a417",
+    "digest_format": "SHA-256 of UTF-8 json.dumps(entries,ensure_ascii=False,separators=(comma,colon)); entries sorted by unique path, each object insertion order path then sha256; per-file SHA-256 of raw bytes"
+  },
+  "changed_files": [
+    {
+      "path": "app/action_delivery_schema_release.py",
+      "sha256": "f239650d60cee61bcb92bf5f0a862e66841450bfdc80e7f6ac1595c7a1f37dbc"
+    },
+    {
+      "path": "app/action_email_schema_release.py",
+      "sha256": "7f80969f6e14cb125d7d54afe3e4fceb181f97012b5095dda6776ba54f62ac9e"
+    },
+    {
+      "path": "app/action_postfix_schema_release.py",
+      "sha256": "6b9aebb9c97b8800ad2d53cae28b7815ec19e5cc0870ee49f3dba1e2f419e3ab"
+    },
+    {
+      "path": "app/action_receipt_schema_release.py",
+      "sha256": "149cca8beb55d34ad890683e908789551a197762f20b9091686e7f510465f3d5"
+    },
+    {
+      "path": "app/action_schema_release.py",
+      "sha256": "7c9719430a7337bdc86ee1510dbbd65c291dcd03c2a3650ed917dfd4d9949f7e"
+    },
+    {
+      "path": "app/current_database_schema.py",
+      "sha256": "ef1fca7474d9ed7cab91b0a4afa4f2f4fdfe562228114a9e533b77392f49615e"
+    },
+    {
+      "path": "app/deploy_maintenance.py",
+      "sha256": "9b32c8b0b0052e217bc52d8d5d8814a5da5ed0ecb04390fae3dd58b2c9125d58"
+    },
+    {
+      "path": "app/email_canonical_definitions.py",
+      "sha256": "8862519ef41af71804d76d12fc8a598126676502f90fbd6eee494a52aae5696c"
+    },
+    {
+      "path": "app/email_canonical_storage.py",
+      "sha256": "cb7a0a769f197b884cad48a3b5ab35ac72f1040acc143c58c6af6a2df0380838"
+    },
+    {
+      "path": "app/email_current_schema.py",
+      "sha256": "643de8edfbaf5d2ba57c1d38b766c6989a7d5ca430d36bd3af400dada68ea2b2"
+    },
+    {
+      "path": "app/email_metadata_schema.py",
+      "sha256": "bb7e5dd76d12a5bc5e885c8c600679d57b796e45045cb3e224bc2fa7efc392f5"
+    },
+    {
+      "path": "app/email_metadata_schema_release.py",
+      "sha256": "38e23b13a036be9f68145e96956065245dbe97534c685d85116d19ecf113d1c5"
+    },
+    {
+      "path": "app/email_preview.py",
+      "sha256": "a29d3b0a63242b64555245bc89ff8eab39cccac9bde074e01da1806a781eda6e"
+    },
+    {
+      "path": "app/email_publication_sources.py",
+      "sha256": "946aeccdc2568528b42117c15955397a7f99bb734e59f7a13ccb5affa93a729d"
+    },
+    {
+      "path": "app/email_store.py",
+      "sha256": "1c002588659d76e4beb33204735e8de702286a7d66cd87a69a6a275038928b53"
+    },
+    {
+      "path": "app/repository_updater.py",
+      "sha256": "dd3a8f135542be9bc992020d8f7382ecdb1f01ad83e12b9bbf3ab4f95450c1f5"
+    },
+    {
+      "path": "app/scheduled_config_storage.py",
+      "sha256": "6a24371e4b9e60d1c9c226b953db27735ee83eeef22fb95724f8f35aabc39397"
+    },
+    {
+      "path": "app/store.py",
+      "sha256": "3d177836a55b024ea98f5c3bb903438e070d40ef7525c473e41284a04e5065df"
+    },
+    {
+      "path": "app/store_schema_release.py",
+      "sha256": "55258827e25ee3dc1feda0dcc20157f71737caf452047167cf05bca2c06e8f7b"
+    },
+    {
+      "path": "app/task_schema_release.py",
+      "sha256": "e6a7fbfac009e8f5c8d2b6de44d1c1ffbe4cd35b0624612a5d9efd3fcf69f56e"
+    },
+    {
+      "path": "scripts/retire_verified_email_inputs.py",
+      "sha256": "d310788602166f106afc969bb306c976c8b76a70e4c29b4770f3a0b134677c6d"
+    },
+    {
+      "path": "tests/test_email_body_source.py",
+      "sha256": "26cdb4a5e7d0ea2248cb672473fd9dce7ff11cd3b076bd9ebb46ecc03c486408"
+    },
+    {
+      "path": "tests/test_email_canonical_current12.py",
+      "sha256": "e981ab08a5ba778f500d3184e139b4b96c37732828ca5d49d2bddf64c8085342"
+    },
+    {
+      "path": "tests/test_email_classification_reader.py",
+      "sha256": "377c7e861b3cd511d7c355071c0e7f1cadd51b3eed4009239a284aa9bec5104b"
+    },
+    {
+      "path": "tests/test_email_metadata_schema.py",
+      "sha256": "60257d46cc0db2f2d82576a13357f848dc095724fb5e02670c133fee61725e47"
+    },
+    {
+      "path": "tests/test_email_model_input_lifecycle.py",
+      "sha256": "9f9e40c760a58568f4a22720578315c663044111ca0c121c148f0fb4dfb339db"
+    },
+    {
+      "path": "tests/test_email_preview.py",
+      "sha256": "dcd2e345b2616c2b36a82ae386466d6ea10a259832ff882d2522396aa4c8d365"
+    },
+    {
+      "path": "tests/test_email_store.py",
+      "sha256": "da00297b5d98b81c8051e02dfa41d256fcec138f897e6736812bdd670bfb5d8a"
+    },
+    {
+      "path": "tests/test_retire_verified_email_inputs.py",
+      "sha256": "37d400fe20bde463a777efe13b7a36a45abc57662ff7b2e3b9aa72e0581d6497"
+    }
+  ],
+  "boundary": "Body-free source manifest. Local component/release tests only; root owns independent review and fresh-copy/native/deployment acceptance."
+}
