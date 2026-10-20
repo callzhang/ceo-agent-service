@@ -2630,6 +2630,9 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
   英文 `QR Code` 标签匹配；可见的“立即登录”按钮可能被遮罩挡住，因此只有扫码入口缺失时
   才尝试直接账号入口。SSO 选择器/组织缺失和导航错误必须保留实际异常，不能静默吞掉后
   统一报“会话过期”；有限等待超时仍按真实认证/浏览器故障失败，不绕过验证或伪造取数成功。
+  该任务的 `StructuredCodexRunner` 使用 `app/schemas/okr_review.schema.json` 声明
+  原生输出：外围仍为通用 AgentEnvelope，`domain_payload` 为现有 OKR 模型的完整
+  字段，所有 object 具备具体 properties、全部 required 字段和 `additionalProperties: false`。
 - 管理者 OKR 周报使用普通 scheduled Agent 与 `ceo-weekly-okr-report` Skill。实时取数按成员执行；评分公式、身份绑定和渲染在 Skill 脚本，来源和发布事实使用既有记录。历史 weekly_okr runtime/分析记录保留，当前调度不再创建该独立工作流。
 
 ## 文档索引

@@ -78,10 +78,13 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-# Hand-authored envelopes with no single root model: each wraps a list of an
-# inner model (ExtractedMemoryCandidate, DurableMemoryMatch) that carries no
-# top-level schema of its own, so there is nothing to compare them against.
+# Composite envelopes with no single root model to compare in PINNED.
+# Any component snapshot checks belong with the owning module's tests.
 NO_SINGLE_MODEL: dict[str, str] = {
+    "okr_review.schema.json": (
+        "agent_envelope snapshot with app.okr_models.OkrReviewPayload as the strict "
+        "domain_payload; tests/test_okr_output_schema.py pins both parts"
+    ),
     "wechat_memory_candidates.schema.json": (
         "envelope around a list of app.wechat.memory_import.ExtractedMemoryCandidate"
     ),

@@ -145,7 +145,7 @@
       "items": 0
     }
   },
-  "inherited_schema_diagnosis": "Actual OKR factory supplies generic AgentEnvelope schema with unconstrained domain_payload. Native provider rejected missing properties before generation. Same shape in45f,b6,development main and local origin/main; separate functional fix in isolated worktree, not yet accepted.",
+  "inherited_schema_diagnosis": "Original provider400 preserved above. Separately reviewed OKR-specific schema derived from existing OkrReviewPayload, OkrReviewItem and OkrEvidence fields is now integrated locally; no model, parser, retry or Audit-policy change.",
   "known_A5_semantic_failures_unchanged": true,
   "release_ready": false,
   "production_modified": false,
@@ -161,6 +161,183 @@
     "capacity-result.json": "a572715523cbb3dd61e3c2cc3694fe9f225d3a5dde5f2da90f807a9f56704aac",
     "native_okr.py": "d14ec9ec5a711511f24c632e9139144f47dd66e17d36b68166fbdbc885dd7298",
     "native.log": "3b2d6106a38275a9133b0b9a5bafff328c3f99766dadc9fb829d34e1aec48060",
-    "native-failure-result.json": "6e9080e715be280b62261889283d18e0d337f4d5b56ba297eeedbddd0b5278b8"
+    "native-failure-result.json": "6e9080e715be280b62261889283d18e0d337f4d5b56ba297eeedbddd0b5278b8",
+    "combined-source.json": "1e51098922f7b99b61b58c1af40f389f75dafb392526e5612981cee55ed3a10c",
+    "combined-schema.log": "5369b4ea8e0483aba463654c5ea32066f2d4c56ab7d7559f1ea4257f085b6729",
+    "native_okr_fixed.py": "61977e78a65ded61d93280649a3339fafb07f62aef8bd03192571c57719f196e",
+    "native-fixed-result.json": "3a851ed547927510390455386b525e4a2158f7c7d37ed485cf1c60f3f35771d2",
+    "native-fixed.log": "5ea471f4f0a6afba33c4fdb2ad335fc253bd43a9387b1f85abce96cd4db778ce",
+    "native_roundtrip.py": "26078a4c52a478b3a3b894ac42c515710557c1904da494b0c7d0fa62308b29c8",
+    "native-current-facts.json": "940961a3cad27b1e1649ee65fe36b933cd9f6650d54d0dc3ffbfadc5df5d0b3b",
+    "native-roundtrip-result.json": "f5bfd00a240ef8561769b10a219ff9d54b6dd2206f73cb5bb4d8a7a99e4f4cef",
+    "native-roundtrip.log": "34fbabb9326c89fd611a1b55e2092991bf5a5b01be9d50c8f455c17365e30833",
+    "native-predecessor-cold.log": "52fcf0ff181ee893ce4c029d5b7f8e06e40f3404999bb7b6eb4922aef45e8f97"
+  },
+  "OKR_schema_fix": {
+    "source_SPEC": "PASS independent seven-file patch",
+    "source_QUALITY": "PASS independent seven-file patch",
+    "patch_sha256": "28086ba61fe90626c0dbaa10b46a4fec28f71304a379222231279267b3ede82b",
+    "combined_source": {
+      "C2_reviewed_app_sha256": "b6d03aea7aaac1e99df9d811f1f83056673b9daa8944798dc63026925fdb230d",
+      "base_head": "4de2d1756c9d2992e081129e0ce6c9514ffb3559",
+      "schema_patch_sha256": "28086ba61fe90626c0dbaa10b46a4fec28f71304a379222231279267b3ede82b",
+      "app_sha256": "3a48b268b52df9c2b2e4358bf9de12633b1b0e232215c378bdd825b0fa251cd6",
+      "changed_old_app_paths": [
+        "app/cli.py"
+      ],
+      "new_app_paths": [
+        "app/schemas/okr_review.schema.json"
+      ],
+      "other_C2_app_files_exact": true,
+      "cli_AST_only_output_schema_path_added": true,
+      "combined_focused_tests": "120 passed in 27.22s",
+      "focused_log_sha256": "5369b4ea8e0483aba463654c5ea32066f2d4c56ab7d7559f1ea4257f085b6729",
+      "release_ready": false
+    },
+    "combined_focused_tests": {
+      "passed": 120,
+      "seconds": 27.22
+    },
+    "final_copy_QUALITY": {
+      "result": "PASS, independent combined source and authentic native case/current-fact recovery evidence; no P1/P2",
+      "final_target_sha256": "eeab2e08cb9e6c0a955b409ad1bc525753335ef7b7d21fca10a5bede82076917",
+      "all_12_typed_digests_match": true,
+      "current_runs": 256596,
+      "original_fk_exact": true,
+      "native_logical_DAO_matches_original_output": true,
+      "prepared_action_id": 101751,
+      "sent_reply_action_id": 101752,
+      "explicit_substitute_receipt_and_same_body": true,
+      "reviewer_reran_tests_migration_constructors_native_or_provider": false,
+      "production_accessed": false,
+      "separate_Audit_agent_executed": false,
+      "scope_excludes_A5_real_delivery_and_release": true
+    }
+  },
+  "authentic_native_OKR_after_fix": {
+    "case": "C2 current professional OKR route on isolated full copy",
+    "token": "C2_OKR_COPY_308f334fc7",
+    "request_id": 416297,
+    "status": "done",
+    "common_run_id": 387724,
+    "public_run_id": "387724",
+    "session_id": "01a15b4c-e153-7fa1-a20d-b61d016b67e9",
+    "range": [
+      0,
+      15
+    ],
+    "actual_runtime_attempts": [
+      {
+        "id": 387723,
+        "status": "completed",
+        "session_id": "01a15b4c-e153-7fa1-a20d-b61d016b67e9",
+        "transcript_start": 0,
+        "transcript_end": 15,
+        "parent_id": null
+      }
+    ],
+    "native_calls": [
+      {
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "d5400765d0652449c90768b2195b91138f31196c4f182c949e982031b5f2145b"
+      },
+      {
+        "returncode": 0,
+        "timed_out": false,
+        "prompt_sha256": "825a4ce110b358cce66296273cfe93f49af45584c2140a62b8a9bf4dc6a38d61"
+      }
+    ],
+    "output_schema_sha256": "b3167d37e35fe9e0422b6fc43a9d8b4007e8800849c1399ab0ce3620f40da76d",
+    "business_item_count": 1,
+    "kr_exactly_preserved": true,
+    "substitute_sends": 1,
+    "substitute_verifications": 1,
+    "prepared_parent_and_accepted_fixture_receipt_and_sent_reply": true,
+    "mechanical_fixture_claimed_but_not_executed": 416293,
+    "separate_audit_agent_executed": false,
+    "audit_scope": "existing OKR AgentEnvelope.audit only; no separate Audit agent in source path",
+    "native_dao_read_succeeded": true,
+    "real_external_sends": 0,
+    "production_modified": false,
+    "A5_previous_semantic_failures_unchanged": true,
+    "release_ready": false,
+    "native_calls_scope": {
+      "capability_probe": 1,
+      "business_execution": 1,
+      "result_validation_retries": 0,
+      "probe_prompt_sha256": "d5400765d0652449c90768b2195b91138f31196c4f182c949e982031b5f2145b"
+    },
+    "original_native_ranges_readback": [
+      {
+        "kind": "capability_probe",
+        "session_id": "01a15b4c-c8f4-7630-b8ea-661cc08c1a99",
+        "range": [
+          0,
+          15
+        ],
+        "original_jsonl_sha256": "bbd30f68cd66e7aa1ae25b375713d8a30be317b3e5e40bbef88d3537a7f403f2",
+        "assistant": [
+          {
+            "line": 11,
+            "sha256": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+            "JSON_keys": [
+              "ok"
+            ],
+            "exact_kr_present": null
+          }
+        ],
+        "native_tool_calls": []
+      },
+      {
+        "kind": "OKR_business",
+        "session_id": "01a15b4c-e153-7fa1-a20d-b61d016b67e9",
+        "range": [
+          0,
+          15
+        ],
+        "original_jsonl_sha256": "a38a6b3c771af05b77a67a7a728262f269cc38dfb259cd67352986a10556c2ec",
+        "assistant": [
+          {
+            "line": 11,
+            "sha256": "665f1bfefa17b8d82934594fcf0b4f6eecba2de5d333918431e8b7a2578aa1e7",
+            "JSON_keys": [
+              "kind",
+              "user_response",
+              "system_actions",
+              "domain_payload",
+              "audit"
+            ],
+            "exact_kr_present": true
+          }
+        ],
+        "native_tool_calls": []
+      }
+    ]
+  },
+  "authentic_native_current_fact_roundtrip": {
+    "current_native_facts_inverse_cold_reforward_all_typed_cells_exact": true,
+    "native_case": {
+      "session_id": "01a15b4c-e153-7fa1-a20d-b61d016b67e9",
+      "request_id": 416297,
+      "common_run_id": 387724
+    },
+    "actual_predecessor": "45f3324be3c568b9f91709c25306e19d73a15087",
+    "cold_read": {
+      "Store": true,
+      "strictEmail": true,
+      "Workbench": true,
+      "actual_native_envelope_read": true,
+      "exact_kr_read": true,
+      "prepared_accepted_fixture_and_sent_reply_read": true,
+      "real_sends": 0
+    },
+    "full_integrity": "ok",
+    "original_fk_preserved": true,
+    "immutable_source_unchanged": true,
+    "worker_or_model_or_provider_reexecuted": false,
+    "real_external_sends": 0,
+    "production_modified": false,
+    "release_ready": false
   }
 }

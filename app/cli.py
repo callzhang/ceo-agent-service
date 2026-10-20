@@ -2293,6 +2293,7 @@ def _build_okr_review_runner(settings: WorkerSettings, store: AutoReplyStore):
     spec = AgentSpec(
         name="okr_review",
         schema_path=_repo_root() / "app" / "schemas" / "agent_envelope.schema.json",
+        output_schema_path=_repo_root() / "app" / "schemas" / "okr_review.schema.json",
         primary_skill_paths=[
             Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md"
         ],
