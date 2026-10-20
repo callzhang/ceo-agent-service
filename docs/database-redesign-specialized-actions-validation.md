@@ -215,3 +215,17 @@ review reran the adequate focused batches. Root verified the frozen per-file has
 before staging. Parent real-copy/native acceptance, integration and live release
 remain pending. A5's Postfix/OKR/Attempt ownership and business units C/D
 remain outside this implementation.
+
+## Parent normal integration before real-copy acceptance
+
+Root committed the independently SPEC/QUALITY-approved source at211eabb87, then
+normally merged reviewed B2a publication7e033bd65 atf82a63dc0. The append-only
+claim conflict retained both complete sides. Every one of the27 specialized
+source/test files remains byte-identical to the original approved freeze. The
+merged tree retains B2a native/current-data inverse evidence and the separately
+authored OA runtime/Skill changes; B2b does not author their policy or replay an
+OA action. The separate merged freeze also pins both CI runtime inputs. The
+exact upstream controls already passed14+1 at B2a; no specialized source is used
+by those mocked controls, so they are not counted again as B2b verification.
+Parent real-copy/native/substitute provider/current-data inverse/actual published
+19.6 old-code cold/reforward and live publication remain pending.
