@@ -21,10 +21,11 @@ from evals.scheduled_task_generic.okr_fixture import (
     digest,
     key,
     load_script,
+    member_payload,
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v1.json"
+CASES_PATH = HERE / "okr_cases.v2.json"
 
 
 def read_json(path):
@@ -91,6 +92,10 @@ def _grade(case, work, output, prior=None):
     analysis, managers = report._analysis_from_files(source, work)
     cards = report._manager_scorecards(analysis, source["managers"])
     checks.update(
+        exact_current_source_payloads=source["managers"] == [
+            member_payload(m, case["facts"])
+            for m in case["facts"]["roster"]["managers"]
+        ],
         exact_current_roster={m.user_id for m in managers}
         == set(expected["roster_ids"]),
         exact_scored_members=set(cards) == set(expected["scored_ids"]),
@@ -204,6 +209,20 @@ def _grade(case, work, output, prior=None):
         }
         checks["full_readbacks_consumed"] = all(
             "readback-" + node + ".md" in consumed for node in published
+        )
+    full_text = (work / "full.md").read_text()
+    summary_text = (work / "summary.md").read_text()
+    if expected.get("preserve_unscored_roster_titles"):
+        checks["known_unscored_titles_preserved"] = all(
+            f"| {report._md_cell(report._member_label(m, managers))} | {report._md_cell(m.title)} |"
+            in full_text
+            for m in managers
+            if m.user_id in expected["gaps"]
+        )
+    if expected.get("summary_contains_actual_member_gaps"):
+        checks["specific_gap_reasons_in_summary"] = all(
+            g.evidence in summary_text and g.kind in summary_text
+            for g in analysis.member_gaps
         )
     proposal = wire.to_proposal()
     actions = list(proposal.actions) if proposal else []
@@ -330,6 +349,8 @@ def native(
     command = [
         shutil.which("codex") or "codex",
         "exec",
+        "--ignore-user-config",
+        "--ignore-rules",
         *flags,
         *fixture_flags,
         "--output-schema",
@@ -392,6 +413,15 @@ def native(
         for e in events
         if e.get("item", {}).get("type") == "mcp_tool_call"
     ]
+    # Native inventory lists metadata from the only configured fixture server;
+    # it does not read provider content. Keep these calls in the raw evidence.
+    inventory = [
+        t
+        for t in tools
+        if t.get("server") == "codex"
+        and t.get("tool") in ("list_mcp_resources", "list_mcp_resource_templates")
+    ]
+    providers = [t for t in tools if t not in inventory]
     other = [
         e.get("item", {}).get("type")
         for e in events
@@ -409,9 +439,13 @@ def native(
         "output": raw,
         "prompt_sha256": digest(prompt.encode()),
         "tool_calls": len(tools),
+        "native_inventory_calls": len(inventory),
+        "mcp_tool_calls": [
+            {k: t.get(k) for k in ("server", "tool", "status")} for t in tools
+        ],
         "unexpected_runtime_items": other,
         "all_tools_fixture_only": all(
-            t.get("server") == "okr_acceptance" for t in tools
+            t.get("server") == "okr_acceptance" for t in providers
         ),
         "exit_code": p.returncode,
     }
@@ -419,15 +453,32 @@ def native(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="okr_results.v1.json")
+    parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
     args = parser.parse_args()
     destination = HERE / args.output
+    if not destination.parent.is_dir():
+        raise ValueError("Result output directory must exist before native execution")
     if destination.exists():
         raise ValueError(
             "Preserve the existing result; use a distinct output name after a diagnosed repair"
         )
     manifest = read_json(CASES_PATH)
     settings, flags = run.configuration("production-config")
+    # Same configured model/effort; only this fixture server is connected.
+    isolated = []
+    index = 0
+    while index < len(flags):
+        if flags[index] == "-c" and flags[index + 1].startswith("mcp_servers."):
+            index += 2
+            continue
+        isolated.append(flags[index])
+        index += 1
+    flags = isolated + [
+        "-c",
+        "model_reasoning_effort=" + json.dumps(settings["configured_reasoning_effort"]),
+    ]
+    settings["ignore_user_config"] = True
+    settings["ignore_rules"] = True
     result = {
         "version": 1,
         "created_at": datetime.now(UTC).isoformat(),

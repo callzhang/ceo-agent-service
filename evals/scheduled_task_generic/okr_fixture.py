@@ -238,6 +238,7 @@ class Fixture:
                 {
                     "node_id": node_id,
                     "title": doc["title"],
+                    "parent_id": doc["parent_id"],
                     "revision": doc["revision"],
                     "url": "https://docs.example.invalid/" + node_id,
                 },

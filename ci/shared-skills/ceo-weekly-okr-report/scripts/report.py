@@ -466,7 +466,7 @@ def render_weekly_okr_report(
         label = _member_label(manager, managers)
         if manager.user_id in gaps:
             lines.append(
-                f"| {_md_cell(label)} | — | — | — | — | — | — | "
+                f"| {_md_cell(label)} | {_md_cell(manager.title)} | — | — | — | — | — | "
                 f"{gaps[manager.user_id].kind} |"
             )
             continue
@@ -591,13 +591,24 @@ def render_group_summary(
         f"## {title}",
         "",
         "已按综合证据口径更新：系统进度仅作线索，结合评论/进展和独立证据逐 KR 评分。",
-        f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人暂不形成最终分（来源/分析缺口或职级、维度证据待补充）"
+        f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人暂不形成最终分"
         + (
             f"；已形成最终分的平均值为 {sum(finalized) / len(finalized):.1f}。"
             if finalized
             else "。"
         ),
     ]
+    names = {item["manager"]["userId"]: item["manager"]["name"] for item in manager_payloads}
+    pending_reasons = [
+        f"- {names[gap.user_id]} [{gap.user_id}]：{gap.kind}；{gap.evidence}"
+        for gap in analysis.member_gaps
+    ]
+    pending_reasons.extend(
+        f"- {names[user_id]} [{user_id}]：{card.final_status}"
+        for user_id, card in scorecards.items() if card.final_score is None
+    )
+    if pending_reasons:
+        lines.extend(["", "暂不形成评分的具体原因：", *pending_reasons])
     if analysis.company_progress:
         lines.extend(["", "重点进展："])
         lines.extend(f"- {item}" for item in analysis.company_progress[:3])
@@ -944,6 +955,11 @@ def prepare(
                 source_file=str(manager_source.resolve()),
                 schema_file=str(schema_file.resolve()),
                 analysis_file=f"analysis-{key}.json",
+            )
+            analysis_file = output_dir / entry["analysis_file"]
+            entry["analysis_reusable"] = (
+                analysis_file.is_file()
+                and _read_json(analysis_file).get("_source_sha256") == entry["source_sha256"]
             )
         plan.append(entry)
     result = {
