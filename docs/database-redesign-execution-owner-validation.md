@@ -150,8 +150,7 @@ and is not the final merged tree.
 Parent acceptance source isbf6b71ebfa9e0e67cb4c5b9f56e9da59ec8a8052;1202 app/tests/scripts files, aggregate
 423b5e5a2b81527ea63753a5fdc797fc138e1181771ffdb96a7673ba2e07597d, using the same path/NUL/raw-digest/NUL algorithm.
 See superpowers/specs/2026-10-19-execution-owner-merged-freeze.json.
-Full-copy/native/current-data inverse and live acceptance are pending. No
-predecessor CLI proof is claimed as a CLI run of this later source.
+At this freeze checkpoint full-copy/native/current-data inverse and live acceptance were pending. Parent full-copy/native/current-data inverse/reforward acceptance subsequently passed as recorded below; production publication is still pending. No predecessor CLI proof is claimed as a CLI run of this later source.
 
 ## Parent merged-source full-copy and native acceptance
 
@@ -163,4 +162,4 @@ Real native Codex Consumer/Audit completed four calls: Consumer386364/attempt386
 
 Current-data inverse restored the entire source SQL declaration, retained the original FK finding, and actual archived40666e521 Store cold-open read the new done task, selected branch, execution, action attempt and substitute receipt. Reforward retained every physical business-table hash (including Email ledger), with only Store marker clock changed; full integrity_check=ok, FK multiset unchanged, immutable input SHA unchanged. Body-free evidence: validation/2026-10-19-execution-owner-parent-copy.json.
 
-Identical original-row capacity comparison is **+3813376bytes** for Actions data+indexes; new declarative reference indexes cost more than the removed duplicated execution payloads. This step simplifies state ownership and writers; no file-shrink or VACUUM saving is claimed. Before publication a fresh production19.3/Email53 backup474292224bytes passed full integrity and exact pair validation; only after verification it atomically replaced the older daily backup, SHA9818c448e7bf857ba85443f14ac4f2d62bc185d6cde8076cabbc572af3d1ac1a.
+Identical original-row capacity comparison is **+3813376bytes** for Actions data+indexes; new declarative reference indexes cost more than the removed duplicated execution payloads. This step simplifies state ownership and writers; no file-shrink or VACUUM saving is claimed. Before publication a fresh production19.3/Email53 backup474292224bytes passed full integrity and exact pair validation with the original Runs190042→Tasks FK finding retained; only after verification it atomically replaced the older daily backup, SHA9818c448e7bf857ba85443f14ac4f2d62bc185d6cde8076cabbc572af3d1ac1a.
