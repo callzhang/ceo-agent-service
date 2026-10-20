@@ -28,3 +28,7 @@ PR #167 已合并为 `c4f332417158384d8cb2bfbeb42efffd17f00a1b`。正式 `python
 `/healthz`、Status、Tasks、Attention、History 均返回 HTTP 200。Status 显示服务运行、系统健康且当前 quality-gate violations 为 0；队列快照为 pending 8、processing 3、failed 9、retryable 0，Attention 4，History 总数 36,375，Tasks 总数 735。这些是回读时状态，不把既有失败归因于本次发布。
 
 Settings 的 `codex_oauth` Consumer 当前公共预览提交状态为 `preview`，服务 Developer 长 40,376 字符，wire 根字段含 `action/reason/target/payload/evidence_refs`；历史 run `385883`／attempt `385884` 状态为 `invoked`，保留当时 37,442 字符的 Developer、23,883 字符的 Task，wire 根字段仍是 `outcome/proposal`。这验证当前与历史输入按各自来源展示；没有新的真实业务回合用于声称修复后业务判断已改善。GitHub Quality job 在回读时仍排队，行为验收依据为本地回归和独立审查。
+
+## 后续自然会话证据（2026-10-20 UTC）
+
+部署后产生的 OA 任务 416047 使用 `codex_oauth`：Consumer run `386421` 冷启动 session `01a156d5-219b-76d1-bf36-ea1a784121b3`，原生开场 Developer 保存的服务 wire schema 与当前 OA purpose schema 完全相等。Audit 两次 return 后，Consumer runs `386436`、`386446` 均以 `resume` 使用同一 session；原生记录确认这两轮各自提交新 Task，沿用开场 Developer，而不是把当前 Developer 误记为每轮重送。三轮 Task 分别为 9,091、1,945、3,609 字符；冷启动读取两项任务 Skill，两个续会话轮次没有重复读取 Skill。后续 Audit 各自独立运行，最终审核结论为 approve。这是**兼容 schema 会话复用**和实际输入来源的自然运行证据；该任务的外部动作结果未在本次分析中确认为成功，也没有发生旧 schema 会话的自然迁移样本。不能将它解释为所有业务判断已改善。
