@@ -192,3 +192,7 @@ proofs, versions, controls, cancellation, retry and feedback adoption retain the
 specialized real fields and current paths. Postfix accepted-but-unverified receipts
 were not moved into the verified external ledger. Parent review, real-copy/native
 acceptance, integration and live deployment are not claimed by this report.
+
+## Parent source freeze and integration
+
+Parent independently verified1215paths/fccf517e and committed the exact handoff at93058af1f. Independent SPEC approved that frozen source. Parent normally merged origin1319e2557 at8172fbc75, retaining all claim rows in the append conflict. The11app/tests/scripts changes are independently developed image/OCR/WeChat/purpose-receipt fixes; shared lifecycle, schema, paired release and both migrated DAO implementations are unchanged. Merged manifest records1216paths/201756cb4812572741a79a0e03f9670ca7ec9af87ab65381656b7a39a7584170. Integration SPEC/QUALITY and parent full-copy/native/current-data inverse/live remain pending. Root read-only eligibility probe passed all10984direct steps on the accepted staged19.5copy, which was checkpointed to DELETE journal with all physical facts unchanged and made read-only; input SHA9a1c692c715e2554b1b124b988ee350a8542ae2718e3f595918cba0fd9be1c4f,476516352bytes. This is not a fresh raw production snapshot.
