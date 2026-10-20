@@ -75,6 +75,25 @@ These probes demonstrate model/schema interoperability on two fixed synthetic
 cases. The persistent limits are established by controlled-clock SQLite tests;
 no real three-day permission wait or production OA write was used as a test.
 
+## Legacy verified OA permission-request receipt compatibility — 2026-10-20
+
+Production Attempts 15681 and 15707 exposed a second compatibility boundary.
+Attempt 15681's existing OA comment had a verified `comment` receipt and the
+stable `material-read-access-block` identity, but its candidate predated
+`purpose_output`. A later retry referenced the exact receipt correctly; the
+validator still rejected it because it only recognized current-schema
+`request_access` candidates. The failure occurred before Audit/System execution,
+and production readback showed no action from Attempt 15707.
+
+The regression was observed failing before the code change. The narrow repair
+accepts a receipt as a legacy permission request only when the record is already
+verified for the same task, operation is `comment`, the receipt and the
+candidate's sole comment have the exact same `material-read-access-block`
+identity, and the candidate has no `purpose_output`. Existing exact key,
+uniqueness, task binding, retry-budget, Audit and execution requirements remain
+in force; ordinary comments remain ineligible. Focused tests and production
+deployment/readback are pending. No historical attempt has been replayed.
+
 ## Release
 
 Publish code and the reviewed Skill manifest through
