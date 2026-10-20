@@ -29,6 +29,7 @@ def _codex_command() -> list[str]:
         "codex", "exec", "--json", "-c",
         'mcp_servers.memory_connector.url="https://memory.example/mcp"',
         "-c", 'mcp_servers.xiaoqing_interview.url="https://interview.example/mcp"',
+        "-c", 'mcp_servers.ai_services.url="https://ai.example/mcp"',
         "-c", "features.browser_use=true",
         "-c", "features.image_generation=true",
         "-c", "features.code_mode_host=false",
@@ -82,6 +83,8 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert 'approval_policy="never"' in command
         assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in command
         assert 'mcp_servers.xiaoqing_interview.enabled_tools=["search_candidates", "get_dashboard_stats", "get_interview_context", "download_attachment", "list_candidate_interviews"]' in command
+        assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in command
+        assert "mcp_servers.ai_services.enabled=false" not in command
         assert not any(option.startswith("tools.enabled_tools=") for option in command)
         assert "--dangerously-bypass-approvals-and-sandbox" not in command
         assert not any("execute_reviewed_read" in option for option in command)
@@ -119,11 +122,15 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     audit = "\n".join(section.text for section in audit_developer_sections("rules"))
 
     for instructions in (AGENT_CAPABILITY_INSTRUCTIONS, audit):
-        normalized = instructions.replace("`", "").lower()
+        normalized = " ".join(instructions.replace("`", "").split()).lower()
         assert "call" in normalized
         assert "mcp__agent_cli" in normalized
         assert "never run local dws commands through" in normalized
         assert "interactive sessions" in normalized
+        assert "ai_services.ocr_document" in normalized
+        assert "call the native" in normalized
+        assert "do not infer" in normalized
+        assert "all_tools" in normalized
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:

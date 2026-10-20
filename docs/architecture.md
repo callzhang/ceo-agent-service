@@ -357,6 +357,7 @@ or parsing. Return values retain that written metadata snapshot and the existing
 native event/result projection. File I/O never extends these writer leases.
 
 Consumer 和只读 Audit 可通过精确节点读取 DingTalk Drive 附件。PDF 下载上限为 64 MiB，其他附件为 20 MiB；扫描 PDF 超过 700 KiB 的内联 MCP 输入上限时，工具返回原始一基页码，之后按页渲染为受限 JPEG，由 `ai_services.ocr_document` 读取。源文件仅在当前 MCP 进程临时目录中保留，技术读取或 OCR 失败继续保持真实技术故障。
+Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。工具审批配置本身不决定可见性，角色清单也必须包含该工具。
 
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
@@ -1654,6 +1655,8 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 ## 能力与配置
 
 ### MCP 服务器可见范围
+
+Consumer 与 Audit 收到扫描页或图片 OCR 输入时，直接调用当前 Native Codex session 的 `ai_services.ocr_document`，传入原读取工具返回的字节、MIME、页码和摘要。嵌套代码环境的 `ALL_TOOLS`、shell 中的 CLI 清单及其他 Agent 的工具列表不能证明当前 Native session 缺少 OCR；只有当前 session 的实际工具调用失败才能作为 OCR 依赖故障。
 
 Codex 会把 `$CODEX_HOME/config.toml` 中的全部 MCP 服务器合并进每次运行，后台 Agent turn 因此
 默认能看到安装用户的个人工具。服务清单（`CEO_SERVICE_MCP_CONFIG_PATH`）除了声明服务自己的
