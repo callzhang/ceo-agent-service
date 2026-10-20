@@ -1342,6 +1342,7 @@ def audit_developer_instructions(
     audit_rules: str,
     *, runtime_context: str | None = None, work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
     return render_prompt_sections(
@@ -1350,6 +1351,7 @@ def audit_developer_instructions(
             runtime_context=runtime_context,
             work_profile=work_profile,
             prompt_configuration=prompt_configuration,
+            purpose_name=purpose_name,
         ),
         placement="developer",
         omit_empty=False,
@@ -1362,6 +1364,7 @@ def audit_developer_sections(
     runtime_context: str | None = None,
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
 ) -> tuple[PromptSection, ...]:
     configuration = prompt_configuration or load_prompt_configuration(role="audit")
     core = _developer_instruction_sections(
@@ -1372,18 +1375,11 @@ def audit_developer_sections(
     sections = _role_developer_sections(
         core,
         capability_instructions=(
-            "Use the capabilities available to the calling Agent. Apply the applicable "
-            "For DingTalk reads in service Consumer/Audit turns, call declared "
-            "mcp__agent_cli read tools directly; never run local dws commands through "
-            "shell. Product Skill CLI examples are for interactive sessions only. "
-            "If the read tool is not declared, report that capability as unavailable. "
-            "When a declared read returns source bytes or page references requiring OCR, "
-            "call the native ai_services.ocr_document MCP directly with those exact source "
-            "bytes, MIME type, page numbers and source digest. Do not infer that the tool "
-            "is absent from nested ALL_TOOLS, shell inventory or another Agent's tool list; "
-            "those do not describe this native session. If the direct call fails, preserve "
-            "its concrete tool/provider error. "
-            "business and operation Skills to the typed candidate. The application does "
+            "Use the capabilities available to the calling Agent.\n"
+            + (_OA_OCR_HANDOFF_INSTRUCTIONS if purpose_name == "oa"
+               else _DIRECT_SOURCE_READ_INSTRUCTIONS)
+            + "\nApply the applicable business and operation Skills to the typed candidate. "
+            "The application does "
             "not inspect command names, MCP tools, receipt formats, or readback procedures; "
             "those are runtime capabilities. When acceptance depends on dynamic external state "
             "and the candidate supplies a stable target identifier, use the available read "
