@@ -1,4 +1,4 @@
-"""One owner/writer for typed reviewed and deterministic-email action facts.
+"""One owner/writer for reviewed and all Email step claims and effect results.
 
 Callers retain their business authorization, provider verification and existing
 transaction boundary. This module owns plan/step allocation, dispatch changes,
@@ -11,15 +11,17 @@ import sqlite3
 
 from app import action_storage as storage
 from app.action_email_definitions import EMAIL_FIELDS, EMAIL_DEFAULTS, EMAIL_NUMERIC_SCOPE
-from app.shared_action_definitions import SHARED_RECORD_TYPES, SOURCE_TO_TARGET, email_projection
+from app.shared_action_definitions import SPECIALIZED_RECORD_TYPES, SOURCE_TO_TARGET, SPECIALIZED_SOURCE_TO_TARGET, email_projection
 
 PLAN_KINDS = {'reviewed': 'review_candidates', 'email': 'email_action_plans'}
 ATTEMPT_KINDS = {'reviewed': 'candidate_action_attempts', 'email': 'email_action_attempts'}
+STEP_KINDS = {'email_reply': 'email_reply_dispatch_claims', 'email_unsubscribe': 'email_unsubscribe_claims'}
+RESULT_KINDS = {'email_reply': 'email_reply_receipts', 'email_unsubscribe': 'email_unsubscribe_receipts'}
 
 
 def _layout(kind):
     return storage.action_payloads('actual_no_memory_fk', selection_references=True,
-        execution_owner=True, shared_lifecycle=True).layouts[kind]
+        execution_owner=True, shared_lifecycle=True, specialized_claims=True).layouts[kind]
 
 
 def _fetch(db, sql, parameters=()):
@@ -78,14 +80,30 @@ def _insert(db, kind, values, *, ignore=False, plan_step_conflict=False):
     cursor = db.execute('insert ' + ('or ignore ' if ignore else '') + 'into actions('
         + ','.join(columns) + ') values(' + ','.join('?' for _ in columns) + ')' + conflict
         + ' returning cast(legacy_key as integer)',
-        (SHARED_RECORD_TYPES.code(kind), str(public), packed, *physical.values()))
+        (SPECIALIZED_RECORD_TYPES.code(kind), str(public), packed, *physical.values()))
     row = cursor.fetchone()
     cursor.fetchall()
     return storage.ActionWriteResult(row[0] if row else None, cursor.rowcount)
 
 
-def _update(db, kind, public_id, values):
-    if kind not in SOURCE_TO_TARGET:
+def _predicate(kind, public_id, where_sql, parameters):
+    if where_sql:
+        # Resolve the exact source predicate to existing physical IDs in the
+        # mutation itself; the outer statement seeks only these Actions rows.
+        predicate = 'id in (select physical_action_id from (' + email_projection(kind,
+            include_rowid=True, include_physical_id=True) + ') where ' + where_sql + ')'
+        arguments = tuple(parameters)
+    else:
+        predicate = '_kind=?'
+        arguments = (SPECIALIZED_RECORD_TYPES.code(kind),)
+    if public_id is not None:
+        predicate += ' and cast(legacy_key as integer)=?'
+        arguments += (public_id,)
+    return predicate, arguments
+
+
+def _update(db, kind, public_id, values, *, where_sql='', parameters=()):
+    if kind not in {*SOURCE_TO_TARGET, *SPECIALIZED_SOURCE_TO_TARGET, *RESULT_KINDS.values()}:
         raise ValueError('unknown shared action variant')
     storage._check_fields(kind, values)
     layout = _layout(kind)
@@ -95,9 +113,10 @@ def _update(db, kind, public_id, values):
     for field, value in values.items():
         paths.extend((layout.path(field), json.dumps(storage._encoded_native_sqlite_value(value),
             ensure_ascii=False, allow_nan=False, separators=(',', ':'))))
+    predicate, arguments = _predicate(kind, public_id, where_sql, parameters)
     return db.execute('update actions set payload_json=jsonb_set(payload_json,'
-        + ','.join('?,json(?)' for _ in values) + ') where _kind=? and cast(legacy_key as integer)=?',
-        (*paths, SHARED_RECORD_TYPES.code(kind), public_id))
+        + ','.join('?,json(?)' for _ in values) + ') where ' + predicate,
+        (*paths, *arguments))
 
 
 def persist_plan(db, origin, values, *, ignore=False):
@@ -157,7 +176,8 @@ def _matches(row, expected):
     return row is not None and all(value is None or row[field] == value for field, value in expected.items())
 
 
-def transition(db, origin, event, *, identity=None, values=None, expected=None, receipt=None):
+def transition(db, origin, event, *, identity=None, values=None, expected=None, receipt=None,
+               where_sql='', parameters=()):
     """Apply one existing claim/outcome/schedule transition under its caller lock.
 
     Email identity is its public action_id. Reviewed claim identity is the exact
@@ -168,6 +188,21 @@ def transition(db, origin, event, *, identity=None, values=None, expected=None, 
     if not db.in_transaction:
         raise ValueError('shared action transition requires caller-owned transaction')
     values, expected = values or {}, expected or {}
+    if origin in STEP_KINDS:
+        # Specialized callers retain proof validation; allocation, CAS, state
+        # and receipt writes are owned here, under the same transaction as the
+        # caller's unique effect journal, controls or ordered observations.
+        if event == 'claim':
+            return _insert(db, STEP_KINDS[origin], values)
+        if event == 'outcome':
+            return _insert(db, RESULT_KINDS[origin], values)
+        if event in ('state', 'amend_outcome'):
+            kind = STEP_KINDS[origin] if event == 'state' else RESULT_KINDS[origin]
+            return _update(db, kind, identity, values, where_sql=where_sql, parameters=parameters)
+        if event == 'retire':
+            predicate, arguments = _predicate(STEP_KINDS[origin], identity, where_sql, parameters)
+            return db.execute('delete from actions where ' + predicate, arguments)
+        raise ValueError('unknown specialized action transition')
     if origin == 'reviewed':
         if event == 'outcome':
             return _update(db, ATTEMPT_KINDS[origin], identity, values)

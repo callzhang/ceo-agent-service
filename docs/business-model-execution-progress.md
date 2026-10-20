@@ -23,3 +23,26 @@ Production/origin advanced to465533b57; merged into c52516670, fresh SPEC/QUALIT
 A4 review source25b2e2daf is1208files/3a1495a0; merged acceptance source804386b12 is1208files/07995baf. Four merged smoke tests passed. Its immutable input is the accepted A3 current-data copy, including the preceding synthetic native task. The ordinary-production fixture allocator guard refused that staged source before any new CLI call; the local harness now continues above the existing all-family high-water (including input children), below the JavaScript integer bound, after proving the failed preparation changed no logical facts. No production allocator or app code was changed for this harness correction. Two actual native Consumer/Audit calls, copy UI selection, one substitute send/verify/receipt and new raw NULL Sent result reference passed. Source2450Sent rows map421exactreferences/2029retained local results, all public values/types and other stored fields exact. Identical-population duplicate body reduction467902bytes; Actions+indexes net+163840bytes. New recall update and actual archived6f53171c9 Store cold-open passed current-data inverse; reforward and full integrity passed. Publication and final live readback subsequently passed as above. Console shut down with0provider calls.
 
 B2a core93058af1f, corrected6ad34bcd2, independently SPEC/QUALITY approved. Fresh production19.5/53 source strict old Store+Email cold, full forward/public values+types/unrelatedfacts, real Consumer/Audit/local UI/substitute1send1verify, six current direct outcomes, current-fact inverse/actual old Store+strict Email cold/reforward/full integrity all pass. Identical population Actions+indexes−4026368bytes; no VACUUM claim. Final normal upstream integration6753e9a2d and publication review pending; no B2a19.6 live claim yet. B2b specialized claim/result ownership source211eabb87 has136distinct targeted passes, actual archived19.6 current-data inverse/cold/reforward and independent SPEC then QUALITY approval; parent copy/native/integration/live remain pending. C1 is in isolated business-model-task-lifecycle, source-backed nine-kind physical Task lifecycle preflight first, then implementation; C2 Run histories, A5 Reply/Postfix and full D remain incomplete.
+
+
+B2b parent acceptance at773468fe0 passed pristine19.6-working-copy→19.7 forward,
+actual Consumer/Audit/UI selection/substitute send+verify+receipt, five specialized
+current outcome branches, current-fact inverse, actual7e old Store+strict Email
+cold open, reforward and full integrity. Same-population capacity delta0bytes.
+First native exact-body fixture remains failed/preserved with0provider calls;
+independent format-permitted success does not fix its existing Postfix conflict.
+A5 contract/mechanism remains open. Source is accepted B2a working copy, not raw
+production19.6; production preflight/live publication remain pending. C1 active;
+C2 and full D remain incomplete. No real provider sends.
+
+
+B2a standard deploymentcompleted actualcbf95112 (shared core unchanged from7e),
+Store19.6/Email53, newPID75178. Exact current declaration/five typed codes, retired
+six direct-step mirrors, HTTP200/queue-failure comparison/quickcheck/originalFK
+passed. Global health is explicitlydegraded by one unresolved feedback created
+04:08:53UTC before cutover, retained untouched; no zero-violation claim.
+B2b is normallymerged withcbf at4fe745ec5; original27corefiles byte-exact, separate
+publicationfreezeaf007868. B2b copy/native/current-facts inverse acceptance has
+SPEC/QUALITY approval; fresh productionpreflight/backup/publicationpending.
+C1nine-kind raw-byte/old-code inverse checks have passed during implementation;
+source not frozen/reviewed/live. A5/C2/fullDremainopen.
