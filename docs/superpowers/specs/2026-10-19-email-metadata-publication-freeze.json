@@ -1,0 +1,25 @@
+{
+  "schema": "ceo-email-metadata-post-acceptance-integration-v1",
+  "commit": "3116110b0b714f6f295a4bb871207466b4abc669",
+  "upstream": "c4f332417158384d8cb2bfbeb42efffd17f00a1b",
+  "files": 1196,
+  "sha256": "0f1db0987f6a636f1ac39a7cc8f4561f7d3116bfdd26cf1123af5ae8787aaaf6",
+  "digest_format": "SHA-256 of UTF-8 json.dumps(entries,ensure_ascii=False,separators=(comma,colon)), unique sorted paths, entry key order path then sha256",
+  "parent_copy_source": "eadf628c8 app/tests/scripts identical to cb156951b,1195files/9d4109905acea0be33e145056a14b6308a1d6a3c71291d0a1422dcbaf64a58be",
+  "changed_source_paths": [
+    "app/consumer_agent.py",
+    "app/native_prompt_input.py",
+    "app/task_scanners.py",
+    "tests/test_consumer_agent.py",
+    "tests/test_native_prompt_wire_schema.py",
+    "tests/test_stardust_oa_people_review_handover_routing.py",
+    "tests/test_task_scanners.py"
+  ],
+  "b1_schema_runtime_release_files_unchanged": true,
+  "focused_wire_session_tests": {
+    "passed": 8,
+    "deselected": 171,
+    "seconds": 14.08
+  },
+  "native_proof_boundary": "Earlier A2 CLI proof did not run these later upstream wire/OA changes; upstream PRs contain their own validation. B1 parent-copy proof remains pinned to9d410990."
+}

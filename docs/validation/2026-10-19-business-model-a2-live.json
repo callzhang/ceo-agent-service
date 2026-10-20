@@ -1,0 +1,100 @@
+{
+  "production_head": "5a0cb051c70bd567fcfd72b25d93007a12d07aa1",
+  "old_pid": "45391",
+  "pid": "63376",
+  "health": "ok",
+  "system_violations": 0,
+  "queue_failure_counts_unchanged": true,
+  "attention_count": 4,
+  "dispatcher_queues": [
+    {
+      "name": "scheduled",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "scheduled_execution",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "reply",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "meeting",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "work_summary",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "okr_review",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "business_task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_memory_write",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    }
+  ],
+  "storage": {
+    "pair": "Store19.2/Email52",
+    "bytes": 474238976,
+    "attempts": 317,
+    "receipt_references": 274,
+    "equal_duplicate_bodies": 0,
+    "missing_reference_owners": 0,
+    "fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "no_native_fixture_in_production": true
+  }
+}

@@ -52,6 +52,7 @@ from app.business_skills import (
 from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
+from app.native_prompt_input import codex_session_wire_schema as read_codex_session_wire_schema
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
@@ -339,11 +340,6 @@ per-run artifacts or intermediate files into memory merely because they may
 look useful later.
 """.strip()
 AGENT_CAPABILITY_INSTRUCTIONS = """
-Use the role's actual declared tools to read the sources needed for this task.
-Consumer may use its ordinary work tools for documents, artifacts, research,
-analysis and computation. Ordinary work does not require a controlled-action
-proposal merely because a tool writes. Use actual tool results and readback as
-evidence of that work. A summary is not a receipt of a controlled action.
 Use consumer_artifact_write for ordinary local drafts and files, with
 read_task_artifact/list_task_artifacts for this task generation's artifacts.
 consumer_document_write writes a scheduled task artifact to its explicit document target.
@@ -351,14 +347,10 @@ consumer_run_skill_script executes a selected Skill script for deterministic loc
 Codex Consumer can run local code using native command and patch tools in its
 current task workspace. The native workspace sandbox keeps writes in that
 workspace and native temporary directories, and disables command network
-access. Claude has declared read and artifact tools only. Use the actual current runtime catalog; do not invent a
-successful execution result.
-Only the registered reviewed system actions in the supplied action contracts
-are dispatched by system code after whole-candidate approval. Do not invoke
-those actions directly or claim them completed without the System receipt.
-Audit has read tools only. Do not try nested CLI inventory, nested Agents,
+access. Claude has declared read and artifact tools only.
+Do not try nested CLI inventory, nested Agents,
 commands or a different channel to reach an unavailable operation.
-Call direct read MCP tools where available. Use memory_recall for relevant
+Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
@@ -367,20 +359,16 @@ For DingTalk reads in service Consumer/Audit turns, call the declared
 shell; command examples in product Skills describe interactive sessions and
 are not service-role execution instructions. If the matching read tool is not
 declared, report that exact capability as unavailable.
-Preserve concrete provider error codes and source context when a read fails.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
 summary. Do not use this code when a successful read returns no match, evidence
 is incomplete or ambiguous, or a governing rule is missing; those are evidence
 or business-rule outcomes, not infrastructure outages.
-Technical/provider authentication or schema errors are failed, not fabricated
-business questions. An unresolved provider-risk refusal for the current
-intended action remains failed with its original error code and no retry;
-not retrying a refused action does not make the task completed or no_action.
-Audit must return a candidate that incorrectly reports such a refusal as
-no_action. Historical refusal evidence never authorizes a new effect, a new
-action identity, or another channel to evade the refusal.
+An unresolved provider-risk refusal for the current intended action remains
+failed with its original error code and no retry; it cannot
+become completed or no_action. Historical refusal evidence never authorizes a
+new effect, identity or channel to evade the refusal.
 A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and
@@ -541,6 +529,7 @@ class ConsumerAgentRunner:
         owner: str | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
+        codex_session_wire_schema: Callable[[str], dict[str, object] | None] | None = None,
         runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
         forced_runtime_route=None,
         reasoning_effort: str = "",
@@ -564,6 +553,11 @@ class ConsumerAgentRunner:
         self.codex_session_exists = codex_session_exists or (
             lambda session_id: find_codex_session_path(session_id) is not None
         )
+        self.codex_session_wire_schema = (
+            codex_session_wire_schema
+            if codex_session_wire_schema is not None
+            else read_codex_session_wire_schema if codex_session_exists is None else None
+        )
         self.runtime_skill_snapshot = runtime_skill_snapshot
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
@@ -577,7 +571,10 @@ class ConsumerAgentRunner:
         )
         return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
 
-    def _route_session_exists(self, route_name: str, session_id: str) -> bool:
+    def _route_session_exists(
+        self, route_name: str, session_id: str,
+        *, expected_wire_schema: dict[str, object] | None = None,
+    ) -> bool:
         config = self.runtime_config or (
             self.codex_adapter.config if self.codex_adapter is not None else None
         )
@@ -599,7 +596,15 @@ class ConsumerAgentRunner:
             # Claude owns its remote conversation ledger. The adapter validates
             # the persisted ID before --resume and handles incompatibility safely.
             return True
-        return self.codex_session_exists(session_id)
+        if not self.codex_session_exists(session_id):
+            return False
+        if (
+            route_kind is RuntimeKind.CODEX_CLI
+            and expected_wire_schema is not None
+            and self.codex_session_wire_schema is not None
+        ):
+            return self.codex_session_wire_schema(session_id) == expected_wire_schema
+        return True
 
     def _consumer_route_sessions(
         self, conversation_id: str, session_contract_hash: str = ""
@@ -607,7 +612,7 @@ class ConsumerAgentRunner:
         """Return live route sessions for one continuous business conversation.
 
         Selected Skill turns reuse only the exact Skill-compatible session. Other
-        Consumer contract edits retain the existing continuous-conversation behavior.
+        prompt edits retain continuity unless the saved Codex wire schema differs.
         """
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():
@@ -717,6 +722,8 @@ class ConsumerAgentRunner:
                 selected_skill_source_fingerprints
             )
         )
+        purpose_name = purpose_for_context(context, task)
+        expected_wire_schema = json.loads(_schema_json(consumer_wire_model(purpose_name)))
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, skill_session_contract_hash
         )
@@ -727,7 +734,9 @@ class ConsumerAgentRunner:
         # id here only supplies a fast-path hint and never clears other routes.
         conversation_session_id = next(iter(route_sessions.values()), None)
         for route_name, route_session_id in tuple(route_sessions.items()):
-            if not self._route_session_exists(route_name, route_session_id):
+            if not self._route_session_exists(
+                route_name, route_session_id, expected_wire_schema=expected_wire_schema
+            ):
                 self._clear_route_session(
                     task.conversation_id, route_name, route_session_id
                 )
@@ -819,7 +828,6 @@ class ConsumerAgentRunner:
                 ),
             )
 
-        purpose_name = purpose_for_context(context, task)
         developer_sections = consumer_developer_sections(
             runtime_context="",
             prompt_configuration=configuration,

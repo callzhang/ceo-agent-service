@@ -67,16 +67,25 @@ Final focused results:
 `ruff check` and Python compilation passed for all 29 changed/new Python files;
 `git diff --check` passed. No full-suite result is claimed.
 
-The source freeze is
-[`2026-10-19-email-metadata-source-freeze.json`](superpowers/specs/2026-10-19-email-metadata-source-freeze.json).
-It lists individual hashes for the 29 changed/new app/test/script files and
-the reproducible aggregate over all 1,195 tracked or unignored source files in
-those three directories. Aggregate SHA-256:
-`e6041ee817c0be27ec5f30c6caba18d48bbbcb459ff20f3d21647e5e8c98a417`.
-Manifest file SHA-256:
-`b9b7ac6ee51a498a5eec2f824083b1943480b36fa21ff6bd2156b0c475a3c571`.
-App/tests/scripts remain frozen for root acceptance; subsequent edits in this
-handoff only record documentation and the implementer's claim status.
+The initial implementer snapshot covered 29 changed source files, with 1,195-file
+aggregate `e6041ee817c0be27ec5f30c6caba18d48bbbcb459ff20f3d21647e5e8c98a417`.
+After the reviewed native-harness correction, the immutable pre-merge snapshot
+[`2026-10-19-email-metadata-source-freeze.json`](superpowers/specs/2026-10-19-email-metadata-source-freeze.json)
+covers 31 changed source files and aggregate
+`125cc463541b7ca34bcfe7e2c70b5f6e1187b489377ef262ffbbe18f7921e210`;
+its manifest file SHA-256 is
+`5e6f5cc6385335fffe0a2a2fffac1b0193a0490f49a8c057c444541d4ae1a3ad`.
+These are historical evidence boundaries, not the final merged app tree.
+
+Root merged accepted A2 and upstream Consumer capability wording at `cb156951b`.
+The only app/test/script differences from pre-merge `07738a55d` are
+`app/consumer_agent.py` and `tests/test_consumer_agent.py`; B1 schema/runtime and
+native helper remain byte-identical. The final merged source for parent acceptance
+is recorded in
+[`2026-10-19-email-metadata-merged-freeze.json`](superpowers/specs/2026-10-19-email-metadata-merged-freeze.json):
+1,195 files, aggregate `9d4109905acea0be33e145056a14b6308a1d6a3c71291d0a1422dcbaf64a58be`.
+The merged metadata-schema and native-harness tests passed 39/96.14s.
+No source body or native trajectory is included in either manifest.
 
 The eleven EmailStore nodes cover direct primary-key lookup, feedback, training
 eligibility, pending-feedback persistence, both rescan locator paths,
@@ -137,3 +146,59 @@ validates the selected declarations. GREEN: after the harness and regression
 assertion changed, both tests in
 `tests/test_native_copy_final_schema.py` passed; Ruff and `git diff --check`
 passed. No application runtime code changed.
+
+## Parent actual-copy and visible UI acceptance
+
+Parent acceptance passed on frozen merged source `eadf628c8` (same app/tests/scripts
+as `cb156951b`, 1,195-file aggregate9d410990...). The fresh live source was
+Store19.1 while A2 waited for work to drain. Actual A2 code `25920bb11` first
+published that consistent copy to19.2; B1 then published to19.3/Email53.
+The source contained9,528 Emails. Every planned Email value/type mapping,
+all unrelated table hashes, original FK multiset and allocator values passed.
+The sole original Runs190042 FK finding remains; it is not reported as zero.
+
+New current facts passed class→message and message→class metadata update,
+paired-locator CAS with separate clocks, independent message/class IDs,
+a message-only row, and the1,000-Unicode-character preview. Default local
+search made zero original reads; explicit detail used the complete synthetic
+original through a substitute. Actual browser interaction at copy port18767
+searched the new subject, opened its detail and displayed the suffix beyond
+the preview. No worker ran in this console and no outbound provider was called.
+
+The inverse restored the exact complete source schema and all new facts.
+Actual archived A2 `25920bb11` Store and EmailStore cold-opened the current
+database and read the new metadata/message-only row. Re-publication preserved
+every business-table hash and all source Email-ledger rows; only Store marker
+time and newly recreated Email53 publication time changed. Full integrity_check
+is ok, source SHA is unchanged and provider calls are0. Detailed body-free
+evidence is `validation/2026-10-19-email-metadata-parent-copy.json`.
+
+Two harness corrections are explicit: the new synthetic ID first used a
+storage-valid negative value, which the positive-ID API correctly rejected;
+UI acceptance then used a verified-unused positive JavaScript-safe ID. The
+first re-publication comparison also incorrectly pinned the recreated Email53
+applied_at timestamp. The corrected full inverse/reforward cycle was rerun;
+no B1 application code changed for either harness issue.
+
+The four duplicate header values sum to1,188,144 bytes. Preview content moves
+to one owner and remains retained. Recorded page figures include two new
+synthetic target rows, so they are not an identical-population savings claim;
+the474,185,728-byte file was not VACUUMed. B1 is accepted locally but not yet
+deployed. A2 separately reached production5a0cb051c, Store19.2/Email52, PID63376
+with clean health, queues, Attention and History readback.
+
+## Subsequent upstream integration for publication
+
+After parent-copy acceptance, upstream `c4f332417` was merged at `3116110b0`.
+Changes under app/tests/scripts are exactly the seven paths listed in
+`superpowers/specs/2026-10-19-email-metadata-publication-freeze.json`: OA scanner
+routing and Consumer native wire-session compatibility with their tests.
+Every B1 schema, storage, reader/writer, release and native-harness file remains
+byte-identical to the accepted source. The post-merge tree contains1196
+source files, aggregate`0f1db0987f6a636f1ac39a7cc8f4561f7d3116bfdd26cf1123af5ae8787aaaf6`.
+Eight focused native-wire/session tests passed14.08s (171deselected). This is
+not a new native CLI run. Prior B1 copy proof stays pinned to its1195-file source;
+upstream PR166/167 validation applies to their separate changes. Fresh current
+Store19.2/Email52 backup passed full integrity and original FK-multiset checks;
+only then atomically replaced the previous verified daily backup. B1 deployment
+remains pending final integration reviews.
