@@ -576,8 +576,11 @@ must fit below the 1 MiB MCP text-block boundary using the same indented
 escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
 business evidence as complete. Textless PDF pages and supported image attachments
 are read through the installed Stardust OCR client; PDF page order, source hash,
-and OCR confidence remain visible, while image results include extracted text,
-confidence, warnings, and source hash. OCR errors are technical read failures
+and OCR confidence remain visible. Supported raster images that exceed the
+700 KiB OCR MCP input bound are re-encoded as a bounded JPEG for OCR while the
+original source SHA-256 and dimensions remain in the reader result; images
+already under the bound are passed through unchanged. Image OCR results include
+extracted text, confidence, warnings, and source hash. OCR errors are technical read failures
 rather than evidence of missing applicant material. Process-owned
 temporary directory cleanup remains unchanged; failed extraction/serialization removes the
 new material file. These limits do not grant shell access to DWS credentials.
