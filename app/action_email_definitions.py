@@ -744,7 +744,7 @@ def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=Fal
     return generated, checks, fks, indexes, triggers
 
 
-def email_action_projection(kind, *, include_rowid=False, source_variant="actual"):
+def email_action_projection(kind, *, include_rowid=False, source_variant="actual", include_physical_id=False):
     if kind not in EMAIL_FIELDS:
         raise ValueError(f"unknown Email action kind: {kind}")
     if source_variant not in ("actual", "fresh_candidate"):
@@ -755,6 +755,8 @@ def email_action_projection(kind, *, include_rowid=False, source_variant="actual
     columns = [f"a.email_{field} as {field}" for field in fields]
     if include_rowid:
         columns.insert(0, "cast(a.legacy_key as integer) as rowid")
+    if include_physical_id:
+        columns.insert(0, "a.id as physical_action_id")
     return f"select {','.join(columns)} from actions a where a.record_type='{kind}'"
 
 

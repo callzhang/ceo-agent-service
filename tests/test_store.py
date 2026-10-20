@@ -13610,3 +13610,75 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
 
     assert mapped == {9001: 13}
     assert store.scheduled_task_ids_for_reply_tasks(()) == {}
+
+
+def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    process_id = "proc-review"
+    oa_task_id = "task-review"
+    conversation_id = f"oa_pending_scan:{process_id}"
+    trigger_id = "oa-pending:proc-review:revision-1:2026-10-19"
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?"
+        f"procInstId={process_id}&taskId={oa_task_id}"
+    )
+    trigger_json = json.dumps({
+        "message_id": trigger_id,
+        "raw_payload": {"source": "oa_pending_scan", "processInstanceId": process_id,
+                        "taskId": oa_task_id},
+    })
+    task = store.ensure_reply_task(
+        conversation_id=conversation_id, conversation_title="审批待办",
+        single_chat=True, trigger_message_id=trigger_id,
+        trigger_create_time="2026-10-19T10:00:00Z", trigger_sender="Derek OA",
+        trigger_text="Review this OA process.", trigger_message_json=trigger_json,
+        channel="dingtalk", oa_url=oa_url,
+        business_object_key=f"oa:{process_id}:{oa_task_id}",
+    )
+    with store._immediate_write_transaction() as db:
+        task_update = task8_set_parts(
+            "reply_tasks", {},
+            update_sql={"status": "'done'", "updated_at": "current_timestamp"},
+            payload_source="tasks.payload_json",
+        )
+        db.execute(
+            f"update tasks set {task_update.sql} "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=conversation_id, conversation_title="审批待办",
+        trigger_message_id=trigger_id, trigger_sender="Derek OA",
+        trigger_text="", action="agent_run", sensitivity_kind="general",
+        oa_process_instance_id=process_id, oa_task_id=oa_task_id,
+        oa_url=oa_url, oa_action="review", oa_action_result_json="{}",
+        send_status="skipped", channel="dingtalk",
+    )
+    store.record_reply_feedback(
+        attempt_id, feedback="Re-review based on the business evidence.",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "resolved_at": "2026-10-20 04:00:00", "resolution": "no_action",
+        })
+
+    rerun_args = dict(
+        conversation_id=conversation_id, conversation_title="审批待办",
+        single_chat=True, trigger_message_id=trigger_id,
+        trigger_create_time="2026-10-19T10:00:00Z", trigger_sender="Derek OA",
+        trigger_text="Review this OA process.", trigger_message_json=trigger_json,
+        oa_url=oa_url, attempt_id=attempt_id, channel="dingtalk",
+        expected_execution_generation=task.execution_generation,
+    )
+    with pytest.raises(store_module.ManualRerunConflict, match="no_action"):
+        store.enqueue_manual_rerun_reply_task(**rerun_args)
+
+    rerun = store.enqueue_manual_rerun_reply_task(
+        **rerun_args, allow_skipped_oa_review=True,
+    )
+
+    assert rerun.status == "pending"
+    assert rerun.execution_generation != task.execution_generation
+    assert rerun.manual_rerun_attempt_id == attempt_id

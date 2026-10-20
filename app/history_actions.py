@@ -101,6 +101,35 @@ def reply_history_attention(
     return None
 
 
+def can_reopen_skipped_oa_review(attempt, task) -> bool:
+    """Whether explicit reviewer feedback may start a fresh OA review turn.
+
+    This does not reopen business actions. It only permits the Agent to
+    re-evaluate a skipped review when the same DingTalk OA task is still
+    pending and the prior turn recorded no OA effect.
+    """
+    if attempt is None or task is None:
+        return False
+    process_id = str(getattr(attempt, "oa_process_instance_id", "") or "").strip()
+    oa_task_id = str(getattr(attempt, "oa_task_id", "") or "").strip()
+    return bool(
+        str(getattr(attempt, "send_status", "") or "").strip().lower() == "skipped"
+        and str(getattr(attempt, "resolved_at", "") or "").strip()
+        and str(getattr(attempt, "reviewer_feedback", "") or "").strip()
+        and str(getattr(attempt, "action", "") or "").strip() == "agent_run"
+        and str(getattr(attempt, "oa_action", "") or "").strip() == "review"
+        and str(getattr(attempt, "oa_action_result_json", "") or "").strip()
+        in {"", "{}", "null"}
+        and process_id and oa_task_id
+        and str(getattr(task, "channel", "") or "").strip() == "dingtalk"
+        and str(getattr(task, "conversation_id", "") or "").strip()
+        == f"oa_pending_scan:{process_id}"
+        and str(getattr(task, "business_object_key", "") or "").strip()
+        == f"oa:{process_id}:{oa_task_id}"
+        and str(getattr(task, "status", "") or "").strip().lower() in {"done", "skipped"}
+    )
+
+
 def _management_tail(
     *,
     include_retry: bool,
