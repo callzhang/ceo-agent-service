@@ -322,3 +322,18 @@ stamp, SHA91c6664401edb953e0ab3f2df7a142e50249125f1e15e950f809c04a990c8492.
 It replaced the previous daily workflow backup atomically only after all checks;
 the active acceptance source is separate disposable working data. Standard
 production deployment and live readback are the remaining B2a gates.
+
+## Final main synchronization before push
+
+The first fast-forward push was rejected because main advanced to816d05e9a with
+an independently authored OA people-Skill rule and matching release hashes. Root
+fetched and normally merged it at96b4ec2dc; the append-only claims conflict kept
+both complete claim rows. The only app/tests/scripts delta is the corresponding
+five-line chronology test update, which passed1/1 in0.15seconds. No app source,
+B2a core, or native general-task instruction changed. The committed Skill's new
+SHA888516678b5f4118acf18d972d1ad6227b22022924eb2c36f7cdc57d6f229fc6
+matches its release manifest; old SHA matches the preceding committed Skill.
+A separate refresh freeze preserves the prior f491 publication manifest, pins
+the one changed test plus both additional CI runtime inputs, and requires bounded
+SPEC then QUALITY refresh before retrying the standard push/deploy. No policy
+change was authored as part of B2a, and no OA action was performed.
