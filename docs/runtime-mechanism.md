@@ -2184,6 +2184,8 @@ AgentRun 的终态重复完成先在写事务外读取准确原生引用。独�
 原生轨迹加载发生在写事务释放后，不用 SQL 正文副本代替原生证据。这只是
 终态收尾路径的锁暴露修复，不代表全部生产延迟或 SQLite 竞争已经根治。
 
+微信专用 Runner 在首轮 Developer 指令中给出有效的最小 `AgentEnvelope` 字段示例；首次格式错误仍由原有同 session 校验修正处理，业务结果仍由完整模型校验。原生 output-schema 开关、路线、工具、会话和交付阶段均未因此改变。
+
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
