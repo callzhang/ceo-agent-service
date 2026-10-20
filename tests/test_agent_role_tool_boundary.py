@@ -74,7 +74,7 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert "features.code_mode_only=false" not in command
         assert "features.code_mode.enabled=true" in command
         assert "features.code_mode.enabled=false" not in command
-        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]' in command
+        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
         assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
         assert "mcp_servers.node_repl.enabled=false" in command
         assert "mcp_servers.plaud.enabled=false" in command
