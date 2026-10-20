@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.3`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.4`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -17,7 +17,7 @@ Tasks 合并二十种已有任务。七个结构列可写；`payload_json` 是�
 关系保留；公开 ID、源 ROWID、独立分配水位、SQLite REAL/BLOB、负零及业务字段
 内的 JSON 文本不改变。历史 `task_storage` 是迁移来源 oracle，不是运行时兼容层。
 
-Actions 合并六十一种已有方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执。
+Actions 保留六十一种物理类型：六十种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 同样只存 `_kind` 和声明的 JSONB 值槽位，公开类型／字段通过生成列读取。
 公开 ID 与物理 Action ID 保持区别，各源 AUTO 水位和普通隐藏 ROWID 语义保留。
 Reply、Email、Sync、delivery、Errors、Feedback、Business evidence、Email history
@@ -41,7 +41,7 @@ failed、uncertain 和独立的结果（包括不同于 receipt 的 `{}`）仍�
 先把此前引用它的历史尝试还原为原正文，再将本次实际修正的尝试指向新正文；
 因此未被修正的历史事实不会随 receipt 改写。原有身份、幂等和状态合同不变。
 
-既有 `prepare_database_schema_release` 当前将准确 Store `2026-10-19.2`／Email52
+B1 的历史配对发布将准确 Store `2026-10-19.2`／Email52
 发布为 `2026-10-19.3`／Email53。B1 只退休五个重复的 classification 元数据列，
 以现有 message 列为唯一 owner；发布前逐行检查四对标量的 SQLite 值及类型完全
 相等、classified 的旧 message_preview 为空且 class_preview 为至多1000字符的文本。
@@ -57,6 +57,36 @@ message-only 的五个旧分类槽位必须为 NULL，有界预览保持原值�
 不保存业务行副本；两种已有 Reply FK 及 Action 到 classification_id 的 FK 保留。
 A2 的历史逆迁仍从当前 receipt 恢复 verified／NULL attempt 的正文；A1 仍从绑定
 candidate 重建选择分支。B1 的局部证据见[Email 元数据验收](database-redesign-email-metadata-validation.md)。
+
+
+Store `2026-10-19.4` 将已审核 candidate 作为执行状态的唯一 owner。candidate 原有
+created_at、失效时间及原因不变；七个新增 JSONB 槽位保存旧 execution 的公开 ID、
+status、lease owner／expiry、result、created_at 和 updated_at，两个可空物理 FK 保存
+实际采用的 review 和 selection。未执行 candidate 的九个值全部为 NULL；选择可以为空，
+执行时其余值按原声明完整保留。多个 review 仍是独立历史，不由执行状态替代。
+旧 `candidate_executions` 类型不再进入当前声明或运行时写入；其类型码5及历史声明冻结。
+新增类型码62的 `candidate_execution_alias` 原位保留旧 Actions 物理 ID、legacy key 和
+candidate FK，JSONB 是空数组，身份不可改写或删除，不持有状态、租约、结果或时间。
+Attempt 的物理 execution_id 继续指向 alias；公共投影连接 plan 后仍返回原 execution
+公开 ID，绝不以 candidate ID 代替。claim、续租、finish 及既有历史回执修复只更新 plan。
+既有代际、最新候选、失效、审核、租约、终态和回执校验保持原语义。
+
+Alias 与完整执行块由可延迟到 COMMIT 的双向复合 FK 保持一一对应，三个虚拟 binding
+列仅由已有物理／公开身份和类型生成。孤立 alias、缺 alias 的执行块或身份不符不能提交。
+独立 candidate 唯一索引禁止多个 alias；复合 FK 保证采用的 review／selection 属于同一
+物理 candidate，selection 的 review 与采用的 review 一致。首次 claim 在原事务内建立
+alias 并填写执行块，使用原普通 INTEGER PRIMARY KEY 的公开 ID 分配语义；不新增水位。
+
+既有 `prepare_database_schema_release` 当前只将准确 Store `2026-10-19.3`／Email53
+发布为 `2026-10-19.4`／Email53。A3 在原发布事务内重建 Actions 并更新 Store marker，
+Email53 账本及其他表保持原值；构造器在写入前拒绝 predecessor 或 mixed pair。迁移前
+检查每个既有执行的精确候选／review／selection 绑定，两种真实 Reply FK 声明分别匹配。
+失败回滚从当前 plan 执行块与 alias 重建旧 execution，包括迁移后新建执行和 attempt；
+没有执行块就不生成 execution。保留物理／公开 ID、SQLite 类型、原 marker 时间及所有
+已有分配水位，不归档业务行副本。仍使用既有 prepare、publish、verify_loaded、rollback、
+finalize 和旧代码冷启动验收。A3 仅完成 reviewed plan 的执行归属，Reply／Sent／Postfix
+及 Email 通用 plan／step／attempt 的后续切片未在本次完成；证据范围见
+[执行归属验收](database-redesign-execution-owner-validation.md)。
 
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
@@ -1670,7 +1700,7 @@ OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`�
 
 原生群消息和直接用户消息在 provider 接受、但本地回执尚未保存的中断后，恢复读取原精确目标，并比对持久化审核正文、本人发送者、未撤回、dispatch 时间下界及唯一消息身份，匹配后补存回执而不重派。窗口读回使用 DingTalk `im.message-list.v1` 完整分页 contract，并验证时间范围、页数、失败数及结果条数；群聊按会话 ID 查询，单聊按稳定 userId/openDingTalkId 查询。若回复任务明确标记 `input_compacted`，触发消息 JSON 是溯源包装而非 `DingTalkMessage`；具名 reconcile 先按保留的原触发消息 ID 只读读取该消息，并核对会话、消息 ID、发送人和时间均与任务元数据一致，再进行原生完整会话消息核对。压缩输入不得导致普通异常重试或进入 dispatch。新 action attempt 在调用 provider 前原子保存 UTC 毫秒 dispatch 时间；旧无时区秒时间不能作为精确归属边界，保持失败并要求新的精确复检；provider 只返回秒时间时，同秒不足以证明消息在 dispatch 后，也保持失败并停止重发。完整窗口唯一精确命中恢复真实发送回执；完整窗口零个匹配的发送人/正文/引用组合记录为未送达，停止旧候选，仅允许确认无效果后由新候选重试；不完整窗口或多匹配保持失败且不派发。若原始发送在准备正文一致性检查处已失败，新执行先对原目标、审核正文和原始派发边界执行只读完整窗口复检。只有完整零命中才把原 action attempt 记录为 `confirmed_no_effect` 并解除动作键门禁；唯一命中记录 verified 回执。若源任务终止而当前待办归档为 skipped，历史中仍保留未送达事实，不投影为已送达。文档评论和 OA 评论恢复读取原 node/process instance 并保存只读诊断；尚无已验证的 author/time/body/stable-ID 联合归属契约时，不凭相似正文补记成功或再次发送。
 
-candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
+`review_candidates` 的执行块保存租约；`candidate_execution_alias` 仅保留原执行物理 ID、公开 ID 和候选 FK，旧形状执行投影连接别名与计划读取当前状态。`candidate_action_attempts` 的 `execution_id` 继续指向别名，在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 

@@ -295,7 +295,7 @@ def test_actions_schema_retires_candidate_tables_and_preserves_public_ids(tmp_pa
     records = {
         "review_candidates": candidate, "candidate_reviews": review,
         "candidate_selections": selected, "candidate_supplements": supplement,
-        "candidate_executions": execution, "candidate_action_attempts": attempt,
+        "candidate_execution_alias": execution, "candidate_action_attempts": attempt,
     }
     with store._connect() as db:
         names = {row[0] for row in db.execute(

@@ -1,6 +1,7 @@
 """Explicit repair of historical reply receipts using provider task readback."""
 
 from app.model_action_schema import selected_branch
+from app.execution_owner_storage import update_plan_execution
 
 import hashlib
 import json
@@ -132,7 +133,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                     error={"code": error_code, "retryable": False,
                            "stage": "system_execution", "authorization_required": False},
                 )
-                update_action(db, "candidate_executions", execution["id"], {
+                update_plan_execution(db, execution["id"], {
                     "status": action_status, "result_json": pending.model_dump_json(),
                     "lease_owner": "", "lease_expires_at": "", "updated_at": proof["queried_at"],
                 })
@@ -471,7 +472,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                              "live_result_reference": verification},
             completed_action_keys=(sent["external_action_key"],),
         ).model_dump_json()
-        update_action(db, "candidate_executions", candidate["execution_id"], {
+        update_plan_execution(db, candidate["execution_id"], {
             "status": "done", "result_json": execution_result,
             "lease_owner": "", "lease_expires_at": "", "updated_at": queried_at,
         })

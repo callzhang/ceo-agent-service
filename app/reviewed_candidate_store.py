@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from app.run_storage import AGENT_RUN_SQL
 from app.model_action_schema import candidate_option, selected_branch
+from app.execution_owner_storage import create_plan_execution, update_plan_execution
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
@@ -146,7 +147,7 @@ class ReviewedCandidateStoreMixin:
             "consumer_run_id": run["id"], "stage_index": stage,
             "proposal_revision": run["proposal_revision"], "predecessor_review_id": predecessor,
             "candidate_digest": digest, "candidate_json": body,
-        }, ignore=True)
+        }, ignore=True, execution_owner=True)
         saved = db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (run["id"],)).fetchone()
         if saved["candidate_digest"] != digest or saved["candidate_json"] != body:
             raise ValueError("candidate content conflict")
@@ -342,16 +343,14 @@ class ReviewedCandidateStoreMixin:
                     raise ValueError("execution plan mismatch")
                 if old["status"] in ("done","skipped","failed") or (old["status"] == "running" and old["lease_expires_at"] > now_text and old["lease_owner"] != owner):
                     return None
-                update_action(db, "candidate_executions", old["id"], {
+                update_plan_execution(db, old["id"], {
                     "status": "running", "lease_owner": owner, "lease_expires_at": expiry,
                     "updated_at": _db_timestamp(db),
                 })
             else:
-                insert_action(db, "candidate_executions", {
-                    "candidate_id": candidate_id, "review_id": review_id,
-                    "selection_id": selection["id"] if selection else None,
-                    "status": "running", "lease_owner": owner, "lease_expires_at": expiry,
-                })
+                create_plan_execution(db, candidate_id=candidate_id, review_id=review_id,
+                    selection_id=selection["id"] if selection else None,
+                    status="running", lease_owner=owner, lease_expires_at=expiry)
             return dict(db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone())
 
     def renew_candidate_execution_claim(self, execution_id: int, owner: str, lease_seconds: int) -> dict[str, Any]:
@@ -359,7 +358,7 @@ class ReviewedCandidateStoreMixin:
             raise ValueError("invalid lease")
         with self._immediate_write_transaction() as db:
             self._leased_execution(db, execution_id, owner)
-            update_action(db, "candidate_executions", execution_id, {
+            update_plan_execution(db, execution_id, {
                 "lease_expires_at": _clock(_utc()+timedelta(seconds=lease_seconds)),
                 "updated_at": _db_timestamp(db),
             })
@@ -411,7 +410,7 @@ class ReviewedCandidateStoreMixin:
                 attempts = db.execute(f"select action_index,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? order by action_index", (execution_id,)).fetchall()
                 if not actions or len(attempts) != len(actions) or any(row["action_index"] != index or row["status"] != "verified" for index,row in enumerate(attempts)):
                     raise ValueError("execution actions are not verified")
-            update_action(db, "candidate_executions", execution_id, {
+            update_plan_execution(db, execution_id, {
                 "status": status, "result_json": body, "lease_owner": "", "lease_expires_at": "",
                 "updated_at": _db_timestamp(db),
             })
@@ -482,7 +481,7 @@ class ReviewedCandidateStoreMixin:
                 "result_json": (None if existing_success is not None and receipt_status == "verified"
                                 and existing_success["provider_result_json"] == "{}" else "{}"),
                 "created_at": db.execute("select strftime('%Y-%m-%dT%H:%M:%fZ','now')").fetchone()[0],
-            })
+            }, execution_owner=True)
             return candidate_action_attempt_row(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (inserted.lastrowid,)).fetchone())
 
     def get_prior_candidate_action_attempt(

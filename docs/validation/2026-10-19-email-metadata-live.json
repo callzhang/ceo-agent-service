@@ -1,6 +1,5 @@
 {
   "production_head": "8221466b1e1e8526d8e3190979214553fa4ff712",
-  "old_pid": "63376",
   "pid": "75700",
   "pair": "Store19.3/Email53",
   "five_duplicate_class_columns_absent": true,
@@ -338,5 +337,6 @@
     "updated_at_utc": "2026-10-20 01:14:00",
     "current_supervisor_started_local": "2026-10-19 18:16:44",
     "note": "Failure timestamp predates B1 restart. Earlier A2 baseline is not an immediate predeploy baseline; no unchanged-failure-count claim."
-  }
+  },
+  "earlier_a2_snapshot_pid": "63376"
 }
