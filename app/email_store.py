@@ -109,7 +109,7 @@ from app.run_storage import AGENT_RUN_SQL
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
     email_action_auxiliary_objects_are_current,
-    insert_action, insert_email_action, update_email_action, update_action,
+    insert_action, insert_email_action, update_action,
     delete_action, delete_email_action,
 )
 
@@ -3066,12 +3066,12 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
         if self.path.exists():
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("begin")
                 if db.execute("select 1 from sqlite_schema where name='actions'").fetchone() and not any(
-                    email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
+                    email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True)
                     for variant in REPLY_VARIANTS
                 ):
                     raise EmailPersistenceCorruption("required Email29 action schema is missing or malformed")
@@ -3079,7 +3079,7 @@ class EmailStore:
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
-            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:
@@ -7040,7 +7040,7 @@ class EmailStore:
                     include_business_actions=True,
                     include_email_history=True,
                     canonical_email=True,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True,
                 )
                 for variant in REPLY_VARIANTS
             ):
@@ -9473,24 +9473,19 @@ class EmailStore:
                     "claimed_at": claimed_at,
                     "updated_at": claimed_at,
                 }
-                mutation_rows = db.execute(
-                    f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='retryable' and owner_id=? and owner_generation=? and lease_token=?""",
-                    (
+                updated = shared_action_lifecycle.transition(
+                    db,
+                    "email_reply",
+                    "state",
+                    values=mutation_values,
+                    where_sql="action_identity=? and status='retryable' and owner_id=? and owner_generation=? and lease_token=?",
+                    parameters=(
                         action_identity,
                         claim["owner_id"],
                         claim["owner_generation"],
                         claim["lease_token"],
                     ),
-                ).fetchall()
-                updated = sum(
-                    update_email_action(
-                        db,
-                        "email_reply_dispatch_claims",
-                        source_row["rowid"],
-                        mutation_values,
-                    ).rowcount
-                    for source_row in mutation_rows
-                )
+                ).rowcount
                 if updated != 1:
                     raise EmailReplyDispatchConflict(
                         "email reply retryable claim changed concurrently"
@@ -9501,10 +9496,11 @@ class EmailStore:
                 ).fetchone()
                 assert row is not None
                 return {**self._email_reply_dispatch_claim_row(row), "acquired": True}
-            insert_email_action(
+            shared_action_lifecycle.transition(
                 db,
-                "email_reply_dispatch_claims",
-                {
+                "email_reply",
+                "claim",
+                values={
                     "action_identity": action_identity,
                     "effect_digest": effect_digest,
                     "action_plan_id": action_plan_id,
@@ -9554,24 +9550,19 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             mutation_values = {"status": "uncertain", "updated_at": self._now()}
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
-                (
+            updated = shared_action_lifecycle.transition(
+                db,
+                "email_reply",
+                "state",
+                values=mutation_values,
+                where_sql="action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?",
+                parameters=(
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).fetchall()
-            updated = sum(
-                update_email_action(
-                    db,
-                    "email_reply_dispatch_claims",
-                    source_row["rowid"],
-                    mutation_values,
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            ).rowcount
             if updated != 1:
                 raise EmailReplyDispatchConflict(
                     "email reply dispatch owner fence changed"
@@ -9635,24 +9626,19 @@ class EmailStore:
                     "email reply retry authorization changed"
                 )
             mutation_values = {"status": "retryable", "updated_at": self._now()}
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
-                (
+            updated = shared_action_lifecycle.transition(
+                db,
+                "email_reply",
+                "state",
+                values=mutation_values,
+                where_sql="action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?",
+                parameters=(
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).fetchall()
-            updated = sum(
-                update_email_action(
-                    db,
-                    "email_reply_dispatch_claims",
-                    source_row["rowid"],
-                    mutation_values,
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            ).rowcount
             if updated != 1:
                 raise EmailReplyDispatchConflict(
                     "email reply dispatch owner fence changed"
@@ -9674,19 +9660,14 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             mutation_values = {"status": "uncertain", "updated_at": recovered_at}
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
-                (owner["owner_id"], owner["generation"], owner["lease_token"]),
-            ).fetchall()
-            updated = sum(
-                update_email_action(
-                    db,
-                    "email_reply_dispatch_claims",
-                    source_row["rowid"],
-                    mutation_values,
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            updated = shared_action_lifecycle.transition(
+                db,
+                "email_reply",
+                "state",
+                values=mutation_values,
+                where_sql="status='dispatching' and owner_id=? and owner_generation=? and lease_token=?",
+                parameters=(owner["owner_id"], owner["generation"], owner["lease_token"]),
+            ).rowcount
             return updated
 
     @staticmethod
@@ -9804,10 +9785,11 @@ class EmailStore:
                 (action_identity,),
             ).fetchone()
             if row is None:
-                insert_email_action(
+                shared_action_lifecycle.transition(
                     db,
-                    "email_reply_receipts",
-                    {
+                    "email_reply",
+                    "outcome",
+                    values={
                         "action_identity": action_identity,
                         "effect_digest": effect_digest,
                         "action_plan_id": action_plan_id,
@@ -9863,19 +9845,14 @@ class EmailStore:
                     mutation_values = {
                         "provider_receipt_json": _json_dump(enriched_receipt)
                     }
-                    mutation_rows = db.execute(
-                        f"""select rowid from ({EMAIL_REPLY_RECEIPT_LOCATOR_SQL}) where action_identity=? and provider_receipt_json=?""",
-                        (action_identity, _json_dump(persisted_receipt)),
-                    ).fetchall()
-                    updated = sum(
-                        update_email_action(
-                            db,
-                            "email_reply_receipts",
-                            source_row["rowid"],
-                            mutation_values,
-                        ).rowcount
-                        for source_row in mutation_rows
-                    )
+                    updated = shared_action_lifecycle.transition(
+                        db,
+                        "email_reply",
+                        "amend_outcome",
+                        values=mutation_values,
+                        where_sql="action_identity=? and provider_receipt_json=?",
+                        parameters=(action_identity, _json_dump(persisted_receipt)),
+                    ).rowcount
                     if updated != 1:
                         raise EmailReplyReceiptConflict(
                             "email reply receipt changed concurrently"
@@ -9906,24 +9883,19 @@ class EmailStore:
                             "email reply claim completion requires its owner fence"
                         )
                     mutation_values = {"status": "done", "updated_at": self._now()}
-                    mutation_rows = db.execute(
-                        f"""select rowid from ({EMAIL_REPLY_CLAIM_LOCATOR_SQL}) where action_identity=? and status in ('dispatching', 'retryable', 'uncertain') and owner_id=? and owner_generation=? and lease_token=?""",
-                        (
+                    updated = shared_action_lifecycle.transition(
+                        db,
+                        "email_reply",
+                        "state",
+                        values=mutation_values,
+                        where_sql="action_identity=? and status in ('dispatching', 'retryable', 'uncertain') and owner_id=? and owner_generation=? and lease_token=?",
+                        parameters=(
                             action_identity,
                             validated_claim_owner["owner_id"],
                             validated_claim_owner["generation"],
                             validated_claim_owner["lease_token"],
                         ),
-                    ).fetchall()
-                    updated = sum(
-                        update_email_action(
-                            db,
-                            "email_reply_dispatch_claims",
-                            source_row["rowid"],
-                            mutation_values,
-                        ).rowcount
-                        for source_row in mutation_rows
-                    )
+                    ).rowcount
                     if updated != 1:
                         raise EmailReplyDispatchConflict(
                             "email reply dispatch owner fence changed"
@@ -10325,17 +10297,14 @@ class EmailStore:
                         "claimed_at": claimed_at,
                         "updated_at": claimed_at,
                     }
-                    mutation_rows = db.execute(
-                        f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and status='awaiting_audit'""",
-                        (action_identity,),
-                    ).fetchall()
-                    for source_row in mutation_rows:
-                        update_email_action(
-                            db,
-                            "email_unsubscribe_claims",
-                            source_row["rowid"],
-                            mutation_values,
-                        )
+                    shared_action_lifecycle.transition(
+                        db,
+                        "email_unsubscribe",
+                        "state",
+                        values=mutation_values,
+                        where_sql="action_identity=? and status='awaiting_audit'",
+                        parameters=(action_identity,),
+                    )
                     insert_action(
                         db,
                         "email_unsubscribe_effects",
@@ -10396,10 +10365,11 @@ class EmailStore:
                     raise EmailUnsubscribeClaimConflict(
                         "unsubscribe initial effect must contain one entry operation"
                     )
-                insert_email_action(
+                shared_action_lifecycle.transition(
                     db,
-                    "email_unsubscribe_claims",
-                    {
+                    "email_unsubscribe",
+                    "claim",
+                    values={
                         "action_identity": action_identity,
                         "effect_digest": effect_digest,
                         "action_plan_id": action_plan_id,
@@ -11288,22 +11258,20 @@ class EmailStore:
                 update_continuation_conflict=True,
             )
             mutation_values = {"status": "awaiting_audit", "updated_at": now}
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and effect_digest=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
-                (
+            updated = shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "state",
+                values=mutation_values,
+                where_sql="action_identity=? and effect_digest=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?",
+                parameters=(
                     action_identity,
                     effect_digest,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).fetchall()
-            updated = sum(
-                update_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            ).rowcount
             if updated != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe continuation owner fence changed"
@@ -11560,17 +11528,14 @@ class EmailStore:
                     "email_unsubscribe_effects",
                     (source_row["action_identity"], source_row["effect_digest"]),
                 )
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
-                (action_identity,),
-            ).fetchall()
             return (
-                sum(
-                    delete_email_action(
-                        db, "email_unsubscribe_claims", source_row["rowid"]
-                    ).rowcount
-                    for source_row in mutation_rows
-                )
+                shared_action_lifecycle.transition(
+                    db,
+                    "email_unsubscribe",
+                    "retire",
+                    where_sql="action_identity=?",
+                    parameters=(action_identity,),
+                ).rowcount
                 == 1
             )
 
@@ -11700,33 +11665,23 @@ class EmailStore:
                     "operations_json": _json_dump(validated),
                     "updated_at": mutation_timestamp,
                 }
-                mutation_rows = db.execute(
-                    f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and effect_digest=?""",
-                    (action_identity, stale_digest),
-                ).fetchall()
-                moved_claim = sum(
-                    update_email_action(
-                        db,
-                        "email_unsubscribe_claims",
-                        source_row["rowid"],
-                        mutation_values,
-                    ).rowcount
-                    for source_row in mutation_rows
-                )
+                moved_claim = shared_action_lifecycle.transition(
+                    db,
+                    "email_unsubscribe",
+                    "state",
+                    values=mutation_values,
+                    where_sql="action_identity=? and effect_digest=?",
+                    parameters=(action_identity, stale_digest),
+                ).rowcount
                 mutation_values = {"effect_digest": digest}
-                mutation_rows = db.execute(
-                    f"""select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=? and effect_digest=?""",
-                    (action_identity, stale_digest),
-                ).fetchall()
-                moved_receipt = sum(
-                    update_email_action(
-                        db,
-                        "email_unsubscribe_receipts",
-                        source_row["rowid"],
-                        mutation_values,
-                    ).rowcount
-                    for source_row in mutation_rows
-                )
+                moved_receipt = shared_action_lifecycle.transition(
+                    db,
+                    "email_unsubscribe",
+                    "amend_outcome",
+                    values=mutation_values,
+                    where_sql="action_identity=? and effect_digest=?",
+                    parameters=(action_identity, stale_digest),
+                ).rowcount
                 still_referenced = db.execute(
                     f"""
                     select
@@ -11845,14 +11800,14 @@ class EmailStore:
                 "lease_token": f"direct-unsubscribe:{effect_digest[:24]}",
                 "updated_at": now,
             }
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
-                (action_identity,),
-            ).fetchall()
-            for source_row in mutation_rows:
-                update_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
-                )
+            shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "state",
+                values=mutation_values,
+                where_sql="action_identity=?",
+                parameters=(action_identity,),
+            )
             insert_action(
                 db,
                 "email_unsubscribe_effects",
@@ -11881,16 +11836,14 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             mutation_values = {"status": "uncertain", "updated_at": recovered_at}
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
-                (owner["owner_id"], owner["generation"], owner["lease_token"]),
-            ).fetchall()
-            return sum(
-                update_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            return shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "state",
+                values=mutation_values,
+                where_sql="status='dispatching' and owner_id=? and owner_generation=? and lease_token=?",
+                parameters=(owner["owner_id"], owner["generation"], owner["lease_token"]),
+            ).rowcount
 
     def mark_email_unsubscribe_uncertain(
         self,
@@ -11906,21 +11859,19 @@ class EmailStore:
                 "phase": "effect_uncertain",
                 "updated_at": self._now(),
             }
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?""",
-                (
+            updated = shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "state",
+                values=mutation_values,
+                where_sql="action_identity=? and status='dispatching' and owner_id=? and owner_generation=? and lease_token=?",
+                parameters=(
                     action_identity,
                     owner["owner_id"],
                     owner["generation"],
                     owner["lease_token"],
                 ),
-            ).fetchall()
-            updated = sum(
-                update_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            ).rowcount
             if updated != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe claim owner fence changed"
@@ -11984,16 +11935,13 @@ class EmailStore:
                 ).rowcount
                 for source_row in mutation_rows
             )
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
-                (action_identity,),
-            ).fetchall()
-            deleted_claim = sum(
-                delete_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"]
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            deleted_claim = shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "retire",
+                where_sql="action_identity=?",
+                parameters=(action_identity,),
+            ).rowcount
             if deleted_effect != 1 or deleted_claim != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe failed operation changed concurrently"
@@ -12087,16 +12035,13 @@ class EmailStore:
                 ).rowcount
                 for source_row in mutation_rows
             )
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
-                (action_identity,),
-            ).fetchall()
-            deleted_claim = sum(
-                delete_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"]
-                ).rowcount
-                for source_row in mutation_rows
-            )
+            deleted_claim = shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "retire",
+                where_sql="action_identity=?",
+                parameters=(action_identity,),
+            ).rowcount
             if deleted_effect != 1 or deleted_claim != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe explicit retry changed concurrently"
@@ -12150,17 +12095,14 @@ class EmailStore:
                 )
             if current != phase:
                 mutation_values = {"phase": phase, "updated_at": self._now()}
-                mutation_rows = db.execute(
-                    f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=?""",
-                    (action_identity,),
-                ).fetchall()
-                for source_row in mutation_rows:
-                    update_email_action(
-                        db,
-                        "email_unsubscribe_claims",
-                        source_row["rowid"],
-                        mutation_values,
-                    )
+                shared_action_lifecycle.transition(
+                    db,
+                    "email_unsubscribe",
+                    "state",
+                    values=mutation_values,
+                    where_sql="action_identity=?",
+                    parameters=(action_identity,),
+                )
             updated = db.execute(
                 f"select * from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) where action_identity=?",
                 (action_identity,),
@@ -12361,10 +12303,11 @@ class EmailStore:
                     f"select updated_at from ({config_projection('email_accounts')}) where account_id=?",
                     (account_id,),
                 ).fetchone()
-                insert_email_action(
+                shared_action_lifecycle.transition(
                     db,
-                    "email_unsubscribe_claims",
-                    {
+                    "email_unsubscribe",
+                    "claim",
+                    values={
                         "action_identity": action_identity,
                         "effect_digest": effect_digest,
                         "action_plan_id": action_plan_id,
@@ -12440,10 +12383,11 @@ class EmailStore:
                 "completed_at": completed_at,
             }
             if existing_receipt is None:
-                insert_email_action(
+                shared_action_lifecycle.transition(
                     db,
-                    "email_unsubscribe_receipts",
-                    {
+                    "email_unsubscribe",
+                    "outcome",
+                    values={
                         "action_identity": action_identity,
                         "effect_digest": effect_digest,
                         "action_plan_id": action_plan_id,
@@ -12499,17 +12443,14 @@ class EmailStore:
                         "started_at": started_at,
                         "completed_at": completed_at,
                     }
-                    mutation_rows = db.execute(
-                        f"""select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=?""",
-                        (action_identity,),
-                    ).fetchall()
-                    for source_row in mutation_rows:
-                        update_email_action(
-                            db,
-                            "email_unsubscribe_receipts",
-                            source_row["rowid"],
-                            mutation_values,
-                        )
+                    shared_action_lifecycle.transition(
+                        db,
+                        "email_unsubscribe",
+                        "amend_outcome",
+                        values=mutation_values,
+                        where_sql="action_identity=?",
+                        parameters=(action_identity,),
+                    )
                 elif any(
                     persisted_receipt[key] != value
                     for key, value in requested_receipt.items()
@@ -12562,14 +12503,14 @@ class EmailStore:
                 "phase": "terminal",
                 "updated_at": created_at,
             }
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL}) where action_identity=? and status in ('dispatching', 'awaiting_audit', 'uncertain')""",
-                (action_identity,),
-            ).fetchall()
-            for source_row in mutation_rows:
-                update_email_action(
-                    db, "email_unsubscribe_claims", source_row["rowid"], mutation_values
-                )
+            shared_action_lifecycle.transition(
+                db,
+                "email_unsubscribe",
+                "state",
+                values=mutation_values,
+                where_sql="action_identity=? and status in ('dispatching', 'awaiting_audit', 'uncertain')",
+                parameters=(action_identity,),
+            )
             mutation_rows = db.execute(
                 f"""select rowid from ({EMAIL_UNSUBSCRIBE_CONTINUATION_LOCATOR_SQL}) where action_identity=?""",
                 (action_identity,),
@@ -13673,21 +13614,16 @@ class EmailStore:
                 return False
             db.execute("begin immediate")
             mutation_values = {"entry_url": validated}
-            mutation_rows = db.execute(
-                f"""select rowid from ({EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL}) where action_identity=? and entry_url=''""",
-                (action_identity,),
-            ).fetchall()
             cursor = ActionWriteResult(
                 None,
-                sum(
-                    update_email_action(
-                        db,
-                        "email_unsubscribe_receipts",
-                        source_row["rowid"],
-                        mutation_values,
-                    ).rowcount
-                    for source_row in mutation_rows
-                ),
+                shared_action_lifecycle.transition(
+                    db,
+                    "email_unsubscribe",
+                    "amend_outcome",
+                    values=mutation_values,
+                    where_sql="action_identity=? and entry_url=''",
+                    parameters=(action_identity,),
+                ).rowcount,
             )
             return cursor.rowcount == 1
 

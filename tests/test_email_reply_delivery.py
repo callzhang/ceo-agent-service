@@ -582,7 +582,7 @@ def test_dispatch_claim_rechecks_account_and_thread_after_sent_precheck(
             with sqlite3.connect(store.path) as db:
                 db.execute(
                     """
-                    update email_messages set thread_identity='thread-changed'
+                    update emails set message_thread_identity='thread-changed'
                     where stable_message_identity=?
                     """,
                     (effect.stable_message_identity,),
@@ -628,7 +628,7 @@ def test_dispatch_claim_blocks_account_and_thread_mutation_before_smtp(
                 with sqlite3.connect(store.path) as db:
                     db.execute(
                         """
-                        update email_messages set thread_identity='thread-changed'
+                        update emails set message_thread_identity='thread-changed'
                         where stable_message_identity=?
                         """,
                         (effect.stable_message_identity,),

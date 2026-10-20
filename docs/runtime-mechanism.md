@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.6`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.7`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -119,7 +119,7 @@ verify_loaded、rollback、finalize 入口变为 `2026-10-19.5`／Email53；构�
 `record_reply_attempt`（包括 direct unsubscribe）和 finalize 的 Attempt／任务写入
 保留；历史 Sent／Attempt 类型、读取及逆迁继续支持。`complete_agent_run` 原本只更新
 run，未作为 Sent writer 退役。Postfix 的准备／首个接受结果、OKR、Reply Attempt 类型、
-Email 通用机制在后续 B2a 切片实现，Reply／unsubscribe 专有归属及其余业务单元仍未完成，A 单元不能据此整体结案。
+Email 通用机制及 Reply／unsubscribe claim／result 归属分别由后述 B2a／B2b 实现；A5 及 C／D 业务单元仍未完成，A 单元不能据此整体结案。
 局部实现、测试和源冻结证据见[Sent 归属验收](database-redesign-sent-result-validation.md)。
 
 Store `2026-10-19.6` 的 B2a 将 reviewed Consumer 与确定性 direct Email 的
@@ -143,7 +143,7 @@ operation／target／result ID、error 只由最新的有序 attempt 持有，at
 水位；Email provider 操作不生成 Consumer／Audit／AgentRun 或伪造 provider JSON。
 A2 verified／NULL 正文与 A4 Sent receipt owner 继续使用原规则。
 
-当前配对发布通过既有 prepare、publish、verify_loaded、rollback、finalize，准确地从
+B2a 的历史配对发布通过既有 prepare、publish、verify_loaded、rollback、finalize，准确地从
 Store `2026-10-19.5`／Email53 转到 `2026-10-19.6`／Email53。转前逐一验证 direct
 attempt 的整数连续序号、数量和最新镜像的精确 SQLite 值／类型；pending 必须无历史，
 processing 的终态字段必须已清空。任何来源例外在写入前拒绝，不擦除或修补。
@@ -152,9 +152,40 @@ direct step 时按 ID 查找；索引随临时表删除，永久源／目标声�
 逆迁从当前 plan／step／attempt 重建旧布局，包括发布后的新计划、新 reviewed 执行及
 可变槽位、新 Email retry attempt 和当前 claim；原 Actions 物理 ID、公开 identity、
 FK finding 多重集合、分配水位及原 marker 时间保留。Email53 账本不增版本，源行不归档。
-本切片不宣称 Reply／unsubscribe claims 的 B2b 或 Postfix 的后续归属已完成。
+B2a 的证据只覆盖上述五类来源；Reply／unsubscribe claims 由后述 B2b 接续，Postfix 归属仍待 A5。
 局部 fake-provider、源程序差分、逆迁及冻结证据见
 [共享动作机制验收](database-redesign-shared-actions-validation.md)。
+
+
+Store `2026-10-19.7` 的 B2b 将 Reply 的17字段 dispatch claim 和 unsubscribe 的
+19字段 claim 原位改为同一共享 effect step，追加类型码68／69、来源为
+`email_reply`／`email_unsubscribe`。`record_type` 的只读原名称保留，公开 DTO、
+Actions 物理 ID、legacy key、唯一 outgoing message ID 及所有原字段／FK 不变。
+Reply 的 sender、thread、account snapshot／更新时间，以及 unsubscribe 的 phase、
+entry reference、operations、audit run、thread／account 时钟仍由各自 typed step 持有。
+既有 EmailStore 入口保留来源校验、provider 证据核验与事务边界；claim、CAS 状态、
+回收、重试、完成及 receipt 写入统一由 `shared_action_lifecycle.transition` 执行。
+原逐行 claim／receipt mutation SQL 循环已退休。CAS 在同一 SQL 中通过原身份索引
+取得物理 ID 并更新 Actions，owner generation／lease token 的原条件不变。
+
+Reply 的13字段 receipt 和 unsubscribe 的20字段 receipt 继续各有一个权威 typed
+result owner，共享结果入口直接写入它们；claim 的状态不生成 SMTP／browser 成功。
+Unsubscribe 多版本 effect journal、独立整数 AUTO 水位的有序 observation steps、
+unfinished continuation 的 observation／controls／时钟、explicit cancellation 的
+principal decision，以及 feedback 的计划版本采用和不可变授权快照均完整保留。
+这些事实不改写为通用 attempt，不制造 provider JSON 或 AgentRun。原 uncertain
+恢复、来源核验后的显式 retry、no-effect／skip、取消及 receipt 幂等语义不变。
+
+当前配对发布通过已有入口准确地从 Store `2026-10-19.6`／Email53 转到
+`2026-10-19.7`／Email53；只转换两个 claim 类型码和对应声明，B2a 五个来源的
+声明工厂／映射不变。正逆迁按一遍临时 staging 转换类型码，逐项比较原存储值和
+SQLite 类型、物理／公开身份、独立分配水位及原 FK finding 多重集合。逆迁读取
+当前 typed claims／results 和独立证据，包括发布后新建的 claim、receipt、effect
+版本、continuation、cancellation 及 retry 状态；仅保留声明／marker 元数据，
+不保留源业务行副本。Email53 账本、Configs 声明和原 source marker 时钟不变。
+本切片未完成 A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元；也未部署。
+局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
+[专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
 
