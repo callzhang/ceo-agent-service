@@ -120,6 +120,70 @@ def test_retry_accepts_prior_receipt_id_evidence_reference():
     assert requested_at == NOW
 
 
+def test_retry_accepts_verified_legacy_material_read_access_comment():
+    class Store:
+        def list_verified_candidate_actions(self, task_id):
+            assert task_id == 42
+            return [{
+                'external_action_key': '11b23bef911e60d1048d41d02cfc0bab',
+                'candidate_id': 'legacy-candidate',
+                'created_at': NOW.isoformat(),
+                'operation': 'comment',
+                'action_identity': (
+                    'oa-comment:process-1:task-1:material-read-access-block'
+                ),
+            }]
+
+        def get_review_candidate(self, candidate_id):
+            assert candidate_id == 'legacy-candidate'
+            # Before purpose_output existed, the approved proposal itself
+            # identified the material permission request.
+            return {'candidate_json': json.dumps({
+                'proposal': {'actions': [{
+                    'operation': 'comment',
+                    'action_identity': (
+                        'oa-comment:process-1:task-1:material-read-access-block'
+                    ),
+                    'payload': {'content': '请为审批人开放所提交材料的只读访问权限。'},
+                }]},
+            })}
+
+    receipt, requested_at = verified_access_request(
+        Store(), SimpleNamespace(id=42),
+        ['prior_receipt_id=11b23bef911e60d1048d41d02cfc0bab'],
+    )
+
+    assert receipt == '11b23bef911e60d1048d41d02cfc0bab'
+    assert requested_at == NOW
+
+
+def test_retry_rejects_ordinary_legacy_comment_as_access_request():
+    class Store:
+        def list_verified_candidate_actions(self, _task_id):
+            return [{
+                'external_action_key': '11b23bef911e60d1048d41d02cfc0bab',
+                'candidate_id': 'legacy-candidate',
+                'created_at': NOW.isoformat(),
+                'operation': 'comment',
+                'action_identity': 'oa-comment:process-1:task-1:ordinary-comment',
+            }]
+
+        def get_review_candidate(self, _candidate_id):
+            return {'candidate_json': json.dumps({
+                'proposal': {'actions': [{
+                    'operation': 'comment',
+                    'action_identity': 'oa-comment:process-1:task-1:ordinary-comment',
+                    'payload': {'content': '请关注项目进展。'},
+                }]},
+            })}
+
+    with pytest.raises(ValueError, match='exactly one verified'):
+        verified_access_request(
+            Store(), SimpleNamespace(id=42),
+            ['prior_receipt_id=11b23bef911e60d1048d41d02cfc0bab'],
+        )
+
+
 def test_retry_does_not_fuzzily_strip_receipt_reference():
     class Store:
         def list_verified_candidate_actions(self, _task_id):

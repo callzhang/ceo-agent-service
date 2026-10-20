@@ -2562,6 +2562,10 @@
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
 # Unreleased
 
+- Let permission retries use the exact verified legacy OA material-access
+  comment receipt when its candidate predates `purpose_output`; ordinary
+  comments still cannot authorize a permission retry.
+
 - Count live dispatcher leases, meeting preparation and claimed meeting delivery
   in the deployment quiet gate, including before an Agent runtime is created.
 
