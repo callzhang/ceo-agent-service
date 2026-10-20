@@ -134,3 +134,21 @@ QUALITY and parent full-copy acceptance remain separate gates.
 This evidence establishes the bounded local A3 implementation and synthetic
 inverse. It does not establish production migration capacity, live execution or
 completion of the remaining Reply/Sent/Postfix, B2, C or D slices.
+
+## Root merged acceptance source
+
+Independent SPEC then QUALITY approved the frozen patch and the first merge.
+Root committed the patch at68f9cb378 and merged B1/current upstream atf93727cd8,
+then the later CI digest/docs update. A3 storage, DDL, projections, runtime
+writers, factory selectors, release and tests remain byte-identical to the
+approved patch. Eight changed source paths are the upstream Consumer/native/OA
+app/tests and a Consumer-release test hash update. Root current native-harness,
+frozen-declaration and execution runtime checks passed4/6.96s before the final
+CI-only test update. The historical1201/bca3 review digest above is unchanged
+and is not the final merged tree.
+
+Parent acceptance source isbf6b71ebfa9e0e67cb4c5b9f56e9da59ec8a8052;1202 app/tests/scripts files, aggregate
+423b5e5a2b81527ea63753a5fdc797fc138e1181771ffdb96a7673ba2e07597d, using the same path/NUL/raw-digest/NUL algorithm.
+See superpowers/specs/2026-10-19-execution-owner-merged-freeze.json.
+Full-copy/native/current-data inverse and live acceptance are pending. No
+predecessor CLI proof is claimed as a CLI run of this later source.
