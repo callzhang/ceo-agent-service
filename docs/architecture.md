@@ -565,6 +565,10 @@ pending -> processing -> done
 - `needs_human`：信息完整但这一类任务缺少可复用规则，且质量门槛允许升级；必须有 needs_human_reason、decision_basis 和 2–4 个互斥规则选项，均标记 `applies_to=task_class`。不能让 Derek 决定当前具体事项。当前事实缺失或需要向来源方确认时使用普通、边界明确的 proposal；技术失败不能成为管理决策。执行分支绑定完整方案，停止分支写明 skipped 和原因；未经审核或旧无绑定选项不可执行。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
+Attempt History 的“需要你处理/选择处理方式”只对应当前可操作的 `needs_human` 规则候选。
+当前 `failed` 即使重试耗尽，也继续显示为执行失败，提供重试或技术详情；不得把技术失败、
+候选绑定错误或外部执行错误伪装成业务规则决策，也不得提供“人工处理/暂不处理”作为替代决策。
+
 如果 DingTalk trigger 引用了本服务通过 provider 回执确认已发送的 Agent 消息，Consumer context 会携带结构化来源标志；此类 Agent 发起的续接/恢复任务不得进入 `needs_human`。该标志以 conversation、quoted message ID 与成功发送状态回读匹配，不靠正文签名猜测；Consumer 生成校验与 Audit 独立复核都会拒绝该升级，要求 Agent 自主判断、补充有边界的 proposal 或向事实来源方 ask-back。
 
 审核闭环如下（task 状态全程停留在 `processing`，直到最终收口为 `done`/`failed`/`needs_human`/`skipped`）：

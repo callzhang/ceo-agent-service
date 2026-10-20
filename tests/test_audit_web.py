@@ -7418,7 +7418,7 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
-def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Path):
+def test_history_failed_item_is_not_presented_as_a_business_decision(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-actionable",
@@ -7434,15 +7434,14 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert "状态：</strong>需要你处理" in html
+    assert "状态：</strong>处理失败，尚未完成" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
-    assert f'<a href="/attempts/{attempt_id}">暂不处理</a>' in html
-    assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
-    assert "你需要做什么：</strong>请选择一种处理方式" in html
+    assert "不需要你判断业务规则" in html
+    assert "请选择一种处理方式" not in html
     assert "重试会沿用同一任务，不会创建新的业务事项" in html
     assert '<span class="attempt-label">答</span>' not in html
     assert '<span class="attempt-label">结果</span>' not in html

@@ -96,8 +96,15 @@ def reply_history_attention(
         return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
             actions=choices + _management_tail(include_retry=False))
     if status == "failed":
-        return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
-            actions=_management_tail(include_retry=True))
+        return HistoryAttention(
+            kind="failed",
+            reason=reason,
+            external_effect=external_effect,
+            actions=(
+                HistoryAction("retry", "重试当前任务"),
+                HistoryAction("details", "技术详情"),
+            ),
+        )
     return None
 
 
