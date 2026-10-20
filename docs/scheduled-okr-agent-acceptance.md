@@ -196,8 +196,38 @@ finance 预置摘要错误地与已更新的安装文件比较，改为固定原
 | CEO 管理周报 | 2026-10-24 19:00 | 10月24日 12:00 |
 | OKR 管理周报 | 2026-10-25 10:00 | 10月25日 03:00 |
 
-三个自然运行尚未到期。到期后须绑定不可变配置/Skill revision、实际 Consumer/Audit
-轨迹、文档读回与所需发送回执核查；只读旧文档、健康检查或提前手动运行均不能替代。
+CEO 日报已于10月20日到期，但此次没有自然运行记录；不得把它标成完成。管理周报与
+OKR 周报仍未到期。每份报告均须绑定不可变配置/Skill revision、实际 Consumer/Audit
+轨迹、文档读回与所需发送回执；只读旧文档、健康检查或提前手动运行均不能替代。
+
+### 10月20日日报漏触发与服务恢复
+
+- task14 计划触发时间为 `2026-10-20T13:00:00Z`。该时间后读取生产 Scheduled Task
+  Runs，最新记录仍是10月19日13:00Z的run **381115**；10月20日没有对应的调度run、
+  reply task、Consumer/Audit轨迹、日报正文读回或通知回执。当前 `next_run_at` 为
+  `2026-10-21T13:00:00Z`。没有手动重放或补发；下一份自然日报必须核实是否按 Skill
+  的漏发窗口规则纳入10月20日。
+- 服务未加载时 launchd label 不存在，8765端口拒绝连接。正式 `--restart` 使 API
+  短暂恢复，但启动日志随后确认 service worker 在恢复阶段反复退出：
+  `reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts` 的更新 SQL 联接
+  `tasks` 与回执投影后，`task8_set_parts` 生成的任务字段没有限定 `tasks` 来源，SQLite
+  因 `created_at` 同名列返回 `ambiguous column name: created_at`。Supervisor 因此不断
+  重启 worker，调度器未运行；单独的 `/healthz` 200 不能证明服务已恢复。保留的日志
+  没有说明 launchd label 最初为何被卸载，因此不把卸载原因归因于该 SQL 错误。
+- 最新主线提交 **b6f87c14a** 将更新字段绑定到 `tasks` 别名，并增加成功/跳过两种
+  终态回执恢复回归。隔离 worktree 定向测试：
+  `pytest -q tests/test_store.py -k startup_reconciles_failed_unsubscribe_task_from_terminal_receipt`
+  结果 **2 passed, 449 deselected**。按正式 `python -m app.deploy --restart` 流程重启后，
+  生产进程PID **11652** 保持运行；healthz为ok，scheduler于20:51:00Z、dispatcher于
+  20:51:06Z、service heartbeat于20:50:49Z写入新tick，worker未再出现该SQL退出。启动对账
+  收口后，队列快照为pending9、processing6、failed13、retryable1，Attention4。
+- 20:52Z调度器、dispatcher和service heartbeat仍持续写入新tick，Supervisor及worker
+  保持运行。系统健康仍为degraded，当前原因是user feedback尚未记录解决，以及native
+  delivery覆盖核查有229条不可读（152条可读）；队列为pending21、processing7、failed13、
+  retryable1，Attention4。必须将这些运行健康事实与日报的文档/通知发布证据分开。
+- 恢复后的task6/task13/task14配置版本分别为v9/v32/v37；对应managed Skill revision
+  仍为209/202/203。下一次计划触发分别为10月25日10:00Z、10月24日19:00Z、10月21日
+  13:00Z。无新版自然报告发布结论；`okr-deployment-readback.json` 中保留无正文读回。
 
 ## 最终集成核查（2026-10-20 UTC）
 

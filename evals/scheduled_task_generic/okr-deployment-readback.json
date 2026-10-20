@@ -864,5 +864,134 @@
       "operation_id": "deploy-2e035667-34c8-4e23-8b8c-e346ff7f2ec3",
       "result": "succeeded"
     }
-  ]
+  ],
+  "post_recovery_readback": {
+    "observed_at": "2026-10-20T20:51:07Z",
+    "source_commit": "b6f87c14a03b2dadb4b37ee637f15baa3e922294",
+    "source_fix": "Qualified task8_set_parts fields with source_alias=tasks in reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts",
+    "targeted_test": {
+      "command": "pytest -q tests/test_store.py -k startup_reconciles_failed_unsubscribe_task_from_terminal_receipt",
+      "result": "2 passed, 449 deselected in 4.19s"
+    },
+    "restart": {
+      "command": "python -m app.deploy --restart",
+      "result": "restarted",
+      "launchd_state": "running",
+      "pid": "11652",
+      "process_started_at": "2026-10-20T20:49:45Z",
+      "healthz": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "component_ticks": {
+      "agent-cron-scheduler": "2026-10-20T20:51:00Z",
+      "agent-cron-dispatcher": "2026-10-20T20:51:06.728208Z",
+      "service-heartbeat": "2026-10-20T20:50:49.237565Z"
+    },
+    "queue_snapshot": {
+      "pending": 9,
+      "processing": 6,
+      "failed": 13,
+      "retryable": 1,
+      "attention": 4,
+      "pending_due_reply_tasks": 1,
+      "system_health": "degraded",
+      "native_delivery_readable": 152,
+      "native_delivery_unavailable": 229
+    },
+    "report_tasks": [
+      {
+        "id": 6,
+        "version": 9,
+        "managed_skill_revision_id": 209,
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 375134,
+        "latest_natural_run_scheduled_for": "2026-10-18T10:00:00Z",
+        "latest_natural_run_status": "failed"
+      },
+      {
+        "id": 13,
+        "version": 32,
+        "managed_skill_revision_id": 202,
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "latest_run_id": 379485,
+        "latest_run_scheduled_for": "2026-10-19T07:00:21Z",
+        "latest_trigger_kind": "manual",
+        "latest_trigger_status": "dispatched",
+        "latest_natural_run_id": 372140,
+        "latest_natural_run_scheduled_for": "2026-10-17T19:00:00Z",
+        "latest_natural_run_status": "dispatched"
+      },
+      {
+        "id": 14,
+        "version": 37,
+        "managed_skill_revision_id": 203,
+        "next_run_at": "2026-10-21T13:00:00Z",
+        "latest_run_id": 381115,
+        "latest_natural_run_scheduled_for": "2026-10-19T13:00:00Z",
+        "latest_natural_run_status": "dispatched",
+        "missed_natural_occurrence": "2026-10-20T13:00:00Z"
+      }
+    ],
+    "missed_task14_run": {
+      "scheduled_for": "2026-10-20T13:00:00Z",
+      "scheduled_run_found": false,
+      "latest_run_id": 381115,
+      "latest_run_scheduled_for": "2026-10-19T13:00:00Z",
+      "next_run_at": "2026-10-21T13:00:00Z",
+      "agent_trajectory_available": false,
+      "document_readback_available": false,
+      "notification_receipt_available": false,
+      "manual_replay_or_publication": false
+    },
+    "startup_failure": {
+      "error": "sqlite3.OperationalError: ambiguous column name: created_at",
+      "function": "AutoReplyStore.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts",
+      "effect": "service child exited during startup recovery and supervisor restarted it; scheduler/dispatcher ticks stayed stale until the query fix was loaded"
+    },
+    "body_free": true,
+    "latest_live_readback": {
+      "observed_at": "2026-10-20T20:52:35Z",
+      "launchd_state": "running",
+      "pid": "11652",
+      "healthz": {
+        "ok": true,
+        "status": "ok"
+      },
+      "component_ticks": {
+        "agent-cron-scheduler": "2026-10-20T20:52:13Z",
+        "agent-cron-dispatcher": "2026-10-20T20:52:30.337691Z",
+        "service-heartbeat": "2026-10-20T20:51:53.056253Z"
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "user feedback has not reached a recorded resolution; native delivery results readable: 152; unavailable: 229",
+        "violations": 3,
+        "checked_at": "2026-10-20T20:52:31.877834Z"
+      },
+      "queue_snapshot": {
+        "pending": 21,
+        "processing": 7,
+        "failed": 13,
+        "retryable": 1,
+        "attention": 4
+      },
+      "dispatcher_queues": [
+        {
+          "name": "scheduled",
+          "pending": 1,
+          "due": 1,
+          "running": 2
+        },
+        {
+          "name": "reply",
+          "pending": 3,
+          "due": 3,
+          "running": 2
+        }
+      ],
+      "task14_missed_run_still_absent": true
+    }
+  }
 }
