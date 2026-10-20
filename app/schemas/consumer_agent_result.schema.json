@@ -820,7 +820,6 @@
     "needs_human_reason": {
       "anyOf": [
         {
-          "maxLength": 100,
           "type": "string"
         },
         {

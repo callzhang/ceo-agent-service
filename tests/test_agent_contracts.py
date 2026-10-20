@@ -13,6 +13,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ConsumerProposal,
     ProposedAction,
+    parse_persisted_consumer_result,
 )
 from app.agent_result import ResultParseError, parse_typed_agent_result
 from app.agent_wire_contracts import (
@@ -192,12 +193,11 @@ def test_needs_human_reason_is_limited_to_100_characters_in_both_consumer_contra
     ConsumerAgentResult.model_validate(domain_payload)
     ConsumerAgentWireResult.model_validate(wire_payload)
 
-    for model, payload in (
-        (ConsumerAgentResult, domain_payload),
-        (ConsumerAgentWireResult, wire_payload),
-    ):
-        with pytest.raises(ValidationError):
-            model.model_validate({**payload, "needs_human_reason": "字" * 101})
+    historical_payload = {**domain_payload, "needs_human_reason": "字" * 101}
+    assert parse_persisted_consumer_result(historical_payload).needs_human_reason == "字" * 101
+    with pytest.raises(ValidationError):
+        ConsumerAgentWireResult.model_validate({**wire_payload, "needs_human_reason": "字" * 101})
+    assert list(Draft202012Validator(ConsumerAgentResult.model_json_schema()).iter_errors(historical_payload))
 
 
 def test_proposed_action_does_not_require_deferred_structured_boundary_field():

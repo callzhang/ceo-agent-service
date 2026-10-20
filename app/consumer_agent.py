@@ -75,12 +75,12 @@ from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_com
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # The Consumer's output schema is generated from ConsumerAgentResult at prompt
-# time (_schema_json), so the running model is always what the agent is asked
-# for and what the parser accepts.  app/schemas/consumer_agent_result.schema.json
-# is the reviewable snapshot of that shape; tests/test_schema_snapshots.py and
-# tests/test_agent_contracts.py keep it equal to the model at commit time.  It
-# is deliberately not read here: a file is live the moment it is saved and code
-# is live only after a restart, so comparing them at run time can only turn an
+# time (_schema_json), with output-only constraints such as the bounded human
+# reason. New output is parsed through the strict wire contract, while
+# parse_persisted_consumer_result remains permissive for historical records.
+# The reviewable snapshot is kept equal to the generated model schema by tests.
+# It is deliberately not read here: a file is live the moment it is saved and
+# code is live only after a restart, so comparing them at runtime could turn an
 # editor's intermediate state into an outage.
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_UNREVIEWED_EFFECT = "consumer_unreviewed_provider_effect"
