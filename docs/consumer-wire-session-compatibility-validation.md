@@ -19,4 +19,4 @@
 
 回归 RED：新增的四个定向测试先因缺少原生 schema 读取与 Runner 参数失败。最小实现后它们通过；Work Profile 中引用同名标题及原生前置 Developer 的边界用例也先失败再通过。生产原生文件只读核对返回旧根字段，与当前根字段不等价。
 
-修改中的宽组检查在最后两个边界测试加入前完成：Consumer、Skill 会话、native-input 和 turn-runner 共 210 通过、4 跳过（481.93 秒）。最终代码对旧／缺失／相同 schema、默认原生读取路径及现有 Skill 会话条件定向重跑，10 项通过。Ruff、`py_compile` 与 diff check 通过；独立审查和发布回读待补。此前 Consumer 能力去重的十组匿名原生配对已覆盖当前 schema 的冷启动与同 session 后续轮次，且本变更没有改动这两轮的 Developer、Task、模型、工具或结果解析，故未重复调用模型。
+修改中的宽组检查在最后两个边界测试加入前完成：Consumer、Skill 会话、native-input 和 turn-runner 共 210 通过、4 跳过（481.93 秒）。独立审查发现原生 JSONL 中非对象记录会抛异常；新增回归先失败，修复后将无法核实的 schema 视为新会话。最终代码对旧／缺失／相同 schema、默认原生读取路径、非对象记录及现有 Skill 会话条件定向重跑，11 项通过。Ruff、`py_compile` 与 diff check 通过；独立审查确认没有剩余 Critical 或 Important 问题，并独立核对生产 run 385883 的错误与续会话范围。合并与发布回读待补。此前 Consumer 能力去重的十组匿名原生配对已覆盖当前 schema 的冷启动与同 session 后续轮次，且本变更没有改动这两轮的 Developer、Task、模型、工具或结果解析，故未重复调用模型。
