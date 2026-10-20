@@ -1,5 +1,8 @@
 """Project service input from immutable native invocation records."""
 
+import json
+from itertools import islice
+
 from app import native_trajectory as native
 
 
@@ -17,6 +20,36 @@ def _codex_text(record, *, role, kind):
     blocks = [block.get("text") for block, source in zip(content, kinds)
               if source == kind and block.get("type") == "input_text"]
     return "\n".join(blocks) if blocks and all(isinstance(text, str) for text in blocks) else None
+
+
+def codex_session_wire_schema(session_id: str) -> dict[str, object] | None:
+    """Read the service wire schema actually supplied when a Codex session began."""
+    path = native.find_codex_session_path(session_id)
+    if path is None:
+        return None
+    marker = "## Pydantic Wire Contract\n"
+    try:
+        with path.open(encoding="utf-8") as stream:
+            for line in islice(stream, 32):
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    return None
+                developer = _codex_text(
+                    record, role="developer", kind="generic.developer_instructions"
+                )
+                if developer is None:
+                    continue
+                if marker not in developer:
+                    continue
+                source = developer.split(marker, 1)[1]
+                schema, end = json.JSONDecoder().raw_decode(source)
+                if not isinstance(schema, dict):
+                    return None
+                tail = source[end:]
+                return schema if not tail or tail.startswith("\n\n## ") else None
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
 
 
 def _codex_input(attempt, *, codex_home=None):
