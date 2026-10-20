@@ -12,9 +12,10 @@ import json
 from app import action_storage as storage
 
 
-def _insert_text_action(db, record_type, values, *, ignore=False, selection_references=False):
+def _insert_text_action(db, record_type, values, *, ignore=False, selection_references=False,
+                        execution_owner=False):
     """Apply the generic non-Reply writer to the historical TEXT layout."""
-    assert not selection_references
+    assert not selection_references and not execution_owner
     storage._check_fields(record_type, values)
     if record_type in storage.REPLY_ACTION_TYPES or record_type not in storage.ALL_ACTION_TYPES_WITH_DELIVERY:
         raise ValueError("historical TEXT fixture only supports non-Reply delivery Actions")
@@ -163,6 +164,14 @@ def install(monkeypatch):
     monkeypatch.setattr(storage, "_insert_action", _insert_text_action)
     monkeypatch.setattr(storage, "update_action", _update_text_action)
     monkeypatch.setattr(storage, "ACTION_PROJECTIONS", projections)
+    # These exports select prepared-owned slots in the current runtime. This
+    # fixture explicitly tests the frozen physical child declarations.
+    for kind, name in (
+        ("outbound_postfixes", "OUTBOUND_POSTFIX_SQL"),
+        ("outbound_postfix_receipts", "OUTBOUND_POSTFIX_RECEIPT_SQL"),
+        ("native_reply_dispatches", "NATIVE_REPLY_DISPATCH_SQL"),
+    ):
+        monkeypatch.setattr(storage, name, projections[kind])
     # This module imports the mapping by value; keep its historical boundary
     # queries aligned with the fixture while normal runtime imports stay intact.
     from app import action_delivery_schema_release

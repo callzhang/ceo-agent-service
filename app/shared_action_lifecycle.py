@@ -1,4 +1,4 @@
-"""One owner/writer for reviewed and all Email step claims and effect results.
+"""One writer for reviewed, Email and prepared-message claims and effect results.
 
 Callers retain their business authorization, provider verification and existing
 transaction boundary. This module owns plan/step allocation, dispatch changes,
@@ -176,6 +176,39 @@ def _matches(row, expected):
     return row is not None and all(value is None or row[field] == value for field, value in expected.items())
 
 
+def _prepared_transition(db, event, identity, values):
+    """Commit the original first preparation, possible effect or accepted result."""
+    from app.prepared_action_definitions import PARENT, SLOTS
+    if event == 'prepare':
+        return storage._insert_action(db, PARENT, values)
+    kind = {'claim': 'native_reply_dispatches', 'outcome': 'outbound_postfix_receipts'}[event]
+    values = dict(zip(storage.POSTFIX_IDENTITY_FIELDS, identity, strict=True)) | values
+    storage._check_fields(kind, values)
+    values = {'created_at': db.execute('select current_timestamp').fetchone()[0]} | values
+    # Match the retired INSERT OR IGNORE's source CHECKs before its FK check.
+    required = storage.SOURCE_COLUMNS[kind]
+    if any(values.get(field) is None for field in required):
+        return storage.ActionWriteResult(None, 0)
+    if kind == 'outbound_postfix_receipts' and not db.execute(
+        "select ? in ('dingtalk','wechat') and trim(?)<>''", identity,
+    ).fetchone()[0]:
+        return storage.ActionWriteResult(None, 0)
+    slots = SLOTS[kind]
+    cursor = db.execute('update actions set ' + ','.join(column + '=?' for column in slots.values())
+        + " where record_type='outbound_postfixes' and channel=? and delivery_key=? and "
+        + slots['created_at'] + ' is null returning channel,delivery_key',
+        (*[values[field] for field in slots], *identity))
+    row = cursor.fetchone()
+    cursor.fetchall()
+    result = storage.ActionWriteResult(tuple(row) if row else None, cursor.rowcount)
+    if not result.rowcount and not db.execute(
+        "select 1 from actions where record_type='outbound_postfixes' and channel=? and delivery_key=?",
+        identity,
+    ).fetchone():
+        raise sqlite3.IntegrityError('FOREIGN KEY constraint failed')
+    return result
+
+
 def transition(db, origin, event, *, identity=None, values=None, expected=None, receipt=None,
                where_sql='', parameters=()):
     """Apply one existing claim/outcome/schedule transition under its caller lock.
@@ -183,11 +216,15 @@ def transition(db, origin, event, *, identity=None, values=None, expected=None, 
     Email identity is its public action_id. Reviewed claim identity is the exact
     (execution public ID, action_index, external_action_key); reviewed outcome
     identity is its current attempt's public ID. The finite variants determine
-    whether an outcome mutates a slot or appends a numbered attempt.
+    whether an outcome mutates a slot or appends a numbered attempt. Prepared
+    identity is the exact (channel, delivery_key); its claim and first accepted
+    provider result occupy their existing prepared Action.
     """
     if not db.in_transaction:
         raise ValueError('shared action transition requires caller-owned transaction')
     values, expected = values or {}, expected or {}
+    if origin == 'prepared':
+        return _prepared_transition(db, event, identity, values)
     if origin in STEP_KINDS:
         # Specialized callers retain proof validation; allocation, CAS, state
         # and receipt writes are owned here, under the same transaction as the

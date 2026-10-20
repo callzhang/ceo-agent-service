@@ -1,0 +1,123 @@
+{
+  "schema": "ceo-prepared-action-frozen-sources-v1",
+  "baseline_commit": "c4a9e794d0fe7b8954a8746b01fec118337dc188",
+  "meaning": "C1 Task declarations and the listed historical factories remain byte-exact. action_storage current code may change; all fourteen historical final Action DDL outputs below are independently equal to the archived baseline. Current runtime has an explicit postfix_owner opt-in.",
+  "files": [
+    {
+      "path": "app/action_postfix_storage.py",
+      "sha256": "b21816f30890cee60f3d2d822f55065d56e57873070fc85c2b0f33f3a8926e40"
+    },
+    {
+      "path": "app/email_canonical_definitions.py",
+      "sha256": "8862519ef41af71804d76d12fc8a598126676502f90fbd6eee494a52aae5696c"
+    },
+    {
+      "path": "app/outbound_postfix.py",
+      "sha256": "4a6cdcf0b0f0275535ffb970c6ac43414d30c8177a4e4f451f96153a4ab2a716"
+    },
+    {
+      "path": "app/service_message_sender.py",
+      "sha256": "034f7a16a622b9ebc9caf3ee22e947e94c45fc5b3ddfb36615d2e16f81793614"
+    },
+    {
+      "path": "app/shared_action_definitions.py",
+      "sha256": "9da0832ee1f76e5bb8b966421f31a5cc5117be8eb616b6b95e5287b0a0113a5f"
+    },
+    {
+      "path": "app/shared_action_schema.py",
+      "sha256": "1171e2a8c11da04f83940ec60d67857a43c2fee95856bebdd40c053751ca4e9a"
+    },
+    {
+      "path": "app/shared_action_schema_release.py",
+      "sha256": "621c6b065406d6384ddb485726a84147d1266d91ad7fc5f39022f341378c8dc0"
+    },
+    {
+      "path": "app/specialized_action_schema.py",
+      "sha256": "e981baf449d3fa0480192229bc233493d0ce0dc4b25a0132a71677b327f289d6"
+    },
+    {
+      "path": "app/specialized_action_schema_release.py",
+      "sha256": "83078b7fe191b703a543e895dd8b0ead0a1e43515570d0a227e705dd4351a58c"
+    },
+    {
+      "path": "app/state_definitions.py",
+      "sha256": "053fbdb7e461f3eaade98ec0aa834875119e777478a1adbe72a66260a1a6d870"
+    },
+    {
+      "path": "app/state_schema_release.py",
+      "sha256": "c384ee942b9df65ffbd45cb47cb536bc0df654f954554c137cb719ef069be7cd"
+    },
+    {
+      "path": "app/state_storage.py",
+      "sha256": "982b92a34ca3b809da829c45ea5ec141af55b77af1f6ba8fc2009d671079187e"
+    },
+    {
+      "path": "app/storage_payload.py",
+      "sha256": "5835d66714c42eb52486a53a77cd7edbe40875c1ee23b6ef50397b76b30821ee"
+    },
+    {
+      "path": "app/task20_current_schema.py",
+      "sha256": "17e24da293d8226fdea2ff269995f9a3b2054f15d8f6a73e31e7afcd7533ea0d"
+    },
+    {
+      "path": "app/task20_definitions.py",
+      "sha256": "e615fc62d4047b592147582332e06fde0d60669c3f050be72f21e54822c914af"
+    },
+    {
+      "path": "app/task20_schema_release.py",
+      "sha256": "883e220189eae5d8f31962e7ba5d883510afe8ea7e8e68300b1870446713f85d"
+    },
+    {
+      "path": "app/task_lifecycle.py",
+      "sha256": "a9f50f3685345ef62d3433419ffbc8b0e276b5f1197c9561e65d25a12dd43b92"
+    },
+    {
+      "path": "app/task_lifecycle_current_schema.py",
+      "sha256": "0dc11e5827db806ba71f21bcb412ef4bb23a2769a4f8233999bd0d96fa4b51e3"
+    },
+    {
+      "path": "app/task_lifecycle_definitions.py",
+      "sha256": "c01fcfd25260dd19d608f22eb93cccc9b17b4033f58a577ba0e590a9b0e5e32b"
+    },
+    {
+      "path": "app/task_lifecycle_jsonb.py",
+      "sha256": "a7dfe4f0aceef5e1710f10783890da684b063a5c5aade7c79e24c624a03c5042"
+    },
+    {
+      "path": "app/task_lifecycle_schema.py",
+      "sha256": "e11ebda1a234eeb820c000a4015dc2164884f1fbb795b48a2fbc3be2b4f776aa"
+    },
+    {
+      "path": "app/task_lifecycle_schema_release.py",
+      "sha256": "ef3945e4344d782b6a37df700bcf8cef9b4dee9b76b53e0ce4f14874216180ef"
+    },
+    {
+      "path": "app/task_lifecycle_storage.py",
+      "sha256": "c47362748125407d4b44071fd25c03dcab980d1e5b67457b8b34a5b412a4845c"
+    },
+    {
+      "path": "app/task_storage.py",
+      "sha256": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86"
+    }
+  ],
+  "historical_factory_output_sha256": {
+    "C1_tasks": "d2e1b320fe45cdd77a4b67ffa4a46a2571757c678a86682965734c5e9d2274d9",
+    "source_tasks": "855b64caeef2b5899ba80292b4dcc2ad34cd1e1b9c47ef9568262394b79406be",
+    "actual_no_memory_fk0": "a72296e1cf7c55dda83b63cff6e1760bfe6ffeb09226450225f100f40501ec66",
+    "actual_no_memory_fk1": "317eb42c3c0a24e2f210d5ba52d11888b3c1a1cf74217979e3bce2a240893f04",
+    "actual_no_memory_fk2": "77ac6dff94126976212d1cd7bfda3b36531e4ee8a02839a9a73f88bee85401d4",
+    "actual_no_memory_fk3": "829ed4f2f5e9fcb3d0eb3b780c6e5857e3e4e050255fbaf18a64ce6db5598e3e",
+    "actual_no_memory_fk4": "25790ebc80564660e643ed3ac6ea5d157912fe1e5f8cfb169423c797df619373",
+    "actual_no_memory_fk5": "d7f73a0780b35b5e8ce816f6701d6d9000214d8c3821d33c720490af98b5e498",
+    "actual_no_memory_fk6": "6d1ef5c24cf7ee555ff7c00ddc11ce8280d7ffd6bff178ac0837b8561cb19236",
+    "fresh_memory_fk0": "e57ae120f24d6ab8aa6e8b5d9825101f438222bfbbbf14060a851d2242fe4245",
+    "fresh_memory_fk1": "ad99aad17823c90a058947ba61d261e6da6ffbf9c9290a8a67b8aa825d9190ad",
+    "fresh_memory_fk2": "f9ab43a6874aba1cc9fc8d6c19770a4834c6374850e29630a905dcc91379c3be",
+    "fresh_memory_fk3": "7862eb54c651e272bb8c917c9232d91ec3b3663200eeedaf865b3b72d26a0bc4",
+    "fresh_memory_fk4": "c9da6469aa1eccc80d6f2e74feb642c2b9470b02e5439f25651465dc6b10f6e7",
+    "fresh_memory_fk5": "986267b56a49e75c52a53e44bbc0ef64df38b9863d66b8d8f9b2df94416ff1c7",
+    "fresh_memory_fk6": "2feb33a2bce7c966dd32f1c3473d40e4408c004d680959f7f63549da6da489d5"
+  },
+  "factory_output_format": "SHA256 of UTF-8 compact JSON with sorted keys",
+  "archived_source_check": true
+}

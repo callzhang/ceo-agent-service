@@ -450,7 +450,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.8"
+STORE_SCHEMA_VERSION = "2026-10-19.9"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1976,7 +1976,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True, task_lifecycle=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1984,7 +1984,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True, task_lifecycle=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2308,7 +2308,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True,
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -2698,7 +2698,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 else feedback_base_url
             ),
         )
-        insert_action(db, "outbound_postfixes", {
+        shared_action_lifecycle.transition(db, "prepared", "prepare", values={
             "channel": prepared.channel, "delivery_key": prepared.delivery_key,
             "final_body": prepared.final_body, "feedback_token": prepared.feedback_token,
             "postfix_version": prepared.postfix_version,
@@ -2753,9 +2753,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def claim_native_reply_dispatch(self, channel: str, delivery_key: str) -> bool:
         """Commit the possible-effect boundary before calling the provider."""
         with self._immediate_write_transaction() as db:
-            cursor = insert_action(db, "native_reply_dispatches", {
-                "channel": channel, "delivery_key": delivery_key,
-            }, ignore=True)
+            cursor = shared_action_lifecycle.transition(
+                db, "prepared", "claim", identity=(channel, delivery_key),
+            )
             return cursor.rowcount == 1
 
     def get_outbound_postfix_receipt(
@@ -2790,10 +2790,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         serialized = json.dumps(provider_result, ensure_ascii=False, default=str)
         with self._immediate_write_transaction() as db:
-            insert_action(db, "outbound_postfix_receipts", {
-                "channel": normalized_channel, "delivery_key": normalized_delivery_key,
-                "provider_result_json": serialized,
-            }, ignore=True)
+            shared_action_lifecycle.transition(
+                db, "prepared", "outcome",
+                identity=(normalized_channel, normalized_delivery_key),
+                values={"provider_result_json": serialized},
+            )
             row = db.execute(
                 f'select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL})\n                   where channel=? and delivery_key=?',
                 (normalized_channel, normalized_delivery_key),
@@ -6775,7 +6776,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     db, action_variant=variant, include_business_actions=True,
                     include_email_history=True,
                     canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True)
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
@@ -6789,9 +6790,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
                         include_business_actions=True,
                         include_email_history=True,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True,
                         canonical_email="emails" in tables,
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True)
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
@@ -6812,7 +6813,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.8 schema"
+                    "or the current 2026-10-19.9 schema"
                 )
             return True
         finally:

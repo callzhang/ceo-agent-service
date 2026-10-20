@@ -2,14 +2,14 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.8`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.9`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-C1 的 Store19.8 候选尚未部署；父级已验证生产 B2b Store19.7／Email53。
+A5a 的 Store19.9 候选尚未部署；本切片的准确来源是 C1 Store19.8／Email53。
 B2b 观察提交、副本及原生 CLI 的独立证据见[专有动作验收](database-redesign-specialized-actions-validation.md)。
-本候选局部验证与剩余发布门槛见[C1 生命周期验收](business-model-task-lifecycle-validation.md)。
+C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validation.md)；本候选局部验证与剩余发布门槛见[Prepared Action 归属验收](database-redesign-prepared-actions-validation.md)。
 [此前阶段验收](database-redesign-final-acceptance.md)只记录 Store14.1 的历史范围；
 当前 C1／C2、A5 及 D 的范围见[业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，
 不能据此前阶段结案推断本轮全部完成或容量已通过。
@@ -43,7 +43,7 @@ Task 单一仲裁的范围是这些符合源 channel／adapter 条件的 dispatc
 reply／scheduled_execution State 历史；该 channel 对两者都不 eligible，
 这条既有取消前置事实不迁成 Task 租约，也不据 owner／expiry 改变取消判定。
 
-既有 paired coordinator 只接受准确的 Store19.7／Email53 源，发布 Store19.8／Email53。
+C1 的历史 paired coordinator 只接受准确的 Store19.7／Email53 源，发布 Store19.8／Email53。
 current-data inverse 使用当前 Task 单一 owner 与未归档的被动 ledger 重建旧声明及
 精确 JSONB 字节，保留源 marker 原时钟、Email 账本、FK 变体和分配水位；不恢复
 旧数据快照。字段来源、九种状态映射、验证与成本见
@@ -52,13 +52,38 @@ current-data inverse 使用当前 Task 单一 owner 与未归档的被动 ledger
 payload UPDATE 上都随无关行数增长。C1 没有新增该扫描；本地旧／新对照、单语句
 原子性和已知 2 秒期限测试失败不构成生产启动／全量副本容量已通过的声明。
 
-Actions 保留六十一种物理类型：六十种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
-同样只存 `_kind` 和声明的 JSONB 值槽位，公开类型／字段通过生成列读取。
+Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
+类型只存 `_kind`，业务值使用声明的 JSONB 槽位及 prepared Action 的三个源限定列；公开字段按其唯一 owner 读取。
 公开 ID 与物理 Action ID 保持区别，各源 AUTO 水位和普通隐藏 ROWID 语义保留。
 Reply、Email、Sync、delivery、Errors、Feedback、Business evidence、Email history
 及 Skill receipt 调用方均使用这一结构；原事务、CAS、claim/lease、约束顺序和
 幂等回执合同保留。Errors 的 ID/时间读取和 Attention 的未解决项使用其既有局部索引。
 Email Attention 先在 Tasks 的现有类型／状态索引上筛选 failed 的公开 ROWID，再读取这些任务的内容；不通过通用完整投影扫描成功任务的输入。
+
+Store `2026-10-19.9` 的 A5a 以现有 `outbound_postfixes` prepared Action 为唯一
+owner，退休 `outbound_postfix_receipts` 与 `native_reply_dispatches` 两个物理类型。
+父记录的 channel／delivery_key、final_body、feedback_token、postfix_version、
+created_at 及整个原始 JSONB payload 不改写。三个 nullable TEXT 物理列分别保存
+源 receipt 的原始 provider_result_json、receipt.created_at，以及 dispatch.created_at；
+只有 prepared 父类型可持有它们。SQL NULL 表示不存在的子事实，文本 `null`／`{}`
+保留为已存在的 provider 字符串；claim 与 receipt 的时钟独立于准备时钟。
+
+Store 的 prepare／claim／record receipt 统一进入 `shared_action_lifecycle.transition`
+的 prepared 来源，get／receipt 公共返回值仍按原源字段投影。首次正文、首次 claim、
+首次回执、原输入校验与 missing-parent 错误保持；claim 仍在 provider 之前单独提交，
+接受回执仍在验证之前单独提交。未知 processQueryKey 仍重核同一回执，不重发；
+claim-only 仍走原 reconcile，echo 仍使用父正文与准备时钟。服务消息不制造 Task、
+AgentRun、全局 verified receipt 或新状态。Audit／授权／取消／重试规则不变。
+
+A5a 的既有配对发布只接受准确 Store19.8／Email53，发布 Store19.9／Email53；
+C1 Task 声明和所有历史 Actions 声明输出冻结。current-data inverse 用当前父值重建
+旧子事实，包含正迁后的新准备、claim 和接受回执；只保存声明变体和原 marker 元数据。
+所有父／无关记录的物理 ID、SQL 类型、值与 payload 原字节及真实 sqlite_sequence
+行／ROWID／水位保持。退休子记录没有公开整数 ID、入站物理子 ID 外键或业务 URL；
+其重建 private ID、legacy_key 的等价 JSON 拼写和下一次普通 private ID 分配可以改变。
+无调用方的旧内部子记录 CRUD／物理 FK 操作合同随类型退休，不增加替代触发器。
+本地验证、字段映射、空间测量和未完成发布门槛见
+[Prepared Action 归属验收](database-redesign-prepared-actions-validation.md)。
 
 Store `2026-10-19.1` 的 `candidate_selections` 保留物理 ID、公开 legacy key、
 candidate／review FK，以及 `option_key`、status、created_at 三个 payload 槽位；
@@ -187,7 +212,7 @@ direct step 时按 ID 查找；索引随临时表删除，永久源／目标声�
 逆迁从当前 plan／step／attempt 重建旧布局，包括发布后的新计划、新 reviewed 执行及
 可变槽位、新 Email retry attempt 和当前 claim；原 Actions 物理 ID、公开 identity、
 FK finding 多重集合、分配水位及原 marker 时间保留。Email53 账本不增版本，源行不归档。
-B2a 的证据只覆盖上述五类来源；Reply／unsubscribe claims 由后述 B2b 接续，Postfix 归属仍待 A5。
+B2a 的证据只覆盖上述五类来源；Reply／unsubscribe claims 由后述 B2b 接续，Postfix 归属由本页 A5a 接续。
 局部 fake-provider、源程序差分、逆迁及冻结证据见
 [共享动作机制验收](database-redesign-shared-actions-validation.md)。
 
@@ -220,7 +245,7 @@ SQLite 类型、物理／公开身份、独立分配水位及原 FK finding 多�
 不保留源业务行副本。Email53 账本、Configs 声明和原 source marker 时钟不变。
 父级已完成 B2b 标准部署和 Store19.7／Email53 生产回读。
 该切片不包含 A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元；
-本 checkout 的 C1 Store19.8 仍为未部署候选。
+C1 和 A5a 的发布状态分别以各自验收记录及生产回读为准。
 局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
 [专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
@@ -2679,6 +2704,8 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
 
 ### Store17 postfix 整合（已发布）
+
+以下记录历史 Store17 边界；当前 Store19.9 的 A5a 将两个子类型事实移到 prepared 父记录，详见本页顶部的当前合同。
 
 Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
 native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
