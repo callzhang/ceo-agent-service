@@ -7501,7 +7501,6 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "meeting",
         "work_summary",
         "okr_review",
-        "task_todo_sync_outbox",
         "business_task_todo_sync_outbox",
         "task_memory_write",
     ]
@@ -7512,12 +7511,11 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "meeting",
         "work_summary",
         "okr_review",
-        "task_todo_sync_outbox",
         "business_task_todo_sync_outbox",
         "task_memory_write",
     }
     assert set(captured["executors"]) == set(captured["consumers"])
-    assert len({id(executor) for executor in captured["executors"].values()}) == 9
+    assert len({id(executor) for executor in captured["executors"].values()}) == 8
     assert captured["max_in_flight"] == {
         name: 1 if name in {"meeting", "work_summary"} else 2
         for name in captured["consumers"]

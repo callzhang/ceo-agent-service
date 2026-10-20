@@ -314,6 +314,15 @@ TODO evidence、Work Project、Work Todo 及候选业务对象。Work Project �
 `repair-task-projects-plan` 仍只生成清单。历史 Work Project／Work Todo／Work Update
 行与已有回执继续供读取和 History 使用；本切片不迁移或删除这些数据，也不改变
 当前 Task Agent、Task 写入及 task-semantic-import 的 plan/apply。
+旧 Work Todo 的钉钉镜像执行代码也已退休：不再注册 `task_todo_sync_outbox`
+dispatcher adapter，Status 中该 adapter 的队列展示也已移除；不再创建、重试、回读恢复、完成外部旧 Todo，也不再通过
+旧 Store API 改写 link/outbox。当前镜像继续只按 `business_task_id` 使用
+`business_task_todo_sync_outbox`，创建、完成及未知回执语义保持原样。
+Derek 2026-10-20 确认：无法核验 current Task 身份的旧 Todo 仅保留原身份的来源、
+业务事实和执行回执；不按共享整数 ID 晋升或关联 Task，不取消、完成或重发真实外部 Todo。
+旧 `active` 是已保存的历史状态，不代表仍在运营；历史 link/outbox 读取、History 和
+legacy-project 深链接保留。本批不改变物理声明或旧记录；旧 `DingTalk Todos` Status
+聚合及其 retryable 分支仍存在，与小时质量检查的旧来源一起留待独立 D1c 退休。
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 
@@ -781,7 +790,7 @@ model、thinking 只作用于首选线路。managed Skill 必须绑定精确、�
 
 统一 Consumer Dispatcher 不建立第二套业务队列表。各 Queue Adapter 直接领取现有事实来源：
 scheduled trigger、scheduled execution、普通 reply、meeting、work summary、OKR review、
-DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
+当前 BusinessTask 的 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
@@ -1867,7 +1876,7 @@ outbox 镜像为钉钉 TODO；只有来源明确给出下次检查时间与目�
 只是建议：由 Derek 在 Task 详情页点按钮发送（Derek 2026-09-25），新信息更新该 Task 时撤回未发出的
 follow-up，见 `docs/runtime-mechanism.md`。没有自动发送：到期的 follow-up 不会被发出，结果未知的
 发送显示为失败、由 Derek 决定是否再点。发送记录 revision、租约、幂等 ID 与 provider 回执。读取后续
-回复或新完成的外部 TODO 后，仅凭明确完成证据关闭对应 Task 与其 follow-up。旧 Project/TODO/follow-up 记录保留在历史边界，等待 Task 8 导入。
+回复或新完成的外部 TODO 后，仅凭明确完成证据关闭对应 Task 与其 follow-up。旧 Project/TODO/follow-up 记录保留在历史边界；没有可核验 current Task 绑定的旧外部 Todo 不会因镜像链路退休而被晋升为 Task。
 
 ## Audit Rules
 

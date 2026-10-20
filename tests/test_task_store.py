@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_todo_link
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -995,7 +996,7 @@ def test_list_recent_follow_up_candidates_respects_non_positive_limit(
     )
 
 
-def test_dingtalk_todo_link_create_get_update_and_active_lookup(tmp_path: Path):
+def test_historical_dingtalk_todo_link_get_and_active_lookup(tmp_path: Path):
     store = _store(tmp_path)
     project_id = store.create_work_project(
         title="客户交付",
@@ -1014,7 +1015,7 @@ def test_dingtalk_todo_link_create_get_update_and_active_lookup(tmp_path: Path):
         deadline_at="2026-07-01 18:00:00",
     )
 
-    link_id = store.create_work_todo_dingtalk_link(
+    link_id = seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="",
         executor_user_id="owner-1",
@@ -1031,58 +1032,21 @@ def test_dingtalk_todo_link_create_get_update_and_active_lookup(tmp_path: Path):
     assert link.status == "creating"
     assert store.get_active_work_todo_dingtalk_link(todo_id).id == link_id
 
-    store.update_work_todo_dingtalk_link(
-        link_id,
-        dingtalk_task_id="dt-task-1",
-        status="active",
-        last_dingtalk_done=False,
-        last_dingtalk_payload_json='{"id":"dt-task-1","done":false}',
-        last_push_at="2026-06-27 10:00:00",
-    )
+    with store._immediate_write_transaction() as db:
+        from app.action_storage import update_sync_action
+
+        update_sync_action(db, "work_todo_dingtalk_links", link_id, {
+            "dingtalk_task_id": "dt-task-1", "status": "active",
+            "last_dingtalk_done": False,
+            "last_dingtalk_payload_json": '{"id":"dt-task-1","done":false}',
+            "last_push_at": "2026-06-27 10:00:00",
+        })
 
     updated = store.get_work_todo_dingtalk_link(link_id)
     assert updated.dingtalk_task_id == "dt-task-1"
     assert updated.status == "active"
     assert updated.last_dingtalk_done is False
     assert updated.last_error == ""
-
-
-def test_dingtalk_todo_link_prevents_duplicate_active_links(tmp_path: Path):
-    store = _store(tmp_path)
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-1",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    first_id = store.create_work_todo_dingtalk_link(
-        work_todo_id=todo_id,
-        executor_user_id="owner-1",
-        title_snapshot="给客户同步验收 ETA",
-        deadline_at_snapshot="2026-07-01 18:00:00",
-        priority_snapshot="P1",
-        status="creating",
-    )
-
-    second_id = store.create_work_todo_dingtalk_link(
-        work_todo_id=todo_id,
-        executor_user_id="owner-1",
-        title_snapshot="给客户同步验收 ETA",
-        deadline_at_snapshot="2026-07-01 18:00:00",
-        priority_snapshot="P1",
-        status="creating",
-    )
-
-    assert second_id == first_id
-    assert len(store.list_work_todo_dingtalk_links(statuses=("creating",))) == 1
 
 
 def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
@@ -1099,7 +1063,7 @@ def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
         title="给客户同步验收 ETA",
         status="open",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -1141,7 +1105,7 @@ def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
         priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -1152,7 +1116,7 @@ def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
         status="active",
         last_push_at="2026-06-27 09:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="",
         executor_user_id="owner-1",
@@ -1315,12 +1279,12 @@ def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
         priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=other_todo_id,
         dingtalk_task_id="dt-other",
         status="failed",
     )
-    target_link_id = store.create_work_todo_dingtalk_link(
+    target_link_id = seed_legacy_todo_link(store,
         work_todo_id=target_todo_id,
         dingtalk_task_id="dt-target",
         status="failed",
@@ -1342,12 +1306,12 @@ def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
         priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=second_target_todo_id,
         dingtalk_task_id="",
         status="failed",
     )
-    second_target_link_id = store.create_work_todo_dingtalk_link(
+    second_target_link_id = seed_legacy_todo_link(store,
         work_todo_id=second_target_todo_id,
         dingtalk_task_id="dt-second-target",
         status="failed",
@@ -1390,14 +1354,14 @@ def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
         deadline_at="2026-07-01 18:00:00",
     )
     link_ids = [
-        store.create_work_todo_dingtalk_link(
+        seed_legacy_todo_link(store,
             work_todo_id=todo_id,
             dingtalk_task_id=f"dt-target-{index}",
             status="failed",
         )
         for index in range(101)
     ]
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=other_todo_id,
         dingtalk_task_id="dt-other",
         status="failed",

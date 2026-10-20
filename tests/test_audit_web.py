@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_todo_link
 import json
 import os
 import re
@@ -4284,7 +4285,7 @@ def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path
         priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -4816,7 +4817,7 @@ def test_task_project_detail_renders_dingtalk_todo_link(tmp_path: Path):
         status="open",
         priority="P1",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -11613,7 +11614,7 @@ def test_render_workers_page_shows_service_and_queue_status(
         priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="",
         status="failed",
@@ -12099,6 +12100,7 @@ def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
 
     names = [row["name"] for row in audit_web_module._dispatcher_queue_snapshots(store)]
 
+    assert "task_todo_sync_outbox" not in names
     assert "business_task_todo_sync_outbox" in names
     assert "task_memory_write" in names
 

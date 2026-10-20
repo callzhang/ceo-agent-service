@@ -2727,7 +2727,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
         TaskMemoryWriteQueueAdapter,
-        TaskTodoSyncOutboxQueueAdapter,
         WorkSummaryQueueAdapter,
     )
 
@@ -2739,7 +2738,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
-        TaskTodoSyncOutboxQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
         TaskMemoryWriteQueueAdapter(store),
     )

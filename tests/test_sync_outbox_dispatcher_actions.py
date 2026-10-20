@@ -12,7 +12,6 @@ from app.action_storage import create_action_schema, insert_sync_action, update_
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.dispatcher.adapters import (
     BusinessTaskTodoSyncOutboxQueueAdapter,
-    TaskTodoSyncOutboxQueueAdapter,
 )
 from app.state_definitions import state_projection
 from app.state_storage import create_state_schema
@@ -63,11 +62,6 @@ def _target_store(tmp_path: Path) -> AutoReplyStore:
     ("kind", "adapter_type", "row"),
     (
         (
-            "task_todo_sync_outbox",
-            TaskTodoSyncOutboxQueueAdapter,
-            {"operation_key": "task:1:create", "work_todo_id": 1, "operation": "create"},
-        ),
-        (
             "business_task_todo_sync_outbox",
             BusinessTaskTodoSyncOutboxQueueAdapter,
             {"operation_key": "business:1:create", "business_task_id": 1, "operation": "create"},
@@ -117,7 +111,6 @@ def test_todo_outbox_dispatcher_claim_lifecycle_uses_actions(
 @pytest.mark.parametrize(
     ("kind", "adapter_type", "parent_field", "parent_id"),
     (
-        ("task_todo_sync_outbox", TaskTodoSyncOutboxQueueAdapter, "work_todo_id", 1),
         (
             "business_task_todo_sync_outbox",
             BusinessTaskTodoSyncOutboxQueueAdapter,
@@ -169,11 +162,6 @@ def test_todo_outbox_claim_marks_expired_running_effect_unknown(
     ("kind", "adapter_type", "row"),
     (
         (
-            "task_todo_sync_outbox",
-            TaskTodoSyncOutboxQueueAdapter,
-            {"operation_key": "task:finish:create", "work_todo_id": 1, "operation": "create"},
-        ),
-        (
             "business_task_todo_sync_outbox",
             BusinessTaskTodoSyncOutboxQueueAdapter,
             {"operation_key": "business:finish:create", "business_task_id": 1, "operation": "create"},
@@ -213,13 +201,6 @@ def test_todo_outbox_finish_verifies_terminal_action_status(
     ("kind", "enqueue", "list_rows", "get_row", "arguments"),
     (
         (
-            "task_todo_sync_outbox",
-            "enqueue_task_todo_sync_outbox",
-            "list_task_todo_sync_outbox",
-            "get_task_todo_sync_outbox",
-            {"operation_key": "task:store:create", "work_todo_id": 1, "operation": "create"},
-        ),
-        (
             "business_task_todo_sync_outbox",
             "enqueue_business_task_todo_sync_outbox",
             "list_business_task_todo_sync_outbox",
@@ -248,13 +229,6 @@ def test_store_outbox_enqueue_list_get_uses_typed_actions(
     ("kind", "enqueue", "claim", "get_row", "arguments"),
     (
         (
-            "task_todo_sync_outbox",
-            "enqueue_task_todo_sync_outbox",
-            "claim_task_todo_sync_outbox",
-            "get_task_todo_sync_outbox",
-            {"operation_key": "task:store:claim", "work_todo_id": 1, "operation": "create"},
-        ),
-        (
             "business_task_todo_sync_outbox",
             "enqueue_business_task_todo_sync_outbox",
             "claim_business_task_todo_sync_outbox",
@@ -282,14 +256,6 @@ def test_store_outbox_claim_uses_typed_actions(
 @pytest.mark.parametrize(
     ("kind", "enqueue", "get_row", "adapter_type", "arguments", "error_prefix"),
     (
-        (
-            "task_todo_sync_outbox",
-            "enqueue_task_todo_sync_outbox",
-            "get_task_todo_sync_outbox",
-            TaskTodoSyncOutboxQueueAdapter,
-            {"operation_key": "task:retry:create", "work_todo_id": 1, "operation": "create"},
-            "task_todo_sync_retry_exhausted:",
-        ),
         (
             "business_task_todo_sync_outbox",
             "enqueue_business_task_todo_sync_outbox",
@@ -352,13 +318,6 @@ def test_outbox_delivery_retry_preserves_backoff_and_attempt_limit(
     ("kind", "enqueue", "get_row", "adapter_type", "arguments"),
     (
         (
-            "task_todo_sync_outbox",
-            "enqueue_task_todo_sync_outbox",
-            "get_task_todo_sync_outbox",
-            TaskTodoSyncOutboxQueueAdapter,
-            {"operation_key": "task:receipt:create", "work_todo_id": 1, "operation": "create"},
-        ),
-        (
             "business_task_todo_sync_outbox",
             "enqueue_business_task_todo_sync_outbox",
             "get_business_task_todo_sync_outbox",
@@ -400,7 +359,6 @@ def test_delivery_receipt_and_claim_ledger_finish_together(
 @pytest.mark.parametrize(
     ("kind", "parent_field", "parent_id", "reconcile"),
     (
-        ("task_todo_sync_outbox", "work_todo_id", 1, "reconcile_unknown_task_todo_sync_outbox"),
         (
             "business_task_todo_sync_outbox",
             "business_task_id",
@@ -425,11 +383,7 @@ def test_unknown_create_reconciliation_uses_actions(
                 "evidence_json": '{"source":"existing"}',
             },
         ).lastrowid
-        link_table = (
-            "work_todo_dingtalk_links"
-            if kind == "task_todo_sync_outbox"
-            else "business_task_dingtalk_links"
-        )
+        link_table = "business_task_dingtalk_links"
         parent_column = parent_field
         insert_sync_action(
             db,
@@ -440,18 +394,8 @@ def test_unknown_create_reconciliation_uses_actions(
     assert getattr(store, reconcile)(
         outbox_id=int(action_id), provider_absent_evidence="provider read confirms absent"
     )
-    item = getattr(
-        store,
-        "get_task_todo_sync_outbox"
-        if kind == "task_todo_sync_outbox"
-        else "get_business_task_todo_sync_outbox",
-    )(int(action_id))
+    item = store.get_business_task_todo_sync_outbox(int(action_id))
     assert item["status"] == "queued"
-    if kind == "task_todo_sync_outbox":
-        assert json.loads(item["evidence_json"]) == {
-            "source": "existing",
-            "provider_absent_reconciliation": "provider read confirms absent",
-        }
     with store._connect() as db:
         link = db.execute(
             f"select status from ({SYNC_ACTION_PROJECTIONS[link_table]})"
@@ -462,14 +406,6 @@ def test_unknown_create_reconciliation_uses_actions(
 @pytest.mark.parametrize(
     ("kind", "parent_field", "parent_id", "complete", "get_row", "link_table"),
     (
-        (
-            "task_todo_sync_outbox",
-            "work_todo_id",
-            1,
-            "complete_unknown_task_todo_sync_outbox_from_receipt",
-            "get_task_todo_sync_outbox",
-            "work_todo_dingtalk_links",
-        ),
         (
             "business_task_todo_sync_outbox",
             "business_task_id",

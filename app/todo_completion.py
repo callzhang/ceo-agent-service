@@ -1,10 +1,7 @@
 import json
-import sqlite3
-from typing import Any
 
 from app.business_storage import update_business
 from app.store import AutoReplyStore
-from app.task_models import TodoStatus
 
 
 def complete_business_task_from_external_todo(
@@ -61,102 +58,3 @@ def complete_business_task_from_external_todo(
 
     BusinessAttentionProjection(store).recompute_for_tasks((business_task_id,))
     return True
-
-def close_todo_with_completion_evidence(
-    store: AutoReplyStore,
-    *,
-    todo_id: int,
-    evidence: dict[str, Any],
-    now: str,
-    source_type: str,
-    source_ref: str,
-    merge_reason: str,
-    confidence: float = 1.0,
-    _db: sqlite3.Connection | None = None,
-) -> bool:
-    todo = store.get_work_todo(todo_id, _db=_db)
-    if todo is None or str(todo.status) == TodoStatus.DONE.value:
-        return False
-    normalized_evidence = _completion_evidence(evidence, now=now)
-    store.update_work_todo(
-        todo.id,
-        status=TodoStatus.DONE.value,
-        completion_evidence_json=json.dumps(normalized_evidence, ensure_ascii=False),
-        completed_at=now,
-        _db=_db,
-    )
-    complete_follow_ups_for_todo(
-        store,
-        todo_id=todo.id,
-        evidence=normalized_evidence,
-        now=now,
-        _db=_db,
-    )
-    store.create_work_update(
-        project_id=todo.project_id,
-        source_type=source_type,
-        source_ref=source_ref,
-        summary=f"Todo completed: {todo.title}",
-        changes_json=json.dumps(
-            {
-                "todo_id": todo.id,
-                "status": TodoStatus.DONE.value,
-                "completion_evidence": normalized_evidence,
-            },
-            ensure_ascii=False,
-        ),
-        merge_reason=merge_reason,
-        confidence=confidence,
-        _db=_db,
-    )
-    return True
-
-
-def complete_follow_ups_for_todo(
-    store: AutoReplyStore,
-    *,
-    todo_id: int,
-    evidence: dict[str, Any],
-    now: str,
-    _db: sqlite3.Connection | None = None,
-) -> int:
-    normalized_evidence = _completion_evidence(evidence, now=now)
-    completed = 0
-    for draft in store.list_follow_up_drafts_for_todo(
-        todo_id,
-        statuses=("draft", "approved", "sent"),
-        _db=_db,
-    ):
-        payload = {
-            "completed": True,
-            "reason": normalized_evidence["reason"],
-            "source": normalized_evidence["source"],
-            "checked_at": now,
-            "completion_evidence": normalized_evidence,
-        }
-        store.update_follow_up_draft(
-            draft.id,
-            status="completed",
-            evidence_check_json=json.dumps(payload, ensure_ascii=False),
-            suppressed_reason=normalized_evidence["reason"],
-            _db=_db,
-        )
-        completed += 1
-    return completed
-
-
-def _completion_evidence(evidence: dict[str, Any], *, now: str) -> dict[str, Any]:
-    source = str(evidence.get("source") or "").strip()
-    reason = str(
-        evidence.get("reason")
-        or evidence.get("description")
-        or evidence.get("summary")
-        or ""
-    ).strip()
-    completed_at = str(evidence.get("completed_at") or now).strip()
-    normalized = dict(evidence)
-    normalized["source"] = source or "unknown"
-    normalized["reason"] = reason or "completion confirmed"
-    normalized["completed_at"] = completed_at
-    normalized.setdefault("checked_at", now)
-    return normalized

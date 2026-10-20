@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox
 import json
 import sqlite3
 
@@ -1181,10 +1182,10 @@ def test_quality_gate_deduplicates_failed_todo_link_after_later_active_link(tmp_
         project_id=project_id, title="follow up", owner_user_id="owner",
         status="open", deadline_at="2026-08-08 12:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id, status="failed", last_error="transient create error"
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id, dingtalk_task_id="external-task", status="active"
     )
 
@@ -1253,7 +1254,7 @@ def test_quality_gate_fails_when_a_live_channel_is_not_ready(tmp_path):
 
 
 def _outbox_row(store: AutoReplyStore, *, key: str, status: str, attempts: int) -> None:
-    store.enqueue_task_todo_sync_outbox(
+    seed_legacy_todo_outbox(store,
         operation_key=key, work_todo_id=1, operation="create"
     )
     row = store.list_task_todo_sync_outbox()[-1]

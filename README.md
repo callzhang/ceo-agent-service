@@ -508,15 +508,17 @@ Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，�
   对同一流程的后续扫描，服务会把已核验的审批动作作为幂等依据交给 Agent：先读取实时状态，
   不重复已确认的同一动作；只有新增证据要求不同动作时才可再次处理。
 
-钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。创建阶段没有取得外部 task id 的 `TOKEN_VERIFIED_FAILED` 或安全校验调用失败，会保留原始提交内容并自动重试一次；第二次仍失败保留明确错误，不会无限创建重复待办。
+钉钉 Todo 是当前 BusinessTask 的外部执行镜像。只有正式、开放、负责人明确、承诺已接受，且来源支持可解析 `committed_deadline_at` 的 Task 才进入镜像 outbox；其他日期不作为镜像期限。创建先保存 provider task ID 再读回，结果未知时沿用当前回执核对流程，不盲目重复创建。钉钉完成扫描只按当前 Task 的准确 provider 链接关闭该 Task、记录完成证据并关闭其 follow-up。
 
-Follow-up 发送使用稳定的幂等键。若钉钉返回登录、权限或已识别的目标错误，服务保留明确原因；若发送命令仅返回无业务码的未知结果，服务将草稿延迟重试并复用同一幂等键，而不是标记为不可恢复的失败。重复请求会由钉钉幂等回执收敛，避免重复催办。
+旧 Work Todo 的创建、重试、完成同步和 outbox 调度已退休。无法核验 current Task 身份的旧记录按原身份保留来源、业务事实和执行回执，公共整数 ID 相同也不建立关联或晋升 Task。已保存的 `active` 状态仅表示历史记录；本次退休不取消、完成或重发真实钉钉 Todo。旧 link/outbox 历史查询继续可用，旧状态修补脚本 `reclassify_unmirrored_todo_outbox.py` 已移除。
+
+当前 follow-up 由 Derek 在 Task 详情页点击发送；到期不自动发送。新信息更新 Task 时撤回该 Task 尚未发送的 follow-up；发送失败或结果未知保留原 attempt 和回执，由再次点击创建新 revision。旧 follow-up 仍按历史记录读取。
 
 可见性：
 
-- `/tasks/{project_id}` 的每个 TODO 下会显示钉钉 Todo 的 task id、状态、最近 pull/push 时间和错误。
-- `/logs` 会显示 `DingTalk Todo` 类别的创建、拉取和完成同步记录。
-- `daily-task-maintenance` 输出包含 `dingtalk_todos_closed`，表示本次从钉钉 Todo 拉取后关闭的内部 TODO 数量。
+- `/tasks/item/{task_id}` 展示当前 Task；旧 Todo 深链接使用 `/tasks/legacy-project/{legacyProjectId}`，保留原来的外部 ID、状态、pull/push 时间和错误。
+- `/logs` 的 `DingTalk Todo` 历史记录继续可查询；Status 的 dispatcher adapter 队列已移除旧 Todo outbox，保留 `business_task_todo_sync_outbox`。旧 `DingTalk Todos` Status 聚合及其 retryable 分支仍存在，与旧来源的小时质量检查一起留待独立 D1c 退休。
+- 定时任务「补查遗漏的钉钉消息和日历更新」执行当前 Task 的完成扫描，输出中的 `dingtalk_todos_closed` 是本次关闭的当前 Task 数量。需要补跑时在 Console 手动运行该定时任务。
 
 手动补跑命令：
 
@@ -537,9 +539,6 @@ cd /path/to/ceo-agent-service
 
 # 扫描当前登录人的钉钉 OA 待审批
 "$HOME/miniforge3/bin/ceo-agent" scan-oa-approvals
-
-# 扫描、处理 Work Item、处理到期 follow-up
-CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" daily-task-maintenance --not-send-message
 ```
 
 `scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。`local_file` Work Item 只能更新明确匹配的现有项目；没有可靠匹配时必须跳过，不能从历史文档自动新建项目。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。

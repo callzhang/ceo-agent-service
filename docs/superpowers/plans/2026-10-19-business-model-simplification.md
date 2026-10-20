@@ -175,6 +175,13 @@ candidate_action_attempts:
 
 ## 6. 单元 D：退出旧业务系统
 
+2026-10-20 用户确认的旧 provider Todo 处置：540 条 recorded-active 旧链接没有可核验的
+current Task 身份，仅按原身份保留来源、业务事实和执行回执；不自动晋升、取消、完成或
+重发真实外部 Todo。D1b 退休旧 provider 执行代码及 dispatcher adapter 队列，保留物理事实和历史 reader；
+旧 `DingTalk Todos` Status 聚合、retryable 分支和旧来源小时质量检查仍保留，另由 D1c 退出，
+后续 DDL 独立处理。当前 BusinessTask 路径保持现有语义。
+D1b 的本地回归与源码冻结不表示完整 D、正式迁移、回退或上线验收完成。
+
 **修改：** `app/task_semantic_import.py`、`app/task_semantic_service.py`、`app/business_definitions.py`、`app/task_agent.py`、`app/task_retrieval.py`、`app/todo_completion.py`、`app/todo_sync.py`、`app/action_followup_sync_definitions.py`、`app/store.py`、`app/web_api/tasks.py`、`frontend/src/pages/TasksPage.tsx`、`frontend/src/pages/TaskParts.tsx`、`frontend/src/app/router.tsx`。
 
 - [ ] 对每个旧 work_todo 按现有 formal_task/history_only 规则生成来源绑定处置；逐条保存实际 task 身份映射；不能按标题或共享整数 ID 合并。
@@ -183,12 +190,12 @@ candidate_action_attempts:
 - [ ] 负责人/截止日期/完成证据迁入 task 与现有证据关系；旧 priority/blocker/follow_up 等不能默默丢弃，逐字段决定保留业务结果、转现有关注/跟进机制或取消功能。
 - [ ] work_updates 的已采用结论进入 task/project_context_revision 与现有业务事件；来源仍是 provenance；旧摘要和 changes_json 不另建历史镜像。
 - [ ] 停止 create/update_work_project/work_todo/create_work_update；替换 task_retrieval、todo_completion、todo_sync 和 Console reader；删除启动补写旧模型代码。
-- [ ] 钉钉 link 和 sync outbox 指向同一权威 business task；保留未确认写入和外部 dingtalk_task_id，不能把停用旧模型等价为取消已有真实待办。
+- [ ] 当前钉钉 link 和 sync outbox 只使用同一权威 business task；旧记录无法核验 current Task 身份时仅保留原身份的来源、业务事实和回执。退出其运营查询、调度和写入，保留历史查询，不按共享整数 ID 关联或晋升，也不取消、完成或重发真实外部 Todo。D1b 执行代码及 dispatcher adapter 队列、D1c 旧 Status 聚合/retryable 分支及旧来源质量检查、后续 DDL 分别验收。
 - [ ] legacy-project URL 不再回读旧表：可唯一映射时转正式目标；多对象分解时提供该历史身份已有事实的列表；退休且无业务价值时明确不存在，不返回空白成功。
 - [ ] 对 project/task/anchor/证据/关系/关注项分别验证：stage/formal_basis/commitment_status/status 的语义、合并 lineage、来源引用、多项目关系仍完整。
 - [ ] 运行 `python -m pytest -q tests/test_task_semantic_import.py tests/test_task_semantic_service.py tests/test_task_semantic_store.py tests/test_task_retrieval.py tests/test_todo_sync.py tests/test_business_console_source_reader.py tests/test_task_console_candidate_decision.py tests/test_task_console_project_candidate.py`；前端 Tasks/TaskParts/API 测试与真实副本浏览器走查通过后提交。
 
-**完成判据：** work_project/work_todo/work_updates/todo_evidence_candidate 旧链路不再写入、查询或补写；每个旧身份有明确处置，旧 URL 有确定结果；业务事实和外部回执可回溯。
+**完成判据：** work_project/work_todo/work_updates/todo_evidence_candidate 旧链路退出运营写入、运营查询和补写；每个旧身份有明确处置，旧 URL 有确定结果。按用户确认保留的旧 provider 来源、业务事实和执行回执仍可按原身份历史查询；本批不代表上述旧业务模型整体迁移完成。
 
 ## 7. 每个单元都必须完成的迁移/回退步骤
 

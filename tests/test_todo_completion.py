@@ -2,49 +2,15 @@ import json
 from pathlib import Path
 
 from app.store import AutoReplyStore
+from app.action_business_definitions import business_action_projection
+from app.provenance_storage import signal_projection
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_semantic_models import AttentionCategory
 from app.todo_completion import complete_business_task_from_external_todo
-from app.todo_completion import (
-    close_todo_with_completion_evidence,
-)
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
-
-
-def _project_todo_follow_up(store: AutoReplyStore):
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        description="客户需要验收 ETA 和下一步安排。",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="基于客户交付项目，请确认验收 ETA 是否已同步。",
-        scheduled_at="2026-06-27 09:00:00",
-        status="sent",
-        sent_at="2026-06-27 09:05:00",
-        send_result_json=json.dumps({"message_id": "msg-1"}, ensure_ascii=False),
-    )
-    return project_id, todo_id, follow_up_id
 
 
 def test_external_dingtalk_completion_closes_only_the_linked_business_task(tmp_path):
@@ -76,8 +42,8 @@ def test_external_dingtalk_completion_closes_only_the_linked_business_task(tmp_p
             (first,),
         ).fetchone()
         signal = db.execute(
-            "select s.source_ref from business_task_signals s "
-            "join business_task_evidence e on e.signal_id=s.id "
+            f"select s.source_ref from ({signal_projection()}) s "
+            f"join ({business_action_projection('business_task_evidence')}) e on e.signal_id=s.id "
             "where e.task_id=? and e.evidence_role='completion'", (first,)
         ).fetchone()
     assert 'dingtalk_todo:dt-1' in event["after_json"]
@@ -221,40 +187,6 @@ def test_business_task_link_lookup_by_provider_task_returns_newest_match(tmp_pat
 
     assert link["id"] == new_link_id
     assert link["id"] != old_link_id
-
-
-def test_close_todo_completion_evidence_completes_bound_follow_ups(tmp_path):
-    store = _store(tmp_path)
-    _, todo_id, follow_up_id = _project_todo_follow_up(store)
-
-    closed = close_todo_with_completion_evidence(
-        store,
-        todo_id=todo_id,
-        evidence={
-            "source": "reply_attempt:7",
-            "reason": "Alex 明确回复验收 ETA 已同步。",
-            "completed_at": "2026-06-27 10:00:00",
-        },
-        now="2026-06-27 10:00:00",
-        source_type="reply_attempt",
-        source_ref="7",
-        merge_reason="reply_completion_evidence",
-    )
-
-    assert closed is True
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.status == "done"
-    evidence = json.loads(todo.completion_evidence_json)
-    assert evidence["source"] == "reply_attempt:7"
-    assert evidence["reason"] == "Alex 明确回复验收 ETA 已同步。"
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.status == "completed"
-    assert json.loads(follow_up.send_result_json) == {"message_id": "msg-1"}
-    check = json.loads(follow_up.evidence_check_json)
-    assert check["source"] == "reply_attempt:7"
-    assert check["reason"] == "Alex 明确回复验收 ETA 已同步。"
 
 
 def test_external_todo_completion_rejects_unlinked_task(tmp_path):

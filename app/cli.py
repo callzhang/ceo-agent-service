@@ -103,7 +103,6 @@ from app.task_agent import (
 )
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
-    dispatch_claimed_task_todo_sync_outbox,
     reconcile_unknown_business_task_todo_creates,
     scan_completed_dingtalk_todos,
 )
@@ -1173,7 +1172,6 @@ def run_agent_cron_dispatcher_loop(
         ReplyQueueAdapter,
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
-        TaskTodoSyncOutboxQueueAdapter,
         WorkSummaryQueueAdapter,
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
@@ -1322,25 +1320,6 @@ def run_agent_cron_dispatcher_loop(
 
     todo_dws = None if settings.dry_run else meeting_dws
 
-    def consume_task_todo_sync_outbox(envelope, guard) -> None:
-        if todo_dws is None:
-            guard.release(datetime.now(timezone.utc))
-            return
-        item = store.get_task_todo_sync_outbox(int(envelope.source_id))
-        if item is None:
-            raise ValueError("task Todo outbox dispatch source does not exist")
-        now = datetime.now(timezone.utc)
-        status = dispatch_claimed_task_todo_sync_outbox(
-            store,
-            todo_dws,
-            item=item,
-            owner=guard.token.owner,
-            now=now.strftime("%Y-%m-%d %H:%M:%S"),
-            claim_guard=guard,
-        )
-        if not guard.resolved:
-            guard.finish_source(now, status=status)
-
     def consume_business_task_todo_sync_outbox(envelope, guard) -> None:
         if todo_dws is None:
             guard.release(datetime.now(timezone.utc))
@@ -1373,7 +1352,6 @@ def run_agent_cron_dispatcher_loop(
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
     ) + (() if settings.dry_run else (
-        TaskTodoSyncOutboxQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
         TaskMemoryWriteQueueAdapter(store),
     ))
@@ -1386,7 +1364,6 @@ def run_agent_cron_dispatcher_loop(
         "okr_review": consume_okr_review,
     }
     if not settings.dry_run:
-        consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
         consumers["business_task_todo_sync_outbox"] = consume_business_task_todo_sync_outbox
         consumers["task_memory_write"] = consume_task_memory_write
     agent_adapters = frozenset(
