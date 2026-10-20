@@ -35,3 +35,7 @@ Full body-free results: [runtime copy evidence](validation/2026-10-19-business-m
 ## Subsequent upstream prompt merge
 
 After the acceptance above, upstream21317f0fc was merged in837e83c36. Its only runtime change is Consumer capability wording; every A2 storage, reader, writer, factory and release file remains unchanged. The native proof above is not a native run of that later prompt. Upstream PR161 separately records ten paired native Consumer cases. The merged prompt-section and session-resume regressions passed2tests in9.39s. Static merge SPEC approved; QUALITY requested the acceptance-tree label correction recorded here.
+
+## Native harness current-version correction
+
+The independently SPEC/QUALITY approved B1 validation-helper fix was backported to A2: `_publish_email_pair` checks the selected current Store/Email constants after the existing constructors validate current declarations. The stale historical Actions-only assertion is removed. Both focused native-harness tests pass on A2 (2/8.66s); this changes no app/runtime/schema file and does not extend the native/model proof above.

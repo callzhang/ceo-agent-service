@@ -196,12 +196,10 @@ def _file_sha256(path):
 
 
 def _publish_email_pair(repo, candidate, *, recovery_source_path=None):
-    from app.action_email_schema_release import TARGET_EMAIL_VERSION, TARGET_STORE_VERSION
-    from app.final_action_schema import final_action_schema_is_current
     from app.storage_payload import ACTION_RECORD_TYPES
     from app.state_definitions import state_projection
-    from app.email_store import EmailStore
-    from app.store import AutoReplyStore
+    from app.email_store import EMAIL_SCHEMA_VERSION, EmailStore
+    from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
     from app.store_schema_release import prepare_database_schema_release
 
     release = prepare_database_schema_release(repo, candidate, recovery_source_path=recovery_source_path)
@@ -217,9 +215,8 @@ def _publish_email_pair(repo, candidate, *, recovery_source_path=None):
         tables = {row[0] for row in db.execute(
             "select name from sqlite_schema where type='table' and name not glob 'sqlite_*'"
         )}
-        assert store_version == (TARGET_STORE_VERSION,)
-        assert email_version == (TARGET_EMAIL_VERSION,)
-        assert final_action_schema_is_current(db)
+        assert store_version == (STORE_SCHEMA_VERSION,)
+        assert email_version == (EMAIL_SCHEMA_VERSION,)
         assert tables == {"tasks", "runs", "actions", "business", "emails", "provenance",
                           "configs", "provider_state", "schedules", "state", "email_schema_migrations"}
     return {"store": store_version[0], "email": email_version[0],
