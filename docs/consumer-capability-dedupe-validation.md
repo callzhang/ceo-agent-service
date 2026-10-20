@@ -20,4 +20,11 @@
 - 匿名原生对照见 `evals/trajectory_optimization/consumer_capability_dedupe_native.results.v1.json`：相同 `gpt-5.6-luna`、medium、事实、假工具返回和完整当前 Consumer wire parser，十组配对共二十轮；候选十组均通过逐项业务断言，旧输入八组通过。覆盖日历候选、认证失败、历史风险拒绝、仅草稿、成功读取但无匹配、敏感群、OA 精确实例、定时文档工件写入与读回、以及冷启动后同 session 续会话。两臂均保留风险拒绝来源码 `provider_risk_refused`；无匹配不报依赖故障；OA 只读 `OA-EXACT-204` 并指出返程票据缺口；定时文档均通过内存假工具写到 `synthetic-weekly-doc-1`、读取 `document-readback.md`，没有声称客户验收完成。两臂续会话均复用冷启动 session ID，草稿轮没有发送候选。旧输入在该组冷启动给出了与占用事件冲突的 09:00–10:00 时段，且敏感群案例虽删去了敏感内容，却改为不带原消息 ID 的群消息；候选给出无冲突的 10:00–11:00 时段，并精确回复原消息。此观察只说明这些固定案例，不推断一般质量提升。
 - 首个匿名工具夹具未声明精确动作契约，导致正例两臂失败；该轮已排除并补足只读契约查询。敏感群初版夹具只提供通用模拟 Skill，两臂在重复运行中都曾向群暗示人员调整话题；这不能证明能力段变化造成退化。最终配对绑定当前真实的 `ceo-personnel-communication` Skill，两臂均实际读取并仅输出交付事实。上述排除原因和最终 Skill hash 在对照证据中明确记录。
 
-限制：固定案例使用合成业务事实、假 MCP 和内存文档工具，未连接生产业务系统、未执行外部写入，也未载入 Work Profile。定时任务与聊天案例使用与服务相同的 Developer 段和 Consumer wire 校验，但案例 Task 是手工构造的匿名输入；续会话第二轮是新的匿名草稿任务，不是服务的 Audit 反馈修订路径。此对照只证明原生 session 复用和第二轮按当前 Task 行事。本地 Settings 装配测试不等于生产 Settings 回读。独立复审已通过；当前／历史 Settings 核对、合并、部署和生产回读仍待完成，不把固定案例成功称为线上业务效果。
+限制：固定案例使用合成业务事实、假 MCP 和内存文档工具，未连接生产业务系统、未执行外部写入，也未载入 Work Profile。定时任务与聊天案例使用与服务相同的 Developer 段和 Consumer wire 校验，但案例 Task 是手工构造的匿名输入；续会话第二轮是新的匿名草稿任务，不是服务的 Audit 反馈修订路径。此对照只证明原生 session 复用和第二轮按当前 Task 行事，不把固定案例成功称为线上业务效果。
+
+## 生产回读（2026-10-20 UTC）
+
+- PR #161 经正常审查流程合并为 `21317f0fc306da2e26c611d532fe71ebd9c8892d`。正式 `python -m app.deploy` 等待在途任务归零后报告 `deployed b33f331d -> 21317f0f`；生产 checkout 回读为该合并提交且干净，没有跳过空闲等待。launchd 服务运行中，PID `45391`。
+- `/healthz`、Status、Tasks、Attention、History 均返回 HTTP 200；Status 的 `system_health.state=healthy`、quality-gate violations 为 0。回读时队列汇总为 pending 8、processing 1、failed 9、retryable 0，Attention 为 4、History 为 36,362；这些是当时快照，历史失败数不归因于本次发布。
+- Settings 的 `codex_oauth` Consumer 当前预览与装配测试一致：能力段连标题 3,496 字符、共同工作原则 625 字符、Developer 输入 40,376 字符；发布前分别为 4,583、625、41,463，净减 1,087 字符。历史 run `385942`／attempt `385943` 仍为保存的 Developer 37,442 字符、Task 25,441 字符，SHA-256 分别为 `b35e32206f07b26729c200b0927ccbe8595de74c7f441de0749072af081ecaec`、`f7739d7a456783bc864fe499b0bd6b4f797e60db8e81b7e597241340752abd2c`，与发布前相同。
+- 这证明新代码上线、服务健康、当前 Settings 与实际装配一致，以及历史快照未被重建；没有新的真实业务 Consumer 轨迹可用于声称线上决策质量改善。GitHub 全量检查在本次回读时仍运行中，固定案例与本地受影响测试是行为验收依据。
