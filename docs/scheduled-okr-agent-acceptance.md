@@ -228,3 +228,35 @@ got there first”，不能当成 Skill 发布成功。随后正式发布操作
 原“旧安装摘要不符必须在写入前失败”回归1项通过；直接调用实际只读
 `_load_file_plan` 对当前26份文件的严格前置核查全部通过。先前允许旧/新
 任一值的辅助文件比较不足以证明发布条件，不能替代严格发布器检查。
+
+## 正式上线与最终状态
+
+2026-10-20 UTC，操作 `deploy-2e035667-34c8-4e23-8b8c-e346ff7f2ec3`
+状态 **succeeded**，无错误。生产提交
+`65560d34d8de63471d1d05d144cbc344ceab5815`，主 PID **93354**，healthz ok。
+部署命令为 `python -m app.deploy --publish-consumer-system-contracts`；正常静默、
+备份、发布、重启与加载校验均由既有部署器完成。没有绕过静默或精确摘要条件。
+
+05:03:52 UTC 的最终只读核查，见
+[无正文部署证据](../evals/scheduled_task_generic/okr-deployment-readback.json)：
+
+- 14项任务的ID、迁移键、周期、时区、启停、命令和prompt摘要逐项保留。
+- 原144份历史配置快照的逐项摘要全部相同；正常调度新增后共146份。
+- OKR task6为配置v8，managed revision **209**（parent204，revision_number2）；
+  Skill元数据version4。四份安装文件与最终v18验收源摘要完全相同。
+- 管理周报task13配置v31、Skill202；日报task14配置v36、Skill203。两项Skill
+  内容未变，配置版本随正常发布流程更新。三项下一次触发时间未变。
+- 启动中间核查曾见failed18、Attention13。逐项对照只读备份与原始run，
+  涉及的是7—9月已存在的失败运行；现有启动恢复先临时投影为failed，随后
+  相关任务恢复原done。原始失败run从未改写，也没有重放。
+- 完成正常恢复后的failed **9**，与发布前相同；失败History仍为相同8个ID，
+  新增失败ID **0**。Attention **3**，未将旧OA等问题宣称为已解决。
+- 队列pending9、processing4是当时事实，不代表所有业务完成；调度器、
+  dispatcher和服务心跳均healthy/running，tick晚于本次部署。
+- 部署成功后自然日历扫描387082（05:01:10 UTC）完成，摘要
+  `calendar-invites-once queued=0`。此前迁移后的7项命令完成事实仍保留。
+
+原七案例与OKR综合Agent验收均通过。新版三份报告还未到期，实际自然发布
+不能提前标记通过；本线程心跳继续核查。当前历史报告结果仍分别为日报真实
+文档与通知成功、管理周报实际写入但事项skipped、旧OKR服务主报告及18附录
+完整读回并发送SUCCESS。未重放或补发任何历史报告。
