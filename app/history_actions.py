@@ -114,7 +114,6 @@ def can_reopen_skipped_oa_review(attempt, task) -> bool:
     oa_task_id = str(getattr(attempt, "oa_task_id", "") or "").strip()
     return bool(
         str(getattr(attempt, "send_status", "") or "").strip().lower() == "skipped"
-        and str(getattr(attempt, "resolved_at", "") or "").strip()
         and str(getattr(attempt, "reviewer_feedback", "") or "").strip()
         and str(getattr(attempt, "action", "") or "").strip() == "agent_run"
         and str(getattr(attempt, "oa_action", "") or "").strip() == "review"
