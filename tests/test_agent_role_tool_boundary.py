@@ -148,6 +148,27 @@ def test_oa_consumer_can_handoff_ocr_bytes_inside_code_mode(tmp_path, monkeypatc
     assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in audit
 
 
+def test_oa_audit_composes_only_declared_read_and_ocr_mcp_tools(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    ordinary = _codex_command()
+    oa = _codex_command()
+    make_audit_agent_command(ordinary)
+    make_audit_agent_command(oa, purpose_name="oa")
+
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in ordinary
+    assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in ordinary
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__memory_connector", "mcp__xiaoqing_interview"]' in oa
+    assert 'features.code_mode.excluded_tool_namespaces=["functions", "image_gen", "multi_agent_v1", "web"]' in oa
+    assert 'sandbox_mode="read-only"' in oa
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in oa
+    assert next(option for option in ordinary if option.startswith("mcp_servers.agent_cli.enabled_tools=")) == next(
+        option for option in oa if option.startswith("mcp_servers.agent_cli.enabled_tools=")
+    )
+
+
 def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     audit = "\n".join(section.text for section in audit_developer_sections("rules"))
     oa_consumer = "\n".join(
@@ -174,6 +195,13 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     assert "do not pass its original pdf page number as ocr page_numbers" in oa_normalized
     assert "confidence, warnings" in oa_normalized
     assert "call the native ai_services.ocr_document mcp directly" not in oa_normalized
+
+    oa_audit = " ".join(
+        section.text for section in audit_developer_sections("rules", purpose_name="oa")
+    ).replace("`", "").lower()
+    assert "same js cell" in oa_audit
+    assert "mcp__ai_services__ocr_document" in oa_audit
+    assert "call the native ai_services.ocr_document mcp directly" not in oa_audit
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:

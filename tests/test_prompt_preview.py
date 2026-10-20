@@ -65,6 +65,32 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     assert not (tmp_path / "materials").exists()
 
 
+def test_current_oa_audit_preview_uses_saved_task_purpose(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "materials"))
+    store = AutoReplyStore(tmp_path / "preview.sqlite3")
+    task, parent = task_and_run(store)
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
+        operation_id="audit-preview", owner="test",
+    ).run
+    store.append_agent_run_event(audit.id, {
+        "type": "runtime.prompt", "role": "audit", "rendered_at": "2026-10-05T10:00:00+00:00",
+        "task_prompt": "Saved OA task", "invocation_facts": {
+            "audit_purpose": "oa", "skill_names": ["dingtalk-oa-approval"],
+        },
+    }, owner="test")
+
+    result = current_prompt_preview(
+        store, role="audit", config=load_runtime_config({}), task_id=task.id,
+    )
+
+    assert result["status"] != "unavailable"
+    assert "same JS cell" in result["developer_instructions"]
+    assert "mcp__ai_services__ocr_document" in result["developer_instructions"]
+    assert "Saved OA task" in result["task_prompt"]
+
+
 def task_and_run(store, *, trigger_message_json="{}"):
     store.enqueue_reply_task(conversation_id="g", conversation_title="Group", single_chat=False,
         trigger_message_id="m", trigger_create_time="2026-10-05T12:00:00+00:00",
