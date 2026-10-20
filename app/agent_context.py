@@ -141,6 +141,12 @@ class AgentTaskContext:
                     }
                 )
             )
+            sections.append(
+                "### Replacement Stage Constraint\n"
+                "An Audit return does not advance the stage. For this replacement revision, "
+                "keep the exact service-bound stage_index and predecessor_review_id above. "
+                "Advance only after Audit approves this stage and its action has a verified completed execution receipt."
+            )
         return "\n\n".join(sections)
 
     def render_business_context(
