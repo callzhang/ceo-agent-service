@@ -300,7 +300,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
 
 def require_current_email_pair(path: Path, *, store_version: str, email_version: int,
                                selection_references: bool = False, result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False,
-                               metadata_owner: bool = False) -> None:
+                               metadata_owner: bool = False, task_lifecycle: bool = False) -> None:
     """Read-only source selection before constructor caches or journal changes."""
     path = Path(path).resolve()
     if not path.exists():
@@ -330,6 +330,10 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
             # collisions and partial unversioned bootstrap refusal.
             return
         if store == store_version:
+            if task_lifecycle:
+                from app.task_lifecycle_current_schema import task20_schema_is_current as current_tasks
+                if not current_tasks(db, allow_missing_objects=True):
+                    raise sqlite3.IntegrityError("malformed current Task lifecycle declaration")
             if email == email_version:
                 if (current_canonical_email_parent_is_current(db, metadata_owner=metadata_owner)
                         and state_current_or_known_dispatcher_index_repair(db)

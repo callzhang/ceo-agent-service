@@ -76,15 +76,16 @@ from app.task_storage import (
     task_id_expression, RETIRED_TASK_TABLES,
 )
 
-from app.task20_definitions import (
+from app.task_lifecycle_definitions import (
     TASK20_FIELDS as SOURCE_COLUMNS, TASK20_INDEX_DDL, TASK20_TRIGGER_DDL,
     TASK20_NEW_KINDS, task20_column, task20_projection,
 )
-from app.task20_current_schema import (
+from app.task_lifecycle_current_schema import (
     create_current_task20_schema, install_current_task_child_guards,
     task20_schema_is_current, task20_feedback_child_is_current,
     task20_workbench_schema_is_current,
 )
+from app import task_lifecycle_storage as task_claims
 from app.task8_storage import (
     register_task8_functions, task8_insert_parts, task8_set_parts, task8_meeting_returning,
 )
@@ -449,7 +450,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.7"
+STORE_SCHEMA_VERSION = "2026-10-19.8"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1975,7 +1976,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True, task_lifecycle=True)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1983,7 +1984,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True, task_lifecycle=True)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -6811,7 +6812,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.7 schema"
+                    "or the current 2026-10-19.8 schema"
                 )
             return True
         finally:
@@ -7040,8 +7041,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).fetchone() is not None:
             return False
         if db.execute(
-            f"""select 1 from ({state_projection('dispatcher_claim_leases')}) where source_id=?
-               and adapter_name in ('reply','scheduled_execution') and terminal_at=''
+            f"""select 1 from ({task_claims.claim_projection()}) where source_id=?
+               and adapter_name in ('reply','scheduled_execution')
                and owner<>'' limit 1""",
             (str(task_id),),
         ).fetchone() is not None:
@@ -10769,13 +10770,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (int(row["id"]), str(row["execution_generation"])),
                 )
                 if cursor.rowcount == 1:
-                    update_state_rows(
-                        db, 'dispatcher_claim_leases',
-                        {'owner': '', 'lease_expires_at': ''},
-                        update_json={'updated_at': 'json_quote(current_timestamp)'},
-                        where_sql="adapter_name='reply' and source_id=? "
-                                  "and owner<>'' and lease_expires_at<=current_timestamp",
-                        parameters=(str(row["id"]),),
+                    task_claims.recover_claims(
+                        db, adapter="reply", source_ids=(row["id"],),
+                        values={"lease_owner": "", "lease_expires_at": ""},
+                        history={"owner": "", "lease_expires_at": "",
+                                 "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                        where_sql="lifecycle_lease_owner<>'' and lifecycle_lease_expires_at<=current_timestamp",
                     )
                     recovered.append(self._reply_task_from_row(row))
             return recovered
@@ -12164,9 +12164,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         now_text = now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with self._immediate_write_transaction() as db:
             current_claim = db.execute(
-                f"select 1 from ({state_projection('dispatcher_claim_leases')}) "
+                f"select 1 from ({task_claims.claim_projection()}) "
                 "where adapter_name='scheduled_execution' and source_id=? "
-                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                "and owner=? and generation=? and lease_expires_at>?",
                 (str(task_id), dispatcher_owner, dispatcher_generation, now_text),
             ).fetchone()
             if current_claim is None:
@@ -12193,13 +12193,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'locked_at': 'null', 'error': "''", 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing' and {task20_column('reply_tasks', 'execution_generation')}=?""",
                 (task_id, expected_execution_generation),
             )
-            ledger = update_state_rows(
-                db, 'dispatcher_claim_leases',
-                {'owner': '', 'lease_expires_at': '', 'terminal_at': now_text,
-                 'last_error': '', 'updated_at': now_text},
-                where_sql="adapter_name='scheduled_execution' and source_id=? "
-                          "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
-                parameters=(str(task_id), dispatcher_owner, dispatcher_generation, now_text),
+            ledger = task_claims.recover_claims(
+                db, adapter="scheduled_execution", source_ids=(task_id,),
+                values={"lease_owner": "", "lease_expires_at": ""},
+                history={"owner": "", "lease_expires_at": "", "terminal_at": now_text,
+                         "last_error": "", "updated_at": now_text},
+                where_sql="lifecycle_lease_owner=? and lifecycle_generation=? and lifecycle_lease_expires_at>?",
+                parameters=(dispatcher_owner, dispatcher_generation, now_text),
             )
             if ledger != 1:
                 raise ValueError("scheduled execution claim is no longer current")
@@ -15162,11 +15162,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if jobs:
                 job_ids = [job.id for job in jobs]
                 placeholders = ",".join("?" for _ in job_ids)
-                update_state_rows(
-                    db, 'dispatcher_claim_leases',
-                    {'owner': '', 'owner_pid': 0, 'lease_expires_at': '', 'updated_at': now_text},
-                    where_sql="adapter_name='meeting' and source_id in (" + placeholders + ")",
-                    parameters=tuple(str(job_id) for job_id in job_ids),
+                task_claims.recover_claims(
+                    db, adapter="meeting", source_ids=job_ids,
+                    values={"lease_owner": "", "owner_pid": 0, "lease_expires_at": ""},
+                    history={"owner": "", "owner_pid": 0, "lease_expires_at": "", "updated_at": now_text},
                 )
                 run_rows = db.execute(
                     f"select id from ({MEETING_RUN_SQL}) "
@@ -15241,10 +15240,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           and delivery.td_claim_job_id=meeting_alignment_jobs.id
                       )
                       and not exists (
-                        select 1 from ({state_projection('dispatcher_claim_leases')}) claim
+                        select 1 from ({task_claims.claim_projection()}) claim
                         where claim.adapter_name='meeting'
                           and claim.source_id=meeting_alignment_jobs.legacy_key
-                          and coalesce(claim.terminal_at,'')=''
                           and julianday(claim.lease_expires_at)>julianday('now')
                       )
                       and not exists (
@@ -15318,9 +15316,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone():
                 return None
             if db.execute(
-                f"""select 1 from ({state_projection('dispatcher_claim_leases')})
+                f"""select 1 from ({task_claims.claim_projection()})
                    where adapter_name='meeting' and source_id=?
-                     and coalesce(terminal_at,'')=''
                      and julianday(lease_expires_at)>julianday('now') limit 1""",
                 (str(job_id),),
             ).fetchone():
@@ -15440,8 +15437,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
                 return False
-            if db.execute(f"select 1 from ({state_projection('dispatcher_claim_leases')}) where adapter_name='meeting' and source_id=? "
-                "and coalesce(terminal_at,'')='' and julianday(lease_expires_at)>julianday('now')",
+            if db.execute(f"select 1 from ({task_claims.claim_projection()}) where adapter_name='meeting' and source_id=? "
+                "and julianday(lease_expires_at)>julianday('now')",
                 (str(job.id),)).fetchone():
                 return False
             updated = db.execute(
@@ -15797,7 +15794,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, processing_max_age_seconds: int | None = None
     ) -> list[OkrReviewRequest]:
         with self._immediate_write_transaction() as db:
-            lease_projection = "(" + state_projection("dispatcher_claim_leases") + ")"
+            lease_projection = "(" + task_claims.claim_projection() + ")"
             lock_projection = "(" + state_projection("codex_session_locks") + ")"
             params: list[object] = []
             processing_clause = (
@@ -15805,7 +15802,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"select 1 from {lease_projection} claim "
                 "where claim.adapter_name='okr_review' "
                 "and claim.source_id=cast(request.id as text) "
-                "and claim.owner<>'' and claim.terminal_at='' "
+                "and claim.owner<>'' "
                 "and claim.lease_expires_at>current_timestamp)"
             )
             if processing_max_age_seconds is not None:

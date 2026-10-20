@@ -12,11 +12,10 @@ from app.task12_storage import (
     update_task12,
 )
 from app.task20_definitions import (
-    create_task20_schema,
     task20_column,
     task20_projection,
 )
-from tests.test_task20_definitions import insert as seed_task
+from tests.task_lifecycle_test_support import create_task20_schema, insert as seed_task
 from tests.test_tasks12_native_source import (
     ACTUAL,
     AUTO,

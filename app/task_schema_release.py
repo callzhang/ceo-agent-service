@@ -1,12 +1,11 @@
 """Exact 11.2 -> 11.3 paired task-schema publication and business-write inverse."""
 from app.state_publication_sources import publication_store_version
-from app.specialized_action_schema_release import (
-    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
+from app.task_lifecycle_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current, publication_tasks_are_current,
 )
 
 from app.action_storage import action_schema_is_current, reply_schema_is_current
 from app.task20_definitions import task20_projection
-from app.task20_current_schema import task20_schema_is_current
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -64,7 +63,7 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
             "select status from tasks where record_type='work_summary_inputs'",
         )
     if (publication_action_schema_is_current(db, version)
-            and task20_schema_is_current(db)
+            and publication_tasks_are_current(db, version)
             and {"tasks", "runs"} <= tables
             and not (old | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
         return task20_projection("reply_tasks"), "select status from (" + task20_projection("work_summary_inputs") + ")"
@@ -98,7 +97,7 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
     ):
         return MEETING_JOB_SQL, MEETING_RUN_SQL
     if (publication_action_schema_is_current(db, version)
-            and task20_schema_is_current(db)
+            and publication_tasks_are_current(db, version)
             and {"tasks", "runs"} <= tables
             and not (set(RETIRED_TASK_TABLES) | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
         return task20_projection("meeting_alignment_jobs"), MEETING_RUN_SQL

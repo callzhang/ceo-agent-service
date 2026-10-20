@@ -82,7 +82,7 @@ from app.email_canonical_storage import (
 from app.action_email_schema_release import require_current_email_pair
 from app.provider_state_schema_release import provider_state_schema_is_current
 from app.task20_definitions import TASK20_NEW_KINDS
-from app.task20_current_schema import task20_schema_is_current
+from app.task_lifecycle_current_schema import task20_schema_is_current
 from app.task8_storage import register_task8_functions, task8_set_parts
 from app.state_definitions import STATE_FIELDS, state_projection
 from app.runs11_definitions import run11_projection
@@ -3066,7 +3066,7 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True, task_lifecycle=True)
         if self.path.exists():
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("begin")
@@ -3079,7 +3079,7 @@ class EmailStore:
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
-            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True, task_lifecycle=True)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:

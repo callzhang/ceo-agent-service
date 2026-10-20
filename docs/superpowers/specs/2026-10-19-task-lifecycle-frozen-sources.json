@@ -1,0 +1,63 @@
+{
+  "schema": "ceo-task-lifecycle-frozen-sources-v1",
+  "baseline_commit": "1aed63ec3c9abb345b685749e70852958bf22776",
+  "meaning": "Historical Task20 factories, State storage/DDL and B2a/B2b factories remain byte-exact. This manifest is separate from the implementation/source freeze.",
+  "files": [
+    {
+      "path": "app/task20_definitions.py",
+      "sha256": "e615fc62d4047b592147582332e06fde0d60669c3f050be72f21e54822c914af"
+    },
+    {
+      "path": "app/task20_current_schema.py",
+      "sha256": "17e24da293d8226fdea2ff269995f9a3b2054f15d8f6a73e31e7afcd7533ea0d"
+    },
+    {
+      "path": "app/task20_schema_release.py",
+      "sha256": "883e220189eae5d8f31962e7ba5d883510afe8ea7e8e68300b1870446713f85d"
+    },
+    {
+      "path": "app/task_storage.py",
+      "sha256": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86"
+    },
+    {
+      "path": "app/state_definitions.py",
+      "sha256": "053fbdb7e461f3eaade98ec0aa834875119e777478a1adbe72a66260a1a6d870"
+    },
+    {
+      "path": "app/state_storage.py",
+      "sha256": "982b92a34ca3b809da829c45ea5ec141af55b77af1f6ba8fc2009d671079187e"
+    },
+    {
+      "path": "app/state_schema_release.py",
+      "sha256": "c384ee942b9df65ffbd45cb47cb536bc0df654f954554c137cb719ef069be7cd"
+    },
+    {
+      "path": "app/shared_action_definitions.py",
+      "sha256": "9da0832ee1f76e5bb8b966421f31a5cc5117be8eb616b6b95e5287b0a0113a5f"
+    },
+    {
+      "path": "app/shared_action_schema.py",
+      "sha256": "1171e2a8c11da04f83940ec60d67857a43c2fee95856bebdd40c053751ca4e9a"
+    },
+    {
+      "path": "app/shared_action_schema_release.py",
+      "sha256": "621c6b065406d6384ddb485726a84147d1266d91ad7fc5f39022f341378c8dc0"
+    },
+    {
+      "path": "app/specialized_action_schema.py",
+      "sha256": "e981baf449d3fa0480192229bc233493d0ce0dc4b25a0132a71677b327f289d6"
+    },
+    {
+      "path": "app/specialized_action_schema_release.py",
+      "sha256": "83078b7fe191b703a543e895dd8b0ead0a1e43515570d0a227e705dd4351a58c"
+    },
+    {
+      "path": "app/action_storage.py",
+      "sha256": "b89b0698035e8ede10c41aa25dd14767ee9c8eaeda5bcbb810449a6f723747f0"
+    },
+    {
+      "path": "app/email_canonical_definitions.py",
+      "sha256": "8862519ef41af71804d76d12fc8a598126676502f90fbd6eee494a52aae5696c"
+    }
+  ]
+}

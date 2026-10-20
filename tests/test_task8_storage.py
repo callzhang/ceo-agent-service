@@ -15,12 +15,12 @@ from app.task8_storage import (
     task8_set_parts,
 )
 from app.task20_definitions import (
-    create_task20_schema,
     task20_column,
-    TASK20_LAYOUTS,
     task20_projection,
 )
-from tests.test_task20_definitions import insert as seed_target, payload
+from app.task_lifecycle_definitions import TASK20_LAYOUTS
+from tests.task_lifecycle_test_support import create_task20_schema, insert as seed_target
+from tests.test_task20_definitions import payload
 
 SOURCE = json.loads(
     (

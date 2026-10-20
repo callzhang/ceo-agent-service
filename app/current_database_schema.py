@@ -12,7 +12,7 @@ from app.configs_storage import create_configs_schema
 from app.schedules_storage import create_schedules_schema
 from app.provider_state_storage import create_provider_state_schema
 from app.state_storage import create_state_schema
-from app.task20_current_schema import create_current_task20_schema, install_current_task_child_guards
+from app.task_lifecycle_current_schema import create_current_task20_schema, install_current_task_child_guards
 from app.runs11_current_schema import create_current_run11_schema
 from app.run_storage import install_run_child_guards
 from app.email_canonical_storage import _create_emails

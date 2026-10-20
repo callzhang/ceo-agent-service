@@ -414,7 +414,7 @@ def test_email_store_rejects_malformed_classifier_queue_schema(tmp_path: Path):
         db.execute("drop index idx_task20_native_1")
         db.execute("create index idx_task20_native_1 on tasks(id)")
     before = database.read_bytes()
-    with pytest.raises(sqlite3.IntegrityError, match="malformed Store source schema"):
+    with pytest.raises(sqlite3.IntegrityError, match="malformed current Task lifecycle declaration"):
         EmailStore(database)
     assert database.read_bytes() == before
 

@@ -24,6 +24,14 @@ REPLY_TASK_SQL = task20_projection("reply_tasks")
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 
 
+def _insert_dispatcher_claim(db, values):
+    from app.task_lifecycle_storage import acquire_claim
+    register_task8_functions(db)
+    acquire_claim(db, adapter_name=values["adapter_name"], source_id=values["source_id"],
+        owner=values["owner"], owner_pid=values.get("owner_pid", 0),
+        lease_expires_at=values["lease_expires_at"], now="2026-10-05 12:00:00")
+
+
 def ready(tmp_path: Path, *, path=None):
     path = path if path is not None else tmp_path / 'source.sqlite3'
     store = AutoReplyStore(path)
@@ -237,11 +245,30 @@ def test_expired_dispatcher_lease_with_live_pid_is_still_owned(tmp_path):
     path, task_id, _backup = ready(tmp_path)
     with sqlite3.connect(path) as db:
         db.execute("begin")
-        insert_state(db, "dispatcher_claim_leases", {
+        _insert_dispatcher_claim(db, {
             "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
             "owner_pid": os.getpid(), "lease_expires_at": "2026-10-05 11:00:00",
         })
     assert 'active_dispatcher_owner' in preview_deferral(path, task_id, now=NOW)['blockers']
+
+
+def test_deferral_active_task_owner_does_not_depend_on_passive_history(tmp_path):
+    path, task_id, _ = ready(tmp_path)
+    with sqlite3.connect(path) as db:
+        db.execute("begin")
+        _insert_dispatcher_claim(db, {"adapter_name": "reply", "source_id": str(task_id),
+            "owner": "worker", "lease_expires_at": "2026-10-05 13:00:00"})
+        db.execute("delete from state where record_type='dispatcher_claim_leases'")
+    assert "active_dispatcher_owner" in preview_deferral(path, task_id, now=NOW)["blockers"]
+
+
+def test_deferral_old_passive_owner_does_not_create_an_active_task_owner(tmp_path):
+    path, task_id, _ = ready(tmp_path)
+    with sqlite3.connect(path) as db:
+        db.execute("begin")
+        insert_state(db, "dispatcher_claim_leases", {"adapter_name": "reply", "source_id": str(task_id),
+            "owner": "old-history", "lease_expires_at": "2026-10-05 13:00:00"})
+    assert preview_deferral(path, task_id, now=NOW)["eligible"] is True
 
 
 def test_unrelated_message_delivery_does_not_block_this_task(tmp_path):
@@ -294,8 +321,9 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
         if callable(mutation):
             mutation(db, task_id)
         elif mutation == 'candidate_selection':
+            from app.shared_action_lifecycle import persist_plan
             run = db.execute(f"select id,execution_generation from ({AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)).fetchone()
-            insert_action(db, 'review_candidates', {
+            persist_plan(db, 'reviewed', {
                 'id': 1, 'task_id': task_id, 'execution_generation': run[1],
                 'consumer_run_id': run[0], 'stage_index': 0, 'proposal_revision': 0,
                 'candidate_digest': 'd'*64, 'candidate_json': '{}',
@@ -305,8 +333,8 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
                 'candidate_digest': 'd'*64, 'result_json': '{}',
             })
             insert_action(db, 'candidate_selections', {
-                'candidate_id': 1, 'review_id': 1, 'option_key': 'x', 'branch_json': '{}',
-            })
+                'candidate_id': 1, 'review_id': 1, 'option_key': 'x',
+            }, selection_references=True)
         else:
             db.execute(mutation + (" where record_type='reply_tasks' and id=?" if mutation.startswith('update tasks') else (' and task_id=?' if mutation.startswith("update runs ") else '')), ((task_id,) if mutation.startswith('update ') else ()))
     with pytest.raises(ValueError):
@@ -320,7 +348,7 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
 @pytest.mark.parametrize(('statement', 'values'), [
     ("update runs set lease_owner='worker', lease_expires_at='2026-10-05 13:00:00' where record_type='agent_runs'", ()),
     ("update runs set lease_owner='worker', lease_expires_at='2026-10-05T13:00:00Z' where record_type='agent_runs'", ()),
-    (lambda db, values: (db.execute("begin"), insert_state(db, "dispatcher_claim_leases", {
+    (lambda db, values: (db.execute("begin"), _insert_dispatcher_claim(db, {
         "adapter_name": "reply", "source_id": values[0], "owner": "worker",
         "lease_expires_at": "2026-10-05 13:00:00",
     })), ('TASK',)),
@@ -411,7 +439,7 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
     increment_input_version,
     lambda db, task_id: set_reply_fields(db, task_id, available_at="2026-10-05 15:00:00"),
     "update runs set structured_error_json='changed' where record_type='agent_runs'",
-    lambda db, task_id: insert_state(db, "dispatcher_claim_leases", {
+    lambda db, task_id: _insert_dispatcher_claim(db, {
         "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
         "lease_expires_at": "2026-10-05 13:00:00",
     }),
@@ -440,7 +468,7 @@ def test_dispatcher_claim_committed_before_deferral_lock_wins(tmp_path):
         claiming.execute('begin immediate')
         with ThreadPoolExecutor(max_workers=1) as pool:
             deferred = pool.submit(apply_ready, path, task_id, backup)
-            insert_state(claiming, "dispatcher_claim_leases", {
+            _insert_dispatcher_claim(claiming, {
                 "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
                 "lease_expires_at": "2026-10-05 13:00:00",
             })

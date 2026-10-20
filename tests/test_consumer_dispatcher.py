@@ -201,9 +201,29 @@ def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object])
 def _insert_claim_lease(
     db, values: dict[str, object], *, source_rowid: int | None = None
 ) -> None:
-    from app.state_storage import insert_state
+    from app.state_storage import insert_state, update_state_rows
+    from app.task_lifecycle_definitions import DISPATCH_KINDS, eligible_adapter
+    from app.task_lifecycle_storage import acquire_claim
 
-    if source_rowid is None:
+    adapter = values["adapter_name"]
+    source_id = str(values["source_id"])
+    exists = adapter in DISPATCH_KINDS and db.execute(
+        "select 1 from tasks where record_type=? and legacy_key=? and "
+        + eligible_adapter() + "=?", (DISPATCH_KINDS[adapter], source_id, adapter),
+    ).fetchone()
+    if exists:
+        if source_rowid is not None:
+            insert_state(db, "dispatcher_claim_leases", values, source_rowid=source_rowid)
+        generation = acquire_claim(db, adapter_name=adapter, source_id=source_id,
+            owner=values["owner"], owner_pid=values["owner_pid"],
+            lease_expires_at=values["lease_expires_at"], now=values["updated_at"])
+        assert generation == values["generation"]
+        update_state_rows(db, "dispatcher_claim_leases", values,
+            where_sql="adapter_name=? and source_id=?", parameters=(adapter, source_id))
+        if source_rowid is not None:
+            assert db.execute("select legacy_key from state where record_type='dispatcher_claim_leases' "
+                "and adapter_name=? and source_id=?", (adapter, source_id)).fetchone()[0] == str(source_rowid)
+    elif source_rowid is None:
         insert_state(db, "dispatcher_claim_leases", values)
     else:
         insert_state(db, "dispatcher_claim_leases", values, source_rowid=source_rowid)
@@ -222,6 +242,15 @@ def _update_claim_lease(
     ).fetchone()
     if row is None:
         return 0
+    from app.task_lifecycle_definitions import DISPATCH_KINDS
+    from app.task_lifecycle_storage import recover_claims
+    if adapter_name in DISPATCH_KINDS:
+        owners = {("lease_owner" if key == "owner" else key): value
+                  for key, value in values.items()
+                  if key in ("owner", "owner_pid", "generation", "lease_expires_at")}
+        if owners:
+            recover_claims(db, adapter=adapter_name, source_ids=(source_id,),
+                values=owners, history=values)
     return update_state(
         db,
         "dispatcher_claim_leases",
@@ -1791,7 +1820,6 @@ def test_renew_failure_keeps_dispatching_other_adapter_and_reports_error(
     reply_envelope = executor.submissions[0][1]
     with store._immediate_write_transaction() as db:
         from app.state_definitions import state_projection
-        from app.state_storage import update_state
 
         row = db.execute(
             f"select rowid,generation from ({state_projection('dispatcher_claim_leases', include_rowid=True)}) "
@@ -1799,18 +1827,14 @@ def test_renew_failure_keeps_dispatching_other_adapter_and_reports_error(
             (reply_envelope.source_id,),
         ).fetchone()
         assert row is not None
-        update_state(
-            db,
-            "dispatcher_claim_leases",
-            row["rowid"],
+        _update_claim_lease(
+            db, "reply", reply_envelope.source_id,
             {
                 "owner": "owner-b",
                 "owner_pid": 202,
                 "generation": row["generation"] + 1,
                 "lease_expires_at": (NOW + timedelta(seconds=10)).strftime("%Y-%m-%d %H:%M:%S"),
             },
-            where_sql="adapter_name='reply' and source_id=?",
-            parameters=(reply_envelope.source_id,),
         )
 
     assert dispatcher.dispatch_available(NOW + timedelta(seconds=1), limit=1) == 1
@@ -2142,8 +2166,6 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
             db, "work_summary_inputs", work_summary_id, {"error": "work-summary error"}
         )
         _update_task_facts(db, "okr_review_requests", okr_id, {"error": "OKR error"})
-        from app.state_storage import insert_state
-
         for adapter_name, source_id in (
             ("scheduled", scheduled_id),
             ("reply", reply_id),
@@ -2153,9 +2175,8 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
             ("okr_review", okr_id),
             ("task_todo_sync_outbox", todo_id),
         ):
-            insert_state(
+            _insert_claim_lease(
                 db,
-                "dispatcher_claim_leases",
                 {
                     "adapter_name": adapter_name,
                     "source_id": str(source_id),

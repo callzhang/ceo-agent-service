@@ -3,8 +3,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from app.task_storage import WORKBENCH_TURN_SQL
-from app.workbench.store import WorkbenchStore
+from app.workbench.store import WORKBENCH_TURN_SQL, WorkbenchStore
 
 
 @pytest.mark.parametrize("running", [False, True])

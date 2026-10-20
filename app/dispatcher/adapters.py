@@ -2,13 +2,12 @@ from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
 from app.state_definitions import state_projection
 from app.state_storage import state_json_field, update_state, upsert_state
-from app.task_storage import task_id_expression
 from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import task8_set_parts
+from app import task_lifecycle_storage as task_claims
+from app.task_lifecycle_definitions import DISPATCH_KINDS, dispatch_source_projection
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.action_storage import update_sync_action, task_delivery_projection, task_delivery_set_parts
 
-from app.store import REPLY_TASK_CURRENT_SQL
 
 import sqlite3
 import os
@@ -391,822 +390,205 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         )
 
 
-class ReplyQueueAdapter(_LedgerClaimLifecycle):
-    name = "reply"
+class _TaskQueueAdapter(_LedgerClaimLifecycle):
+    """One Task-owned due/claim/release mechanism with exact source phases."""
 
     def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
         self.owner_alive = owner_alive
 
-    def complete(
-        self, envelope: DispatchEnvelope, *, owner: str, now: datetime
-    ) -> None:
-        with self.store._immediate_write_transaction() as db:
-            _complete_ledger_in_db(
-                db, envelope=envelope, owner=owner, now=_sqlite_time(now),
-            )
-            self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
+    @property
+    def kind(self):
+        return DISPATCH_KINDS[self.name]
 
-    def _channel_clause(self, alias: str = "task") -> str:
-        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'} in ('dingtalk','wechat')"
+    @property
+    def source(self):
+        return dispatch_source_projection(self.kind)
+
+    def _channel_clause(self, alias="task"):
+        return "1"
+
+    def _pending(self, alias="task"):
+        phases = "('waiting','pending','retry')" if self.kind == "meeting_alignment_jobs" else "('pending')"
+        return alias + ".task_status='pending' and " + alias + ".status in " + phases
+
+    def _due(self, now_text, alias="task"):
+        due = ""
+        params = []
+        if self.kind == "meeting_alignment_jobs":
+            due += " and datetime(" + alias + ".eligible_at)<=datetime(?)"
+            params.append(now_text)
+        if self.kind != "okr_review_requests":
+            due += " and (" + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
+            params.append(now_text)
+        return (self._channel_clause(alias) + " and " + alias + ".task_status in ('pending','processing') and ((" + self._pending(alias) + due
+            + " and (" + alias + ".claim_owner is null or " + alias + ".claim_owner='' or " + alias + ".claim_expires_at<=?))"
+            + " or (" + alias + ".status='processing' and " + alias + ".claim_owner<>'' and " + alias + ".claim_expires_at<=?))",
+            (*params, now_text, now_text))
+
+    def _ready_at(self, alias="task"):
+        if self.kind == "meeting_alignment_jobs":
+            return ("max(datetime(" + alias + ".eligible_at),coalesce(datetime(nullif(" + alias
+                    + ".available_at,'')),datetime(" + alias + ".eligible_at)))")
+        return alias + ".id"
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
+        eligible, params = self._due(now_text)
+        joined = f"from ({self.source}) task "
+        if self.kind == "meeting_alignment_jobs":
+            oldest_sql = ("case when task.available_at='' then task.eligible_at "
+                          "when datetime(task.available_at)>datetime(task.eligible_at) "
+                          "then task.available_at else task.eligible_at end")
+        elif self.kind == "okr_review_requests":
+            oldest_sql = "task.created_at"
+        else:
+            oldest_sql = "case when task.available_at='' then task.created_at else task.available_at end"
         with self.store._connect() as db:
-            pending = db.execute(
-                f"select count(*) from ({REPLY_TASK_SQL}) task where status='pending' and "
-                + self._channel_clause()
-            ).fetchone()[0]
-            due = db.execute(
-                f"select count(*) from ({REPLY_TASK_SQL}) task "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where " + self._channel_clause() + " and ((task.status='pending' "
-                "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (task.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?))",
-                (self.name, now_text, now_text, now_text),
-            ).fetchone()[0]
-            claimed = db.execute(
-                f"select count(*) from ({REPLY_TASK_SQL}) task "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where " + self._channel_clause() + " and task.status='processing' and (claim.owner is null "
-                "or claim.owner='' or claim.lease_expires_at>?)",
-                (self.name, now_text),
-            ).fetchone()[0]
-            oldest = db.execute(
-                "select min(case when task.available_at='' then task.created_at "
-                f"else task.available_at end) from ({REPLY_TASK_SQL}) task "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where " + self._channel_clause() + " and ((task.status='pending' "
-                "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (task.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?))",
-                (self.name, now_text, now_text, now_text),
-            ).fetchone()[0]
-            latest_error = _latest_actionable_error(
-                db,
-                column="error",
-                source_projection=(
-                    f"from ({REPLY_TASK_SQL}) source "
-                    f"left join {_LEASE_PROJECTION} source_claim "
-                    "on source_claim.adapter_name=? "
-                    "and source_claim.source_id=cast(source.id as text) "
-                    "where "
-                    + self._channel_clause("source")
-                    + " and ((source.status='pending' "
-                    "and (source.available_at='' or datetime(source.available_at)<=datetime(?)) "
-                    "and (source_claim.owner is null or source_claim.owner='' "
-                    "or source_claim.lease_expires_at<=?)) "
-                    "or (source.status='processing' and source_claim.owner<>'' "
-                    "and source_claim.lease_expires_at<=?))"
-                ),
-                source_params=(self.name, now_text, now_text, now_text),
-                candidate_is_protected=_live_expired_owner,
-                owner_alive=self.owner_alive,
-                now=now_text,
-            )
-        return QueueMetrics(
-            pending=int(pending),
-            due=int(due),
-            oldest_available_at=(
-                _source_time(str(oldest), fallback=now) if oldest else None
-            ),
-            running=int(claimed),
-            latest_error=latest_error,
-        )
+            pending = db.execute(f"select count(*) from ({self.source}) task where "
+                                 + self._pending() + " and " + self._channel_clause()).fetchone()[0]
+            due = db.execute("select count(*) " + joined + "where " + eligible, params).fetchone()[0]
+            running = db.execute("select count(*) " + joined + "where " + self._channel_clause()
+                + " and task.task_status='processing' and task.status='processing' "
+                "and (task.claim_owner is null or task.claim_owner='' or task.claim_expires_at>?)",
+                (now_text,)).fetchone()[0]
+            oldest = db.execute("select min(" + oldest_sql + ") " + joined + "where " + eligible,
+                                params).fetchone()[0]
+            error_eligible, error_params = self._due(now_text, "source")
+            latest_error = _latest_actionable_error(db, column="error",
+                source_projection=f"from ({self.source}) source left join {_LEASE_PROJECTION} source_claim "
+                    "on source_claim.adapter_name=? and source_claim.source_id=cast(source.id as text) where " + error_eligible,
+                source_params=(self.name, *error_params), candidate_is_protected=_live_expired_owner,
+                owner_alive=self.owner_alive, now=now_text, task_owned=True)
+        return QueueMetrics(pending=int(pending), due=int(due), running=int(running), latest_error=latest_error,
+                            oldest_available_at=_source_time(str(oldest), fallback=now) if oldest else None)
 
-    def claim(
-        self,
-        now: datetime,
-        *,
-        owner: str,
-        owner_pid: int | None = None,
-        lease: timedelta,
-    ) -> DispatchEnvelope | None:
+    def claim(self, now: datetime, *, owner: str, owner_pid: int | None = None,
+              lease: timedelta) -> DispatchEnvelope | None:
         owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
-        lease_text = _lease_expiry(now, lease)
-        with self.store._connect() as db:
+        eligible, params = self._due(now_text)
+        ready = self._ready_at()
 
-            def fetch_page(after: sqlite3.Row | None, limit: int):
-                after_id = 0 if after is None else int(after["id"])
+        def candidate(db):
+            def fetch_page(after, limit):
+                keyset, keys = "", []
+                if after is not None:
+                    if self.kind == "meeting_alignment_jobs":
+                        keyset = " and (" + ready + ">datetime(?) or (" + ready + "=datetime(?) and task.id>?))"
+                        keys = [after["ready_at"], after["ready_at"], after["id"]]
+                    else:
+                        keyset, keys = " and task.id>?", [after["id"]]
+                elif self.kind != "meeting_alignment_jobs":
+                    # The source adapters start their public ID keyset at zero.
+                    keyset, keys = " and task.id>?", [0]
                 return db.execute(
-                    "select task.*, claim.owner as claim_owner, "
-                    "claim.generation as claim_generation, "
-                    "claim.owner_pid as claim_owner_pid, "
-                    "claim.lease_expires_at as claim_expires_at "
-                    f"from ({REPLY_TASK_SQL}) task left join {_LEASE_PROJECTION} claim "
-                    "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                    "where " + self._channel_clause() + " and ((task.status='pending' "
-                    "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
-                    "and (claim.owner is null or claim.owner='' "
-                    "or claim.lease_expires_at<=?)) "
-                    "or (task.status='processing' and claim.owner<>'' "
-                    "and claim.lease_expires_at<=?)) and task.id>? "
-                    "order by task.id limit ?",
-                    (self.name, now_text, now_text, now_text, after_id, limit),
-                ).fetchall()
+                    "select task.*," + ready + " as ready_at "
+                    f"from ({self.source}) task where "
+                    + eligible + keyset + " order by " + ready + ",task.id limit ?",
+                    (*params, *keys, limit)).fetchall()
+            return _scan_claimable_candidate(fetch_page, now=now_text, owner_alive=self.owner_alive)
 
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
+        with self.store._connect() as db:
+            if candidate(db) is None:
                 return None
         with self.store._immediate_write_transaction() as db:
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
+            row = candidate(db)
             if row is None:
                 return None
             source_id = str(row["id"])
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('reply_tasks', 'attempts')}+1", 'claimed_input_version': f"{task20_column('reply_tasks', 'input_version')}", 'locked_at': '?', 'available_at': "''", 'updated_at': '?'}, structural_sql={'claimed_input_id': 'current_input_id'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing') and {self._channel_clause('tasks')}""",
-                (now_text, now_text, row["id"]),
-            )
-            if cursor.rowcount != 1:
-                return None
-            generation = _acquire_lease(
-                db,
-                adapter_name=self.name,
-                source_id=source_id,
-                owner=owner,
-                owner_pid=owner_pid,
-                lease_expires_at=lease_text,
-                now=now_text,
-            )
-            claimed = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (row["id"],)
-            ).fetchone()
-            assert claimed is not None
-        return DispatchEnvelope(
-            adapter_name=self.name,
-            source_id=source_id,
-            available_at=_source_time(str(claimed["created_at"]), fallback=now),
-            priority=0,
-            attempt=int(claimed["attempts"]),
-            generation=generation,
-        )
+            changes = {"status": "'processing'", "updated_at": "?"}
+            bindings = [now_text]
+            structural = {}
+            if self.kind != "okr_review_requests":
+                changes["attempts"] = task20_column(self.kind, "attempts") + "+1"
+            if self.kind in ("reply_tasks", "meeting_alignment_jobs"):
+                changes["locked_at"] = "?"
+                bindings.append(now_text)
+            if self.kind in ("reply_tasks", "work_summary_inputs"):
+                changes["available_at"] = "''"
+            if self.kind in ("work_summary_inputs", "okr_review_requests"):
+                changes["error"] = "''"
+            if self.kind == "reply_tasks":
+                changes["claimed_input_version"] = task20_column(self.kind, "input_version")
+                structural["claimed_input_id"] = "current_input_id"
+            generation = task_claims.acquire_claim(db, adapter_name=self.name, source_id=source_id,
+                owner=owner, owner_pid=owner_pid, lease_expires_at=_lease_expiry(now, lease), now=now_text,
+                domain_sql=changes, domain_parameters=tuple(bindings), structural_sql=structural,
+                domain_where=(task20_column(self.kind, "status") + "=" + repr(row["status"])
+                              + " and " + self._channel_clause("tasks")))
+            claimed = db.execute(f"select * from ({self.source}) where id=?", (row["id"],)).fetchone()
+        time_field = "eligible_at" if self.kind == "meeting_alignment_jobs" else "created_at"
+        return DispatchEnvelope(adapter_name=self.name, source_id=source_id,
+            available_at=_source_time(str(claimed[time_field]), fallback=now), priority=0,
+            attempt=generation if self.kind == "okr_review_requests" else int(claimed["attempts"]), generation=generation)
 
-    def release(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-    ) -> None:
+    def release(self, envelope: DispatchEnvelope, *, owner: str, now: datetime) -> None:
         _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        changes = {"status": "'retry'" if self.kind == "meeting_alignment_jobs" else "'pending'",
+                   "updated_at": "?"}
+        if self.kind != "okr_review_requests":
+            changes["attempts"] = "max(" + task20_column(self.kind, "attempts") + "-1,0)"
+        if self.kind in ("reply_tasks", "meeting_alignment_jobs"):
+            changes["locked_at"] = "null"
         with self.store._immediate_write_transaction() as db:
-            _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': f"max({task20_column('reply_tasks', 'attempts')}-1,0)", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'""",
-                (_sqlite_time(now), int(envelope.source_id)),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("reply dispatch claim is no longer owned")
+            task_claims.transition_claim(db, envelope=envelope, owner=owner,
+                values={"lease_owner": "", "lease_expires_at": ""},
+                history={"owner": "", "lease_expires_at": "", "updated_at": now_text},
+                domain_sql=changes, domain_parameters=(now_text,),
+                domain_where=task20_column(self.kind, "status") + "='processing'")
 
-    def handle_handler_error(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-        error: str,
-    ) -> None:
-        """Count handler failures against the task budget, with bounded backoff."""
+    def renew(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, lease: timedelta) -> None:
+        _renew_lease(self.store, envelope=envelope, owner=owner, now=now, lease=lease)
+
+
+class ReplyQueueAdapter(_TaskQueueAdapter):
+    name = "reply"
+
+    def _channel_clause(self, alias="task"):
+        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'} in ('dingtalk','wechat')"
+
+    def complete(self, envelope: DispatchEnvelope, *, owner: str, now: datetime) -> None:
+        with self.store._immediate_write_transaction() as db:
+            _complete_ledger_in_db(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
+            self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
+
+    def handle_handler_error(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, error: str) -> None:
         from app.external_retry import retry_delay_seconds
         from app.worker import MAX_REPLY_TASK_ATTEMPTS
         _validate_release(self.name, envelope, owner, now)
         now_text = _sqlite_time(now)
         terminal = envelope.attempt >= MAX_REPLY_TASK_ATTEMPTS
         available_at = '' if terminal else _sqlite_time(
-            now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0)))
-        )
+            now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0))))
         with self.store._immediate_write_transaction() as db:
-            _release_lease(db, envelope=envelope, owner=owner, now=now_text)
-            cursor = db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': '?'}).sql}
-                where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'
-                """,
-                ('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id)),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("reply dispatch handler error source is no longer owned")
-
-    def renew(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-        lease: timedelta,
-    ) -> None:
-        _renew_lease(
-            self.store,
-            envelope=envelope,
-            owner=owner,
-            now=now,
-            lease=lease,
-        )
+            task_claims.transition_claim(db, envelope=envelope, owner=owner,
+                values={"lease_owner": "", "lease_expires_at": ""},
+                history={"owner": "", "lease_expires_at": "", "updated_at": now_text},
+                domain_values={"status": "failed" if terminal else "pending", "locked_at": None,
+                               "available_at": available_at, "error": error[:2000], "updated_at": now_text},
+                domain_where=task20_column(self.kind, "status") + "='processing'")
 
 
 class ScheduledExecutionQueueAdapter(ReplyQueueAdapter):
     name = "scheduled_execution"
 
-    def _channel_clause(self, alias: str = "task") -> str:
+    def _channel_clause(self, alias="task"):
         return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'}='scheduled'"
 
 
-class MeetingQueueAdapter(_LedgerClaimLifecycle):
+class MeetingQueueAdapter(_TaskQueueAdapter):
     name = "meeting"
 
-    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
-        self.store = store
-        self.owner_alive = owner_alive
 
-    def metrics(self, now: datetime) -> QueueMetrics:
-        now_text = _sqlite_time(now)
-        with self.store._connect() as db:
-            pending = db.execute(
-                f"select count(*) from ({MEETING_JOB_SQL}) "
-                "where status in ('waiting','pending','retry')"
-            ).fetchone()[0]
-            due = db.execute(
-                f"select count(*) from ({MEETING_JOB_SQL}) job "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
-                "where (job.status in ('waiting','pending','retry') "
-                "and datetime(job.eligible_at)<=datetime(?) "
-                "and (job.available_at='' or datetime(job.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (job.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
-                (self.name, now_text, now_text, now_text, now_text),
-            ).fetchone()[0]
-            claimed = db.execute(
-                f"select count(*) from ({MEETING_JOB_SQL}) job "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
-                "where job.status='processing' and (claim.owner is null "
-                "or claim.owner='' or claim.lease_expires_at>?)",
-                (self.name, now_text),
-            ).fetchone()[0]
-            oldest = db.execute(
-                "select min(case when job.available_at='' then job.eligible_at "
-                "when datetime(job.available_at)>datetime(job.eligible_at) "
-                "then job.available_at else job.eligible_at end) "
-                f"from ({MEETING_JOB_SQL}) job "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
-                "where (job.status in ('waiting','pending','retry') "
-                "and datetime(job.eligible_at)<=datetime(?) "
-                "and (job.available_at='' or datetime(job.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (job.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
-                (self.name, now_text, now_text, now_text, now_text),
-            ).fetchone()[0]
-            latest_error = _latest_actionable_error(
-                db,
-                column="error",
-                source_projection=(
-                    f"from ({MEETING_JOB_SQL}) source "
-                    f"left join {_LEASE_PROJECTION} source_claim "
-                    "on source_claim.adapter_name=? "
-                    "and source_claim.source_id=cast(source.id as text) "
-                    "where (source.status in ('waiting','pending','retry') "
-                    "and datetime(source.eligible_at)<=datetime(?) "
-                    "and (source.available_at='' or datetime(source.available_at)<=datetime(?)) "
-                    "and (source_claim.owner is null or source_claim.owner='' "
-                    "or source_claim.lease_expires_at<=?)) "
-                    "or (source.status='processing' and source_claim.owner<>'' "
-                    "and source_claim.lease_expires_at<=?)"
-                ),
-                source_params=(self.name, now_text, now_text, now_text, now_text),
-                candidate_is_protected=_live_expired_owner,
-                owner_alive=self.owner_alive,
-                now=now_text,
-            )
-        return QueueMetrics(
-            pending=int(pending),
-            due=int(due),
-            oldest_available_at=(
-                _source_time(str(oldest), fallback=now) if oldest else None
-            ),
-            running=int(claimed),
-            latest_error=latest_error,
-        )
-
-    def claim(
-        self,
-        now: datetime,
-        *,
-        owner: str,
-        owner_pid: int | None = None,
-        lease: timedelta,
-    ) -> DispatchEnvelope | None:
-        owner_pid = os.getpid() if owner_pid is None else owner_pid
-        _validate_claim(owner, lease)
-        now_text = _sqlite_time(now)
-        ready_at = (
-            "max(datetime(job.eligible_at), "
-            "coalesce(datetime(nullif(job.available_at,'')), datetime(job.eligible_at)))"
-        )
-        with self.store._connect() as db:
-
-            def fetch_page(after: sqlite3.Row | None, limit: int):
-                keyset = ""
-                params: list[object] = [
-                    self.name,
-                    now_text,
-                    now_text,
-                    now_text,
-                    now_text,
-                ]
-                if after is not None:
-                    keyset = (
-                        f"and ({ready_at}>datetime(?) or "
-                    f"({ready_at}=datetime(?) and job.id>?)) "
-                    )
-                    params.extend(
-                        [after["ready_at"], after["ready_at"], after["id"]]
-                    )
-                params.append(limit)
-                return db.execute(
-                    f"select job.*, {ready_at} as ready_at, claim.owner as claim_owner, "
-                    "claim.generation as claim_generation, "
-                    "claim.owner_pid as claim_owner_pid, "
-                    "claim.lease_expires_at as claim_expires_at "
-                    f"from ({MEETING_JOB_SQL}) job "
-                    f"left join {_LEASE_PROJECTION} claim "
-                    "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
-                    "where ((job.status in ('waiting','pending','retry') "
-                    "and datetime(job.eligible_at)<=datetime(?) "
-                    "and (job.available_at='' "
-                    "or datetime(job.available_at)<=datetime(?)) "
-                    "and (claim.owner is null or claim.owner='' "
-                    "or claim.lease_expires_at<=?)) "
-                    "or (job.status='processing' and claim.owner<>'' "
-                    "and claim.lease_expires_at<=?)) "
-                    + keyset
-                    + f"order by {ready_at}, job.id limit ?",
-                    params,
-                ).fetchall()
-
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
-                return None
-        with self.store._immediate_write_transaction() as db:
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
-                return None
-            source_id = str(row["id"])
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('meeting_alignment_jobs', 'attempts')}+1", 'locked_at': '?', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')} in ('waiting','pending','retry','processing')""",
-                (now_text, now_text, row["id"]),
-            )
-            if cursor.rowcount != 1:
-                return None
-            generation = _acquire_lease(
-                db,
-                adapter_name=self.name,
-                source_id=source_id,
-                owner=owner,
-                owner_pid=owner_pid,
-                lease_expires_at=_lease_expiry(now, lease),
-                now=now_text,
-            )
-            claimed = db.execute(
-                f"select * from ({MEETING_JOB_SQL}) where id=?", (row["id"],)
-            ).fetchone()
-            assert claimed is not None
-        return DispatchEnvelope(
-            adapter_name=self.name,
-            source_id=source_id,
-            available_at=_source_time(str(claimed["eligible_at"]), fallback=now),
-            priority=0,
-            attempt=int(claimed["attempts"]),
-            generation=generation,
-        )
-
-    def release(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-    ) -> None:
-        _validate_release(self.name, envelope, owner, now)
-        with self.store._immediate_write_transaction() as db:
-            _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'retry'", 'attempts': f"max({task20_column('meeting_alignment_jobs', 'attempts')}-1,0)", 'locked_at': 'null', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')}='processing'""",
-                (_sqlite_time(now), int(envelope.source_id)),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("meeting dispatch claim is no longer owned")
-
-    def renew(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-        lease: timedelta,
-    ) -> None:
-        _renew_lease(
-            self.store,
-            envelope=envelope,
-            owner=owner,
-            now=now,
-            lease=lease,
-        )
-
-
-class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
-    """Claim pending OKR review requests without running a second poll loop."""
-
+class OkrReviewQueueAdapter(_TaskQueueAdapter):
     name = "okr_review"
 
-    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
-        self.store = store
-        self.owner_alive = owner_alive
 
-    def metrics(self, now: datetime) -> QueueMetrics:
-        now_text = _sqlite_time(now)
-        with self.store._connect() as db:
-            pending = db.execute(
-                f"select count(*) from tasks where record_type='okr_review_requests' and {task20_column('okr_review_requests', 'status')}='pending'"
-            ).fetchone()[0]
-            due = db.execute(
-                f"select count(*) from ({OKR_REQUEST_SQL}) request "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
-                "where (request.status='pending' and (claim.owner is null "
-                "or claim.owner='' or claim.lease_expires_at<=?)) "
-                "or (request.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
-                (self.name, now_text, now_text),
-            ).fetchone()[0]
-            claimed = db.execute(
-                f"select count(*) from ({OKR_REQUEST_SQL}) request "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
-                "where request.status='processing' and (claim.owner is null "
-                "or claim.owner='' or claim.lease_expires_at>?)",
-                (self.name, now_text),
-            ).fetchone()[0]
-            oldest = db.execute(
-                f"select min(request.created_at) from ({OKR_REQUEST_SQL}) request "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
-                "where (request.status='pending' and (claim.owner is null "
-                "or claim.owner='' or claim.lease_expires_at<=?)) "
-                "or (request.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
-                (self.name, now_text, now_text),
-            ).fetchone()[0]
-            latest_error = _latest_actionable_error(
-                db,
-                column="error",
-                source_projection=(
-                    f"from ({OKR_REQUEST_SQL}) source "
-                    f"left join {_LEASE_PROJECTION} source_claim "
-                    "on source_claim.adapter_name=? "
-                    "and source_claim.source_id=cast(source.id as text) "
-                    "where (source.status='pending' and (source_claim.owner is null "
-                    "or source_claim.owner='' or source_claim.lease_expires_at<=?)) "
-                    "or (source.status='processing' and source_claim.owner<>'' "
-                    "and source_claim.lease_expires_at<=?)"
-                ),
-                source_params=(self.name, now_text, now_text),
-                candidate_is_protected=_live_expired_owner,
-                owner_alive=self.owner_alive,
-                now=now_text,
-            )
-        return QueueMetrics(
-            pending=int(pending),
-            due=int(due),
-            oldest_available_at=(
-                _source_time(str(oldest), fallback=now) if oldest else None
-            ),
-            running=int(claimed),
-            latest_error=latest_error,
-        )
-
-    def claim(
-        self,
-        now: datetime,
-        *,
-        owner: str,
-        owner_pid: int | None = None,
-        lease: timedelta,
-    ) -> DispatchEnvelope | None:
-        owner_pid = os.getpid() if owner_pid is None else owner_pid
-        _validate_claim(owner, lease)
-        now_text = _sqlite_time(now)
-        with self.store._connect() as db:
-
-            def fetch_page(after: sqlite3.Row | None, limit: int):
-                after_id = 0 if after is None else int(after["id"])
-                return db.execute(
-                    "select request.*, claim.owner as claim_owner, "
-                    "claim.owner_pid as claim_owner_pid, "
-                    "claim.lease_expires_at as claim_expires_at "
-                    f"from ({OKR_REQUEST_SQL}) request "
-                    f"left join {_LEASE_PROJECTION} claim "
-                    "on claim.adapter_name=? "
-                    "and claim.source_id=cast(request.id as text) "
-                    "where ((request.status='pending' and (claim.owner is null "
-                    "or claim.owner='' or claim.lease_expires_at<=?)) "
-                    "or (request.status='processing' and claim.owner<>'' "
-                    "and claim.lease_expires_at<=?)) and request.id>? "
-                    "order by request.id limit ?",
-                    (self.name, now_text, now_text, after_id, limit),
-                ).fetchall()
-
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
-                return None
-        with self.store._immediate_write_transaction() as db:
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
-                return None
-            source_id = str(row["id"])
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'processing'", 'error': "''", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')} in ('pending','processing')""",
-                (now_text, row["id"]),
-            )
-            if cursor.rowcount != 1:
-                return None
-            generation = _acquire_lease(
-                db,
-                adapter_name=self.name,
-                source_id=source_id,
-                owner=owner,
-                owner_pid=owner_pid,
-                lease_expires_at=_lease_expiry(now, lease),
-                now=now_text,
-            )
-        return DispatchEnvelope(
-            adapter_name=self.name,
-            source_id=source_id,
-            available_at=_source_time(str(row["created_at"]), fallback=now),
-            priority=0,
-            attempt=generation,
-            generation=generation,
-        )
-
-    def release(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-    ) -> None:
-        _validate_release(self.name, envelope, owner, now)
-        with self.store._immediate_write_transaction() as db:
-            _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'pending'", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'""",
-                (_sqlite_time(now), int(envelope.source_id)),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("OKR review dispatch claim is no longer owned")
-
-    def renew(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-        lease: timedelta,
-    ) -> None:
-        _renew_lease(
-            self.store,
-            envelope=envelope,
-            owner=owner,
-            now=now,
-            lease=lease,
-        )
-
-
-class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
+class WorkSummaryQueueAdapter(_TaskQueueAdapter):
     name = "work_summary"
-
-    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
-        self.store = store
-        self.owner_alive = owner_alive
-
-    def metrics(self, now: datetime) -> QueueMetrics:
-        now_text = _sqlite_time(now)
-        with self.store._connect() as db:
-            pending = db.execute(
-                f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where status='pending'"
-            ).fetchone()[0]
-            due = db.execute(
-                f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) item "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
-                "where (item.status='pending' "
-                "and (item.available_at='' or datetime(item.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (item.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
-                (self.name, now_text, now_text, now_text),
-            ).fetchone()[0]
-            claimed = db.execute(
-                f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) item "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
-                "where item.status='processing' and (claim.owner is null "
-                "or claim.owner='' or claim.lease_expires_at>?)",
-                (self.name, now_text),
-            ).fetchone()[0]
-            oldest = db.execute(
-                "select min(case when item.available_at='' then item.created_at "
-                f"else item.available_at end) from ({WORK_SUMMARY_INPUT_SQL}) item "
-                f"left join {_LEASE_PROJECTION} claim "
-                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
-                "where (item.status='pending' "
-                "and (item.available_at='' or datetime(item.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (item.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
-                (self.name, now_text, now_text, now_text),
-            ).fetchone()[0]
-            latest_error = _latest_actionable_error(
-                db,
-                column="error",
-                source_projection=(
-                    f"from ({WORK_SUMMARY_INPUT_SQL}) source "
-                    f"left join {_LEASE_PROJECTION} source_claim "
-                    "on source_claim.adapter_name=? "
-                    "and source_claim.source_id=cast(source.id as text) "
-                    "where (source.status='pending' "
-                    "and (source.available_at='' or datetime(source.available_at)<=datetime(?)) "
-                    "and (source_claim.owner is null or source_claim.owner='' "
-                    "or source_claim.lease_expires_at<=?)) "
-                    "or (source.status='processing' and source_claim.owner<>'' "
-                    "and source_claim.lease_expires_at<=?)"
-                ),
-                source_params=(self.name, now_text, now_text, now_text),
-                candidate_is_protected=_live_expired_owner,
-                owner_alive=self.owner_alive,
-                now=now_text,
-            )
-        return QueueMetrics(
-            pending=int(pending),
-            due=int(due),
-            oldest_available_at=(
-                _source_time(str(oldest), fallback=now) if oldest else None
-            ),
-            running=int(claimed),
-            latest_error=latest_error,
-        )
-
-    def claim(
-        self,
-        now: datetime,
-        *,
-        owner: str,
-        owner_pid: int | None = None,
-        lease: timedelta,
-    ) -> DispatchEnvelope | None:
-        owner_pid = os.getpid() if owner_pid is None else owner_pid
-        _validate_claim(owner, lease)
-        now_text = _sqlite_time(now)
-        with self.store._connect() as db:
-
-            def fetch_page(after: sqlite3.Row | None, limit: int):
-                after_id = 0 if after is None else int(after["id"])
-                return db.execute(
-                    "select item.*, claim.owner as claim_owner, "
-                    "claim.generation as claim_generation, "
-                    "claim.owner_pid as claim_owner_pid, "
-                    "claim.lease_expires_at as claim_expires_at "
-                    f"from ({WORK_SUMMARY_INPUT_SQL}) item "
-                    f"left join {_LEASE_PROJECTION} claim "
-                    "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
-                    "where ((item.status='pending' "
-                    "and (item.available_at='' or datetime(item.available_at)<=datetime(?)) "
-                    "and (claim.owner is null or claim.owner='' "
-                    "or claim.lease_expires_at<=?)) "
-                    "or (item.status='processing' and claim.owner<>'' "
-                    "and claim.lease_expires_at<=?)) and item.id>? "
-                    "order by item.id limit ?",
-                    (self.name, now_text, now_text, now_text, after_id, limit),
-                ).fetchall()
-
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
-                return None
-        with self.store._immediate_write_transaction() as db:
-            row = _scan_claimable_candidate(
-                fetch_page,
-                now=now_text,
-                owner_alive=self.owner_alive,
-            )
-            if row is None:
-                return None
-            source_id = str(row["id"])
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('work_summary_inputs', 'attempts')}+1", 'error': "''", 'available_at': "''", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('pending','processing')""",
-                (now_text, row["id"]),
-            )
-            if cursor.rowcount != 1:
-                return None
-            generation = _acquire_lease(
-                db,
-                adapter_name=self.name,
-                source_id=source_id,
-                owner=owner,
-                owner_pid=owner_pid,
-                lease_expires_at=_lease_expiry(now, lease),
-                now=now_text,
-            )
-            claimed = db.execute(
-                f"select * from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (row["id"],)
-            ).fetchone()
-            assert claimed is not None
-        return DispatchEnvelope(
-            adapter_name=self.name,
-            source_id=source_id,
-            available_at=_source_time(str(claimed["created_at"]), fallback=now),
-            priority=0,
-            attempt=int(claimed["attempts"]),
-            generation=generation,
-        )
-
-    def release(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-    ) -> None:
-        _validate_release(self.name, envelope, owner, now)
-        with self.store._immediate_write_transaction() as db:
-            _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
-            cursor = db.execute(
-                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': f"max({task20_column('work_summary_inputs', 'attempts')}-1,0)", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')}='processing'""",
-                (_sqlite_time(now), int(envelope.source_id)),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("work-summary dispatch claim is no longer owned")
-
-    def renew(
-        self,
-        envelope: DispatchEnvelope,
-        *,
-        owner: str,
-        now: datetime,
-        lease: timedelta,
-    ) -> None:
-        _renew_lease(
-            self.store,
-            envelope=envelope,
-            owner=owner,
-            now=now,
-            lease=lease,
-        )
 
 
 class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
@@ -1886,6 +1268,9 @@ def _acquire_lease(
     lease_expires_at: str,
     now: str,
 ) -> int:
+    if adapter_name in DISPATCH_KINDS:
+        return task_claims.acquire_claim(db, adapter_name=adapter_name, source_id=source_id,
+            owner=owner, owner_pid=owner_pid, lease_expires_at=lease_expires_at, now=now)
     row = db.execute(
         "select owner, generation, lease_expires_at "
         f"from {_LEASE_PROJECTION} where adapter_name=? and source_id=?",
@@ -1980,6 +1365,11 @@ def _release_lease(
     owner: str,
     now: str,
 ) -> None:
+    if envelope.adapter_name in DISPATCH_KINDS:
+        task_claims.transition_claim(db, envelope=envelope, owner=owner,
+            values={"lease_owner": "", "lease_expires_at": ""},
+            history={"owner": "", "lease_expires_at": "", "updated_at": now})
+        return
     changed = update_state(
         db, "dispatcher_claim_leases",
         _lease_rowid(db, envelope.adapter_name, envelope.source_id),
@@ -2019,6 +1409,11 @@ def _renew_lease_in_db(
     now: str,
     lease_expires_at: str,
 ) -> None:
+    if envelope.adapter_name in DISPATCH_KINDS:
+        task_claims.transition_claim(db, envelope=envelope, owner=owner, now=now,
+            values={"lease_expires_at": lease_expires_at},
+            history={"lease_expires_at": lease_expires_at, "last_error": "", "updated_at": now})
+        return
     changed = update_state(
         db, "dispatcher_claim_leases",
         _lease_rowid(db, envelope.adapter_name, envelope.source_id),
@@ -2057,6 +1452,9 @@ def _assert_ledger_current_in_db(
     owner: str,
     now: str,
 ) -> None:
+    if envelope.adapter_name in DISPATCH_KINDS:
+        task_claims.assert_claim(db, envelope=envelope, owner=owner, now=now)
+        return
     row = db.execute(
         f"select 1 from {_LEASE_PROJECTION} where adapter_name=? "
         "and source_id=? and owner=? and generation=? "
@@ -2092,6 +1490,13 @@ def _complete_ledger_in_db(
     owner: str,
     now: str,
 ) -> None:
+    if envelope.adapter_name in DISPATCH_KINDS:
+        task_claims.transition_claim(db, envelope=envelope, owner=owner,
+            values={"lease_owner": "", "lease_expires_at": ""},
+            history={"owner": "", "lease_expires_at": "", "terminal_at": now,
+                     "last_error": "", "updated_at": now})
+        _prune_completed_claim_history(db)
+        return
     changed = update_state(
         db, "dispatcher_claim_leases",
         _lease_rowid(db, envelope.adapter_name, envelope.source_id),
@@ -2102,14 +1507,19 @@ def _complete_ledger_in_db(
     )
     if changed != 1:
         raise ValueError("dispatcher source claim is no longer owned")
-    db.execute(
+    _prune_completed_claim_history(db)
+
+
+def _prune_completed_claim_history(db):
+    deleted = db.execute(
         "delete from state where record_type='dispatcher_claim_leases' "
         "and terminal_at<>'' and (terminal_at,cast(legacy_key as integer))<("
         "select terminal_at,cast(legacy_key as integer) from state "
         "where record_type='dispatcher_claim_leases' and terminal_at<>'' "
         "order by terminal_at desc,cast(legacy_key as integer) desc "
-        "limit 1 offset 9999)"
-    )
+        "limit 1 offset 9999) returning adapter_name,source_id,generation"
+    ).fetchall()
+    task_claims.forget_pruned_claims(db, deleted)
 
 
 def _let_go_of_lease(
@@ -2128,6 +1538,13 @@ def _let_go_of_lease(
     claim someone else has since taken is untouched.
     """
     with store._immediate_write_transaction() as db:
+        if envelope.adapter_name in DISPATCH_KINDS:
+            task_claims.recover_claims(db, adapter=envelope.adapter_name,
+                source_ids=(envelope.source_id,), values={"owner_pid": 0, "lease_expires_at": ""},
+                history={"owner_pid": 0, "lease_expires_at": ""},
+                where_sql="lifecycle_lease_owner=? and lifecycle_generation=?",
+                parameters=(owner, envelope.generation), repack_history=True)
+            return
         update_state(
             db, "dispatcher_claim_leases",
             _lease_rowid(db, envelope.adapter_name, envelope.source_id),
@@ -2166,15 +1583,16 @@ def _latest_actionable_error(
     now: str,
     source_updated_at_column: str = "updated_at",
     source_fields: tuple[str, ...] = (),
+    task_owned: bool = False,
 ) -> str:
     base_fields = (
         "source.id, "
         f"source.{column} as source_error, "
         f"source.{source_updated_at_column} as source_updated_at, "
-        "source_claim.owner as claim_owner, "
-        "source_claim.owner_pid as claim_owner_pid, "
-        "source_claim.lease_expires_at as claim_expires_at, "
-        "source_claim.last_error as claim_last_error, "
+        + ("source.claim_owner,source.claim_owner_pid,source.claim_expires_at, " if task_owned else
+           "source_claim.owner as claim_owner,source_claim.owner_pid as claim_owner_pid,"
+           "source_claim.lease_expires_at as claim_expires_at, ")
+        + "source_claim.last_error as claim_last_error, "
         "source_claim.updated_at as claim_updated_at, "
         "source_claim.rowid as claim_rowid"
     )

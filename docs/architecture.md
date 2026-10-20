@@ -2,20 +2,54 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.7`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.8`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-本候选尚未部署；副本、真实 CLI、容量及发布的证据范围统一见
-[最终验收清单](database-redesign-final-acceptance.md)，不由历史分期记录推断生产生效。
+C1 的 Store19.8 候选尚未部署；父级已验证生产 B2b Store19.7／Email53。
+本候选的局部验证与剩余发布门槛见
+[C1 生命周期验收](business-model-task-lifecycle-validation.md)。
+[旧最终验收清单](database-redesign-final-acceptance.md)只记录 Store14.1 的历史范围，
+不作为 C1 已发布或容量已通过的证据。
 
-Tasks 合并二十种已有任务。七个结构列可写；`payload_json` 是按
-`TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 排列的严格 JSONB 值数组。
+Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
+`payload_json` 只保存当前 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 的业务值数组。
 `_kind` 是唯一存储的类型，`record_type` 是只读生成名称；原公开字段、过滤、
 唯一性和类型约束由生成列及既有索引提供。当前／claimed 输入指针和真实物理父子
 关系保留；公开 ID、源 ROWID、独立分配水位、SQLite REAL/BLOB、负零及业务字段
 内的 JSON 文本不改变。历史 `task_storage` 是迁移来源 oracle，不是运行时兼容层。
+
+Store19.8 的 C1 将九种实际可执行 Task 的源 status、due、attempt、error、时间与
+既有 owner／PID／generation／expiry 事实移到单一物理列；不存在的源字段保持
+SQL NULL，另外十一种记录保持原业务状态且没有通用生命周期。物理列保存一个
+原始 JSONB 标量，`lifecycle_*` 生成列按原源列 affinity 解码；唯一保存的 status 是源状态，通用状态
+和 `meeting_phase` 只读派生。原始非最小 JSONB 标头同样保留；共同写入器在一次
+Task UPDATE 内瞬时重建源数组、调用原生 jsonb_set，再拆回各唯一 owner。
+该临时数组不落库，业务 payload 的根标头只保留自身 framing。
+
+Reply／ScheduledExecution、WorkSummary、Meeting、OKR 的 claim、续租、release、
+当前 owner 判定和 metrics 读取 Task；两个 Reply adapter 的 ledger 身份与 channel
+过滤仍然独立。`dispatcher_claim_leases` 只保留源限定的被动历史：旧 public ID、
+generation、清空的 owner、terminal/error 及各自时间均在同一事务派生维护，
+历史错误仍按原时钟和 ROWID 排序，不参与活跃租约仲裁。原有 terminal ledger
+裁剪只在同一源身份／代际且没有活跃 owner 时清空对应 Task 的 claim 元数据，
+使裁剪后的下一次 claim 保持旧源 generation=1 语义。Meeting 的 ready_to_send
+不能重新进入 Consumer claim；送达锁 `locked_at`、实际 send claim／receipt、
+quarantined 保护状态与原有取消、恢复、结果事务不变。
+Task 单一仲裁的范围是这些符合源 channel／adapter 条件的 dispatcher claim。
+`EmailStore._unsubscribe_cancellation_decision` 仍读取 channel=email 的
+reply／scheduled_execution State 历史；该 channel 对两者都不 eligible，
+这条既有取消前置事实不迁成 Task 租约，也不据 owner／expiry 改变取消判定。
+
+既有 paired coordinator 只接受准确的 Store19.7／Email53 源，发布 Store19.8／Email53。
+current-data inverse 使用当前 Task 单一 owner 与未归档的被动 ledger 重建旧声明及
+精确 JSONB 字节，保留源 marker 原时钟、Email 账本、FK 变体和分配水位；不恢复
+旧数据快照。字段来源、九种状态映射、验证与成本见
+[C1 Task 生命周期说明](business-model-task-lifecycle-validation.md)。
+局部实测区分 Task 的索引点选择与既有 generated-parent FK 检查：后者在旧／新
+payload UPDATE 上都随无关行数增长。C1 没有新增该扫描；本地旧／新对照、单语句
+原子性和已知 2 秒期限测试失败不构成生产启动／全量副本容量已通过的声明。
 
 Actions 保留六十一种物理类型：六十种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 同样只存 `_kind` 和声明的 JSONB 值槽位，公开类型／字段通过生成列读取。
@@ -176,14 +210,16 @@ principal decision，以及 feedback 的计划版本采用和不可变授权快�
 这些事实不改写为通用 attempt，不制造 provider JSON 或 AgentRun。原 uncertain
 恢复、来源核验后的显式 retry、no-effect／skip、取消及 receipt 幂等语义不变。
 
-当前配对发布通过已有入口准确地从 Store `2026-10-19.6`／Email53 转到
+B2b 配对发布通过已有入口准确地从 Store `2026-10-19.6`／Email53 转到
 `2026-10-19.7`／Email53；只转换两个 claim 类型码和对应声明，B2a 五个来源的
 声明工厂／映射不变。正逆迁按一遍临时 staging 转换类型码，逐项比较原存储值和
 SQLite 类型、物理／公开身份、独立分配水位及原 FK finding 多重集合。逆迁读取
 当前 typed claims／results 和独立证据，包括发布后新建的 claim、receipt、effect
 版本、continuation、cancellation 及 retry 状态；仅保留声明／marker 元数据，
 不保留源业务行副本。Email53 账本、Configs 声明和原 source marker 时钟不变。
-本切片未完成 A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元；也未部署。
+父级已完成 B2b 标准部署和 Store19.7／Email53 生产回读。
+该切片不包含 A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元；
+本 checkout 的 C1 Store19.8 仍为未部署候选。
 局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
 [专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
