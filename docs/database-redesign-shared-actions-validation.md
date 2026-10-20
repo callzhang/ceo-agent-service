@@ -337,3 +337,22 @@ A separate refresh freeze preserves the prior f491 publication manifest, pins
 the one changed test plus both additional CI runtime inputs, and requires bounded
 SPEC then QUALITY refresh before retrying the standard push/deploy. No policy
 change was authored as part of B2a, and no OA action was performed.
+
+
+## Live publication readback
+
+Standard deploy completed296b6d82→actualcbf95112, preserving the separately
+authored OA manual-rerun context repair published during the wait. Its focused
+four controls passed5.46s in the isolated B2a worktree after restart; the shared
+Action declarations/lifecycle sources are unchanged from7e. Production now
+uses exactStore19.6/Email53, newPID75178, all five new typed codes63–67 with
+zero wrong-code rows, and no six retired latest-attempt mirror slots in direct
+steps. Quick check isok and originalFK(runs190042→tasks) is unchanged.
+Health/status/Attention/History return200 and queue failure counts do not rise.
+Production file479956992bytes is not a file-shrink/VACUUM claim.
+
+Global system_health remainsdegraded with one unresolved feedback, created
+2026-10-20 04:08:53UTC while source296b was still observed at04:10:58UTC.
+This is retained as an existing business alert; it was not resolved/suppressed
+to get a green result. No zero-violation or whole-project completion claim is
+made. See validation/2026-10-19-shared-actions-live.json for metadata only.

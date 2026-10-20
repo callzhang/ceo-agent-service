@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.6`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.7`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -119,7 +119,7 @@ verify_loaded、rollback、finalize 入口变为 `2026-10-19.5`／Email53；构�
 `record_reply_attempt`（包括 direct unsubscribe）和 finalize 的 Attempt／任务写入
 保留；历史 Sent／Attempt 类型、读取及逆迁继续支持。`complete_agent_run` 原本只更新
 run，未作为 Sent writer 退役。Postfix 的准备／首个接受结果、OKR、Reply Attempt 类型、
-Email 通用机制在后续 B2a 切片实现，Reply／unsubscribe 专有归属及其余业务单元仍未完成，A 单元不能据此整体结案。
+Email 通用机制及 Reply／unsubscribe claim／result 归属分别由后述 B2a／B2b 实现；A5 及 C／D 业务单元仍未完成，A 单元不能据此整体结案。
 局部实现、测试和源冻结证据见[Sent 归属验收](database-redesign-sent-result-validation.md)。
 
 Store `2026-10-19.6` 的 B2a 将 reviewed Consumer 与确定性 direct Email 的
@@ -143,7 +143,7 @@ operation／target／result ID、error 只由最新的有序 attempt 持有，at
 水位；Email provider 操作不生成 Consumer／Audit／AgentRun 或伪造 provider JSON。
 A2 verified／NULL 正文与 A4 Sent receipt owner 继续使用原规则。
 
-当前配对发布通过既有 prepare、publish、verify_loaded、rollback、finalize，准确地从
+B2a 的历史配对发布通过既有 prepare、publish、verify_loaded、rollback、finalize，准确地从
 Store `2026-10-19.5`／Email53 转到 `2026-10-19.6`／Email53。转前逐一验证 direct
 attempt 的整数连续序号、数量和最新镜像的精确 SQLite 值／类型；pending 必须无历史，
 processing 的终态字段必须已清空。任何来源例外在写入前拒绝，不擦除或修补。
@@ -152,9 +152,40 @@ direct step 时按 ID 查找；索引随临时表删除，永久源／目标声�
 逆迁从当前 plan／step／attempt 重建旧布局，包括发布后的新计划、新 reviewed 执行及
 可变槽位、新 Email retry attempt 和当前 claim；原 Actions 物理 ID、公开 identity、
 FK finding 多重集合、分配水位及原 marker 时间保留。Email53 账本不增版本，源行不归档。
-本切片不宣称 Reply／unsubscribe claims 的 B2b 或 Postfix 的后续归属已完成。
+B2a 的证据只覆盖上述五类来源；Reply／unsubscribe claims 由后述 B2b 接续，Postfix 归属仍待 A5。
 局部 fake-provider、源程序差分、逆迁及冻结证据见
 [共享动作机制验收](database-redesign-shared-actions-validation.md)。
+
+
+Store `2026-10-19.7` 的 B2b 将 Reply 的17字段 dispatch claim 和 unsubscribe 的
+19字段 claim 原位改为同一共享 effect step，追加类型码68／69、来源为
+`email_reply`／`email_unsubscribe`。`record_type` 的只读原名称保留，公开 DTO、
+Actions 物理 ID、legacy key、唯一 outgoing message ID 及所有原字段／FK 不变。
+Reply 的 sender、thread、account snapshot／更新时间，以及 unsubscribe 的 phase、
+entry reference、operations、audit run、thread／account 时钟仍由各自 typed step 持有。
+既有 EmailStore 入口保留来源校验、provider 证据核验与事务边界；claim、CAS 状态、
+回收、重试、完成及 receipt 写入统一由 `shared_action_lifecycle.transition` 执行。
+原逐行 claim／receipt mutation SQL 循环已退休。CAS 在同一 SQL 中通过原身份索引
+取得物理 ID 并更新 Actions，owner generation／lease token 的原条件不变。
+
+Reply 的13字段 receipt 和 unsubscribe 的20字段 receipt 继续各有一个权威 typed
+result owner，共享结果入口直接写入它们；claim 的状态不生成 SMTP／browser 成功。
+Unsubscribe 多版本 effect journal、独立整数 AUTO 水位的有序 observation steps、
+unfinished continuation 的 observation／controls／时钟、explicit cancellation 的
+principal decision，以及 feedback 的计划版本采用和不可变授权快照均完整保留。
+这些事实不改写为通用 attempt，不制造 provider JSON 或 AgentRun。原 uncertain
+恢复、来源核验后的显式 retry、no-effect／skip、取消及 receipt 幂等语义不变。
+
+当前配对发布通过已有入口准确地从 Store `2026-10-19.6`／Email53 转到
+`2026-10-19.7`／Email53；只转换两个 claim 类型码和对应声明，B2a 五个来源的
+声明工厂／映射不变。正逆迁按一遍临时 staging 转换类型码，逐项比较原存储值和
+SQLite 类型、物理／公开身份、独立分配水位及原 FK finding 多重集合。逆迁读取
+当前 typed claims／results 和独立证据，包括发布后新建的 claim、receipt、effect
+版本、continuation、cancellation 及 retry 状态；仅保留声明／marker 元数据，
+不保留源业务行副本。Email53 账本、Configs 声明和原 source marker 时钟不变。
+本切片未完成 A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元；也未部署。
+局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
+[专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
 
@@ -354,6 +385,7 @@ Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务�
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取
 当前所选 Skill 或对应任务配置，则不排入重跑。原 Attempt、旧代际和旧 Skill 快照保留不变。
 人工重跑内部 OA 待办使用持久化任务中的 `oa-pending:` 合成触发 ID；按触发 ID 定位当前任务并恢复其实际 `oa_pending_scan:<process>` 会话。该类 ID 不是钉钉消息 ID，不调用钉钉会话读取或按 ID 读取；若当前任务已不存在，按未找到任务失败。
+输入已压缩时，按任务保存的审批 URL、业务身份和定时扫描 run ID 恢复当前 OA 触发及其最新选中 Skill；身份或运行快照无法对应时拒绝排队，不把合成 ID 交给钉钉消息读取。
 
 Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
 `list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、
@@ -407,8 +439,13 @@ remain terminal. See `docs/email-unsubscribe-conditional-copy-validation.md`.
 
 Console manual rerun loads only the terminal Agent run metadata used by the
 existing refusal check. It does not discover sessions or read/parse native
-trajectory/result files before queueing. Refusal behavior, original-input
-verification and the appended execution generation remain unchanged.
+trajectory/result files before queueing. A resolved `skipped` OA review can be
+reopened only when the reviewer supplied new explicit feedback, the same
+DingTalk OA task remains pending, its process/task identity still matches, and
+the prior review has no recorded external effect. The new generation goes
+through the ordinary Consumer and Audit review; this does not reopen `needs_human`
+or other skipped work. Refusal behavior, original-input verification and the
+appended execution generation remain unchanged.
 
 Empty dispatcher polls are read-only across all queue adapters. A candidate
 probe does not reserve an item: the existing writer transaction rechecks the
@@ -644,11 +681,13 @@ Chrome 登录态、申请读不到的钉钉 AI 听记，以及下载新增的钉
 
 定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
 
+产物 offset 是从0起的字符索引；每页统一返回 offset、total_chars、next_offset，sha256 始终对应整份文件。完整读取从0开始，按 next_offset 续读至 null，不能把非零起点的尾部当作全文。
+
 `consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
 
 日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。
 
-OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
+OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。 Skill 的 prepare 在计划中标记来源摘要匹配的 `analysis_reusable`，恢复保留这些分析原文，来源或评分日期变化才重新分析；审核修订只修改被指出的分析。未评分成员保留已知职级与逐人来源缺口，不生成分数。业务 KR 的完成档位与领导力/文化行为档位分别应用；行为评分使用正式维度，70–79 为符合标准，80 分及以上须有明确超标案例，90 分及以上须具备对应榜样范围证据。成员附录按主报告父节点解析并读回，最终群提案逐字使用 summary.md；这些步骤由 Skill 与现有 Audit 承担，未新增服务发布门槛。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
 
 发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束；核查未完成执行的原始快照，不依赖当前任务仍保留旧命令或 Skill 引用。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
 

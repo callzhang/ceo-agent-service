@@ -449,7 +449,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.6"
+STORE_SCHEMA_VERSION = "2026-10-19.7"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1975,7 +1975,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1983,7 +1983,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, metadata_owner=True)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2307,7 +2307,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True,
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -6774,7 +6774,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     db, action_variant=variant, include_business_actions=True,
                     include_email_history=True,
                     canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
@@ -6788,9 +6788,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
                         include_business_actions=True,
                         include_email_history=True,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True,
                         canonical_email="emails" in tables,
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
@@ -6811,7 +6811,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.6 schema"
+                    "or the current 2026-10-19.7 schema"
                 )
             return True
         finally:
@@ -7719,6 +7719,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         channel: str = "dingtalk",
         force_rotation: bool = False,
         expected_execution_generation: str | None = None,
+        allow_skipped_oa_review: bool = False,
     ) -> ReplyTask:
         with self._immediate_write_transaction() as db:
             if expected_execution_generation is not None:
@@ -7727,14 +7728,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
 
                 current = db.execute(
-                    f"select id,execution_generation,error from ({REPLY_TASK_SQL}) as reply_tasks "
+                    f"select id,execution_generation,error,status,business_object_key "
+                    f"from ({REPLY_TASK_SQL}) as reply_tasks "
                     "where channel=? and conversation_id=? and trigger_message_id=?",
                     (channel, conversation_id, trigger_message_id),
                 ).fetchone()
                 if current is None or current["execution_generation"] != expected_execution_generation:
                     raise ManualRerunConflict("reply task generation changed during source read")
                 attempt = db.execute(
-                    "select agent_run_id,send_status,send_error,resolved_at,resolution "
+                    "select agent_run_id,action,send_status,send_error,resolved_at,resolution,"
+                    "reviewer_feedback,oa_process_instance_id,oa_task_id,oa_action,"
+                    "oa_action_result_json "
                     f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=? and channel=? "
                     "and conversation_id=? and trigger_message_id=?",
                     (attempt_id, channel, conversation_id, trigger_message_id),
@@ -7742,7 +7746,33 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if attempt is None:
                     raise ManualRerunConflict("manual rerun attempt identity changed")
                 if attempt["resolved_at"] and attempt["send_status"] in {"needs_human", "skipped"}:
-                    raise ManualRerunConflict(attempt["resolution"] or "historical attempt was retired")
+                    process_id = str(attempt["oa_process_instance_id"] or "").strip()
+                    oa_task_id = str(attempt["oa_task_id"] or "").strip()
+                    no_effect_result = str(attempt["oa_action_result_json"] or "").strip() in {
+                        "", "{}", "null",
+                    }
+                    effect_receipt = db.execute(
+                        "select 1 from actions where task_id=? and record_type in "
+                        "('candidate_execution_alias','external_action_results') limit 1",
+                        (current["id"],),
+                    ).fetchone()
+                    reopenable = bool(
+                        allow_skipped_oa_review
+                        and attempt["send_status"] == "skipped"
+                        and str(attempt["action"] or "").strip() == "agent_run"
+                        and str(attempt["oa_action"] or "").strip() == "review"
+                        and no_effect_result
+                        and str(attempt["reviewer_feedback"] or "").strip()
+                        and process_id and oa_task_id
+                        and str(current["business_object_key"] or "").strip()
+                        == f"oa:{process_id}:{oa_task_id}"
+                        and str(current["status"] or "").strip().lower() in {"done", "skipped"}
+                        and effect_receipt is None
+                    )
+                    if not reopenable:
+                        raise ManualRerunConflict(
+                            attempt["resolution"] or "historical attempt was retired"
+                        )
                 terminal = db.execute(
                     f'select structured_error_json from ({AGENT_RUN_SQL}) as agent_runs where id=?',
                     (attempt["agent_run_id"],),

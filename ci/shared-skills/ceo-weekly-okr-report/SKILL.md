@@ -3,6 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
+  version: 4
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -57,21 +58,34 @@ ceo_attention_items, manager_reviews, source_coverage and warnings. The schema
 contains every nested field. Each analysis has exactly one manager review and
 exactly one KR review per live KR in the original source order. Preserve KR IDs
 and objective/KR titles. Private ownership comes from the plan's userId-bound
-file, not an identity invented in model output. Do not add `user_id` or member gaps to the model JSON. Save the plan
-entry source_sha256 as `_source_sha256` alongside the analysis JSON. Reuse
-analysis only while that exact source digest still matches; a changed source
-or scoring date requires new analysis.
+file, not an identity invented in model output. Do not add `user_id` or member gaps to the model JSON.
+Use the plan's `subject_label` for authored ownership references to this person;
+the prepared schema states that exact label, including stable identity when names collide.
+Keep the manager review's source name unchanged.
+Save the plan
+entry source_sha256 as `_source_sha256` alongside the analysis JSON. On recovery,
+read the existing analysis when the plan marks `analysis_reusable=true` and
+preserve that file verbatim. Analyze only missing or changed entries; a changed
+source or scoring date requires new analysis. Audit corrections change the
+identified analysis, preserving other valid members' files.
 
 Score each commitment using actual effects, independent evidence and completion
 time. Classify each KR as 业务OKR, 领导力 or 文化价值观; explain base_score and
 deadline-discounted score. Use current contact title to establish role level;
-unresolved roles remain 职级待确认. Managers have four leadership dimensions;
-all members have three culture dimensions. For individual contributors,
+unresolved roles remain 职级待确认. Use the formal dimensions from
+`dingtang-okr-review`: leadership is 战略能力、团队赋能能力、组织协同能力、创新能力;
+culture is AI时代原生能力、I Can I Up、简单可信赖. Map observed behaviors to these
+dimensions with evidence; observation labels do not replace the policy dimensions.
+For individual contributors,
 leadership candidate scores apply only when explicitly assigned and never
-enter their final formula. Above 80 requires concrete behavior beyond the
-standard; above 90 requires the applicable exemplar scope; below 70 names the
-unmet behavior or contrary case. Do not substitute business outcomes for these
-behavioral scores.
+enter their final formula. Business KRs use the completion bands in
+`dingtang-okr-review`: 100 means the committed outcome is fully met with evidence;
+it does not require a behavioral exemplar. For leadership and culture dimensions,
+70–79 means meeting the current role standard. A score of 80 or more requires a
+concrete case beyond that standard; 90 or more requires the applicable exemplar
+scope; 100 requires a company-level exemplar. Below 70 names the unmet behavior
+or contrary case.
+Do not substitute business outcomes for these behavioral scores.
 
 Keep progress, risks, next checkpoints and CEO decisions concise. Explain what
 changed this week separately from period-to-date scores. Never calculate final
@@ -103,6 +117,11 @@ Existing nodes use `node_id` and their read-back `expected_revision`.
 For each manifest appendix run the same destination script with --title and
 --parent <main-node-id>, then create/update the returned target as a real
 child of the main report.
+Use this same parent-scoped resolution on recovery, updating the existing child
+and its current revision. After any analysis correction, republish changed
+appendices as well as the main report. Before proposing the notification, compare
+all final provider readbacks with the current manifest artifacts and confirm
+each appendix's parent is the main node; Audit checks these same actual results.
 Read back content through the returned readback artifact. Call
 `read_dingtalk_document_info(node_id)` to obtain each published document's
 canonical URL; preserve that provider URL for appendix links and delivery.
@@ -112,8 +131,13 @@ mapping every userId to its verified appendix URL from document info, then rerun
 `--appendix-links-file appendix-links.json` to produce the final
 main.md with online links. Update the main document with its latest revision.
 After its receipt, run render with that same links file and
-`--document-url <main-url>` to produce summary.md. Propose the exact summary
-body and the roster's conversation ID through the existing `dingtalk-chat`
+`--document-url <main-url>` to produce summary.md. This final `summary.md` is the
+canonical notification artifact: preserve its text and Markdown verbatim in the
+proposal content. Audit compares the proposal directly with that artifact, not
+with a separately rewritten message draft. Correct analysis inputs and rerender
+to change generated reports; do not hand-edit the generated canonical files.
+Propose that body and the roster's
+conversation ID through the existing `dingtalk-chat`
 message action. Publication and sending are normal controlled actions reviewed
 by Audit; keep document and message receipts in the task result.
 

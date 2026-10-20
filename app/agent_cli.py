@@ -1479,12 +1479,11 @@ def _read_task_file(
         "content": text[offset : offset + max_chars],
         "sha256": hashlib.sha256(data).hexdigest(),
     }
-    if offset or len(text) > max_chars:
-        item.update(
-            offset=offset,
-            total_chars=len(text),
-            next_offset=offset + max_chars if offset + max_chars < len(text) else None,
-        )
+    item.update(
+        offset=offset,
+        total_chars=len(text),
+        next_offset=offset + max_chars if offset + max_chars < len(text) else None,
+    )
     if len(json.dumps(item).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
         raise ValueError("task file readback is too large")
     return item
@@ -1882,7 +1881,12 @@ def build_role_server(
     def read_task_artifact(
         name: str, offset: int = 0, max_chars: int = 20000
     ) -> dict[str, object]:
-        """Read a text artifact from this task's current execution generation."""
+        """Read a text artifact using a zero-based character offset (default 0).
+
+        Start at 0 for the full document; offset=1 omits its first character.
+        Follow next_offset until null. Every response includes offset and
+        total_chars; sha256 identifies the entire file, not the returned slice.
+        """
         return _read_task_file(
             _task_file_root(db_path, task_id, artifact_generation, create=False),
             name,

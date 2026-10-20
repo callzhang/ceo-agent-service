@@ -352,3 +352,14 @@ The optional native Audit probe uses the service's role pattern but does not
 invoke the actual application AuditAgent, orchestrator, feedback persistence,
 delivery code or provider tools. Full production lifecycle and external
 receipt/readback evidence remain separate checks.
+
+## OKR composite workflow acceptance
+
+The seven cases above remain frozen. The separate four-case native OKR workflow
+uses real prepare/render/destination scripts and the production purpose parser,
+with synthetic provider IO and an independent native audit/correction. Its failed
+probes, current status, root causes, and real publication readback are recorded in
+[OKR composite acceptance](scheduled-okr-agent-acceptance.md). It does not replace
+production orchestrator acceptance or future natural scheduled execution.
+
+Final OKR composite status (2026-10-20 UTC): **4/4 passed**, with real application artifact/document callbacks and simulated provider IO. The final record preserves original first-turn and feedback failures, same-output observer rescoring, the exact source/contract hashes, and cleanup. See the [composite acceptance record](scheduled-okr-agent-acceptance.md); real historical publication and future natural execution remain separate.
