@@ -1,0 +1,2012 @@
+{
+  "schema": "ceo-task-lifecycle-validation-v1",
+  "baseline_commit": "1aed63ec3c9abb345b685749e70852958bf22776",
+  "final_source_aggregate": "c959c4389efd9047eb7d8c6eae535e662cc3d20420e5dd20497f5b34fd9c9798",
+  "application_aggregate": "e37955c43046981ceece0599fcf77b27ed25127e99f0a07fe19699ce14eafaab",
+  "scope": "serial focused local tests only; outbound/provider/native Agent execution substituted",
+  "result": "Local implementation ready for independent review; one unchanged baseline two-second deadline test remains failed.",
+  "final_batches": [
+    {
+      "batch": "core",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_task_lifecycle_storage.py",
+        "tests/test_task_lifecycle_release.py",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-core"
+      ],
+      "returncode": 1,
+      "elapsed_seconds": 181.36,
+      "source_before": "0685d278a301353243343d551d29ebcb2a578ac28e0a6168b6d838269e489398",
+      "source_after": "0685d278a301353243343d551d29ebcb2a578ac28e0a6168b6d838269e489398",
+      "source_unchanged": true,
+      "summary": "1 failed, 34 passed in 180.43s (0:03:00)",
+      "cost": {
+        "current_claim_cost": {
+          "before": {
+            "reply": {
+              "vm": 35800,
+              "task_updates": 1,
+              "median_ms": 190.011
+            },
+            "summary_64k": {
+              "vm": 35400,
+              "task_updates": 1,
+              "median_ms": 276.788
+            },
+            "email": {
+              "vm": 25400,
+              "task_updates": 1,
+              "median_ms": 91.473
+            }
+          },
+          "with_3000_unrelated": {
+            "reply": {
+              "vm": 44800,
+              "task_updates": 1,
+              "median_ms": 288.686
+            },
+            "summary_64k": {
+              "vm": 44400,
+              "task_updates": 1,
+              "median_ms": 279.87
+            },
+            "email": {
+              "vm": 34400,
+              "task_updates": 1,
+              "median_ms": 88.965
+            }
+          }
+        }
+      },
+      "pytest_summary": "1 failed, 34 passed in 180.43s (0:03:00)",
+      "log_sha256": "2ac3b7ccce88c021bdcab1383598c0ee3e336aad987ab1b931016b74974209d2"
+    },
+    {
+      "batch": "cost",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_task_lifecycle_release.py::test_actual_source_claim_cost_retains_indexed_selection_and_inherited_fk_work",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-cost"
+      ],
+      "returncode": 1,
+      "elapsed_seconds": 39.91,
+      "source_before": "20996d828be73e63b11974dd69a4e3709d0abbd6cc474176d202eca1c996b62c",
+      "source_after": "20996d828be73e63b11974dd69a4e3709d0abbd6cc474176d202eca1c996b62c",
+      "source_unchanged": true,
+      "summary": "1 failed in 38.41s",
+      "cost": {
+        "source_claim_cost": {
+          "sqlite_version": "3.53.4",
+          "before": {
+            "reply": {
+              "vm": 34400,
+              "task_updates": 1,
+              "median_ms": 129.025,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 33900,
+              "task_updates": 1,
+              "median_ms": 203.005,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8"
+              ]
+            },
+            "email": {
+              "vm": 24800,
+              "task_updates": 1,
+              "median_ms": 100.433,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)"
+              ]
+            }
+          },
+          "with_3000_unrelated": {
+            "reply": {
+              "vm": 43400,
+              "task_updates": 1,
+              "median_ms": 169.906,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 42900,
+              "task_updates": 1,
+              "median_ms": 137.733,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8"
+              ]
+            },
+            "email": {
+              "vm": 33800,
+              "task_updates": 1,
+              "median_ms": 74.405,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)"
+              ]
+            }
+          }
+        },
+        "current_claim_cost": {
+          "sqlite_version": "3.53.4",
+          "before": {
+            "reply": {
+              "vm": 35800,
+              "task_updates": 1,
+              "median_ms": 211.9,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 35400,
+              "task_updates": 1,
+              "median_ms": 237.862,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "email": {
+              "vm": 25400,
+              "task_updates": 1,
+              "median_ms": 89.81,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            }
+          },
+          "with_3000_unrelated": {
+            "reply": {
+              "vm": 44800,
+              "task_updates": 1,
+              "median_ms": 266.69,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 44400,
+              "task_updates": 1,
+              "median_ms": 307.382,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "email": {
+              "vm": 34400,
+              "task_updates": 1,
+              "median_ms": 154.413,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            }
+          }
+        }
+      },
+      "pytest_summary": "1 failed in 38.41s",
+      "log_sha256": "3c8ad096759da43312e1a3a1811c9c05a015f6a14fc7804d731b008d3a02e9ec"
+    },
+    {
+      "batch": "cost",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_task_lifecycle_release.py::test_actual_source_claim_cost_retains_indexed_selection_and_inherited_fk_work",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-cost"
+      ],
+      "returncode": 0,
+      "elapsed_seconds": 33.45,
+      "source_before": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_after": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_unchanged": true,
+      "summary": "1 passed in 32.41s",
+      "cost": {
+        "source_claim_cost": {
+          "sqlite_version": "3.53.4",
+          "before": {
+            "reply": {
+              "vm": 34400,
+              "task_updates": 1,
+              "median_ms": 426.646,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 33900,
+              "task_updates": 1,
+              "median_ms": 188.294,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8"
+              ]
+            },
+            "email": {
+              "vm": 24800,
+              "task_updates": 1,
+              "median_ms": 97.24,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)"
+              ]
+            }
+          },
+          "with_3000_unrelated": {
+            "reply": {
+              "vm": 43400,
+              "task_updates": 1,
+              "median_ms": 159.864,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 42900,
+              "task_updates": 1,
+              "median_ms": 154.612,
+              "update_plan": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INTEGER PRIMARY KEY (rowid=?)",
+                "SCALAR SUBQUERY 1",
+                "SCAN tasks USING INDEX idx_task20_published_8"
+              ]
+            },
+            "email": {
+              "vm": 33800,
+              "task_updates": 1,
+              "median_ms": 70.968,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)"
+              ]
+            }
+          }
+        },
+        "current_claim_cost": {
+          "sqlite_version": "3.53.4",
+          "before": {
+            "reply": {
+              "vm": 35800,
+              "task_updates": 1,
+              "median_ms": 256.244,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 35400,
+              "task_updates": 1,
+              "median_ms": 143.707,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "email": {
+              "vm": 25400,
+              "task_updates": 1,
+              "median_ms": 74.091,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            }
+          },
+          "with_3000_unrelated": {
+            "reply": {
+              "vm": 44800,
+              "task_updates": 1,
+              "median_ms": 130.762,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "summary_64k": {
+              "vm": 44400,
+              "task_updates": 1,
+              "median_ms": 106.711,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_numeric_identity (record_type=? AND <expr>=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            },
+            "email": {
+              "vm": 34400,
+              "task_updates": 1,
+              "median_ms": 54.326,
+              "update_plan": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)",
+                "SCAN tasks",
+                "SCAN actions",
+                "SCAN tasks",
+                "SCAN actions"
+              ],
+              "selection_plan_without_fk": [
+                "SEARCH tasks USING INDEX idx_task20_native_3 (email_agent_classification_tasks__task_id=?)",
+                "CORRELATED SCALAR SUBQUERY 3",
+                "CO-ROUTINE (subquery-2)",
+                "CO-ROUTINE (subquery-1)",
+                "SCAN CONSTANT ROW",
+                "SCAN (subquery-1)",
+                "SCAN (subquery-2)"
+              ]
+            }
+          }
+        }
+      },
+      "pytest_summary": "1 passed in 32.41s",
+      "log_sha256": "77ff4805f88f4bff2fa396e4e4f2787402da9689a4314269554fe76370a1ce78"
+    },
+    {
+      "batch": "dispatch",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_consumer_dispatcher.py",
+        "tests/test_dispatcher_ledger_retention.py",
+        "tests/test_dispatcher_idle_claims.py",
+        "tests/test_reply_task_deferral.py",
+        "tests/test_state_publication_marker.py",
+        "tests/test_repository_updater.py::test_quiet_wait_returns_once_work_drains",
+        "tests/test_repository_updater.py::test_quiet_counts_meeting_preparation_and_claimed_delivery",
+        "tests/test_repository_updater.py::test_quiet_does_not_count_unclaimed_historical_meeting_processing",
+        "tests/test_repository_updater.py::test_quiet_counts_live_dispatcher_claim_before_runtime_exists",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-dispatch"
+      ],
+      "returncode": 1,
+      "elapsed_seconds": 464.09,
+      "source_before": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_after": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_unchanged": true,
+      "summary": "KeyboardInterrupt: ",
+      "cost": [],
+      "pytest_summary": "1 failed, 164 passed in 379.50s (0:06:19)",
+      "log_sha256": "1207d5829d24039057fa958a917009a79543cb3cdf0888b0792940f3ccbbc05a",
+      "runner_cleanup": "Owned pytest runner interrupted only after failure summary; original assertion skipped non-daemon dispatcher shutdown."
+    },
+    {
+      "batch": "dispatch_retry",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_consumer_dispatcher.py::test_task_todo_outbox_enqueue_wake_is_not_lost_after_empty_scan",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-dispatch_retry"
+      ],
+      "returncode": 1,
+      "elapsed_seconds": 76.93,
+      "source_before": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_after": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_unchanged": true,
+      "summary": "KeyboardInterrupt: ",
+      "cost": [],
+      "pytest_summary": "1 failed in 4.38s",
+      "log_sha256": "da3e31e29b516d1aaca931bb2b924dcc5ae8185aa592fb48863eb0ed5ba9db2f",
+      "runner_cleanup": "Owned pytest runner interrupted only after failure summary; original assertion skipped non-daemon dispatcher shutdown."
+    },
+    {
+      "batch": "native",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_task8_storage.py",
+        "tests/test_task12_storage.py",
+        "tests/test_task12_native_parts.py",
+        "tests/test_task12_insert_expression.py",
+        "tests/test_task8_allocator.py",
+        "tests/test_task20_main_sequence.py",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-native"
+      ],
+      "returncode": 0,
+      "elapsed_seconds": 427.37,
+      "source_before": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_after": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_unchanged": true,
+      "summary": "758 passed in 425.95s (0:07:05)",
+      "cost": [],
+      "pytest_summary": "758 passed in 425.95s (0:07:05)",
+      "log_sha256": "b39727b36fee1fdfb4c2e3a93e61ee9e7f701a26abc6a90878e46a75d1862816"
+    },
+    {
+      "batch": "domain",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_workbench_idle_claim.py",
+        "tests/test_workbench_store.py::test_concurrent_turn_creation_allocates_unique_monotonic_task_sequences",
+        "tests/test_workbench_store.py::test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition",
+        "tests/test_workbench_store.py::test_create_turn_persists_initial_status_event_and_lists_nested_resources",
+        "tests/test_workbench_store.py::test_events_replay_in_id_order_and_reject_duplicate_sequence",
+        "tests/test_workbench_store.py::test_append_artifact_event_is_atomic_and_public_payload_has_no_path",
+        "tests/test_workbench_store.py::test_append_artifact_event_rolls_back_artifact_when_event_insert_fails",
+        "tests/test_workbench_store.py::test_recover_expired_running_turn_as_queued",
+        "tests/test_workbench_store.py::test_running_transition_requires_claiming_a_lease",
+        "tests/test_workbench_store.py::test_running_turn_executor_mutations_require_an_owner",
+        "tests/test_workbench_store.py::test_running_turn_executor_mutations_reject_mismatched_and_expired_owners",
+        "tests/test_workbench_store.py::test_recovered_stale_worker_cannot_append_events",
+        "tests/test_workbench_store.py::test_provider_session_requires_running_turn_lease",
+        "tests/test_workbench_store.py::test_stop_is_idempotent",
+        "tests/test_workbench_store.py::test_stop_and_terminal_completion_append_atomic_control_events",
+        "tests/test_workbench_store.py::test_independent_stores_allow_one_active_turn_and_one_claim",
+        "tests/test_workbench_store.py::test_independent_stores_linearize_stop_against_terminal_completion",
+        "tests/test_workbench_store.py::test_running_stop_is_immediately_terminal_on_both_recovery_paths",
+        "tests/test_meeting_alignment.py::test_internal_delivery_pass_never_claims_pending_analysis_jobs",
+        "tests/test_meeting_alignment.py::test_delivery_terminal_write_failure_releases_claim_without_resending",
+        "tests/test_meeting_alignment.py::test_delivery_exception_releases_unprocessed_batch_claims",
+        "tests/test_meeting_alignment.py::test_delivery_cleanup_cannot_release_a_successor_claim",
+        "tests/test_meeting_alignment.py::test_typed_delivery_claim_after_reopen_preserves_existing_receipt",
+        "tests/test_meeting_alignment.py::test_delivery_claim_insert_failure_rolls_back_job_lock",
+        "tests/test_meeting_alignment.py::test_meeting_delivery_probe_cannot_overwrite_competing_claim",
+        "tests/test_meeting_alignment.py::test_delivery_claim_delete_failure_rolls_back_release",
+        "tests/test_meeting_alignment.py::test_startup_reset_removes_interrupted_and_terminal_delivery_claims",
+        "tests/test_meeting_alignment.py::test_startup_recovery_only_requeues_processing_and_unlocks_ready",
+        "tests/test_meeting_alignment.py::test_startup_recovery_continues_locked_delivery_without_second_send",
+        "tests/test_feedback_processing.py::test_claim_associate_patch_and_resolve_feedback_batch",
+        "tests/test_feedback_processing.py::test_claim_rejects_unknown_or_resolved_keys_atomically",
+        "tests/test_feedback_processing.py::test_claim_cannot_move_processing_item_to_another_batch",
+        "tests/test_feedback_processing.py::test_reopened_claim_creates_empty_next_round_and_transitions_newest_first",
+        "tests/test_feedback_processing.py::test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history",
+        "tests/test_feedback_processing.py::test_resolve_rejects_missing_source_feedback_before_any_mutation",
+        "tests/test_feedback_processing.py::test_new_claim_and_resolution_persist_receipt_version_two",
+        "tests/wechat/test_memory.py::test_run_persists_pending_candidates",
+        "tests/wechat/test_memory.py::test_import_fails_closed_without_durable_matcher",
+        "tests/test_work_summary_payload.py::test_store_round_trips_compressed_work_summary_input",
+        "tests/test_work_summary_payload.py::test_terminal_compaction_reads_compressed_input_and_preserves_provenance",
+        "tests/test_store.py::test_restart_recovery_requeues_interrupted_run_without_classifying_effects",
+        "tests/test_store.py::test_weekly_okr_parent_matches_the_complete_natural_key",
+        "tests/test_store.py::test_weekly_okr_report_run_lease_is_single_owner_and_recoverable",
+        "tests/test_store.py::test_weekly_okr_report_run_lease_can_be_reclaimed_after_expiry",
+        "tests/test_store.py::test_weekly_okr_generation_key_matches_the_claimed_job_and_lease",
+        "tests/test_store.py::test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit",
+        "tests/test_store.py::test_weekly_okr_manager_identity_is_canonicalized",
+        "tests/test_store.py::test_weekly_okr_failed_job_reopen_is_concurrency_safe",
+        "tests/test_store.py::test_weekly_okr_completed_cache_miss_reclaims_same_job",
+        "tests/test_store.py::test_weekly_okr_completed_cache_miss_reclaim_is_concurrency_safe",
+        "tests/test_store.py::test_weekly_okr_live_lease_blocks_and_expired_owner_is_reclaimed",
+        "tests/test_store.py::test_weekly_okr_cache_miss_reclaim_wrong_key_or_status_fails_closed",
+        "tests/test_store.py::test_recover_orphaned_task_agent_run_when_parent_input_is_pending",
+        "tests/test_store.py::test_reply_input_compaction_rolls_back_with_terminal_transaction",
+        "tests/test_store.py::test_claim_reply_tasks_marks_tasks_processing_atomically",
+        "tests/test_store.py::test_peek_reply_tasks_does_not_claim_or_increment_attempts",
+        "tests/test_store.py::test_claim_reply_task_claims_only_requested_pending_task",
+        "tests/test_store.py::test_claim_reply_tasks_waits_until_available_at",
+        "tests/test_store.py::test_claim_reply_tasks_accepts_timezone_aware_available_at",
+        "tests/test_store.py::test_create_and_claim_okr_review_request",
+        "tests/test_store.py::test_recreating_okr_review_request_requeues_failed_request",
+        "tests/test_store.py::test_recreating_okr_review_request_does_not_reset_processing_request",
+        "tests/test_store.py::test_reset_recoverable_okr_review_requests_requeues_stale_processing",
+        "tests/test_store.py::test_reset_recoverable_okr_review_requests_keeps_fresh_processing",
+        "tests/test_store.py::test_reset_recoverable_okr_review_requests_requeues_stale_lock_failure",
+        "tests/test_store.py::test_reset_recoverable_okr_review_requests_keeps_fresh_lock_failure",
+        "tests/test_store.py::test_requeue_failed_work_summary_input_is_scoped_to_failed_record",
+        "tests/test_store.py::test_terminal_work_summary_input_resolves_its_own_error",
+        "tests/test_store.py::test_terminal_work_summary_incident_recovery_uses_incident_time",
+        "tests/test_email_task_adapter.py::test_classification_task_adapter_persists_one_stable_task_across_reopen",
+        "tests/test_email_task_adapter.py::test_duplicate_email_scan_keeps_first_trigger_context_without_conflict",
+        "tests/test_email_task_adapter.py::test_completed_classification_compacts_input_and_keeps_immutable_identity",
+        "tests/test_email_task_adapter.py::test_compacted_classifier_input_never_copies_custom_skill_preamble",
+        "tests/test_email_task_adapter.py::test_classification_failed_and_retry_inputs_remain_exact",
+        "tests/test_email_task_adapter.py::test_classifier_queue_schema_is_owned_by_email_store_not_adapter",
+        "tests/test_email_task_adapter.py::test_email_store_rejects_malformed_classifier_queue_schema",
+        "tests/test_email_task_adapter.py::test_ineligible_classification_poll_does_not_acquire_writer_lock",
+        "tests/test_email_task_adapter.py::test_classification_claim_rechecks_after_an_intervening_owner",
+        "tests/test_email_task_adapter.py::test_classification_task_claim_is_single_owner_and_recoverable",
+        "tests/test_email_task_adapter.py::test_live_classifier_lease_cannot_be_stolen_or_completed_by_stale_claim",
+        "tests/test_email_task_adapter.py::test_fast_restart_reclaims_claim_when_lease_expires_during_normal_polling",
+        "tests/test_email_task_adapter.py::test_expired_classifier_claim_returns_to_retry_queue_without_terminal_failure",
+        "tests/test_email_task_adapter.py::test_default_classifier_lease_outlasts_maximum_agent_turn",
+        "tests/test_email_task_adapter.py::test_classifier_retry_uses_shared_capped_backoff_until_success",
+        "tests/test_email_task_adapter.py::test_explicit_classifier_repair_reopens_only_selected_failed_tasks",
+        "tests/test_email_task_adapter.py::test_classification_task_bootstrap_recovers_crash_interrupted_claim",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-domain"
+      ],
+      "returncode": 1,
+      "elapsed_seconds": 571.34,
+      "source_before": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_after": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+      "source_unchanged": true,
+      "summary": "4 failed, 94 passed in 565.91s (0:09:25)",
+      "cost": [],
+      "pytest_summary": "4 failed, 94 passed in 565.91s (0:09:25)",
+      "log_sha256": "c565afea9b1e534e2c06add7d42f3a8c4c948f13d1e07f6d7fe016c715d5ba9b"
+    },
+    {
+      "batch": "domain_repair",
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "tests/test_workbench_idle_claim.py",
+        "tests/test_email_task_adapter.py::test_email_store_rejects_malformed_classifier_queue_schema",
+        "--tb=short",
+        "--basetemp=/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-domain_repair"
+      ],
+      "returncode": 0,
+      "elapsed_seconds": 17.9,
+      "source_before": "c959c4389efd9047eb7d8c6eae535e662cc3d20420e5dd20497f5b34fd9c9798",
+      "source_after": "c959c4389efd9047eb7d8c6eae535e662cc3d20420e5dd20497f5b34fd9c9798",
+      "source_unchanged": true,
+      "summary": "7 passed in 15.31s",
+      "cost": [],
+      "pytest_summary": "7 passed in 15.31s",
+      "log_sha256": "0e2de90b9c422e1b239f6252493bebf6903fbe4bd4d954ab2a3fd6eaa9c37087"
+    }
+  ],
+  "freeze_transitions": [
+    {
+      "from": "0685d278",
+      "to": "20996d82",
+      "changes": [
+        "tests/task_lifecycle_caller_fixture.py",
+        "tests/test_task_lifecycle_release.py"
+      ],
+      "reason": "Replace false whole-path constant-cost assumption with actual archived/current FK-growth comparison; app unchanged."
+    },
+    {
+      "from": "20996d82",
+      "to": "77a205d4",
+      "changes": [
+        "tests/test_task_lifecycle_release.py"
+      ],
+      "reason": "Require current selection to avoid history scan; old Summary has an existing partial-index scan. App unchanged."
+    },
+    {
+      "from": "77a205d4",
+      "to": "c959c438",
+      "changes": [
+        "tests/test_email_task_adapter.py",
+        "tests/test_workbench_idle_claim.py"
+      ],
+      "reason": "Current projection import and exact current declaration error expectation; all original business/refusal assertions retained. App unchanged."
+    }
+  ],
+  "known_deadline_failure": {
+    "node": "tests/test_consumer_dispatcher.py::test_task_todo_outbox_enqueue_wake_is_not_lost_after_empty_scan",
+    "source_commit": "1aed63ec3c9abb345b685749e70852958bf22776",
+    "current_source_aggregate": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+    "original_full_batch": "1 failed, 164 passed in 379.50s (0:06:19)",
+    "original_single_rerun": "1 failed in 4.38s",
+    "deadline_seconds_unchanged": 2,
+    "probe_description": "Temporary pytest hook observes original methods and Event.wait, captures all Python stacks on the original deadline failure, and stops only its own dispatcher/executor in finally. Original assertion and application source remain unchanged.",
+    "probe_sha256": "8a97428e8459d335ffdf4fb87089da1819c0081cc7c1e22a01bdc04c3f543df9",
+    "unchanged_ast": [
+      "test function",
+      "TaskTodoSyncOutboxQueueAdapter",
+      "_LedgerClaimLifecycle",
+      "ConsumerDispatcher",
+      "AutoReplyStore.enqueue_task_todo_sync_outbox",
+      "AutoReplyStore.claim_task_todo_sync_outbox",
+      "AutoReplyStore.get_task_todo_sync_outbox",
+      "AutoReplyStore.finish_task_todo_sync_outbox"
+    ],
+    "observed_runs": [
+      {
+        "source": "old",
+        "root": "/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-core/actual-store19-70",
+        "command": [
+          "/Users/derek/miniforge3/bin/python",
+          "-m",
+          "pytest",
+          "-q",
+          "-s",
+          "-p",
+          "ceo_c1_wake_probe",
+          "tests/test_consumer_dispatcher.py::test_task_todo_outbox_enqueue_wake_is_not_lost_after_empty_scan",
+          "--tb=short",
+          "--basetemp=/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-wake-probe-old"
+        ],
+        "returncode": 1,
+        "elapsed_seconds": 11.793,
+        "summary": "1 failed in 10.25s",
+        "observations": [
+          [
+            {
+              "elapsed": 1.529001,
+              "event": "dispatch_available:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 1.529027,
+              "event": "claim:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 1.529152,
+              "event": "enqueue_task_todo_sync_outbox:start",
+              "thread": "MainThread"
+            },
+            {
+              "elapsed": 1.756797,
+              "event": "claim:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 1.757091,
+              "event": "dispatch_available:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 2.289659,
+              "event": "enqueue_task_todo_sync_outbox:end",
+              "thread": "MainThread"
+            },
+            {
+              "elapsed": 2.346235,
+              "event": "dispatch_available:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 2.346375,
+              "event": "claim:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 4.569045,
+              "event": "original_two_second_wait",
+              "thread": "MainThread",
+              "result": false,
+              "duration": 2.011945,
+              "application_thread_stacks": [
+                [
+                  "  File \"{source_root}/app/dispatcher/service.py\", line 376, in run\n    submitted = self.dispatch_available(tick_at, limit=dispatch_limit)\n",
+                  "  File \"{source_root}/app/dispatcher/service.py\", line 145, in dispatch_available\n    envelope = adapter.claim(\n",
+                  "  File \"{source_root}/app/dispatcher/adapters.py\", line 1367, in claim\n    cursor = update_sync_action(\n",
+                  "  File \"{source_root}/app/action_storage.py\", line 1620, in update_sync_action\n    return _email_unit(db, \"action_sync_update\", operation)\n",
+                  "  File \"{source_root}/app/action_storage.py\", line 1285, in _email_unit\n    result = operation()\n",
+                  "  File \"{source_root}/app/action_storage.py\", line 1617, in operation\n    return db.execute(\"update actions set \" + \",\".join(assignments) + \" where \" + predicate,\n"
+                ]
+              ]
+            },
+            {
+              "elapsed": 5.580055,
+              "event": "claim:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 5.608835,
+              "event": "dispatch_available:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 5.609194,
+              "event": "get_task_todo_sync_outbox:start",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 5.765079,
+              "event": "get_task_todo_sync_outbox:end",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 5.765911,
+              "event": "finish_task_todo_sync_outbox:start",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 7.766013,
+              "event": "finish_task_todo_sync_outbox:end",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 7.770502,
+              "event": "finish_source:start",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 8.068861,
+              "event": "finish_source:end",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 8.08182,
+              "event": "owned_cleanup",
+              "thread": "MainThread",
+              "dispatcher_thread_alive": false
+            }
+          ]
+        ],
+        "final_outbox": {
+          "id": 1,
+          "status": "completed",
+          "attempt_count": 1,
+          "error": ""
+        }
+      },
+      {
+        "source": "current",
+        "root": "/Users/derek/.codex/worktrees/business-model-task-lifecycle/ceo-agent-service",
+        "command": [
+          "/Users/derek/miniforge3/bin/python",
+          "-m",
+          "pytest",
+          "-q",
+          "-s",
+          "-p",
+          "ceo_c1_wake_probe",
+          "tests/test_consumer_dispatcher.py::test_task_todo_outbox_enqueue_wake_is_not_lost_after_empty_scan",
+          "--tb=short",
+          "--basetemp=/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-wake-probe-current"
+        ],
+        "returncode": 1,
+        "elapsed_seconds": 7.841,
+        "summary": "1 failed in 6.58s",
+        "observations": [
+          [
+            {
+              "elapsed": 1.168074,
+              "event": "dispatch_available:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 1.168093,
+              "event": "claim:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 1.168238,
+              "event": "enqueue_task_todo_sync_outbox:start",
+              "thread": "MainThread"
+            },
+            {
+              "elapsed": 1.346931,
+              "event": "claim:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 1.346994,
+              "event": "dispatch_available:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 2.044987,
+              "event": "enqueue_task_todo_sync_outbox:end",
+              "thread": "MainThread"
+            },
+            {
+              "elapsed": 2.124554,
+              "event": "dispatch_available:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 2.124664,
+              "event": "claim:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 3.796204,
+              "event": "claim:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 3.797094,
+              "event": "get_task_todo_sync_outbox:start",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 3.797362,
+              "event": "dispatch_available:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 3.79743,
+              "event": "dispatch_available:start",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 3.797454,
+              "event": "dispatch_available:end",
+              "thread": "Thread-1 (run)"
+            },
+            {
+              "elapsed": 3.888377,
+              "event": "get_task_todo_sync_outbox:end",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 3.888416,
+              "event": "finish_task_todo_sync_outbox:start",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 4.159038,
+              "event": "original_two_second_wait",
+              "thread": "MainThread",
+              "result": false,
+              "duration": 2.000424,
+              "application_thread_stacks": [
+                [
+                  "  File \"{source_root}/tests/test_consumer_dispatcher.py\", line 470, in consume\n    store.finish_task_todo_sync_outbox(\n",
+                  "  File \"{source_root}/app/store.py\", line 25380, in finish_task_todo_sync_outbox\n    changed = update_sync_action(\n",
+                  "  File \"{source_root}/app/action_storage.py\", line 1620, in update_sync_action\n    return _email_unit(db, \"action_sync_update\", operation)\n",
+                  "  File \"{source_root}/app/action_storage.py\", line 1285, in _email_unit\n    result = operation()\n",
+                  "  File \"{source_root}/app/action_storage.py\", line 1617, in operation\n    return db.execute(\"update actions set \" + \",\".join(assignments) + \" where \" + predicate,\n"
+                ],
+                [
+                  "  File \"{source_root}/app/dispatcher/service.py\", line 386, in run\n    self.wake_event.wait(\n"
+                ]
+              ]
+            },
+            {
+              "elapsed": 5.236519,
+              "event": "finish_task_todo_sync_outbox:end",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 5.236635,
+              "event": "finish_source:start",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 5.493042,
+              "event": "finish_source:end",
+              "thread": "ThreadPoolExecutor-0_0"
+            },
+            {
+              "elapsed": 5.493735,
+              "event": "owned_cleanup",
+              "thread": "MainThread",
+              "dispatcher_thread_alive": false
+            }
+          ]
+        ],
+        "final_outbox": {
+          "id": 1,
+          "status": "completed",
+          "attempt_count": 1,
+          "error": ""
+        }
+      }
+    ],
+    "conclusion": "Both actual source and current fail the existing two-second end-to-end deadline on this host. Both observe wake and finish one outbox attempt. Deadline stacks are inside unchanged Action UPDATE work. This node remains failed; no timeout or source change was made."
+  },
+  "malformed_index_diagnosis": {
+    "only_task_declaration_difference": [
+      {
+        "name": "idx_task20_native_1",
+        "expected": {
+          "type": "index",
+          "name": "idx_task20_native_1",
+          "sql": "CREATE INDEX idx_task20_native_1 on tasks(\"email_agent_classification_tasks__status\",\"email_agent_classification_tasks__available_at\",\"email_agent_classification_tasks__lease_expires_at\",\"email_agent_classification_tasks__task_id\",cast(legacy_key as integer)) where record_type='email_agent_classification_tasks'"
+        },
+        "actual": {
+          "type": "index",
+          "name": "idx_task20_native_1",
+          "sql": "CREATE INDEX idx_task20_native_1 on tasks(id)"
+        }
+      }
+    ],
+    "guard_accepts_malformed": false,
+    "raised": "malformed current Task lifecycle declaration",
+    "malformed_file_sha256_before": "f01cc12c9cedd966493804c148db3d977645db4b2381adc34e9745f641d45931",
+    "malformed_file_sha256_after": "f01cc12c9cedd966493804c148db3d977645db4b2381adc34e9745f641d45931",
+    "bytes_unchanged": true,
+    "control_only_index_restored_constructor_passed": true
+  },
+  "meeting_send_claim_comparison": {
+    "fixture": "One actual 1aed source ready-to-send job; copied via SQLite backup, then target paired publication; no provider.",
+    "actual_source_method_ast_sha256": "d4cb5aec84ba6e0a412e7d78d1dca080da1e716819ef3dcaf9d71b62ee23b1b2",
+    "current_method_ast_same": true,
+    "probe_sha256": "0c6bb6ceab7486977f6832ba250f814f720db4eef8b7818da19102f0c1f0fd49",
+    "source_aggregate": "77a205d482d89d0acb1398408b1104084e4e25b41f95e3751a5b6fd1b578907d",
+    "runs": [
+      {
+        "source": "old",
+        "root": "/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-core/actual-store19-70",
+        "command": [
+          "/Users/derek/miniforge3/bin/python",
+          "/tmp/ceo-c1-task-lifecycle.KEEegd/meeting_send_probe.py",
+          "measure",
+          "/tmp/ceo-c1-task-lifecycle.KEEegd/meeting-send-old.sqlite3"
+        ],
+        "returncode": 0,
+        "process_seconds": 18.927,
+        "measurement": {
+          "sqlite_version": "3.53.4",
+          "fixture": {
+            "tasks": 1,
+            "foreign_keys": 1
+          },
+          "limit": 1,
+          "returned_rows": 1,
+          "jobs": [
+            {
+              "id": 1,
+              "status": "ready_to_send",
+              "attempts": 0,
+              "has_lock": true,
+              "has_delivery_claim": true
+            }
+          ],
+          "elapsed_seconds": 17.003819,
+          "vm": 2067800,
+          "event_groups": [
+            {
+              "signature": [
+                "connect:start",
+                null
+              ],
+              "first": {
+                "elapsed": 1.3e-05,
+                "event": "connect:start",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 1.3e-05,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:ready",
+                null
+              ],
+              "first": {
+                "elapsed": 0.033943,
+                "event": "connect:ready",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.033943,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "sql",
+                "select 1 from tasks where record_type='meeting_alignment_jobs' and \"meeting_alignment_jobs__status\"="
+              ],
+              "first": {
+                "elapsed": 0.034075,
+                "event": "sql",
+                "vm": 0,
+                "prefix": "select 1 from tasks where record_type='meeting_alignment_jobs' and \"meeting_alignment_jobs__status\"=",
+                "sql_utf8_bytes": 384,
+                "sha256": "559f8dda881f9b3c88c12dbeac49413b15d0ef03d982e7437a43a6430f89554b"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.034075,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "body:end",
+                null
+              ],
+              "first": {
+                "elapsed": 0.034121,
+                "event": "body:end",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.034121,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:closed",
+                null
+              ],
+              "first": {
+                "elapsed": 0.051438,
+                "event": "connect:closed",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.051438,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:start",
+                null
+              ],
+              "first": {
+                "elapsed": 0.051455,
+                "event": "connect:start",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.051455,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:ready",
+                null
+              ],
+              "first": {
+                "elapsed": 0.084211,
+                "event": "connect:ready",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.084211,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "sql",
+                "begin immediate"
+              ],
+              "first": {
+                "elapsed": 0.084235,
+                "event": "sql",
+                "vm": 0,
+                "prefix": "begin immediate",
+                "sql_utf8_bytes": 15,
+                "sha256": "387f77ec7678d032012a77cc5a5769255a6266527cad869481b568919a800f5d"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.084235,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "sql",
+                "with candidates as ( select id from tasks where record_type='meeting_alignment_jobs' and \"meeting_al"
+              ],
+              "first": {
+                "elapsed": 0.150083,
+                "event": "sql",
+                "vm": 400,
+                "prefix": "with candidates as ( select id from tasks where record_type='meeting_alignment_jobs' and \"meeting_al",
+                "sql_utf8_bytes": 2331,
+                "sha256": "96144bb7ba8c8db5e2d77a42eb91f16732c73c5c4ee15aa238c409a258d52f24"
+              },
+              "trace_occurrences": 3,
+              "last_elapsed": 0.150419,
+              "last_vm": 16300
+            },
+            {
+              "signature": [
+                "sql",
+                "pragma table_xinfo(actions)"
+              ],
+              "first": {
+                "elapsed": 0.150898,
+                "event": "sql",
+                "vm": 18900,
+                "prefix": "pragma table_xinfo(actions)",
+                "sql_utf8_bytes": 27,
+                "sha256": "f08d23619c5e999854e204abd6cc80fe0a393a27cf2a418ceb7413b6a7ad02d8"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.150898,
+              "last_vm": 18900
+            },
+            {
+              "signature": [
+                "sql",
+                "select jsonb('[\"6bda812a17e6454087b6347a08c0da72\"]')"
+              ],
+              "first": {
+                "elapsed": 0.151289,
+                "event": "sql",
+                "vm": 22600,
+                "prefix": "select jsonb('[\"6bda812a17e6454087b6347a08c0da72\"]')",
+                "sql_utf8_bytes": 52,
+                "sha256": "6b109fba0c1857b83598d76e963b927a2a997bc56b1cdeb4660ac37a03e40ec4"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.151289,
+              "last_vm": 22600
+            },
+            {
+              "signature": [
+                "sql",
+                "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) values(40,'1',x'cb22c720366264613"
+              ],
+              "first": {
+                "elapsed": 13.979068,
+                "event": "sql",
+                "vm": 78900,
+                "prefix": "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) values(40,'1',x'cb22c720366264613",
+                "sql_utf8_bytes": 220,
+                "sha256": "0048c73f35016438cc0065cc4f8bba84519c167d2e12711c244dcfbc091c5fc3"
+              },
+              "trace_occurrences": 59,
+              "last_elapsed": 14.276496,
+              "last_vm": 2067800
+            },
+            {
+              "signature": [
+                "body:end",
+                null
+              ],
+              "first": {
+                "elapsed": 14.300459,
+                "event": "body:end",
+                "vm": 2067800
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 14.300459,
+              "last_vm": 2067800
+            },
+            {
+              "signature": [
+                "connect:closed",
+                null
+              ],
+              "first": {
+                "elapsed": 17.003429,
+                "event": "connect:closed",
+                "vm": 2067800
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 17.003429,
+              "last_vm": 2067800
+            },
+            {
+              "signature": [
+                "claim:return",
+                null
+              ],
+              "first": {
+                "elapsed": 17.003819,
+                "event": "claim:return",
+                "vm": 2067800
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 17.003819,
+              "last_vm": 2067800
+            }
+          ]
+        }
+      },
+      {
+        "source": "current",
+        "root": "/Users/derek/.codex/worktrees/business-model-task-lifecycle/ceo-agent-service",
+        "command": [
+          "/Users/derek/miniforge3/bin/python",
+          "/tmp/ceo-c1-task-lifecycle.KEEegd/meeting_send_probe.py",
+          "measure",
+          "/tmp/ceo-c1-task-lifecycle.KEEegd/meeting-send-current.sqlite3"
+        ],
+        "returncode": 0,
+        "process_seconds": 12.485,
+        "measurement": {
+          "sqlite_version": "3.53.4",
+          "fixture": {
+            "tasks": 1,
+            "foreign_keys": 1
+          },
+          "limit": 1,
+          "returned_rows": 1,
+          "jobs": [
+            {
+              "id": 1,
+              "status": "ready_to_send",
+              "attempts": 0,
+              "has_lock": true,
+              "has_delivery_claim": true
+            }
+          ],
+          "elapsed_seconds": 10.072518,
+          "vm": 2068300,
+          "event_groups": [
+            {
+              "signature": [
+                "connect:start",
+                null
+              ],
+              "first": {
+                "elapsed": 2e-05,
+                "event": "connect:start",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 2e-05,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:ready",
+                null
+              ],
+              "first": {
+                "elapsed": 0.043919,
+                "event": "connect:ready",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.043919,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "sql",
+                "select 1 from tasks where record_type='meeting_alignment_jobs' and \"meeting_alignment_jobs__status\"="
+              ],
+              "first": {
+                "elapsed": 0.044096,
+                "event": "sql",
+                "vm": 0,
+                "prefix": "select 1 from tasks where record_type='meeting_alignment_jobs' and \"meeting_alignment_jobs__status\"=",
+                "sql_utf8_bytes": 384,
+                "sha256": "559f8dda881f9b3c88c12dbeac49413b15d0ef03d982e7437a43a6430f89554b"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.044096,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "body:end",
+                null
+              ],
+              "first": {
+                "elapsed": 0.045396,
+                "event": "body:end",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.045396,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:closed",
+                null
+              ],
+              "first": {
+                "elapsed": 0.071941,
+                "event": "connect:closed",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.071941,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:start",
+                null
+              ],
+              "first": {
+                "elapsed": 0.07196,
+                "event": "connect:start",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.07196,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "connect:ready",
+                null
+              ],
+              "first": {
+                "elapsed": 0.117717,
+                "event": "connect:ready",
+                "vm": 0
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.117717,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "sql",
+                "begin immediate"
+              ],
+              "first": {
+                "elapsed": 0.11775,
+                "event": "sql",
+                "vm": 0,
+                "prefix": "begin immediate",
+                "sql_utf8_bytes": 15,
+                "sha256": "387f77ec7678d032012a77cc5a5769255a6266527cad869481b568919a800f5d"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.11775,
+              "last_vm": 0
+            },
+            {
+              "signature": [
+                "sql",
+                "with candidates as ( select id from tasks where record_type='meeting_alignment_jobs' and \"meeting_al"
+              ],
+              "first": {
+                "elapsed": 0.194635,
+                "event": "sql",
+                "vm": 400,
+                "prefix": "with candidates as ( select id from tasks where record_type='meeting_alignment_jobs' and \"meeting_al",
+                "sql_utf8_bytes": 2957,
+                "sha256": "3600894dd3766dabc594d4a12f0173d42d72cb98ec315ead960c8164c5041345"
+              },
+              "trace_occurrences": 3,
+              "last_elapsed": 0.195056,
+              "last_vm": 16400
+            },
+            {
+              "signature": [
+                "sql",
+                "pragma table_xinfo(actions)"
+              ],
+              "first": {
+                "elapsed": 0.19634,
+                "event": "sql",
+                "vm": 19400,
+                "prefix": "pragma table_xinfo(actions)",
+                "sql_utf8_bytes": 27,
+                "sha256": "f08d23619c5e999854e204abd6cc80fe0a393a27cf2a418ceb7413b6a7ad02d8"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.19634,
+              "last_vm": 19400
+            },
+            {
+              "signature": [
+                "sql",
+                "select jsonb('[\"47893848b12f4821b08e0616bbcee30f\"]')"
+              ],
+              "first": {
+                "elapsed": 0.196753,
+                "event": "sql",
+                "vm": 23100,
+                "prefix": "select jsonb('[\"47893848b12f4821b08e0616bbcee30f\"]')",
+                "sql_utf8_bytes": 52,
+                "sha256": "0f42f73f4450388db165c0248b99c2ed52e4d12c0a427176394efd0456e0bdee"
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 0.196753,
+              "last_vm": 23100
+            },
+            {
+              "signature": [
+                "sql",
+                "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) values(40,'1',x'cb22c720343738393"
+              ],
+              "first": {
+                "elapsed": 9.349456,
+                "event": "sql",
+                "vm": 79400,
+                "prefix": "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) values(40,'1',x'cb22c720343738393",
+                "sql_utf8_bytes": 220,
+                "sha256": "065ae80c9ee8f4abb2c055dcfbba1514a169ee87224446b10be76603fe32d831"
+              },
+              "trace_occurrences": 59,
+              "last_elapsed": 9.385075,
+              "last_vm": 2068300
+            },
+            {
+              "signature": [
+                "body:end",
+                null
+              ],
+              "first": {
+                "elapsed": 9.390397,
+                "event": "body:end",
+                "vm": 2068300
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 9.390397,
+              "last_vm": 2068300
+            },
+            {
+              "signature": [
+                "connect:closed",
+                null
+              ],
+              "first": {
+                "elapsed": 10.072448,
+                "event": "connect:closed",
+                "vm": 2068300
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 10.072448,
+              "last_vm": 2068300
+            },
+            {
+              "signature": [
+                "claim:return",
+                null
+              ],
+              "first": {
+                "elapsed": 10.072518,
+                "event": "claim:return",
+                "vm": 2068300
+              },
+              "trace_occurrences": 1,
+              "last_elapsed": 10.072518,
+              "last_vm": 2068300
+            }
+          ]
+        }
+      }
+    ],
+    "conclusion": "Single-row local comparison showed +500 sampled VM and no wall-time regression; both spent most time after Task claim in existing Action insertion/connection completion. Not throughput or complete SQLite preparation diagnosis."
+  },
+  "cost_interpretation": {
+    "new_task_selection": "Indexed SEARCH; bounded row-local scalar reconstruction, one Task UPDATE.",
+    "whole_update": "Both old/current inherited generated-parent FK checks scan; +3000 rows adds +9000 VM to both.",
+    "fixed_additional_sampled_vm_at_both_sizes": {
+      "reply": 1400,
+      "summary_64k": 1500,
+      "email": 600
+    },
+    "foreign_keys": "Only owned-fixture EXPLAIN diagnosis toggled FK; runtime/migration FK/index policy unchanged.",
+    "not_claimed": [
+      "scan-free complete write path",
+      "production capacity",
+      "speedup",
+      "startup cost improvement"
+    ]
+  },
+  "codec_scope": {
+    "lines": 91,
+    "source_cells_per_selected_row": [
+      7,
+      23
+    ],
+    "moved_source_cells": [
+      3,
+      9
+    ],
+    "operation": "Existing SQLite JSONB cell framing/split/join only; native jsonb_set once; transient array never stored.",
+    "row_local_cost": "restore/domain walks and at most nine source-cell prefixes; copied bytes proportional to selected payload.",
+    "root_framing_diagnosis": {
+      "source_error_bytes": [
+        0,
+        70000,
+        0
+      ],
+      "source_root_widths": [
+        2,
+        5,
+        2
+      ],
+      "source_blob_bytes": [
+        74,
+        70081,
+        74
+      ],
+      "domain_blob_bytes": [
+        61,
+        64,
+        61
+      ]
+    }
+  },
+  "retained_state_reader": {
+    "path": "app/email_store.py",
+    "function": "_unsubscribe_cancellation_decision",
+    "reason": "Existing channel=email reply/scheduled_execution history is ineligible for both migrated adapters; cancellation prerequisite remains unchanged, no synthesized Task lease."
+  },
+  "provisional_history_not_final_acceptance": [
+    {
+      "log_name": "release-6.log",
+      "sha256": "c9dc878405f42e8ae57d8081773dc8b6ff3d63806a6a7d4ada25763bddab38c4",
+      "pytest_summary": "1 failed, 30 passed in 177.26s (0:02:57)",
+      "source_binding": "provisional; predates final freeze, not final acceptance",
+      "exact_command": null
+    },
+    {
+      "log_name": "dispatch-final.log",
+      "sha256": "8a2d85b8780a05a64a1ed511e3495b8722b1a49914359efc16f5ddf687c6869a",
+      "pytest_summary": "3 failed, 128 passed in 395.11s (0:06:35)",
+      "source_binding": "provisional; predates final freeze, not final acceptance",
+      "exact_command": null
+    },
+    {
+      "log_name": "native-writers.log",
+      "sha256": "b91139e56dccab8e1e6b1401ecd037b4e4deb8cbf62554cf1fe2ed0c80c91c5c",
+      "pytest_summary": "758 passed in 170.44s (0:02:50)",
+      "source_binding": "provisional; predates final freeze, not final acceptance",
+      "exact_command": null
+    },
+    {
+      "log_name": "quiet-red.log",
+      "sha256": "83a26ff7f208328670eaaa4d4682b5f322a54b05e0ce7614d3f8ad8fbf7884f6",
+      "pytest_summary": "2 failed, 14 passed, 48 deselected in 15.54s",
+      "source_binding": "provisional; predates final freeze, not final acceptance",
+      "exact_command": null
+    },
+    {
+      "log_name": "fixture-repair.log",
+      "sha256": "37383a3b9818fe423c2c4bcc8907d062c26d4b61fa0a369cea40fd9d8368e0c9",
+      "pytest_summary": "7 failed, 9 passed in 51.61s",
+      "source_binding": "provisional; predates final freeze, not final acceptance",
+      "exact_command": null
+    },
+    {
+      "log_name": "fixture-repair-2.log",
+      "sha256": "f274d8e28d81cacdc7ae0d907c2c18fd97509e9c1343b496927df0f6e5210e82",
+      "pytest_summary": "12 passed in 16.06s",
+      "source_binding": "provisional; predates final freeze, not final acceptance",
+      "exact_command": null
+    }
+  ],
+  "provisional_explanations": [
+    "Initial dispatcher/retention 78 passed and 2 State-only-owner fixtures failed; narrow repaired rerun 7 passed. Current Task owner facts now seeded without weakening owner/PID/expiry assertions.",
+    "Earlier Task8 1 failed and Task12 2 errors used frozen source factories as current target fixtures; corrected selection preserves original assertions. Final writer batch is separately bound 758 passed.",
+    "Raw-byte RED cases exposed nonminimal JSONB scalar/root headers and native State key order; bounded codec/native update fixed the actual fidelity mechanism before final application freeze.",
+    "One cost fixture used invalid OA event_kind; corrected to existing system_notification without changing business assertions.",
+    "Provisional dispatch 128 passed/3 failed overlapped affinity-source changes and is not frozen acceptance. Final results are the separately fingerprinted batches above.",
+    "Quiet/marker fixtures were updated only for actual migrated Task owners; State-only/no Task, stale terminal history and other-adapter controls remain."
+  ],
+  "checks": {
+    "ruff": {
+      "command": [
+        "/Users/derek/miniforge3/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "app/action_delivery_schema_release.py",
+        "app/action_email_schema_release.py",
+        "app/action_postfix_schema_release.py",
+        "app/action_receipt_schema_release.py",
+        "app/action_schema_release.py",
+        "app/current_database_schema.py",
+        "app/deploy_maintenance.py",
+        "app/dispatcher/adapters.py",
+        "app/email_publication_sources.py",
+        "app/email_store.py",
+        "app/reply_task_deferral.py",
+        "app/repository_updater.py",
+        "app/scheduled_config_storage.py",
+        "app/state_publication_sources.py",
+        "app/store.py",
+        "app/store_schema_release.py",
+        "app/task12_storage.py",
+        "app/task8_storage.py",
+        "app/task_lifecycle_current_schema.py",
+        "app/task_lifecycle_definitions.py",
+        "app/task_lifecycle_jsonb.py",
+        "app/task_lifecycle_schema.py",
+        "app/task_lifecycle_schema_release.py",
+        "app/task_lifecycle_storage.py",
+        "app/task_schema_release.py",
+        "tests/task_lifecycle_caller_fixture.py",
+        "tests/task_lifecycle_test_support.py",
+        "tests/test_consumer_dispatcher.py",
+        "tests/test_email_task_adapter.py",
+        "tests/test_reply_task_deferral.py",
+        "tests/test_repository_updater.py",
+        "tests/test_state_publication_marker.py",
+        "tests/test_task12_storage.py",
+        "tests/test_task20_main_sequence.py",
+        "tests/test_task8_allocator.py",
+        "tests/test_task8_storage.py",
+        "tests/test_task_lifecycle_release.py",
+        "tests/test_task_lifecycle_storage.py",
+        "tests/test_workbench_idle_claim.py"
+      ],
+      "returncode": 0,
+      "elapsed_seconds": 0.197,
+      "output": "All checks passed!\n",
+      "checked_files": 39,
+      "source_aggregate": "c959c4389efd9047eb7d8c6eae535e662cc3d20420e5dd20497f5b34fd9c9798"
+    },
+    "historical_frozen_files": 14,
+    "field_map_verified": true,
+    "task_declarations": {
+      "source": {
+        "objects": 83,
+        "sha256": "ffaa908ffac0b48c57336d379377d630986897e730851f0aed5bf478306601c0",
+        "sql_utf8_bytes": 428606
+      },
+      "target": {
+        "objects": 87,
+        "sha256": "d2e1b320fe45cdd77a4b67ffa4a46a2571757c678a86682965734c5e9d2274d9",
+        "sql_utf8_bytes": 397263
+      }
+    },
+    "staged_files": 0,
+    "git_diff_check": {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "returncode": 0
+    }
+  },
+  "remaining_parent_gates": [
+    "normal upstream integration and affected checks",
+    "fresh production-copy migration, new facts and native Consumer/Audit with substitutes",
+    "current-fact inverse, actual predecessor cold open and reforward",
+    "standard deploy, new PID and production readback"
+  ],
+  "separate_scopes": [
+    "C2 Run history projection/API retirement",
+    "A5 Reply/Postfix",
+    "D legacy workflow"
+  ],
+  "production_boundary": {
+    "predecessor": "Parent separately verified B2b Store19.7/Email53 standard deploy and live readback.",
+    "candidate": "This C1 Store19.8 remains unpublished and undeployed.",
+    "historical_final_acceptance": "Existing final-acceptance document is Store14.1 historical scope."
+  },
+  "raw_review_evidence": {
+    "root": "/private/tmp/ceo-c1-task-lifecycle.KEEegd",
+    "retention": "Retain through parent fresh SPEC/QUALITY and necessary evidence checks; exact task-owned cleanup afterwards. Not a permanent archive.",
+    "final_logs_metadata": [
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-core.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-core.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-cost-2099.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-cost-2099.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-cost.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-cost.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-dispatch.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-dispatch.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-dispatch_retry.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-dispatch_retry.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-native.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-native.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-domain.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-domain.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-domain_repair.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-domain_repair.json"
+    ],
+    "diagnostics": [
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/wake-diagnosis.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/wake-probe.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/wake-probe-old.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/wake-probe-current.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/ceo_c1_wake_probe.py",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/meeting-send-diagnosis.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/meeting-send-old.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/meeting-send-current.log",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/meeting_send_probe.py",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/email-bad-index-diagnosis.json"
+    ],
+    "actual_source_archive": "/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-core/actual-store19-70",
+    "inverse_cold_reforward_fixtures": "/private/tmp/ceo-c1-task-lifecycle.KEEegd/pytest-final-core",
+    "commands_and_runner": [
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/final-batches.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/run_final.py"
+    ],
+    "source_binding_metadata": [
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/source-pre-final-0685.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/source-pre-final-2099.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/source-pre-final-77a2.json",
+      "/private/tmp/ceo-c1-task-lifecycle.KEEegd/source-pre-final.json"
+    ]
+  },
+  "independent_review": {
+    "spec": "APPROVE on c959c438 frozen candidate; source map, raw inverse, sole ownership and original evidence inspected",
+    "quality": "APPROVE on same frozen candidate; no correctness/transaction/integration blocker",
+    "reviewers_reran_tests_or_production": false,
+    "additional_read_only_cost_check": "SQLite3.53.4 EXPLAIN on both preserved3006Task fixtures: lease-only renewal point SEARCH; current no Task/Action scans, no UPDATE executed"
+  }
+}

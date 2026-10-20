@@ -41,6 +41,20 @@ def publication_dispatcher_source(db: sqlite3.Connection, *, current_version: st
                                   previous_versions: tuple[str, ...] = ()) -> str:
     """Select the existing dispatcher facts for the same publication role."""
     version = publication_store_version(db, current_version=current_version, previous_versions=previous_versions)
+    if version == "2026-10-19.8":
+        from app.task_lifecycle_current_schema import task20_schema_is_current
+        from app.task_lifecycle_storage import claim_projection
+        from app.task_lifecycle_definitions import DISPATCH_KINDS
+        if not task20_schema_is_current(db):
+            raise ValueError("unknown Task lifecycle publication declaration")
+        fields = ("adapter_name", "source_id", "owner", "owner_pid", "generation",
+                  "lease_expires_at", "terminal_at", "last_error", "created_at", "updated_at")
+        columns = ",".join(fields)
+        return ("select " + columns + ",1 as claim_active from (" + claim_projection() + ") "
+                "union all select " + columns + ",coalesce(terminal_at,'')='' as claim_active from ("
+                + state_projection("dispatcher_claim_leases") + ") where adapter_name not in ("
+                + ",".join(map(repr, DISPATCH_KINDS)) + ")")
     if version in (current_version, *previous_versions):
-        return state_projection("dispatcher_claim_leases")
-    return "select * from main.dispatcher_claim_leases"
+        return ("select *,coalesce(terminal_at,'')='' as claim_active from ("
+                + state_projection("dispatcher_claim_leases") + ")")
+    return "select *,coalesce(terminal_at,'')='' as claim_active from main.dispatcher_claim_leases"

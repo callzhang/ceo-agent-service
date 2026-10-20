@@ -17,16 +17,13 @@ from app.action_storage import (
     _raise_autoincrement_full,
     _source_bound_null,
 )
-from app.task8_storage import _scalar_json
+from app.task_lifecycle_storage import source_assignments, source_insert
 from app.task20_definitions import (
     TASK12_AUTOINCREMENT_KINDS,
     TASK12_PRIMARY_KEYS,
-    TASK20_COLUMNS,
-    TASK20_DEFAULTS,
     TASK20_FIELDS,
     TASK20_NEW_KINDS,
     TASK20_PAYLOAD_FIELDS,
-    TASK20_LAYOUTS,
     TASK20_PARENTS,
     task20_column,
     task20_projection_barrier,
@@ -83,15 +80,12 @@ def task12_set_parts(
         raise ValueError("native Tasks SET requires payload fields")
     if set(values) & set(expressions):
         raise ValueError("native Tasks SET field supplied twice")
-    assignments = {field: "?" for field in values} | {
-        field: "ceo_native_json(" + expression + ")"
-        for field, expression in expressions.items()
-    }
-    if not assignments:
+    owned = source_assignments(kind, values, expressions, payload_source=payload_source)
+    if not owned.sql:
         raise ValueError("native Tasks SET requires fields")
     return Task12SetParts(
-        "payload_json=" + TASK20_LAYOUTS[kind].assignments_sql(payload_source, assignments),
-        (*(_scalar_json(value) for value in values.values()), *update_parameters),
+        owned.sql,
+        (*owned.parameters, *update_parameters),
     )
 
 
@@ -180,43 +174,6 @@ def _auto_next(db, kind, values):
             db.rollback()
         _raise_autoincrement_full()
     return high + 1
-
-
-def _payload(db, kind, values, replace, *, insert_sql=None):
-    expressions = {} if insert_sql is None else insert_sql
-    required = {c[0] for c in TASK20_COLUMNS[kind] if c[2]}
-    bound = {
-        f: values[f]
-        for f in TASK20_PAYLOAD_FIELDS[kind]
-        if f in values
-        and not (
-            replace
-            and f in required
-            and f in TASK20_DEFAULTS[kind]
-            and _source_bound_null(values[f])
-        )
-    }
-    missing = {
-        f: "json_quote(" + TASK20_DEFAULTS[kind].get(f, "null") + ")"
-        for f in TASK20_PAYLOAD_FIELDS[kind]
-        if f not in bound and f not in expressions
-    } | {
-        field: "ceo_native_json("
-        + (
-            "coalesce(" + sql + "," + TASK20_DEFAULTS[kind][field] + ")"
-            if replace and field in required and field in TASK20_DEFAULTS[kind]
-            else sql
-        )
-        + ")"
-        for field, sql in expressions.items()
-    }
-    layout = TASK20_LAYOUTS[kind]
-    expression = layout.assignments_sql("?", missing)
-    packed = layout.pack(
-        {field: bound.get(field) for field in layout.fields},
-        scalar_codec=_encoded_native_sqlite_value,
-    )
-    return expression, packed
 
 
 def _parent(db, kind, values):
@@ -315,19 +272,21 @@ def task12_insert_parts(
         physical = existing[0] if existing else None
     if physical is None:
         physical = _physical_next(db)
-    expression, payload = _payload(db, kind, values, replace, insert_sql=expressions)
+    columns, owned_sql, owned_parameters = source_insert(
+        kind, {f: v for f, v in values.items() if f in TASK20_PAYLOAD_FIELDS[kind]},
+        expressions, insert_parameters, replace=replace,
+    )
     return Task12InsertParts(
         "insert "
         + mode
-        + "into tasks(id,_kind,legacy_key,parent_id,payload_json) "
-        "values(?,?,?,?," + expression + ")",
+        + "into tasks(id,_kind,legacy_key,parent_id," + ",".join(columns) + ") "
+        "values(?,?,?,?," + ",".join(owned_sql) + ")",
         (
             physical,
             TASK_RECORD_TYPES.code(kind),
             str(identity),
             _parent(db, kind, values),
-            payload,
-            *insert_parameters,
+            *owned_parameters,
         ),
         identity,
         physical,
@@ -410,14 +369,17 @@ def update_task12(
     physical = _key_physical(db, kind, current, identity) if replace else None
     if physical is None:
         physical = row[0]
-    expression, payload = _payload(db, kind, current, replace)
+    columns, owned_sql, owned_parameters = source_insert(
+        kind, {f: v for f, v in current.items() if f in TASK20_PAYLOAD_FIELDS[kind]}, {},
+        replace=replace,
+    )
     return db.execute(
         "update "
         + mode
-        + "tasks set id=?,legacy_key=?,parent_id=?,payload_json="
-        + expression
+        + "tasks set id=?,legacy_key=?,parent_id=?,"
+        + ",".join(name + "=" + expr for name, expr in zip(columns, owned_sql, strict=True))
         + " where id=?",
-        (physical, str(identity), _parent(db, kind, current), payload, row[0]),
+        (physical, str(identity), _parent(db, kind, current), *owned_parameters, row[0]),
     ).rowcount
 
 

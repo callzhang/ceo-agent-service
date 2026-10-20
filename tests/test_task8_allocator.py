@@ -3,10 +3,11 @@ import sqlite3
 
 import pytest
 
-from app.task20_definitions import initialize_task8_sequence, create_task20_schema
+from app.task20_definitions import initialize_task8_sequence
 from app.task12_storage import insert_task12
 from app.task8_storage import TASK8_KINDS
-from tests.test_task20_definitions import payload, insert as explicit_insert
+from tests.test_task20_definitions import payload
+from tests.task_lifecycle_test_support import create_task20_schema, insert as explicit_insert
 from tests.test_task8_storage import (
     pair as pair,
     base, native_insert, target_insert, compare,

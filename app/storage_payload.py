@@ -113,7 +113,7 @@ class PayloadLayout:
 # including currently empty but live-supported families. Codes are one-based;
 # reorder/removal requires an explicit schema migration, never inference.
 
-ACTION_RECORD_TYPES = RecordTypes((
+SOURCE_ACTION_RECORD_TYPES = RecordTypes((
     'review_candidates',
     'candidate_reviews',
     'candidate_selections',
@@ -176,6 +176,14 @@ ACTION_RECORD_TYPES = RecordTypes((
     'email_historical_classification_history',
     'email_historical_operations',
 ))
+
+EXECUTION_ACTION_RECORD_TYPES = RecordTypes((*SOURCE_ACTION_RECORD_TYPES.names, 'candidate_execution_alias'))
+
+ACTION_RECORD_TYPES = RecordTypes((*EXECUTION_ACTION_RECORD_TYPES.names,
+    'plan_version_reviewed', 'plan_version_email', 'effect_step_email',
+    'action_attempt_reviewed', 'action_attempt_email',
+    'effect_step_email_reply', 'effect_step_email_unsubscribe'))
+
 
 TASK_RECORD_TYPES = RecordTypes((
     'reply_tasks',

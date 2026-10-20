@@ -1,6 +1,7 @@
 """Historical receipt correction preserves evidence and never permits resend."""
 
 import json
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -196,9 +197,24 @@ def _legacy_native_readback_case(tmp_path):
         })
         for row in attempts:
             delete_action(db, "candidate_action_attempts", row["id"])
+    # Build the historical receipt-only fixture in the frozen source, where
+    # no execution identity has yet been reserved by an immutable alias.
+    from app.execution_owner_schema import migrate_execution_owner, restore_execution_owner
+    from app.sent_result_schema import migrate_sent_result_references, restore_sent_result_references
+    from app.shared_action_schema import migrate_shared_actions, restore_shared_actions
+    with sqlite3.connect(store.path, isolation_level=None) as db:
+        db.execute('pragma foreign_keys=off')
+        db.execute('begin immediate')
+        restore_shared_actions(db, {'reply_variant': 'fresh_memory_fk'})
+        restore_sent_result_references(db, {'reply_variant': 'fresh_memory_fk'})
+        restore_execution_owner(db, {'reply_variant': 'fresh_memory_fk'})
         delete_action(db, "candidate_executions", execution["id"])
         delete_action(db, "candidate_reviews", reviewed["review_id"])
         delete_action(db, "review_candidates", reviewed["id"])
+        migrate_execution_owner(db)
+        migrate_sent_result_references(db)
+        migrate_shared_actions(db)
+        db.commit()
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     readback = _native_chat_proof(task, sent)
     return store, task, handler, receipt, readback

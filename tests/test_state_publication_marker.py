@@ -116,14 +116,62 @@ def test_dispatcher_reader_preserves_selected_facts_and_types(current):
 def test_current_quiet_wait_reads_dispatcher_without_native_table(tmp_path, expiry, terminal, expected):
     from app.repository_updater import in_flight_work
     from app.store import AutoReplyStore
+    from app.task_lifecycle_storage import acquire_claim
+    from tests.task_lifecycle_test_support import insert
     path = tmp_path / "quiet.sqlite3"
     store = AutoReplyStore(path)
     with store._connect() as db:
         db.execute("begin")
-        insert_state(db, "dispatcher_claim_leases", {
-            "adapter_name": "reply", "source_id": "007", "owner": "worker",
-            "owner_pid": 42, "lease_expires_at": expiry, "terminal_at": terminal,
-        })
+        insert(db, "reply_tasks", physical_id=7, legacy_key="7")
+        if terminal:
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": "reply", "source_id": "7", "owner": "worker",
+                "owner_pid": 42, "lease_expires_at": expiry, "terminal_at": terminal,
+            })
+        else:
+            acquire_claim(db, adapter_name="reply", source_id="7", owner="worker",
+                owner_pid=42, lease_expires_at=expiry, now="1999-01-01 00:00:00")
     before = path.read_bytes()
     assert in_flight_work(path) == expected
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("case,expected", (
+    ("state_only", 0),
+    ("terminal_history", 1),
+    ("other_adapter_history", 1),
+    ("missing_history", 1),
+))
+def test_current_quiet_uses_task_claim_and_preserves_passive_history(tmp_path, case, expected):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
+    from app.task_lifecycle_storage import acquire_claim
+    from app.state_storage import update_state_rows
+    from tests.task_lifecycle_test_support import insert, payload
+    path = tmp_path / "claim-authority.sqlite3"
+    store = AutoReplyStore(path)
+    with store._connect() as db:
+        db.execute("begin")
+        current_adapter = "scheduled_execution" if case == "other_adapter_history" else "reply"
+        if case != "state_only":
+            insert(db, "reply_tasks", physical_id=7, legacy_key="7", values=payload(db, "reply_tasks",
+                channel="scheduled" if current_adapter == "scheduled_execution" else "dingtalk"))
+            acquire_claim(db, adapter_name=current_adapter, source_id="7", owner="current",
+                owner_pid=42, lease_expires_at="2099-01-01 00:00:00", now="1999-01-01 00:00:00")
+        if case in ("state_only", "other_adapter_history"):
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": "reply", "source_id": "7", "owner": "historical",
+                "owner_pid": 99, "lease_expires_at": "2099-01-01 00:00:00",
+            })
+        elif case == "terminal_history":
+            update_state_rows(db, "dispatcher_claim_leases", {"terminal_at": "old-terminal"},
+                where_sql="adapter_name=? and source_id=?", parameters=("reply", "7"))
+        else:
+            db.execute("delete from state where record_type='dispatcher_claim_leases'")
+    before = path.read_bytes()
+    assert in_flight_work(path) == expected
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+        projection = publication_dispatcher_source(db, current_version=STORE_SCHEMA_VERSION)
+        rows = db.execute("select adapter_name,owner,owner_pid from (" + projection + ")").fetchall()
+        assert rows == ([] if case == "state_only" else [(current_adapter, "current", 42)])
     assert path.read_bytes() == before

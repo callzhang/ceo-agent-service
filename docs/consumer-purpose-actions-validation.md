@@ -53,9 +53,52 @@ to empty code/false technical flags in both JSON Schema and Pydantic. The two
 accepted native probes ran after that repair. Earlier harness startup/argument
 failures are not counted as model or application acceptance.
 
+A later rerun exposed a receipt-reference representation mismatch: the Consumer
+returned `receipt:<external_action_key>`, while retry eligibility compared it
+directly with the unlabeled key persisted on the verified action. The retry
+validator now removes only one leading `receipt:` label before exact matching;
+task identity, unique verified-action selection and `request_access` candidate
+checks remain required. A focused regression reproduces the previously rejected
+canonical reference. This parser fix does not broaden which receipts are trusted.
+After this change, the focused purpose retry/orchestration/output/action-contract
+group passed 39 tests; Ruff and the scoped diff check passed.
+
+The first production rerun after the `receipt:` fix exposed another emitted
+reference label: `prior_receipt_id=<external_action_key>`. The Consumer's retry
+decision was otherwise valid, but the service rejected this label as unbound.
+The validator now strips exactly one of the two observed labels (`receipt:` or
+`prior_receipt_id=`) before exact key matching; unknown or repeated labels remain
+invalid. This second regression was observed failing before the alias fix. The
+rerun did not reach Audit or System Execution and generated no external action.
+
 These probes demonstrate model/schema interoperability on two fixed synthetic
 cases. The persistent limits are established by controlled-clock SQLite tests;
 no real three-day permission wait or production OA write was used as a test.
+
+## Legacy verified OA permission-request receipt compatibility — 2026-10-20
+
+Production Attempts 15681 and 15707 exposed a second compatibility boundary.
+Attempt 15681's existing OA comment had a verified `comment` receipt and the
+stable `material-read-access-block` identity, but its candidate predated
+`purpose_output`. A later retry referenced the exact receipt correctly; the
+validator still rejected it because it only recognized current-schema
+`request_access` candidates. The failure occurred before Audit/System execution,
+and production readback showed no action from Attempt 15707.
+
+The regression was observed failing before the code change. The narrow repair
+accepts a receipt as a legacy permission request only when the record is already
+verified for the same task, operation is `comment`, the receipt and the
+candidate's sole comment have the exact same `material-read-access-block`
+identity, and the candidate has no `purpose_output`. Existing exact key,
+uniqueness, task binding, retry-budget, Audit and execution requirements remain
+in force; ordinary comments remain ineligible. The focused retry tests passed
+(10 tests) on 2026-10-20. No historical attempt was replayed.
+
+The fix commit `012a1fc3f61146bd1ebedea6f44480cacfb6fd64` is an ancestor of the
+production checkout `63504af9f1b7c456010cc5a808722054dfffe780`. Production
+readback showed service PID `7444` and `/healthz` returned `ok=true,status=ok`.
+Attempt 15681 retains its verified comment receipt; neither Attempt 15681 nor
+15707 was replayed to validate this release.
 
 ## Release
 
@@ -81,8 +124,23 @@ action was processing, without a new failure; History returned processing,
 done and skipped as its latest three rows. No OA write or historical retry
 was started for this verification. These observations establish publication
 and runtime loading; the maximum count/deadline behavior is covered by the
+controlled-clock regression tests above, not a real three-day wait.
 
-The controlled-clock tests cover the maximum count/deadline behavior.
+## Receipt-prefix repair production readback — 2026-10-20
+
+The canonical `receipt:<external_action_key>` matching repair was published in
+`ba3a26639b52cc8b9456767e9856fc4dbbe9793c` and deployed with
+`python -m app.deploy`. The production checkout read back the same commit, the
+replacement service PID was `3957`, and `/healthz` returned
+`{"ok":true,"status":"ok"}`. Status readback showed 13 queues, zero current
+quality-gate violations, two Attention rows and no processing History rows.
+
+Historical Attempt 15681 remains failed with its original receipt-validation
+error; its System Execution already records the OA comment as verified. Attempt
+15707 also remains failed with the same pre-fix validation error. Neither
+historical task was replayed after deployment, so no new OA comment or other
+external action was generated as release verification. The repair is covered
+by the scoped 38-test group above; the 10-retry / 72-hour budget is unchanged.
 
 ## Attempt 15760: request-stage continuation flag repair
 
@@ -105,29 +163,3 @@ Focused regressions in
 `tests/test_consumer_access_request_continuation.py` check that a false flag
 stays false and that a verified request still starts the wait. Focused test and
 production deployment evidence must be added here after those steps complete.
-
-## Historical incident: OA Attempt 15681
-
-The production History detail for Attempt `15681` records 235 role runs: 233
-failed Consumer runs, one completed Consumer run, and one completed Audit run.
-Among the 233 failed Consumer runs, 232 were classified as
-`runtime_business_result_failed` and one as `codex_result_invalid`. The
-successful Consumer ran after those 233 failed Consumer runs; Audit then
-approved the candidate. The System Execution record verifies exactly one OA comment, at
-`2026-10-19T18:11:53.364Z`, asking the file owner or space administrator to
-grant read-only access. The Attempt's terminal `done` status therefore means
-the approved comment was delivered and verified; it does not mean the files
-became readable or that the underlying OA review was completed.
-
-The unbounded loop came from the pre-release dependency classification:
-`dependency_read_unavailable` was included in
-`EXTERNAL_DEPENDENCY_WAIT_ERRORS`. That path deferred the task and refunded
-the worker attempt budget, so repeated Consumer failures did not reach the
-persisted consecutive technical-failure limit. Commit `d9d326d63` removed
-ordinary `dependency_read_unavailable` from that wait set. The fix now lets
-these failures reach the existing six-consecutive-technical-turn terminal
-limit; only service-side context refresh and the audited purpose `retry`
-remain in the dependency wait set. For permission-request retries, the
-separate persisted purpose budget remains capped at ten subsequent Consumer
-starts within 72 hours. This was a historical run before the bounded behavior
-was deployed; no historical Consumer or OA action was replayed to verify it.

@@ -1,0 +1,26 @@
+{
+  "schema": "ceo-execution-owner-merged-freeze-v1",
+  "commit": "bf6b71ebfa9e0e67cb4c5b9f56e9da59ec8a8052",
+  "files": 1202,
+  "sha256": "423b5e5a2b81527ea63753a5fdc797fc138e1181771ffdb96a7673ba2e07597d",
+  "digest_format": "sorted unique path UTF-8 + NUL + raw SHA256(file bytes) + NUL",
+  "pre_merge_review_source": "68f9cb378 / 1201files bca3a178bf3d0227e03648894ebb4cd77ed6f85b45006ef655a30fa34074b3b2",
+  "upstream_merge": "40666e521",
+  "source_changes_since_review": [
+    "app/consumer_agent.py",
+    "app/native_prompt_input.py",
+    "app/task_scanners.py",
+    "tests/test_consumer_agent.py",
+    "tests/test_consumer_system_release.py",
+    "tests/test_native_prompt_wire_schema.py",
+    "tests/test_stardust_oa_people_review_handover_routing.py",
+    "tests/test_task_scanners.py"
+  ],
+  "a3_runtime_release_files_unchanged": true,
+  "merged_smoke": {
+    "passed": 4,
+    "seconds": 6.96,
+    "boundary": "f93727cd8 before later CI-only test hash update"
+  },
+  "acceptance": "Native/full-copy pending; not deployed."
+}

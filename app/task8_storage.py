@@ -13,12 +13,11 @@ from app.action_storage import _encoded_native_sqlite_value
 from app.storage_payload import TASK_RECORD_TYPES
 from app.task20_definitions import (
     TASK20_COLUMNS,
-    TASK20_DEFAULTS,
     TASK20_NEW_KINDS,
     TASK20_PAYLOAD_FIELDS,
-    TASK20_LAYOUTS,
     task20_column,
 )
+from app.task_lifecycle_storage import source_assignments, source_insert
 
 TASK8_KINDS = tuple(kind for kind in TASK20_COLUMNS if kind not in TASK20_NEW_KINDS)
 
@@ -47,7 +46,9 @@ def _scalar_json(value):
 
 def register_task8_functions(db):
     """Install the exact scalar codec; never begin, commit or select a schema."""
+    from app.task_lifecycle_jsonb import register
     db.create_function("ceo_native_json", 1, _scalar_json, deterministic=True)
+    register(db)
 
 
 def _quote(name):
@@ -86,31 +87,19 @@ def task8_insert_parts(
     expressions = {} if insert_sql is None else insert_sql
     physical_sql = {} if structural_sql is None else structural_sql
     payload, physical = _partition(kind, values, expressions, physical_sql)
-    defaults = {
-        field: "ceo_native_json(" + TASK20_DEFAULTS[kind].get(field, "null") + ")"
-        for field in TASK20_PAYLOAD_FIELDS[kind]
-        if field not in payload and field not in expressions
-    }
-    columns = ["_kind", *physical, *physical_sql, "payload_json"]
-    scalar_sql = [str(TASK_RECORD_TYPES.code(kind)), *("?" for _ in physical), *physical_sql.values()]
-    scalar_sql.append(
-        TASK20_LAYOUTS[kind].assignments_sql(
-            "?",
-            defaults
-            | {f: "ceo_native_json(" + expr + ")" for f, expr in expressions.items()},
-        )
+    owned_columns, owned_values, owned_parameters = source_insert(
+        kind, payload, expressions, insert_parameters,
     )
+    columns = ["_kind", *physical, *physical_sql, *owned_columns]
+    scalar_sql = [str(TASK_RECORD_TYPES.code(kind)), *("?" for _ in physical), *physical_sql.values()]
+    scalar_sql.extend(owned_values)
     return Task8InsertParts(
         ",".join(map(_quote, columns)),
         ",".join(scalar_sql),
         (
             *physical.values(),
             *structural_parameters,
-            TASK20_LAYOUTS[kind].pack(
-                {field: payload.get(field) for field in TASK20_PAYLOAD_FIELDS[kind]},
-                scalar_codec=_encoded_native_sqlite_value,
-            ),
-            *insert_parameters,
+            *owned_parameters,
         ),
     )
 
@@ -124,29 +113,28 @@ def task8_set_parts(
     structural_sql=None,
     structural_parameters=(),
     payload_source="tasks.payload_json",
+    source_alias="",
 ):
     """Compile native scalar SET; each RHS is evaluated once on the original row."""
     expressions = {} if update_sql is None else update_sql
     physical_sql = {} if structural_sql is None else structural_sql
     payload, physical = _partition(kind, values, expressions, physical_sql)
-    json_expressions = {field: "?" for field in payload} | {
-        f: "ceo_native_json(" + expr + ")" for f, expr in expressions.items()
-    }
+    owned = source_assignments(
+        kind, payload, expressions,
+        payload_source=payload_source, source_alias=source_alias,
+    )
     assignments = []
-    if json_expressions:
-        assignments.append(
-            "payload_json=" + TASK20_LAYOUTS[kind].assignments_sql(payload_source, json_expressions)
-        )
+    if owned.sql:
+        assignments.append(owned.sql)
     assignments.extend(_quote(field) + "=?" for field in physical)
     assignments.extend(
         _quote(field) + "=" + expression for field, expression in physical_sql.items()
     )
     if not assignments:
         raise ValueError("existing Tasks SET requires fields")
-    encoded = tuple(_scalar_json(value) for value in payload.values())
     return Task8SetParts(
         ",".join(assignments),
-        (*encoded, *update_parameters, *physical.values(), *structural_parameters),
+        (*owned.parameters, *update_parameters, *physical.values(), *structural_parameters),
     )
 
 

@@ -1,0 +1,1256 @@
+{
+  "case": "business-model-sent-owner-native.v1",
+  "source_sha256": "240bc55bbdf2ee48f5136de327498d797e3331953f26daeb6bab45c090aafc93",
+  "baseline_sha256": "d6a8e106296a33cd1911d8ddc32bbfc0bb74ffb2eec27b35657f909da73119cb",
+  "a4_transition": {
+    "all_unrelated_tables_and_actions_exact": true,
+    "non_result_sent_fields_values_types_exact": true,
+    "public_sent_results_values_types_exact": true,
+    "original_sent_count": 2450,
+    "exact_receipt_references": 421,
+    "distinct_local_results": 2029,
+    "exact_store_markers": true,
+    "original_fk_multiset_preserved": true
+  },
+  "task_id": 5617166720504642,
+  "generation": "initial",
+  "native_calls": [
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "64cef7d4174d68addb6e0477ab12eece0417b95d7a8296b3a830c7742058cc41"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "f50fdd0cbc20dde8bbd16e3a946e729381e2876df9928a51918882b10af7b257"
+    }
+  ],
+  "prepared": {
+    "task_status": "needs_human",
+    "provider_calls": 0,
+    "candidate_id": 1032,
+    "attempt_id": 15708
+  },
+  "native_evidence": {
+    "runs": [
+      {
+        "id": 386372,
+        "role": "consumer",
+        "status": "completed",
+        "attempts": [
+          {
+            "attempt_id": 386373,
+            "session_id": "01a156fd-ed3c-7921-a3f2-5f8f83498a20",
+            "start": 0,
+            "end": 36,
+            "status": "completed",
+            "tools": [
+              "read_system_action_contract",
+              "read_task_artifact"
+            ],
+            "event_count": 5,
+            "global_rules_read_commands_reviewed": 1
+          }
+        ]
+      },
+      {
+        "id": 386374,
+        "role": "audit",
+        "status": "completed",
+        "attempts": [
+          {
+            "attempt_id": 386375,
+            "session_id": "01a156fe-5805-71f0-8671-38578db6a30f",
+            "start": 0,
+            "end": 29,
+            "status": "completed",
+            "tools": [
+              "read_task_artifact",
+              "read_system_action_contract"
+            ],
+            "event_count": 4,
+            "global_rules_read_commands_reviewed": 0
+          }
+        ]
+      }
+    ],
+    "candidate_id": 1032,
+    "review_id": 1022,
+    "attempt_id": 15708,
+    "original_tables_unchanged": 11
+  },
+  "completed": {
+    "task_status": "done",
+    "execution_id": 329,
+    "provider_calls": 1,
+    "provider_verifications": 1,
+    "verified_attempts": 1,
+    "external_receipts": 1,
+    "sent_result_is_reference": true,
+    "sent_public_result_exact": true,
+    "no_additional_native_turn": true,
+    "original_tables_unchanged": 11
+  },
+  "current_sent_recall": {
+    "sent_id": 2468,
+    "recall_status": "failed",
+    "provider_calls": 0
+  },
+  "native_inverse": {
+    "source_schema_exact": true,
+    "old_store_cold_open": true,
+    "new_native_task_done": true,
+    "new_selection_readable": true,
+    "new_fake_receipt_readable": true,
+    "attempt_body_reconstructed_exact": true,
+    "new_sent_result_readable": true,
+    "current_recall_preserved": true
+  },
+  "native_reforward": {
+    "current_facts_preserved": true,
+    "integrity_check": "ok",
+    "original_fk_multiset_preserved": true,
+    "console_provider_calls": 0,
+    "immutable_source_unchanged": true
+  },
+  "source_freeze": {
+    "schema": "ceo-sent-result-owner-merged-freeze-v1",
+    "commit": "1b38a0e20bd495b597f092883173b222dbd3c5cd",
+    "files": 1208,
+    "sha256": "07995baffd63214a516366631228479e0b3fb67cdc66940bff8b289126333720",
+    "digest_format": "sorted unique path UTF-8 + NUL + raw SHA256(file bytes) + NUL",
+    "premerge_review_source": "25b2e2daf/1208/3a1495a0fba960a0d04851c19b00a514ad8ee1a08ceaa525f2edb49347396413",
+    "upstream_merge": "47db00411",
+    "changed_source_paths": [
+      "app/consumer_agent.py",
+      "app/wechat/codex_safety.py",
+      "tests/test_agent_role_tool_boundary.py",
+      "tests/test_prompt.py"
+    ],
+    "sent_storage_release_paths_unchanged": true,
+    "focused_merged_smoke": {
+      "passed": 4,
+      "seconds": 4.07
+    },
+    "acceptance": "Parent full-copy/native/live pending"
+  },
+  "capacity": {
+    "a3-native-selection": {
+      "file_bytes": 476332032,
+      "actions_and_indexes_bytes": 172511232,
+      "pages": [
+        [
+          "actions",
+          138838016
+        ],
+        [
+          "idx_actions_attempt_sequence",
+          4096
+        ],
+        [
+          "idx_actions_audit_run",
+          16384
+        ],
+        [
+          "idx_actions_business_attention_events_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_proposal_tasks_key",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_proposal_tasks_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_tasks_key",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_tasks_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_project_evidence_key",
+          4096
+        ],
+        [
+          "idx_actions_business_signal_public_id",
+          884736
+        ],
+        [
+          "idx_actions_business_task_anchor_links_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_task_anchor_links_task_id",
+          4096
+        ],
+        [
+          "idx_actions_business_task_date_evidence_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_task_evidence_key",
+          32768
+        ],
+        [
+          "idx_actions_business_task_evidence_lookup",
+          40960
+        ],
+        [
+          "idx_actions_business_task_relations_key",
+          4096
+        ],
+        [
+          "idx_actions_business_task_relations_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_task_relations_reverse",
+          4096
+        ],
+        [
+          "idx_actions_business_task_signals_dedupe_key",
+          233472
+        ],
+        [
+          "idx_actions_business_work_cluster_tasks_key",
+          4096
+        ],
+        [
+          "idx_actions_business_work_cluster_tasks_lookup",
+          4096
+        ],
+        [
+          "idx_actions_candidates_task",
+          32768
+        ],
+        [
+          "idx_actions_consumer_run",
+          16384
+        ],
+        [
+          "idx_actions_email_email_action_attempts_0",
+          1171456
+        ],
+        [
+          "idx_actions_email_email_action_plans_0",
+          188416
+        ],
+        [
+          "idx_actions_email_email_action_plans_1",
+          991232
+        ],
+        [
+          "idx_actions_email_email_actions_0",
+          1130496
+        ],
+        [
+          "idx_actions_email_email_actions_1",
+          1331200
+        ],
+        [
+          "idx_actions_email_email_actions_2",
+          1114112
+        ],
+        [
+          "idx_actions_email_email_actions_3",
+          987136
+        ],
+        [
+          "idx_actions_email_email_direct_retry_requests_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_feedback_requests_0",
+          135168
+        ],
+        [
+          "idx_actions_email_email_feedback_requests_1",
+          102400
+        ],
+        [
+          "idx_actions_email_email_feedback_requests_2",
+          86016
+        ],
+        [
+          "idx_actions_email_email_reply_dispatch_claims_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_dispatch_claims_1",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_dispatch_claims_2",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_receipts_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_receipts_1",
+          4096
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_cancellations_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_claims_0",
+          135168
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_claims_1",
+          102400
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_continuations_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_effects_0",
+          196608
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_receipts_0",
+          110592
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_receipts_1",
+          102400
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_steps_0",
+          77824
+        ],
+        [
+          "idx_actions_email_history_created",
+          28672
+        ],
+        [
+          "idx_actions_email_operation_identity",
+          4096
+        ],
+        [
+          "idx_actions_email_operation_processing",
+          4096
+        ],
+        [
+          "idx_actions_email_public_key",
+          4661248
+        ],
+        [
+          "idx_actions_errors_reply_task_settlement",
+          937984
+        ],
+        [
+          "idx_actions_errors_unresolved",
+          4096
+        ],
+        [
+          "idx_actions_execution_alias_candidate",
+          4096
+        ],
+        [
+          "idx_actions_execution_binding",
+          1196032
+        ],
+        [
+          "idx_actions_execution_receipt_operation",
+          36864
+        ],
+        [
+          "idx_actions_execution_receipt_run",
+          4096
+        ],
+        [
+          "idx_actions_external_key",
+          28672
+        ],
+        [
+          "idx_actions_fb_decision_feedback_round",
+          4096
+        ],
+        [
+          "idx_actions_fb_decision_item",
+          4096
+        ],
+        [
+          "idx_actions_fb_event_key",
+          4096
+        ],
+        [
+          "idx_actions_fb_event_token",
+          4096
+        ],
+        [
+          "idx_actions_fb_transition_batch_round",
+          4096
+        ],
+        [
+          "idx_actions_fb_transition_feedback",
+          4096
+        ],
+        [
+          "idx_actions_fb_transition_round",
+          4096
+        ],
+        [
+          "idx_actions_global_business",
+          81920
+        ],
+        [
+          "idx_actions_history_public_id",
+          24576
+        ],
+        [
+          "idx_actions_intent_authorization",
+          20480
+        ],
+        [
+          "idx_actions_intent_operation",
+          57344
+        ],
+        [
+          "idx_actions_intent_run",
+          4096
+        ],
+        [
+          "idx_actions_memory_attempt",
+          12288
+        ],
+        [
+          "idx_actions_memory_public_order",
+          20480
+        ],
+        [
+          "idx_actions_memory_status",
+          16384
+        ],
+        [
+          "idx_actions_memory_unique",
+          16384
+        ],
+        [
+          "idx_actions_observer_identity",
+          12288
+        ],
+        [
+          "idx_actions_operation_public_id",
+          4096
+        ],
+        [
+          "idx_actions_parent_candidate",
+          1265664
+        ],
+        [
+          "idx_actions_parent_review",
+          1261568
+        ],
+        [
+          "idx_actions_postfix_identity",
+          2969600
+        ],
+        [
+          "idx_actions_public_id",
+          2699264
+        ],
+        [
+          "idx_actions_reply_created",
+          696320
+        ],
+        [
+          "idx_actions_reply_current_trigger",
+          2129920
+        ],
+        [
+          "idx_actions_reply_oa_history",
+          77824
+        ],
+        [
+          "idx_actions_reply_public_order",
+          385024
+        ],
+        [
+          "idx_actions_reply_run_recovery",
+          401408
+        ],
+        [
+          "idx_actions_reply_status",
+          774144
+        ],
+        [
+          "idx_actions_reply_trigger_history",
+          1888256
+        ],
+        [
+          "idx_actions_reply_trigger_message",
+          843776
+        ],
+        [
+          "idx_actions_reviews_candidate",
+          20480
+        ],
+        [
+          "idx_actions_selection_candidate",
+          4096
+        ],
+        [
+          "idx_actions_sent_external_key",
+          36864
+        ],
+        [
+          "idx_actions_sent_history",
+          237568
+        ],
+        [
+          "idx_actions_signal_inline_key",
+          12288
+        ],
+        [
+          "idx_actions_signal_inline_source",
+          20480
+        ],
+        [
+          "idx_actions_signal_shared",
+          16384
+        ],
+        [
+          "idx_actions_skill_export_revision",
+          36864
+        ],
+        [
+          "idx_actions_skill_load_config",
+          65536
+        ],
+        [
+          "idx_actions_skill_load_pid",
+          69632
+        ],
+        [
+          "idx_actions_sync_business_task_dingtalk_links_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_dingtalk_links_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_events_0",
+          40960
+        ],
+        [
+          "idx_actions_sync_business_task_follow_up_send_attempts_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_follow_up_send_attempts_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_follow_ups_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_follow_ups_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_todo_sync_outbox_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_todo_sync_outbox_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_0",
+          98304
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_1",
+          98304
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_2",
+          81920
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_3",
+          110592
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_4",
+          126976
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_5",
+          110592
+        ],
+        [
+          "idx_actions_sync_follow_up_send_attempts_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_follow_up_send_attempts_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_follow_up_send_attempts_2",
+          4096
+        ],
+        [
+          "idx_actions_sync_task_todo_sync_outbox_0",
+          12288
+        ],
+        [
+          "idx_actions_sync_task_todo_sync_outbox_1",
+          16384
+        ],
+        [
+          "idx_actions_sync_work_todo_dingtalk_links_0",
+          24576
+        ],
+        [
+          "idx_actions_sync_work_todo_dingtalk_links_1",
+          12288
+        ],
+        [
+          "idx_actions_sync_work_todo_dingtalk_links_2",
+          24576
+        ],
+        [
+          "idx_actions_sync_work_updates_0",
+          176128
+        ],
+        [
+          "idx_actions_sync_work_updates_1",
+          81920
+        ],
+        [
+          "idx_actions_td_meeting_due",
+          16384
+        ],
+        [
+          "idx_actions_td_meeting_lease",
+          16384
+        ],
+        [
+          "idx_actions_td_meeting_memory_unique",
+          12288
+        ],
+        [
+          "idx_actions_td_task_due",
+          20480
+        ],
+        [
+          "idx_actions_td_task_lease",
+          20480
+        ],
+        [
+          "idx_actions_td_task_memory_unique",
+          24576
+        ],
+        [
+          "idx_actions_td_wechat_actual_unique",
+          4096
+        ],
+        [
+          "idx_actions_td_wechat_status",
+          4096
+        ],
+        [
+          "idx_actions_td_wechat_task_generation",
+          4096
+        ],
+        [
+          "idx_actions_text_public_key",
+          53248
+        ]
+      ],
+      "sent_rows": 2450,
+      "stored_sent_body_bytes": 3911184
+    },
+    "a4-native-selection-baseline": {
+      "file_bytes": 476332032,
+      "actions_and_indexes_bytes": 172675072,
+      "pages": [
+        [
+          "actions",
+          138047488
+        ],
+        [
+          "idx_actions_attempt_sequence",
+          4096
+        ],
+        [
+          "idx_actions_audit_run",
+          16384
+        ],
+        [
+          "idx_actions_business_attention_events_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_proposal_tasks_key",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_proposal_tasks_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_tasks_key",
+          4096
+        ],
+        [
+          "idx_actions_business_attention_tasks_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_project_evidence_key",
+          4096
+        ],
+        [
+          "idx_actions_business_signal_public_id",
+          884736
+        ],
+        [
+          "idx_actions_business_task_anchor_links_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_task_anchor_links_task_id",
+          4096
+        ],
+        [
+          "idx_actions_business_task_date_evidence_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_task_evidence_key",
+          32768
+        ],
+        [
+          "idx_actions_business_task_evidence_lookup",
+          40960
+        ],
+        [
+          "idx_actions_business_task_relations_key",
+          4096
+        ],
+        [
+          "idx_actions_business_task_relations_lookup",
+          4096
+        ],
+        [
+          "idx_actions_business_task_relations_reverse",
+          4096
+        ],
+        [
+          "idx_actions_business_task_signals_dedupe_key",
+          233472
+        ],
+        [
+          "idx_actions_business_work_cluster_tasks_key",
+          4096
+        ],
+        [
+          "idx_actions_business_work_cluster_tasks_lookup",
+          4096
+        ],
+        [
+          "idx_actions_candidates_task",
+          32768
+        ],
+        [
+          "idx_actions_consumer_run",
+          16384
+        ],
+        [
+          "idx_actions_email_email_action_attempts_0",
+          1171456
+        ],
+        [
+          "idx_actions_email_email_action_plans_0",
+          188416
+        ],
+        [
+          "idx_actions_email_email_action_plans_1",
+          991232
+        ],
+        [
+          "idx_actions_email_email_actions_0",
+          1130496
+        ],
+        [
+          "idx_actions_email_email_actions_1",
+          1331200
+        ],
+        [
+          "idx_actions_email_email_actions_2",
+          1114112
+        ],
+        [
+          "idx_actions_email_email_actions_3",
+          987136
+        ],
+        [
+          "idx_actions_email_email_direct_retry_requests_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_feedback_requests_0",
+          135168
+        ],
+        [
+          "idx_actions_email_email_feedback_requests_1",
+          102400
+        ],
+        [
+          "idx_actions_email_email_feedback_requests_2",
+          86016
+        ],
+        [
+          "idx_actions_email_email_reply_dispatch_claims_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_dispatch_claims_1",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_dispatch_claims_2",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_receipts_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_reply_receipts_1",
+          4096
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_cancellations_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_claims_0",
+          135168
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_claims_1",
+          102400
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_continuations_0",
+          4096
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_effects_0",
+          196608
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_receipts_0",
+          110592
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_receipts_1",
+          102400
+        ],
+        [
+          "idx_actions_email_email_unsubscribe_steps_0",
+          77824
+        ],
+        [
+          "idx_actions_email_history_created",
+          28672
+        ],
+        [
+          "idx_actions_email_operation_identity",
+          4096
+        ],
+        [
+          "idx_actions_email_operation_processing",
+          4096
+        ],
+        [
+          "idx_actions_email_public_key",
+          4661248
+        ],
+        [
+          "idx_actions_errors_reply_task_settlement",
+          937984
+        ],
+        [
+          "idx_actions_errors_unresolved",
+          4096
+        ],
+        [
+          "idx_actions_execution_alias_candidate",
+          4096
+        ],
+        [
+          "idx_actions_execution_binding",
+          1196032
+        ],
+        [
+          "idx_actions_execution_receipt_operation",
+          36864
+        ],
+        [
+          "idx_actions_execution_receipt_run",
+          4096
+        ],
+        [
+          "idx_actions_external_key",
+          28672
+        ],
+        [
+          "idx_actions_fb_decision_feedback_round",
+          4096
+        ],
+        [
+          "idx_actions_fb_decision_item",
+          4096
+        ],
+        [
+          "idx_actions_fb_event_key",
+          4096
+        ],
+        [
+          "idx_actions_fb_event_token",
+          4096
+        ],
+        [
+          "idx_actions_fb_transition_batch_round",
+          4096
+        ],
+        [
+          "idx_actions_fb_transition_feedback",
+          4096
+        ],
+        [
+          "idx_actions_fb_transition_round",
+          4096
+        ],
+        [
+          "idx_actions_global_business",
+          81920
+        ],
+        [
+          "idx_actions_history_public_id",
+          24576
+        ],
+        [
+          "idx_actions_intent_authorization",
+          20480
+        ],
+        [
+          "idx_actions_intent_operation",
+          57344
+        ],
+        [
+          "idx_actions_intent_run",
+          4096
+        ],
+        [
+          "idx_actions_memory_attempt",
+          12288
+        ],
+        [
+          "idx_actions_memory_public_order",
+          20480
+        ],
+        [
+          "idx_actions_memory_status",
+          16384
+        ],
+        [
+          "idx_actions_memory_unique",
+          16384
+        ],
+        [
+          "idx_actions_observer_identity",
+          12288
+        ],
+        [
+          "idx_actions_operation_public_id",
+          4096
+        ],
+        [
+          "idx_actions_parent_candidate",
+          1265664
+        ],
+        [
+          "idx_actions_parent_review",
+          1261568
+        ],
+        [
+          "idx_actions_postfix_identity",
+          2969600
+        ],
+        [
+          "idx_actions_public_id",
+          2699264
+        ],
+        [
+          "idx_actions_reply_created",
+          696320
+        ],
+        [
+          "idx_actions_reply_current_trigger",
+          2129920
+        ],
+        [
+          "idx_actions_reply_oa_history",
+          77824
+        ],
+        [
+          "idx_actions_reply_public_order",
+          385024
+        ],
+        [
+          "idx_actions_reply_run_recovery",
+          401408
+        ],
+        [
+          "idx_actions_reply_status",
+          774144
+        ],
+        [
+          "idx_actions_reply_trigger_history",
+          1888256
+        ],
+        [
+          "idx_actions_reply_trigger_message",
+          843776
+        ],
+        [
+          "idx_actions_reviews_candidate",
+          20480
+        ],
+        [
+          "idx_actions_selection_candidate",
+          4096
+        ],
+        [
+          "idx_actions_sent_external_key",
+          36864
+        ],
+        [
+          "idx_actions_sent_history",
+          237568
+        ],
+        [
+          "idx_actions_sent_result_owner",
+          36864
+        ],
+        [
+          "idx_actions_sent_result_receipt",
+          917504
+        ],
+        [
+          "idx_actions_signal_inline_key",
+          12288
+        ],
+        [
+          "idx_actions_signal_inline_source",
+          20480
+        ],
+        [
+          "idx_actions_signal_shared",
+          16384
+        ],
+        [
+          "idx_actions_skill_export_revision",
+          36864
+        ],
+        [
+          "idx_actions_skill_load_config",
+          65536
+        ],
+        [
+          "idx_actions_skill_load_pid",
+          69632
+        ],
+        [
+          "idx_actions_sync_business_task_dingtalk_links_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_dingtalk_links_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_events_0",
+          40960
+        ],
+        [
+          "idx_actions_sync_business_task_follow_up_send_attempts_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_follow_up_send_attempts_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_follow_ups_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_follow_ups_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_todo_sync_outbox_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_business_task_todo_sync_outbox_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_0",
+          98304
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_1",
+          98304
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_2",
+          81920
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_3",
+          110592
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_4",
+          126976
+        ],
+        [
+          "idx_actions_sync_follow_up_drafts_5",
+          110592
+        ],
+        [
+          "idx_actions_sync_follow_up_send_attempts_0",
+          4096
+        ],
+        [
+          "idx_actions_sync_follow_up_send_attempts_1",
+          4096
+        ],
+        [
+          "idx_actions_sync_follow_up_send_attempts_2",
+          4096
+        ],
+        [
+          "idx_actions_sync_task_todo_sync_outbox_0",
+          12288
+        ],
+        [
+          "idx_actions_sync_task_todo_sync_outbox_1",
+          16384
+        ],
+        [
+          "idx_actions_sync_work_todo_dingtalk_links_0",
+          24576
+        ],
+        [
+          "idx_actions_sync_work_todo_dingtalk_links_1",
+          12288
+        ],
+        [
+          "idx_actions_sync_work_todo_dingtalk_links_2",
+          24576
+        ],
+        [
+          "idx_actions_sync_work_updates_0",
+          176128
+        ],
+        [
+          "idx_actions_sync_work_updates_1",
+          81920
+        ],
+        [
+          "idx_actions_td_meeting_due",
+          16384
+        ],
+        [
+          "idx_actions_td_meeting_lease",
+          16384
+        ],
+        [
+          "idx_actions_td_meeting_memory_unique",
+          12288
+        ],
+        [
+          "idx_actions_td_task_due",
+          20480
+        ],
+        [
+          "idx_actions_td_task_lease",
+          20480
+        ],
+        [
+          "idx_actions_td_task_memory_unique",
+          24576
+        ],
+        [
+          "idx_actions_td_wechat_actual_unique",
+          4096
+        ],
+        [
+          "idx_actions_td_wechat_status",
+          4096
+        ],
+        [
+          "idx_actions_td_wechat_task_generation",
+          4096
+        ],
+        [
+          "idx_actions_text_public_key",
+          53248
+        ]
+      ],
+      "sent_rows": 2450,
+      "stored_sent_body_bytes": 3443282
+    },
+    "delta_actions_and_indexes_bytes": 163840,
+    "removed_duplicate_sent_body_bytes": 467902,
+    "note": "Identical original source population; direct owner and child reference indexes included; file bytes include freelist so no VACUUM claim."
+  },
+  "backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-19.sqlite3",
+    "store_version": "2026-10-19.4",
+    "email_version": 53,
+    "integrity_check": "ok",
+    "fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "bytes": 477253632,
+    "sha256": "3587cf1abc0f99c8f24516d48c36f053df71f6805121f4e33a2ef86fb2e1ae33",
+    "complete_application_id": 1128615746,
+    "old_backup_untouched": true,
+    "replaced_backup_bytes": 474292224,
+    "atomic_replacement_after_full_verification": true
+  },
+  "old_code_cold_ref": "6f53171c9",
+  "source_lineage": "Accepted A3 current-data staged copy, including previous synthetic native task; not a fresh raw production19.4 snapshot.",
+  "fixture_allocator_correction": "Ordinary-source helper refused prior synthetic IDs before CLI. Local harness continued above exact existing all-family allocator, below2**53; prior fixture and unchanged logical baseline checked. No app/production allocator change."
+}

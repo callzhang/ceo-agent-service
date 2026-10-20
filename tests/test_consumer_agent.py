@@ -37,6 +37,7 @@ from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
     audit_developer_instructions,
+    consumer_developer_sections,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
     _consumer_source_context_fingerprint,
@@ -1078,6 +1079,22 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert "do not return a nested error object" in instructions
 
 
+def test_consumer_capability_section_keeps_tool_contract_without_repeating_common_rules():
+    sections = consumer_developer_sections(runtime_context="", work_profile="")
+    capability = next(section.text for section in sections if section.name == "能力边界")
+    common = next(section.text for section in sections if section.name == "共同工作原则")
+
+    assert len(capability) <= 3556
+    assert "Consumer 可做本轮普通文档" in common
+    assert "只有当前系统任务已注册且要求 Audit 的动作" in common
+    assert "consumer_artifact_write" in capability
+    assert "consumer_document_write" in capability
+    assert "consumer_run_skill_script" in capability
+    assert "mcp__agent_cli" in capability
+    assert "dependency_read_unavailable" in capability
+    assert "provider-risk refusal" in capability
+
+
 def test_consumer_document_action_keeps_body_out_of_description():
     from app.action_contract_catalog import read_system_action_contract
 
@@ -1658,7 +1675,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     )
 
 
-def test_consumer_resumes_session_when_wire_contract_changes(store, task, context):
+def test_consumer_resumes_session_when_unrelated_contract_hash_changes(store, task, context):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
@@ -1677,6 +1694,94 @@ def test_consumer_resumes_session_when_wire_contract_changes(store, task, contex
         store.get_codex_session_contract_hash(task.conversation_id)
         == consumer_wire_contract_hash()
     )
+
+
+@pytest.mark.parametrize("saved_schema", [
+    {"properties": {"outcome": {"type": "string"}}}, None,
+])
+def test_consumer_starts_fresh_when_saved_native_wire_schema_is_old_or_missing(
+    store, task, context, saved_schema
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+        codex_session_wire_schema=lambda _: saved_schema,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3] == "exec"
+    assert "resume" not in executor.commands[0]
+    assert store.get_codex_session_id(task.conversation_id) == "session-new"
+
+
+def test_consumer_reuses_matching_native_wire_despite_prompt_hash_change(store, task, context):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+    current_schema = json.loads(
+        consumer_agent._schema_json(consumer_agent.consumer_wire_model("general"))
+    )
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+        codex_session_wire_schema=lambda _: current_schema,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3:5] == ["exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-old", "-"]
+
+
+def test_consumer_default_path_reads_native_wire_before_resume(
+    store, task, context, monkeypatch, tmp_path
+):
+    session = tmp_path / "old-session.jsonl"
+    developer = (
+        "## Pydantic Wire Contract\n"
+        '{"type":"object","properties":{"outcome":{"type":"string"}}}'
+        "\n\n## Capability Instructions\nexisting guidance"
+    )
+    session.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {
+            "type": "message", "role": "developer",
+            "content": [{"type": "input_text", "text": developer}],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": ["generic.developer_instructions"]
+            },
+        },
+    }) + "\n")
+    monkeypatch.setattr(consumer_agent, "find_codex_session_path", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(
+        "app.native_prompt_input.native.find_codex_session_path",
+        lambda *_args, **_kwargs: session,
+    )
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
+
+    ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" not in executor.commands[0]
+    assert context.trigger_text in executor.prompts[0]
+    developer_option = next(
+        option for option in executor.commands[0]
+        if option.startswith("developer_instructions=")
+    )
+    submitted_developer = json.loads(developer_option.partition("=")[2])
+    assert (
+        "## Pydantic Wire Contract\n"
+        + consumer_agent._schema_json(consumer_agent.consumer_wire_model("general"))
+    ) in submitted_developer
+    assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
 def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, context):
@@ -4059,6 +4164,7 @@ def test_audit_reviews_proposal_and_human_question_as_separate_stages():
     assert "An approved human request authorizes only publication of the question" in text
     assert "no branch executes until the person selects it" in text
     assert "Audit never originates a human question" in text
+    assert "needs_human reason is one short sentence in ordinary Chinese, at most 100 characters" in text
 
 
 def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
@@ -4069,7 +4175,12 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
     assert "DingTalk bodies use structured Markdown" not in text
     assert "OA comments and email use plain text" not in text
-    assert "the reusable task class rule that is missing and why it matters" in text
+
+
+def test_needs_human_reason_prompt_is_plain_language_and_bounded():
+    text = " ".join(consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS.split())
+    assert "one plain-Chinese sentence of at most 100 characters" in text
+    assert "Avoid jargon; keep evidence in decision_basis" in text
 
 
 def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):

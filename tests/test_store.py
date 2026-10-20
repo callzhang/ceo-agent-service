@@ -1,3 +1,5 @@
+from tests.sent_fixtures import historical_sent_delivery
+
 from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
 from tests.test_email_legacy_schema import published_source as published_source
 import errno
@@ -104,6 +106,49 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_pat
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    (("done", "done"), ("skipped_no_reliable_entry", "skipped")),
+)
+def test_startup_reconciles_failed_unsubscribe_task_from_terminal_receipt(
+    tmp_path, outcome, expected_status,
+):
+    from app.email_store import EmailStore
+    from tests.test_email_action_storage import _cases
+
+    path = tmp_path / "unsubscribe-startup.sqlite3"
+    store = AutoReplyStore(path)
+    EmailStore(path)
+    identity = "email-action:" + "c" * 64
+    with store._connect() as db:
+        # This fixture exercises the startup projection from a persisted receipt;
+        # provider-plan ancestry is outside the recovery query under test.
+        db.execute("pragma foreign_keys=off")
+        task_id = _insert_current_task8(db, "reply_tasks", {
+            "channel": "email", "conversation_id": "email-thread",
+            "conversation_title": "Email", "single_chat": 0,
+            "trigger_message_id": identity, "trigger_create_time": "",
+            "trigger_sender": "", "status": "failed",
+            "error": "worker_interrupted",
+        }).lastrowid
+        insert_email_action(
+            db, "email_unsubscribe_receipts",
+            _cases()["email_unsubscribe_receipts"] | {
+                "action_identity": identity,
+                "outcome": outcome,
+            },
+        )
+
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 1
+    with store._connect() as db:
+        task = db.execute(
+            f"select status, error from ({store_module.REPLY_TASK_SQL}) where id=?",
+            (task_id,),
+        ).fetchone()
+    assert tuple(task) == (expected_status, "")
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 0
 
 
 def test_agent_authored_message_requires_verified_provider_readback(tmp_path):
@@ -2496,7 +2541,7 @@ def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
     assert method([]) == {}
 
 
-def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
+def test_finalize_orchestration_preserves_independently_recorded_delivery(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -2534,6 +2579,13 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
         "[👎 需改进](https://feedback.example.com/api/dingtalk-feedback-spike"
         "?feedback_token=spike_1_abcd1234&rating=down)"
     )
+    store.record_completed_agent_message_delivery(
+        agent_run_id=audit.id, external_action_key='confirmed-delivery',
+        business_object_key=task.business_object_key, action_identity='reply',
+        operation='message.send', target_identifiers={'conversation_id': task.conversation_id},
+        conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
+        reply_text=sent_reply_text, provider_result={'source': 'test'},
+    )
     attempt_id = store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -2555,8 +2607,6 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
         send_status="completed",
         send_error="",
         channel="dingtalk",
-        sent_reply_text=sent_reply_text,
-        sent_reply_result_json='{"source":"test"}',
     )
 
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
@@ -2566,7 +2616,8 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     assert sent.reply_text == sent_reply_text
     assert sent.feedback_token == "spike_1_abcd1234"
     assert attempt is not None
-    assert attempt.final_reply_text == sent_reply_text
+    assert attempt.final_reply_text == ""
+    assert store.count_sent_replies() == 1
 
 
 def test_finalize_orchestration_never_projects_failed_current_run_as_done(
@@ -3102,7 +3153,7 @@ def test_reconcile_failed_audit_requires_verified_delivery_and_all_effects(
         business_object_key=task.business_object_key, action_identity="send",
         operation="send", target_identifiers=action["target"],
     )
-    store.record_agent_message_delivery(
+    historical_sent_delivery(store,
         agent_run_id=audit.id, external_action_key=key,
         conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
         reply_text="Delivered report", provider_result={
@@ -6286,7 +6337,7 @@ def test_message_delivery_history_is_single_projection_with_run_observers(
     first_run = _claim_audit_run(
         store, first_task_id, "initial", owner="worker-1"
     ).run
-    first = store.record_agent_message_delivery(
+    first = historical_sent_delivery(store,
         agent_run_id=first_run.id,
         external_action_key="stable-message-action",
         conversation_id="cid-1",
@@ -6308,7 +6359,7 @@ def test_message_delivery_history_is_single_projection_with_run_observers(
         store, second_task.id, second_task.execution_generation,
         owner="worker-2",
     ).run
-    repeated = store.record_agent_message_delivery(
+    repeated = historical_sent_delivery(store,
         agent_run_id=second_run.id,
         external_action_key="stable-message-action",
         conversation_id="cid-2",
@@ -9238,120 +9289,6 @@ def test_reply_attempt_records_calendar_response_metadata(tmp_path: Path):
     assert loaded.calendar_event_id == "event-1"
     assert loaded.calendar_response_status == "accepted"
     assert loaded.calendar_response_result_json == '{"success":true}'
-
-
-def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-
-    first_id = store.record_reply_attempt_for_trigger(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Xiaomin",
-        trigger_text="@Alex Chen 这个怎么处理？",
-        action="no_reply",
-        sensitivity_kind="general",
-        codex_reason="system_or_notification_message",
-        send_status="skipped",
-    )
-    store.update_reply_attempt(
-        first_id,
-        final_reply_text="旧回复",
-        send_error="no_reply",
-        retry_count=2,
-    )
-
-    second_id = store.record_reply_attempt_for_trigger(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Xiaomin",
-        trigger_text="@Alex Chen 这个怎么处理？",
-        action="send_reply",
-        sensitivity_kind="general",
-        codex_reason="direct ask",
-        draft_reply_text="先按A方案走",
-        codex_session_id="session-1",
-        audit_documents_json='[{"title":"chat"}]',
-        audit_tool_events_json='[{"tool":"dws"}]',
-        audit_summary="已重新判断，需要回复。",
-        send_status="pending",
-    )
-
-    attempt = store.get_reply_attempt(first_id)
-
-    assert second_id == first_id
-    assert store.count_reply_attempts() == 1
-    assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.codex_reason == "direct ask"
-    assert attempt.draft_reply_text == "先按A方案走"
-    assert attempt.codex_session_id == "session-1"
-    assert attempt.audit_documents_json == '[{"title":"chat"}]'
-    assert attempt.audit_tool_events_json == '[]'
-    assert attempt.audit_summary == "已重新判断，需要回复。"
-    assert attempt.final_reply_text == ""
-    assert attempt.send_status == "pending"
-    assert attempt.send_error == ""
-    assert attempt.retry_count == 0
-
-
-def test_record_reply_attempt_for_trigger_does_not_overwrite_sent_reply_attempt(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-
-    first_id = store.record_reply_attempt_for_trigger(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Xiaomin",
-        trigger_text="@Alex Chen 这个怎么处理？",
-        action="send_reply",
-        sensitivity_kind="general",
-        codex_reason="direct ask",
-        draft_reply_text="先按A方案走",
-        send_status="pending",
-    )
-    store.update_reply_attempt(
-        first_id,
-        final_reply_text="先按A方案走",
-        send_status="sent",
-    )
-    store.record_sent_reply(
-        "cid-1",
-        "msg-1",
-        "先按A方案走",
-        send_result_json='{"success":true}',
-        feedback_token="token-1",
-    )
-
-    second_id = store.record_reply_attempt_for_trigger(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Xiaomin",
-        trigger_text="@Alex Chen 这个怎么处理？",
-        action="stop_with_error",
-        sensitivity_kind="general",
-        codex_reason="provider failed",
-        send_status="pending",
-    )
-
-    first_attempt = store.get_reply_attempt(first_id)
-    second_attempt = store.get_reply_attempt(second_id)
-
-    assert second_id != first_id
-    assert store.count_reply_attempts() == 2
-    assert first_attempt is not None
-    assert first_attempt.action == "send_reply"
-    assert first_attempt.send_status == "sent"
-    assert first_attempt.final_reply_text == "先按A方案走"
-    assert second_attempt is not None
-    assert second_attempt.action == "stop_with_error"
-    assert second_attempt.send_status == "pending"
 
 
 def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
@@ -13716,3 +13653,70 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
 
     assert mapped == {9001: 13}
     assert store.scheduled_task_ids_for_reply_tasks(()) == {}
+
+
+def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    process_id = "proc-review"
+    oa_task_id = "task-review"
+    conversation_id = f"oa_pending_scan:{process_id}"
+    trigger_id = "oa-pending:proc-review:revision-1:2026-10-19"
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?"
+        f"procInstId={process_id}&taskId={oa_task_id}"
+    )
+    trigger_json = json.dumps({
+        "message_id": trigger_id,
+        "raw_payload": {"source": "oa_pending_scan", "processInstanceId": process_id,
+                        "taskId": oa_task_id},
+    })
+    task = store.ensure_reply_task(
+        conversation_id=conversation_id, conversation_title="审批待办",
+        single_chat=True, trigger_message_id=trigger_id,
+        trigger_create_time="2026-10-19T10:00:00Z", trigger_sender="Derek OA",
+        trigger_text="Review this OA process.", trigger_message_json=trigger_json,
+        channel="dingtalk", oa_url=oa_url,
+        business_object_key=f"oa:{process_id}:{oa_task_id}",
+    )
+    with store._immediate_write_transaction() as db:
+        task_update = task8_set_parts(
+            "reply_tasks", {},
+            update_sql={"status": "'done'", "updated_at": "current_timestamp"},
+            payload_source="tasks.payload_json",
+        )
+        db.execute(
+            f"update tasks set {task_update.sql} "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=conversation_id, conversation_title="审批待办",
+        trigger_message_id=trigger_id, trigger_sender="Derek OA",
+        trigger_text="", action="agent_run", sensitivity_kind="general",
+        oa_process_instance_id=process_id, oa_task_id=oa_task_id,
+        oa_url=oa_url, oa_action="review", oa_action_result_json="{}",
+        send_status="skipped", channel="dingtalk",
+    )
+    store.record_reply_feedback(
+        attempt_id, feedback="Re-review based on the business evidence.",
+    )
+    rerun_args = dict(
+        conversation_id=conversation_id, conversation_title="审批待办",
+        single_chat=True, trigger_message_id=trigger_id,
+        trigger_create_time="2026-10-19T10:00:00Z", trigger_sender="Derek OA",
+        trigger_text="Review this OA process.", trigger_message_json=trigger_json,
+        oa_url=oa_url, attempt_id=attempt_id, channel="dingtalk",
+        expected_execution_generation=task.execution_generation,
+    )
+    with pytest.raises(store_module.ManualRerunConflict):
+        store.enqueue_manual_rerun_reply_task(**rerun_args)
+
+    rerun = store.enqueue_manual_rerun_reply_task(
+        **rerun_args, allow_skipped_oa_review=True,
+    )
+
+    assert rerun.status == "pending"
+    assert rerun.execution_generation != task.execution_generation
+    assert rerun.manual_rerun_attempt_id == attempt_id

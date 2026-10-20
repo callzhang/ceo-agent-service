@@ -141,6 +141,25 @@ describe("AttemptDetailPage", () => {
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
   });
 
+  it("labels the human decision in plain language", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        human_decision: {
+          candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41,
+          reason: "现有规则没说清这类项目资料未齐时谁能决定继续推进。请选一条今后适用的授权规则；这不代表让你批准本项目。",
+          requested_input: "", basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+          authorization_plan: null, selection: null,
+        },
+      },
+      meta: { snapshot_at: "2026-09-08T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "这次要你决定什么" })).toBeInTheDocument();
+  });
+
   it("groups runtime retries into collapsed processing batches", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {

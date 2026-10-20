@@ -15,7 +15,7 @@ def test_attention_follows_original_run_task_after_scanner_trigger_changes(tmp_p
         trigger_create_time="2026-10-14 10:00:00", trigger_sender="Applicant",
         trigger_text="Review this approval", business_object_key="oa:process:node",
     )
-    attempt_id = store.record_reply_attempt_for_trigger(
+    attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="general",

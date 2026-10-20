@@ -13,7 +13,7 @@ def _proved_copy(store):
     from app.email_store import EmailStore
     message, _ = _model_fixture(store, included='old-model')
     with store._connect() as db:
-        db.execute("update emails set class_folder='Archive',message_folder='Archive',"
+        db.execute("update emails set message_folder='Archive',"
                    "uidvalidity=11,uid=21,class_rfc_message_id='<message>',"
                    "message_rfc_message_id='<message>',class_thread_id='',message_thread_identity=''")
     path = store.path.with_name('verified-copy.sqlite3')
@@ -34,7 +34,7 @@ def test_preview_and_apply_keep_live_facts_inclusion_and_repeat_idempotently(bod
     from app import email_body_source
     source = _proved_copy(body_store)
     with body_store._connect() as db:
-        db.execute("update emails set class_subject='new business result',class_category='legal'")
+        db.execute("update emails set message_subject='new business result',class_category='legal'")
         db.execute("update emails set class_included_in_model_id='current-model'")
     before = _row(body_store)
     monkeypatch.setattr(email_body_source, 'locate_original', lambda *a, **k: pytest.fail('proof already exists'))
@@ -45,9 +45,8 @@ def test_preview_and_apply_keep_live_facts_inclusion_and_repeat_idempotently(bod
     assert applied['body_retired'] == applied['model_inputs_retired'] == 1
     after = _row(body_store)
     assert after['message_normalized_text'] == after['class_model_text'] == ''
-    assert after['class_preview'] == 'complete body'
-    assert after['message_preview'] == ''
-    assert after | {k: before[k] for k in ('message_normalized_text','class_model_text','message_source_reference_json','class_preview','message_preview')} == before
+    assert after['message_preview'] == 'complete body'
+    assert after | {k: before[k] for k in ('message_normalized_text','class_model_text','message_source_reference_json','message_preview')} == before
     again = retire_verified_email_inputs(source, body_store.path, apply=True)
     assert again['changed_rows'] == 0
     assert _row(body_store) == after
@@ -71,9 +70,8 @@ def test_new_or_unfinished_live_inputs_are_never_overwritten(body_store, change)
     if change == 'body':
         permitted.add('class_model_text')
     if change in ('model', 'model_blob'):
-        permitted.update(('message_normalized_text', 'class_preview', 'message_preview'))
-        assert after['class_preview'] == 'complete body'
-        assert after['message_preview'] == ''
+        permitted.update(('message_normalized_text', 'message_preview'))
+        assert after['message_preview'] == 'complete body'
     assert after | {k:before[k] for k in permitted} == before
 
 

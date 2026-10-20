@@ -229,5 +229,42 @@
     "merge_quality": "approved",
     "fixture_spec": "approved",
     "fixture_quality": "approved"
+  },
+  "production_readback": {
+    "deployed_commit": "b33f331d6492f8172c0c64570c13839add13e069",
+    "pre_pid": 5137,
+    "post_pid": 16854,
+    "schema": {
+      "store": "2026-10-19.1",
+      "email": 52,
+      "branch_json_column_present": false,
+      "foreign_keys": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "file_bytes": 474185728,
+      "pages": 115768,
+      "free_pages": 294,
+      "native_test_fixture_in_production": 0,
+      "launchd": [
+        "state = running",
+        "pid = 16854",
+        "last exit code = (never exited)",
+        "state = active",
+        "state = active"
+      ]
+    },
+    "health_http": 200,
+    "status_http": 200,
+    "attention_http": 200,
+    "history_http": 200,
+    "queue_counts_unchanged": true,
+    "attention_total_before_after": 4,
+    "history_total_before_after": 36352,
+    "new_test_outbound_sends": 0
   }
 }

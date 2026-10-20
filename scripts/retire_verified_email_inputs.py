@@ -10,9 +10,8 @@ import json
 from pathlib import Path
 import sqlite3
 
-from app.action_email_schema_release import (
-    TARGET_EMAIL_VERSION, TARGET_STORE_VERSION, require_current_email_pair,
-)
+from app.action_email_schema_release import require_current_email_pair
+from app.email_metadata_schema_release import TARGET_EMAIL_VERSION, TARGET_STORE_VERSION
 from app.email_body_source import verify_original
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_store import EmailStore
@@ -54,7 +53,7 @@ def retire_verified_email_inputs(source: Path, target: Path, *, apply=False):
         if not path.is_file():
             raise FileNotFoundError(path)
         require_current_email_pair(path, store_version=TARGET_STORE_VERSION,
-                                   email_version=TARGET_EMAIL_VERSION)
+                                   email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, metadata_owner=True)
     with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
         proofs = []
@@ -97,8 +96,7 @@ def retire_verified_email_inputs(source: Path, target: Path, *, apply=False):
                     continue
                 values = {}
                 if retire_body:
-                    values['class_preview'] = email_preview(row['message_normalized_text'])
-                    values['message_preview'] = ''
+                    values['message_preview'] = email_preview(row['message_normalized_text'])
                     values['message_normalized_text'] = ''
                     current.update(body)
                 if retire_model:

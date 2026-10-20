@@ -80,7 +80,10 @@ def test_org_structure_material_gap_is_asked_of_responsible_party_before_human_e
         assert "No basis: request the missing business rationale from the submitter" in text
         assert "Do not escalate solely because the agent cannot independently verify" in text
         assert "business need, affected work and people, receiving arrangement, and reporting line" in text
-        assert "Keep the approval pending and independently verify the response" in text
+        assert "After a return/comment, independently verify any response" in text
+        assert "formal return for correction" in text
+        assert "rather than leaving it in Derek's pending queue" in text
+        assert "Comment only when no valid return path exists" in text
         assert "Use `needs_human` only for a genuine policy or authority gap" in text
         assert "If the given basis cannot be proven by evidence, `needs_human`" not in text
 
@@ -93,16 +96,16 @@ def test_ordinary_approval_is_not_a_reserved_personal_decision_and_wrong_recipie
         assert "Only an explicit discretionary choice outside the normal approval decision" in text
 
 
-def test_org_change_does_not_repeat_a_verified_return_after_the_same_approver_reapproves_without_new_facts() -> None:
+def test_org_change_orders_evidence_by_timestamp_and_does_not_repeat_a_verified_return() -> None:
     path = Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")
     text = path.read_text(encoding="utf-8")
-    assert "prior verified return for the same unresolved facts" in text
-    assert "the responsible approver again approves without supplying new evidence" in text
-    assert "do not repeat the return or send a duplicate comment" in text
-    assert "Keep the current OA task pending with `no_action`" in text
-    assert "until new material or an explicit instruction changes the facts" in text
-    assert "takes precedence over the generic rule to return an unresolved issue again" in text
-    assert "A second action requires new submitted evidence" in text
+    assert "source-timestamp order using the DWS operation records" in text
+    assert "Only material submitted after the latest verified return for the same gap can count as post-return new evidence" in text
+    assert "timestamped before that return is not new evidence" in text
+    assert "an approver's `AGREE` alone does not resolve the gap" in text
+    assert "preserve the current OA task as pending with `no_action`" in text
+    assert "do not issue another return or duplicate comment" in text
+    assert "Reviewer-side read or OCR failures are not applicant-resolvable gaps" in text
 
 
 def test_algorithm_department_compensation_authority_is_documented_in_the_people_skill() -> None:

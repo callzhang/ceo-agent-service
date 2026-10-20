@@ -7,6 +7,22 @@
 - 保留最多 10 次后续读取、从原始申请起最长 72 小时的退避预算；不把申请送达当成权限恢复。
 - 增加回归测试；部署与线上读回结果记录在 [验证记录](docs/consumer-purpose-actions-validation.md)。
 
+## 2026-10-20 — 人工决策说明改为白话短句
+
+- Attempt 人工决策卡片改用“这次要你决定什么”；Consumer/Audit 要求原因用一句中文说明要决定什么及原因，不超过100字。
+- Consumer 新输出契约和 JSON Schema 强制限制 `needs_human_reason` 为100字以内；历史结果读取保持兼容，详细依据继续显示在独立证据区。
+- 保留是否需要规则反馈及现有选项不变；增加超长理由和页面标题回归测试。
+
+## 2026-10-20 — OKR 原生综合验收与恢复修复
+
+- 正式发布发现已部署财务 Skill/规则卡的旧摘要清单过期；记录当前安装与 managed 摘要，只刷新两项精确旧摘要，并增加冻结前置值回归，严格发布代码保持不变。
+
+- 新增四场景原生 Consumer/Audit 工作流验收，固定事实和预期，保留失败轨迹；严格核对本次来源、复用分析、公式、真实父子页、完整读回与精确消息提案。
+- OKR Skill 保留未评分成员的已知职级与逐人来源缺口，分开业务完成档位和领导力/文化行为档位，修正正式维度及80/90包含边界；prepare 明确标记可复用分析，恢复更新现有附录。
+- 记录日报、管理周报、OKR 旧版实际发布及读回；新版自然执行单独等待，不重放已发布报告。
+- 产物读取明确0起字符偏移，并为整页/分页统一返回范围元数据；按人准备的 schema 提供稳定身份标签，防止同名负责人在合并后丢失归属。
+- 原七案例验收和历史失败均保留；详见 docs/scheduled-okr-agent-acceptance.md。
+
 ## 2026-10-19 — 定时任务 Agent 验收协议修复
 
 - 统一离线评测 Consumer、Audit 和修订的字段及结果标签，区分最终内容与排除说明的来源追踪。
@@ -2568,6 +2584,10 @@
 
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
 # Unreleased
+
+- Let permission retries use the exact verified legacy OA material-access
+  comment receipt when its candidate predates `purpose_output`; ordinary
+  comments still cannot authorize a permission retry.
 
 - Count live dispatcher leases, meeting preparation and claimed meeting delivery
   in the deployment quiet gate, including before an Agent runtime is created.

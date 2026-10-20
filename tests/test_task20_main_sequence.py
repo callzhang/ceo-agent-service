@@ -4,7 +4,8 @@ import sqlite3
 
 import pytest
 
-from app.task20_definitions import create_task20_schema, initialize_task8_sequence
+from app.task20_definitions import initialize_task8_sequence
+from tests.task_lifecycle_test_support import create_task20_schema
 from app.task12_storage import insert_task12
 from app.task8_storage import register_task8_functions, task8_insert_parts
 

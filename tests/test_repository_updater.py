@@ -481,11 +481,22 @@ def test_quiet_counts_live_dispatcher_claim_before_runtime_exists(tmp_path, leas
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         from app.state_storage import insert_state
+        from app.task8_storage import register_task8_functions, task8_insert_parts
+        from app.task_lifecycle_storage import acquire_claim
+        register_task8_functions(db)
         db.execute("begin")
-        insert_state(db, "dispatcher_claim_leases", {
-            "adapter_name": "meeting", "source_id": "42",
-            "lease_expires_at": lease, "terminal_at": terminal,
+        parts = task8_insert_parts("meeting_alignment_jobs", {
+            "legacy_key": 42, "meeting_id": "claim-quiet", "status": "pending",
         })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+        if terminal:
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": "meeting", "source_id": "42",
+                "lease_expires_at": lease, "terminal_at": terminal,
+            })
+        else:
+            acquire_claim(db, adapter_name="meeting", source_id="42", owner="",
+                owner_pid=0, lease_expires_at=lease, now="1999-01-01 00:00:00")
     assert in_flight_work(path) == expected
 
 

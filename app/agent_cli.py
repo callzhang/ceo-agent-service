@@ -484,7 +484,68 @@ def read_text_file(path: str) -> dict[str, object]:
 
 
 def _read_image_material(material_file, material_path: Path) -> dict[str, object]:
-    return _ocr_input_for_agent(material_file, material_path, file_format="image")
+    material_file.seek(0)
+    source_sha256 = hashlib.file_digest(material_file, "sha256").hexdigest()
+    material_file.seek(0)
+    original = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+    if len(original) <= MAX_OCR_AGENT_INPUT_BYTES:
+        return {
+            "format": "image",
+            "ocr_required": True,
+            "ocr_input_base64": base64.b64encode(original).decode("ascii"),
+            "ocr_mime_type": mimetypes.guess_type(material_path.name)[0]
+            or "application/octet-stream",
+            "path": str(material_path),
+            "sha256": source_sha256,
+        }
+
+    try:
+        from PIL import Image, ImageOps
+
+        material_file.seek(0)
+        with Image.open(material_file) as source:
+            width, height = source.size
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+        background = Image.new("RGB", image.size, "white")
+        background.paste(image, mask=image.getchannel("A"))
+        image.close()
+        if max(background.size) > 3000:
+            background.thumbnail((3000, 3000))
+        try:
+            for scale in (1.0, 0.85, 0.7, 0.55):
+                current = background.copy()
+                try:
+                    if scale < 1.0:
+                        current.thumbnail((
+                            int(background.width * scale),
+                            int(background.height * scale),
+                        ))
+                    for quality in (88, 80, 72, 64):
+                        encoded = BytesIO()
+                        current.save(encoded, format="JPEG", quality=quality, optimize=True)
+                        payload = encoded.getvalue()
+                        if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                            return {
+                                "format": "image",
+                                "ocr_required": True,
+                                "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                                "ocr_mime_type": "image/jpeg",
+                                "ocr_source_mime_type": mimetypes.guess_type(material_path.name)[0]
+                                or "application/octet-stream",
+                                "ocr_source_dimensions": {"width": width, "height": height},
+                                "ocr_input_transformed": True,
+                                "path": str(material_path),
+                                "sha256": source_sha256,
+                            }
+                finally:
+                    current.close()
+        finally:
+            background.close()
+        raise AgentReadOnlyViolationError("image_ocr_bounded_render_too_large")
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("image_ocr_bounded_render_failed") from exc
 
 
 def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
@@ -1418,12 +1479,11 @@ def _read_task_file(
         "content": text[offset : offset + max_chars],
         "sha256": hashlib.sha256(data).hexdigest(),
     }
-    if offset or len(text) > max_chars:
-        item.update(
-            offset=offset,
-            total_chars=len(text),
-            next_offset=offset + max_chars if offset + max_chars < len(text) else None,
-        )
+    item.update(
+        offset=offset,
+        total_chars=len(text),
+        next_offset=offset + max_chars if offset + max_chars < len(text) else None,
+    )
     if len(json.dumps(item).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
         raise ValueError("task file readback is too large")
     return item
@@ -1821,7 +1881,12 @@ def build_role_server(
     def read_task_artifact(
         name: str, offset: int = 0, max_chars: int = 20000
     ) -> dict[str, object]:
-        """Read a text artifact from this task's current execution generation."""
+        """Read a text artifact using a zero-based character offset (default 0).
+
+        Start at 0 for the full document; offset=1 omits its first character.
+        Follow next_offset until null. Every response includes offset and
+        total_chars; sha256 identifies the entire file, not the returned slice.
+        """
         return _read_task_file(
             _task_file_root(db_path, task_id, artifact_generation, create=False),
             name,

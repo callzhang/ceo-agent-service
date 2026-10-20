@@ -37,16 +37,15 @@ def test_population_keeps_one_preview_and_preserves_full_input(preview_catalog):
         before = db.execute("select message_normalized_text,class_model_text,message_source_reference_json from emails order by id").fetchall()
         facts_before = [dict(row) for row in db.execute("select * from emails order by id")]
         populate_email_previews(db)
-        rows = db.execute("select class_preview,message_preview from emails order by id").fetchall()
+        rows = db.execute("select message_preview from emails order by id").fetchall()
         assert rows[0][0] == ("前部关键词" + "中" * 1100 + "后部关键词")[:1000]
         assert rows[1][0] == "另一个正文"
-        assert all(row[1] == "" for row in rows)
         facts_after = [dict(row) for row in db.execute("select * from emails order by id")]
         for old, new in zip(facts_before, facts_after, strict=True):
-            assert new | {key: old[key] for key in ("class_preview", "message_preview")} == old
+            assert new | {key: old[key] for key in ("message_preview",)} == old
         assert db.execute("select message_normalized_text,class_model_text,message_source_reference_json from emails order by id").fetchall() == before
         populate_email_previews(db)
-        assert db.execute("select class_preview,message_preview from emails order by id").fetchall() == rows
+        assert db.execute("select message_preview from emails order by id").fetchall() == rows
 
 
 def test_default_search_never_reads_sources_but_full_search_finds_deep_keyword(preview_catalog):
@@ -82,7 +81,7 @@ def test_default_search_keeps_unicode_casefold_and_literal_percent(preview_catal
     from app.email_classification_reader import EmailClassificationReader
 
     with preview_catalog._connect() as db:
-        db.execute("update emails set class_preview='Straße 100% literal',message_preview=''")
+        db.execute("update emails set message_preview='Straße 100% literal'")
     def unavailable(*args):
         raise AssertionError("preview listing must not read originals")
     reader = EmailClassificationReader(preview_catalog, message_reader=SimpleNamespace(read_views=unavailable))
@@ -103,12 +102,11 @@ def test_scan_persists_one_bounded_preview_without_truncating_inputs(tmp_path):
     store.persist_scan_result(classification, normalized_text=original,
         preview="caller preview must not become another body copy", model_text=features)
     with store._connect() as db:
-        row = db.execute("select class_preview,message_preview,message_normalized_text,class_model_text,message_source_reference_json from emails").fetchone()
+        row = db.execute("select message_preview,message_normalized_text,class_model_text,message_source_reference_json from emails").fetchone()
     assert row[0] == original[:1000]
-    assert row[1] == ""
-    assert row[2] == original
-    assert row[3] == features
-    assert row[4] is None
+    assert row[1] == original
+    assert row[2] == features
+    assert row[3] is None
 
 
 def test_message_only_row_owns_preview_without_inventing_classification(tmp_path):
@@ -120,8 +118,8 @@ def test_message_only_row_owns_preview_without_inventing_classification(tmp_path
         db.execute("begin immediate")
         upsert_email_message(db, _message("message-only", normalized_text=body))
         populate_email_previews(db)
-        row = db.execute("select classification_id,class_preview,message_preview,message_normalized_text from emails").fetchone()
-    assert tuple(row) == (None, None, body[:1000], body)
+        row = db.execute("select classification_id,message_preview,message_normalized_text from emails").fetchone()
+    assert tuple(row) == (None, body[:1000], body)
 
 
 def test_retired_source_preview_stays_bounded_without_recreating_original(preview_catalog):
@@ -130,8 +128,8 @@ def test_retired_source_preview_stays_bounded_without_recreating_original(previe
 
     reference = json.dumps({"kind": "provider", "sha256": "a" * 64})
     with preview_catalog._connect() as db:
-        db.execute("update emails set message_normalized_text='',class_preview=?,message_preview=?,message_source_reference_json=?",
-                   ("已保存的真实预览" * 200, "duplicate", reference))
+        db.execute("update emails set message_normalized_text='',message_preview=?,message_source_reference_json=?",
+                   (("已保存的真实预览" * 200)[:1000], reference))
         populate_email_previews(db)
-        rows = db.execute("select class_preview,message_preview,message_normalized_text,message_source_reference_json from emails").fetchall()
-    assert all(tuple(row) == (("已保存的真实预览" * 200)[:1000], "", "", reference) for row in rows)
+        rows = db.execute("select message_preview,message_normalized_text,message_source_reference_json from emails").fetchall()
+    assert all(tuple(row) == (("已保存的真实预览" * 200)[:1000], "", reference) for row in rows)

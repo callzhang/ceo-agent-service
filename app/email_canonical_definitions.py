@@ -1,4 +1,4 @@
-"""Unselected, finite canonical Email declaration and source projections.
+"""Frozen Email52 declaration and explicit Email53 metadata ownership.
 
 The one physical row has distinct classification and message public IDs. The
 four locator facts shared by valid pairs are stored once; raw folders, headers,
@@ -21,9 +21,10 @@ MESSAGE_FIELDS = (
     "attachment_metadata_json", "received_at", "created_at", "updated_at",
 )
 SHARED_FIELDS = frozenset(("account_id", "stable_message_identity", "uidvalidity", "uid"))
+MESSAGE_METADATA_FIELDS = frozenset(("folder", "sender", "subject", "received_at", "preview"))
 
 
-def canonical_column(kind: str, field: str) -> str:
+def canonical_column(kind: str, field: str, *, metadata_owner: bool = False) -> str:
     fields = CLASS_FIELDS if kind == "email_classifications" else MESSAGE_FIELDS if kind == "email_messages" else ()
     if field not in fields:
         raise ValueError("unsupported Email source field")
@@ -31,14 +32,16 @@ def canonical_column(kind: str, field: str) -> str:
         return "classification_id"
     if field in SHARED_FIELDS:
         return field
+    if metadata_owner and field in MESSAGE_METADATA_FIELDS:
+        return "message_" + field
     return ("class_" if kind == "email_classifications" else "message_") + field
 
 
-def email_projection(kind: str) -> str:
+def email_projection(kind: str, *, metadata_owner: bool = False) -> str:
     fields = CLASS_FIELDS if kind == "email_classifications" else MESSAGE_FIELDS if kind == "email_messages" else ()
     if not fields:
         raise ValueError("unsupported Email source kind")
-    selected = ",".join(f'"{canonical_column(kind, field)}" as "{field}"' for field in fields)
+    selected = ",".join(f'"{canonical_column(kind, field, metadata_owner=metadata_owner)}" as "{field}"' for field in fields)
     predicate = " where classification_id is not null" if kind == "email_classifications" else ""
     return "select " + selected + " from main.emails" + predicate
 
@@ -111,6 +114,30 @@ EMAILS_INDEX_SQL = (
     "create index idx_emails_class_status on emails(class_status,class_updated_at desc,classification_id desc) where classification_id is not null",
     "create index idx_emails_message_account_locator on emails(account_id,message_folder,uidvalidity,uid)",
 )
+
+
+def email_metadata_declaration(*, metadata_owner: bool = False):
+    """Select Email53 explicitly; the default Email52 declaration stays frozen."""
+    if not metadata_owner:
+        return EMAILS_TABLE_SQL, EMAILS_INDEX_SQL, EMAILS_TRIGGER_SQL
+    table = EMAILS_TABLE_SQL
+    for field in MESSAGE_METADATA_FIELDS:
+        table = table.replace("    class_" + field + " text,\n", "")
+    table = table.replace(
+        "        class_folder is not null and class_sender is not null and\n"
+        "        class_subject is not null and class_preview is not null and\n"
+        "        class_model_text is not null and class_received_at is not null and\n",
+        "        class_model_text is not null and\n",
+    )
+    # The counting expression includes embedded NULs, which length(text)
+    # alone stops at. It does not modify the stored preview.
+    table = table.replace(
+        "    message_preview text not null,", "    message_preview text not null "
+        "check(typeof(message_preview)='text' and "
+        "length(cast(unhex(replace(hex(message_preview),'00','01')) as text))<=1000),")
+    indexes = tuple(sql.replace("account_id,class_folder,", "account_id,message_folder,")
+                    for sql in EMAILS_INDEX_SQL)
+    return table, indexes, EMAILS_TRIGGER_SQL
 
 EMAILS_TRIGGER_SQL = (
     "create trigger trg_emails_class_source_insert before insert on emails when new.classification_id is not null and new.class_classification_source not in ('model','user','agent') begin select raise(abort,'invalid email classification source'); end",

@@ -747,6 +747,7 @@
           "type": "null"
         },
         "needs_human_reason": {
+          "maxLength": 100,
           "minLength": 1,
           "type": "string"
         },

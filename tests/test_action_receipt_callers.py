@@ -1,5 +1,7 @@
 """Real runtime callers retain their contracts after the receipt-table cutover."""
 
+from tests.sent_fixtures import historical_sent_delivery
+
 import pytest
 
 from app.task8_storage import task8_set_parts
@@ -105,7 +107,7 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     ).run
     key = external_action_key(business_object_key=task.business_object_key, action_identity="send",
                               operation="send", target_identifiers=action["target"])
-    store.record_agent_message_delivery(
+    historical_sent_delivery(store,
         agent_run_id=audit.id, external_action_key=key, conversation_id=task.conversation_id,
         trigger_message_id=task.trigger_message_id, reply_text="Delivered report",
         provider_result={"verification": {"state": "sent"}},

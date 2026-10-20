@@ -1,0 +1,891 @@
+{
+  "schema": "ceo-shared-actions-copy-acceptance-v1",
+  "acceptance_source_commit": "6ad34bcd2d11e6105e201a0151c214f513274d5f",
+  "source": {
+    "path": "/private/tmp/ceo-model-simplification-0zjph5co/b2-fresh-production-source.sqlite3",
+    "store_version": "2026-10-19.5",
+    "email_version": 53,
+    "integrity_check": "ok",
+    "fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "bytes": 479186944,
+    "sha256": "be50ca02d0e8cf94d9e879d59fa2ab7dfb7487ba7173334601112b2cde490d97",
+    "complete_application_id": 1128615746,
+    "old_backup_untouched": true,
+    "strict_old_source_cold_open": true,
+    "cold_open_all_physical_facts_exact": true
+  },
+  "migration_publish_seconds": 222.164,
+  "task_id": 5131569106897304,
+  "task_generation": "initial",
+  "b2_transition": {
+    "public_shared_action_values_types_exact": true,
+    "family_counts": {
+      "review_candidates": 1040,
+      "candidate_executions": 331,
+      "candidate_action_attempts": 321,
+      "email_action_plans": 10602,
+      "email_actions": 11026,
+      "email_action_attempts": 13090
+    },
+    "all_unrelated_tables_and_actions_exact": true,
+    "identities_and_non_step_payloads_exact": true,
+    "exact_store_markers": true,
+    "original_fk_multiset_preserved": true
+  },
+  "prepared": {
+    "task_status": "needs_human",
+    "provider_calls": 0,
+    "candidate_id": 1041,
+    "attempt_id": 15717
+  },
+  "native_evidence": {
+    "runs": [
+      {
+        "id": 386803,
+        "role": "consumer",
+        "status": "completed",
+        "attempts": [
+          {
+            "attempt_id": 386804,
+            "session_id": "01a1574c-4e7e-72f2-9e66-b1befeb30540",
+            "start": 0,
+            "end": 36,
+            "status": "completed",
+            "tools": [
+              "read_task_artifact",
+              "read_system_action_contract"
+            ],
+            "commands_for_parent_review": [
+              [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' /Users/derek/.agents/AGENTS.md"
+              ]
+            ],
+            "event_count": 5
+          }
+        ]
+      },
+      {
+        "id": 386805,
+        "role": "audit",
+        "status": "completed",
+        "attempts": [
+          {
+            "attempt_id": 386806,
+            "session_id": "01a1574c-e483-7fc1-b709-e8c5d164004b",
+            "start": 0,
+            "end": 29,
+            "status": "completed",
+            "tools": [
+              "read_task_artifact",
+              "read_system_action_contract"
+            ],
+            "commands_for_parent_review": [],
+            "event_count": 4
+          }
+        ]
+      }
+    ],
+    "candidate_id": 1041,
+    "review_id": 1031,
+    "attempt_id": 15717,
+    "original_tables_unchanged": 11
+  },
+  "completed": {
+    "task_status": "done",
+    "execution_id": 332,
+    "provider_calls": 1,
+    "provider_verifications": 1,
+    "verified_attempts": 1,
+    "external_receipts": 1,
+    "sent_result_is_reference": true,
+    "sent_public_result_exact": true,
+    "no_additional_native_turn": true,
+    "original_tables_unchanged": 11
+  },
+  "current_direct": {
+    "account_id": "b2-copy-90e81978daaa",
+    "actions": [
+      {
+        "action_id": "email-action:7465abc90e94be767e0ae4b1cab62fbcc76f8a11e450cfea282c321b9b54101f",
+        "classification_id": 8658347715128503105,
+        "action_plan_id": "email-action-plan:14cd1b31a5c4e62d1b63624a2ebba16645351fd09c1428c19f6fe55e25daf9cc",
+        "operation": "archive",
+        "status": "processing",
+        "attempts": 1,
+        "claim_attempt_number": 2,
+        "provider_calls": 0
+      },
+      {
+        "action_id": "email-action:43f65d42643a5d91ef2fdcb7e950eaf023e8eb1f1f8128cc9f1690147cdb01fa",
+        "classification_id": 451037402626379671,
+        "action_plan_id": "email-action-plan:9dd1992fa52c00f4356ab16e7196a4ebb27ebfbf0dde321efa361b218197ba2c",
+        "operation": "flag_important",
+        "status": "done",
+        "attempts": 1,
+        "provider_operation": "STORE IMPORTANT",
+        "provider_calls": 2
+      },
+      {
+        "action_id": "email-action:70a5689a7ec75e95cc26699a7259d174a89c82591c79d1010c49ebe0bc87f84f",
+        "classification_id": 6861488042266591032,
+        "action_plan_id": "email-action-plan:6576c5a7cb3a632c3ad04c724d08c5b79376f666740bdc552901ddb6208aa39d",
+        "operation": "label",
+        "status": "done",
+        "attempts": 1,
+        "provider_operation": "STORE LABELS",
+        "provider_calls": 2
+      },
+      {
+        "action_id": "email-action:267e4120e52e41f99bad7a39acacca4423fda0d9172200484932a9a8f42e7d4a",
+        "classification_id": 2013812026509209160,
+        "action_plan_id": "email-action-plan:9a674687548ae6a9b07e74d857015bccc8c237b799b978b45c05cf22c8e5abc6",
+        "operation": "mark_read",
+        "status": "done",
+        "attempts": 1,
+        "provider_operation": "STORE \\Seen",
+        "provider_calls": 2
+      },
+      {
+        "action_id": "email-action:ccf5cc55a0cdcdd412c67b1c37172c8836f1fc8a98ed0baafeb1710a4ebf471e",
+        "classification_id": 1830615440574773445,
+        "action_plan_id": "email-action-plan:8fb82265b79ad87a38a119b048afc35c3db8466e3ea6f1421c67e0d27228373d",
+        "operation": "move",
+        "status": "done",
+        "attempts": 1,
+        "provider_operation": "MOVE",
+        "provider_calls": 3
+      },
+      {
+        "action_id": "email-action:ff79b6f7d49b5576e0b69bbd87a627190754879976fe38b393b3fd0f7fd45fb7",
+        "classification_id": 9002396265737945937,
+        "action_plan_id": "email-action-plan:a6ec88e4bcff97fd55ce9c04d57aac46c7615ad4e28c0b4b59436ce99b8be20b",
+        "operation": "trash",
+        "status": "done",
+        "attempts": 1,
+        "provider_operation": "move_to_trash",
+        "provider_calls": 3
+      }
+    ],
+    "no_agent_run_fabricated": true,
+    "no_verified_receipt_fabricated": true,
+    "real_provider_calls": 0
+  },
+  "native_inverse": {
+    "source_schema_exact": true,
+    "old_source": "cee038b130bfe908bdb148821787b54e0e4091aa",
+    "old_store_cold_open": true,
+    "old_email_store_cold_open": true,
+    "new_native_task_done": true,
+    "new_selection_execution_receipt_readable": true,
+    "new_direct_current_claim_and_five_terminal_results_readable": true,
+    "no_replay_or_provider_calls": true
+  },
+  "native_reforward": {
+    "current_facts_preserved": true,
+    "integrity_check": "ok",
+    "original_fk_multiset_preserved": true,
+    "console_provider_calls": 0,
+    "immutable_source_unchanged": true
+  },
+  "capacity": {
+    "source": {
+      "file_bytes": 479186944,
+      "actions_and_indexes_bytes": 173584384,
+      "parts": {
+        "actions": 138395648,
+        "idx_actions_attempt_sequence": 4096,
+        "idx_actions_audit_run": 16384,
+        "idx_actions_business_attention_events_lookup": 4096,
+        "idx_actions_business_attention_proposal_tasks_key": 4096,
+        "idx_actions_business_attention_proposal_tasks_lookup": 4096,
+        "idx_actions_business_attention_tasks_key": 4096,
+        "idx_actions_business_attention_tasks_lookup": 4096,
+        "idx_actions_business_project_evidence_key": 4096,
+        "idx_actions_business_signal_public_id": 892928,
+        "idx_actions_business_task_anchor_links_lookup": 4096,
+        "idx_actions_business_task_anchor_links_task_id": 4096,
+        "idx_actions_business_task_date_evidence_lookup": 4096,
+        "idx_actions_business_task_evidence_key": 32768,
+        "idx_actions_business_task_evidence_lookup": 40960,
+        "idx_actions_business_task_relations_key": 4096,
+        "idx_actions_business_task_relations_lookup": 4096,
+        "idx_actions_business_task_relations_reverse": 4096,
+        "idx_actions_business_task_signals_dedupe_key": 233472,
+        "idx_actions_business_work_cluster_tasks_key": 4096,
+        "idx_actions_business_work_cluster_tasks_lookup": 4096,
+        "idx_actions_candidates_task": 32768,
+        "idx_actions_consumer_run": 16384,
+        "idx_actions_email_email_action_attempts_0": 1204224,
+        "idx_actions_email_email_action_plans_0": 204800,
+        "idx_actions_email_email_action_plans_1": 1019904,
+        "idx_actions_email_email_actions_0": 1163264,
+        "idx_actions_email_email_actions_1": 1339392,
+        "idx_actions_email_email_actions_2": 1146880,
+        "idx_actions_email_email_actions_3": 1015808,
+        "idx_actions_email_email_direct_retry_requests_0": 4096,
+        "idx_actions_email_email_feedback_requests_0": 135168,
+        "idx_actions_email_email_feedback_requests_1": 102400,
+        "idx_actions_email_email_feedback_requests_2": 86016,
+        "idx_actions_email_email_reply_dispatch_claims_0": 4096,
+        "idx_actions_email_email_reply_dispatch_claims_1": 4096,
+        "idx_actions_email_email_reply_dispatch_claims_2": 4096,
+        "idx_actions_email_email_reply_receipts_0": 4096,
+        "idx_actions_email_email_reply_receipts_1": 4096,
+        "idx_actions_email_email_unsubscribe_cancellations_0": 4096,
+        "idx_actions_email_email_unsubscribe_claims_0": 135168,
+        "idx_actions_email_email_unsubscribe_claims_1": 102400,
+        "idx_actions_email_email_unsubscribe_continuations_0": 4096,
+        "idx_actions_email_email_unsubscribe_effects_0": 196608,
+        "idx_actions_email_email_unsubscribe_receipts_0": 110592,
+        "idx_actions_email_email_unsubscribe_receipts_1": 102400,
+        "idx_actions_email_email_unsubscribe_steps_0": 77824,
+        "idx_actions_email_history_created": 28672,
+        "idx_actions_email_operation_identity": 4096,
+        "idx_actions_email_operation_processing": 4096,
+        "idx_actions_email_public_key": 4780032,
+        "idx_actions_errors_reply_task_settlement": 937984,
+        "idx_actions_errors_unresolved": 4096,
+        "idx_actions_execution_alias_candidate": 4096,
+        "idx_actions_execution_binding": 1245184,
+        "idx_actions_execution_receipt_operation": 36864,
+        "idx_actions_execution_receipt_run": 4096,
+        "idx_actions_external_key": 32768,
+        "idx_actions_fb_decision_feedback_round": 4096,
+        "idx_actions_fb_decision_item": 4096,
+        "idx_actions_fb_event_key": 4096,
+        "idx_actions_fb_event_token": 4096,
+        "idx_actions_fb_transition_batch_round": 4096,
+        "idx_actions_fb_transition_feedback": 4096,
+        "idx_actions_fb_transition_round": 4096,
+        "idx_actions_global_business": 81920,
+        "idx_actions_history_public_id": 24576,
+        "idx_actions_intent_authorization": 20480,
+        "idx_actions_intent_operation": 57344,
+        "idx_actions_intent_run": 4096,
+        "idx_actions_memory_attempt": 12288,
+        "idx_actions_memory_public_order": 20480,
+        "idx_actions_memory_status": 16384,
+        "idx_actions_memory_unique": 16384,
+        "idx_actions_observer_identity": 12288,
+        "idx_actions_operation_public_id": 4096,
+        "idx_actions_parent_candidate": 1269760,
+        "idx_actions_parent_review": 1265664,
+        "idx_actions_postfix_identity": 3043328,
+        "idx_actions_public_id": 2756608,
+        "idx_actions_reply_created": 696320,
+        "idx_actions_reply_current_trigger": 2138112,
+        "idx_actions_reply_oa_history": 86016,
+        "idx_actions_reply_public_order": 385024,
+        "idx_actions_reply_run_recovery": 401408,
+        "idx_actions_reply_status": 786432,
+        "idx_actions_reply_trigger_history": 1892352,
+        "idx_actions_reply_trigger_message": 851968,
+        "idx_actions_reviews_candidate": 20480,
+        "idx_actions_selection_candidate": 4096,
+        "idx_actions_sent_external_key": 36864,
+        "idx_actions_sent_history": 237568,
+        "idx_actions_sent_result_owner": 36864,
+        "idx_actions_sent_result_receipt": 921600,
+        "idx_actions_signal_inline_key": 12288,
+        "idx_actions_signal_inline_source": 20480,
+        "idx_actions_signal_shared": 16384,
+        "idx_actions_skill_export_revision": 36864,
+        "idx_actions_skill_load_config": 69632,
+        "idx_actions_skill_load_pid": 77824,
+        "idx_actions_sync_business_task_dingtalk_links_0": 4096,
+        "idx_actions_sync_business_task_dingtalk_links_1": 4096,
+        "idx_actions_sync_business_task_events_0": 40960,
+        "idx_actions_sync_business_task_follow_up_send_attempts_0": 4096,
+        "idx_actions_sync_business_task_follow_up_send_attempts_1": 4096,
+        "idx_actions_sync_business_task_follow_ups_0": 4096,
+        "idx_actions_sync_business_task_follow_ups_1": 4096,
+        "idx_actions_sync_business_task_todo_sync_outbox_0": 4096,
+        "idx_actions_sync_business_task_todo_sync_outbox_1": 4096,
+        "idx_actions_sync_follow_up_drafts_0": 98304,
+        "idx_actions_sync_follow_up_drafts_1": 98304,
+        "idx_actions_sync_follow_up_drafts_2": 81920,
+        "idx_actions_sync_follow_up_drafts_3": 110592,
+        "idx_actions_sync_follow_up_drafts_4": 126976,
+        "idx_actions_sync_follow_up_drafts_5": 110592,
+        "idx_actions_sync_follow_up_send_attempts_0": 4096,
+        "idx_actions_sync_follow_up_send_attempts_1": 4096,
+        "idx_actions_sync_follow_up_send_attempts_2": 4096,
+        "idx_actions_sync_task_todo_sync_outbox_0": 12288,
+        "idx_actions_sync_task_todo_sync_outbox_1": 16384,
+        "idx_actions_sync_work_todo_dingtalk_links_0": 24576,
+        "idx_actions_sync_work_todo_dingtalk_links_1": 12288,
+        "idx_actions_sync_work_todo_dingtalk_links_2": 24576,
+        "idx_actions_sync_work_updates_0": 176128,
+        "idx_actions_sync_work_updates_1": 81920,
+        "idx_actions_td_meeting_due": 16384,
+        "idx_actions_td_meeting_lease": 16384,
+        "idx_actions_td_meeting_memory_unique": 12288,
+        "idx_actions_td_task_due": 20480,
+        "idx_actions_td_task_lease": 20480,
+        "idx_actions_td_task_memory_unique": 24576,
+        "idx_actions_td_wechat_actual_unique": 4096,
+        "idx_actions_td_wechat_status": 4096,
+        "idx_actions_td_wechat_task_generation": 4096,
+        "idx_actions_text_public_key": 57344
+      },
+      "payloads": {
+        "agent_effect_intents": [
+          214,
+          138422
+        ],
+        "agent_execution_receipts": [
+          115,
+          74155
+        ],
+        "business_attention_events": [
+          24,
+          85490
+        ],
+        "business_attention_proposal_tasks": [
+          29,
+          848
+        ],
+        "business_attention_tasks": [
+          29,
+          848
+        ],
+        "business_project_evidence": [
+          52,
+          1538
+        ],
+        "business_task_anchor_links": [
+          111,
+          15461
+        ],
+        "business_task_events": [
+          1054,
+          1552799
+        ],
+        "business_task_evidence": [
+          1058,
+          43531
+        ],
+        "business_task_signals": [
+          999,
+          556867
+        ],
+        "business_work_cluster_tasks": [
+          16,
+          471
+        ],
+        "candidate_action_attempts": [
+          321,
+          48772
+        ],
+        "candidate_execution_alias": [
+          331,
+          331
+        ],
+        "candidate_reviews": [
+          1030,
+          2018030
+        ],
+        "candidate_supplements": [
+          7,
+          3076
+        ],
+        "email_action_attempts": [
+          13090,
+          4136298
+        ],
+        "email_action_plans": [
+          10602,
+          12795615
+        ],
+        "email_actions": [
+          11026,
+          8697255
+        ],
+        "email_direct_retry_requests": [
+          1,
+          265
+        ],
+        "email_feedback_requests": [
+          1413,
+          361941
+        ],
+        "email_historical_classification_history": [
+          183,
+          64557
+        ],
+        "email_unsubscribe_cancellations": [
+          1,
+          517
+        ],
+        "email_unsubscribe_claims": [
+          1109,
+          1063966
+        ],
+        "email_unsubscribe_effects": [
+          1196,
+          379651
+        ],
+        "email_unsubscribe_receipts": [
+          1109,
+          1796425
+        ],
+        "email_unsubscribe_steps": [
+          842,
+          231025
+        ],
+        "errors": [
+          15529,
+          7124348
+        ],
+        "external_action_results": [
+          497,
+          714526
+        ],
+        "feedback_events": [
+          48,
+          73667
+        ],
+        "feedback_processing_transitions": [
+          5,
+          781
+        ],
+        "follow_up_drafts": [
+          2477,
+          8570301
+        ],
+        "follow_up_send_attempts": [
+          65,
+          183966
+        ],
+        "managed_skill_export_receipts": [
+          2138,
+          304848
+        ],
+        "meeting_memory_write_events": [
+          612,
+          85735
+        ],
+        "memory_write_events": [
+          476,
+          69532
+        ],
+        "native_reply_dispatches": [
+          155,
+          3565
+        ],
+        "outbound_postfix_receipts": [
+          781,
+          463012
+        ],
+        "outbound_postfixes": [
+          1346,
+          1906533
+        ],
+        "reply_attempts": [
+          15128,
+          18744400
+        ],
+        "review_candidates": [
+          1040,
+          19796511
+        ],
+        "runtime_skill_load_receipts": [
+          4407,
+          142157
+        ],
+        "sent_replies": [
+          2450,
+          7800185
+        ],
+        "sent_reply_observers": [
+          429,
+          9867
+        ],
+        "task_memory_write_events": [
+          709,
+          75548
+        ],
+        "task_todo_sync_outbox": [
+          242,
+          69045
+        ],
+        "wechat_deliveries": [
+          133,
+          114789
+        ],
+        "work_todo_dingtalk_links": [
+          875,
+          1686200
+        ],
+        "work_updates": [
+          5468,
+          10024989
+        ]
+      }
+    },
+    "target_before_new_facts": {
+      "file_bytes": 479186944,
+      "actions_and_indexes_bytes": 169558016,
+      "parts": {
+        "actions": 134840320,
+        "idx_actions_attempt_sequence": 4096,
+        "idx_actions_audit_run": 16384,
+        "idx_actions_business_attention_events_lookup": 4096,
+        "idx_actions_business_attention_proposal_tasks_key": 4096,
+        "idx_actions_business_attention_proposal_tasks_lookup": 4096,
+        "idx_actions_business_attention_tasks_key": 4096,
+        "idx_actions_business_attention_tasks_lookup": 4096,
+        "idx_actions_business_project_evidence_key": 4096,
+        "idx_actions_business_signal_public_id": 888832,
+        "idx_actions_business_task_anchor_links_lookup": 4096,
+        "idx_actions_business_task_anchor_links_task_id": 4096,
+        "idx_actions_business_task_date_evidence_lookup": 4096,
+        "idx_actions_business_task_evidence_key": 32768,
+        "idx_actions_business_task_evidence_lookup": 40960,
+        "idx_actions_business_task_relations_key": 4096,
+        "idx_actions_business_task_relations_lookup": 4096,
+        "idx_actions_business_task_relations_reverse": 4096,
+        "idx_actions_business_task_signals_dedupe_key": 233472,
+        "idx_actions_business_work_cluster_tasks_key": 4096,
+        "idx_actions_business_work_cluster_tasks_lookup": 4096,
+        "idx_actions_candidates_task": 32768,
+        "idx_actions_consumer_run": 16384,
+        "idx_actions_email_email_action_attempts_0": 1175552,
+        "idx_actions_email_email_action_plans_0": 188416,
+        "idx_actions_email_email_action_plans_1": 995328,
+        "idx_actions_email_email_actions_0": 1134592,
+        "idx_actions_email_email_actions_1": 1339392,
+        "idx_actions_email_email_actions_2": 1118208,
+        "idx_actions_email_email_actions_3": 991232,
+        "idx_actions_email_email_direct_retry_requests_0": 4096,
+        "idx_actions_email_email_feedback_requests_0": 135168,
+        "idx_actions_email_email_feedback_requests_1": 102400,
+        "idx_actions_email_email_feedback_requests_2": 86016,
+        "idx_actions_email_email_reply_dispatch_claims_0": 4096,
+        "idx_actions_email_email_reply_dispatch_claims_1": 4096,
+        "idx_actions_email_email_reply_dispatch_claims_2": 4096,
+        "idx_actions_email_email_reply_receipts_0": 4096,
+        "idx_actions_email_email_reply_receipts_1": 4096,
+        "idx_actions_email_email_unsubscribe_cancellations_0": 4096,
+        "idx_actions_email_email_unsubscribe_claims_0": 135168,
+        "idx_actions_email_email_unsubscribe_claims_1": 102400,
+        "idx_actions_email_email_unsubscribe_continuations_0": 4096,
+        "idx_actions_email_email_unsubscribe_effects_0": 196608,
+        "idx_actions_email_email_unsubscribe_receipts_0": 110592,
+        "idx_actions_email_email_unsubscribe_receipts_1": 102400,
+        "idx_actions_email_email_unsubscribe_steps_0": 77824,
+        "idx_actions_email_history_created": 28672,
+        "idx_actions_email_operation_identity": 4096,
+        "idx_actions_email_operation_processing": 4096,
+        "idx_actions_email_public_key": 4677632,
+        "idx_actions_errors_reply_task_settlement": 937984,
+        "idx_actions_errors_unresolved": 4096,
+        "idx_actions_execution_alias_candidate": 4096,
+        "idx_actions_execution_binding": 1200128,
+        "idx_actions_execution_receipt_operation": 36864,
+        "idx_actions_execution_receipt_run": 4096,
+        "idx_actions_external_key": 28672,
+        "idx_actions_fb_decision_feedback_round": 4096,
+        "idx_actions_fb_decision_item": 4096,
+        "idx_actions_fb_event_key": 4096,
+        "idx_actions_fb_event_token": 4096,
+        "idx_actions_fb_transition_batch_round": 4096,
+        "idx_actions_fb_transition_feedback": 4096,
+        "idx_actions_fb_transition_round": 4096,
+        "idx_actions_global_business": 81920,
+        "idx_actions_history_public_id": 24576,
+        "idx_actions_intent_authorization": 20480,
+        "idx_actions_intent_operation": 57344,
+        "idx_actions_intent_run": 4096,
+        "idx_actions_memory_attempt": 12288,
+        "idx_actions_memory_public_order": 20480,
+        "idx_actions_memory_status": 16384,
+        "idx_actions_memory_unique": 16384,
+        "idx_actions_observer_identity": 12288,
+        "idx_actions_operation_public_id": 4096,
+        "idx_actions_parent_candidate": 1269760,
+        "idx_actions_parent_review": 1265664,
+        "idx_actions_postfix_identity": 2977792,
+        "idx_actions_public_id": 2707456,
+        "idx_actions_reply_created": 696320,
+        "idx_actions_reply_current_trigger": 2129920,
+        "idx_actions_reply_oa_history": 77824,
+        "idx_actions_reply_public_order": 385024,
+        "idx_actions_reply_run_recovery": 401408,
+        "idx_actions_reply_status": 778240,
+        "idx_actions_reply_trigger_history": 1892352,
+        "idx_actions_reply_trigger_message": 843776,
+        "idx_actions_reviews_candidate": 20480,
+        "idx_actions_selection_candidate": 4096,
+        "idx_actions_sent_external_key": 36864,
+        "idx_actions_sent_history": 237568,
+        "idx_actions_sent_result_owner": 36864,
+        "idx_actions_sent_result_receipt": 917504,
+        "idx_actions_signal_inline_key": 12288,
+        "idx_actions_signal_inline_source": 20480,
+        "idx_actions_signal_shared": 16384,
+        "idx_actions_skill_export_revision": 36864,
+        "idx_actions_skill_load_config": 69632,
+        "idx_actions_skill_load_pid": 69632,
+        "idx_actions_sync_business_task_dingtalk_links_0": 4096,
+        "idx_actions_sync_business_task_dingtalk_links_1": 4096,
+        "idx_actions_sync_business_task_events_0": 40960,
+        "idx_actions_sync_business_task_follow_up_send_attempts_0": 4096,
+        "idx_actions_sync_business_task_follow_up_send_attempts_1": 4096,
+        "idx_actions_sync_business_task_follow_ups_0": 4096,
+        "idx_actions_sync_business_task_follow_ups_1": 4096,
+        "idx_actions_sync_business_task_todo_sync_outbox_0": 4096,
+        "idx_actions_sync_business_task_todo_sync_outbox_1": 4096,
+        "idx_actions_sync_follow_up_drafts_0": 98304,
+        "idx_actions_sync_follow_up_drafts_1": 98304,
+        "idx_actions_sync_follow_up_drafts_2": 81920,
+        "idx_actions_sync_follow_up_drafts_3": 110592,
+        "idx_actions_sync_follow_up_drafts_4": 126976,
+        "idx_actions_sync_follow_up_drafts_5": 110592,
+        "idx_actions_sync_follow_up_send_attempts_0": 4096,
+        "idx_actions_sync_follow_up_send_attempts_1": 4096,
+        "idx_actions_sync_follow_up_send_attempts_2": 4096,
+        "idx_actions_sync_task_todo_sync_outbox_0": 12288,
+        "idx_actions_sync_task_todo_sync_outbox_1": 16384,
+        "idx_actions_sync_work_todo_dingtalk_links_0": 24576,
+        "idx_actions_sync_work_todo_dingtalk_links_1": 12288,
+        "idx_actions_sync_work_todo_dingtalk_links_2": 24576,
+        "idx_actions_sync_work_updates_0": 176128,
+        "idx_actions_sync_work_updates_1": 81920,
+        "idx_actions_td_meeting_due": 16384,
+        "idx_actions_td_meeting_lease": 16384,
+        "idx_actions_td_meeting_memory_unique": 12288,
+        "idx_actions_td_task_due": 20480,
+        "idx_actions_td_task_lease": 20480,
+        "idx_actions_td_task_memory_unique": 24576,
+        "idx_actions_td_wechat_actual_unique": 4096,
+        "idx_actions_td_wechat_status": 4096,
+        "idx_actions_td_wechat_task_generation": 4096,
+        "idx_actions_text_public_key": 53248
+      },
+      "payloads": {
+        "agent_effect_intents": [
+          214,
+          138422
+        ],
+        "agent_execution_receipts": [
+          115,
+          74155
+        ],
+        "business_attention_events": [
+          24,
+          85490
+        ],
+        "business_attention_proposal_tasks": [
+          29,
+          848
+        ],
+        "business_attention_tasks": [
+          29,
+          848
+        ],
+        "business_project_evidence": [
+          52,
+          1538
+        ],
+        "business_task_anchor_links": [
+          111,
+          15461
+        ],
+        "business_task_events": [
+          1054,
+          1552799
+        ],
+        "business_task_evidence": [
+          1058,
+          43531
+        ],
+        "business_task_signals": [
+          999,
+          556867
+        ],
+        "business_work_cluster_tasks": [
+          16,
+          471
+        ],
+        "candidate_action_attempts": [
+          321,
+          48772
+        ],
+        "candidate_execution_alias": [
+          331,
+          331
+        ],
+        "candidate_reviews": [
+          1030,
+          2018030
+        ],
+        "candidate_supplements": [
+          7,
+          3076
+        ],
+        "email_action_attempts": [
+          13090,
+          4136298
+        ],
+        "email_action_plans": [
+          10602,
+          12795615
+        ],
+        "email_actions": [
+          11026,
+          6194110
+        ],
+        "email_direct_retry_requests": [
+          1,
+          265
+        ],
+        "email_feedback_requests": [
+          1413,
+          361941
+        ],
+        "email_historical_classification_history": [
+          183,
+          64557
+        ],
+        "email_unsubscribe_cancellations": [
+          1,
+          517
+        ],
+        "email_unsubscribe_claims": [
+          1109,
+          1063966
+        ],
+        "email_unsubscribe_effects": [
+          1196,
+          379651
+        ],
+        "email_unsubscribe_receipts": [
+          1109,
+          1796425
+        ],
+        "email_unsubscribe_steps": [
+          842,
+          231025
+        ],
+        "errors": [
+          15529,
+          7124348
+        ],
+        "external_action_results": [
+          497,
+          714526
+        ],
+        "feedback_events": [
+          48,
+          73667
+        ],
+        "feedback_processing_transitions": [
+          5,
+          781
+        ],
+        "follow_up_drafts": [
+          2477,
+          8570301
+        ],
+        "follow_up_send_attempts": [
+          65,
+          183966
+        ],
+        "managed_skill_export_receipts": [
+          2138,
+          304848
+        ],
+        "meeting_memory_write_events": [
+          612,
+          85735
+        ],
+        "memory_write_events": [
+          476,
+          69532
+        ],
+        "native_reply_dispatches": [
+          155,
+          3565
+        ],
+        "outbound_postfix_receipts": [
+          781,
+          463012
+        ],
+        "outbound_postfixes": [
+          1346,
+          1906533
+        ],
+        "reply_attempts": [
+          15128,
+          18744400
+        ],
+        "review_candidates": [
+          1040,
+          19796511
+        ],
+        "runtime_skill_load_receipts": [
+          4407,
+          142157
+        ],
+        "sent_replies": [
+          2450,
+          7800185
+        ],
+        "sent_reply_observers": [
+          429,
+          9867
+        ],
+        "task_memory_write_events": [
+          709,
+          75548
+        ],
+        "task_todo_sync_outbox": [
+          242,
+          69045
+        ],
+        "wechat_deliveries": [
+          133,
+          114789
+        ],
+        "work_todo_dingtalk_links": [
+          875,
+          1686200
+        ],
+        "work_updates": [
+          5468,
+          10024989
+        ]
+      }
+    },
+    "actions_and_indexes_delta": -4026368,
+    "all_actions_payload_delta": -2503145,
+    "basis": "identical original population after schema migration, before new test facts; no VACUUM/file-shrink claim"
+  },
+  "upstream_general_contract": {
+    "source": "6ad34bcd2",
+    "upstream": "9297581a950e5d0b6be918ce63a0e48adbf68337",
+    "general_capability_instructions_exact": true,
+    "sha256_with_unchanged_storage_sentinel": "bb93c8706b31aab45aff1781ab82ffeb63aea9247ab487931405fbbe8df15795",
+    "scope": "AST evaluation only of constant assignments; actual native acceptance is at frozen6ad source"
+  },
+  "evidence_limits": [
+    "Fresh source is production snapshot, not prior cumulative synthetic fixture.",
+    "Native originals remain only in native Codex sessions; no trajectory copied.",
+    "No real provider sends or original email reads in test.",
+    "Current-data inverse passed actual old Store and default strict EmailStore.",
+    "No VACUUM or file-size shrink claim.",
+    "Production publication and live readback remain pending."
+  ],
+  "prior_staged_fixture_limit": "Earlier cumulative A4 source contained one B1 partial synthetic message90261019 with RFC/thread mismatch; both pre/post B2a; production had neither mismatch. Its native/single-action proof passed but strict full EmailStore acceptance was not claimed. Fresh normal source was used for complete proof.",
+  "harness_correction": "Synthetic DTO assembly now preserves Python enums/tuples/datetimes rather than passing JSON-mode values to strict Python validation; app and validation unchanged. Initial failed assembly created only a disabled synthetic account, no action or provider effect."
+}

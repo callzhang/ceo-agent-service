@@ -63,9 +63,11 @@ class ExistingSchemaUpgradeStateStore:
 
     def bind_committed_schema(self) -> None:
         """Select the progress backend from one committed, read-only snapshot."""
-        from app.action_email_schema_release import (
-            SOURCE_EMAIL_VERSION, TARGET_EMAIL_VERSION, TARGET_STORE_VERSION,
+        from app.action_email_schema_release import SOURCE_EMAIL_VERSION
+        from app.email_metadata_schema_release import (
+            SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
         )
+        from app.task_lifecycle_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
         from app.state_definitions import state_projection
 
         if not self.database_path.exists():
@@ -84,10 +86,10 @@ class ExistingSchemaUpgradeStateStore:
             ).fetchone()[0] if ledger else None
             if version is not None:
                 if type(version) is not int or not (
-                    0 < version <= SOURCE_EMAIL_VERSION or version == TARGET_EMAIL_VERSION
+                    0 < version <= SOURCE_EMAIL_VERSION or version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION)
                 ):
                     raise ValueError("unsupported committed Email schema role")
-                current = version == TARGET_EMAIL_VERSION
+                current = version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION)
             elif db.execute(
                 "select 1 from main.sqlite_schema where name='state' collate nocase"
             ).fetchone():
@@ -95,7 +97,7 @@ class ExistingSchemaUpgradeStateStore:
                     f"select value from ({state_projection('service_state')}) "
                     "where key='store_schema_version'"
                 ).fetchone()
-                if marker is None or marker[0] != TARGET_STORE_VERSION:
+                if marker is None or marker[0] not in (*PREVIOUS_STORE_VERSIONS, TARGET_STORE_VERSION):
                     raise ValueError("unsupported committed Store-only State schema role")
                 current = True
             else:
@@ -420,25 +422,25 @@ def in_flight_work(database_path: Path) -> int:
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
-            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.1', previous_versions=('2026-10-14.1',))}) as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.8', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5', '2026-10-19.6', '2026-10-19.7'))}) as claim "
             "        where claim.adapter_name='reply' "
             "          and claim.source_id=cast(task.id as text) "
-            "          and coalesce(claim.terminal_at,'')='' "
+            "          and claim.claim_active "
             "          and julianday(claim.lease_expires_at)>julianday('now'))))"
             f" + (select count(*) from ({work_source}) where status='processing')"
             f" + (select count(*) from ({meeting_jobs}) as jobs "
             "    where (jobs.status='processing' and ("
             f"      exists (select 1 from ({meeting_runs}) as runs "
             "        where runs.job_id=jobs.id and runs.status='running') "
-            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.1', previous_versions=('2026-10-14.1',))}) as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.8', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5', '2026-10-19.6', '2026-10-19.7'))}) as claim "
             "        where claim.adapter_name='meeting' "
             "          and claim.source_id=cast(jobs.id as text) "
-            "          and coalesce(claim.terminal_at,'')='' "
+            "          and claim.claim_active "
             "          and julianday(claim.lease_expires_at)>julianday('now')))) "
             "    or (jobs.status='ready_to_send' "
             "      and coalesce(jobs.locked_at,'')<>''))"
-            f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-19.1', previous_versions=('2026-10-14.1',))})"
-            "    where coalesce(terminal_at,'')=''"
+            f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-19.8', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5', '2026-10-19.6', '2026-10-19.7'))})"
+            "    where claim_active"
             "    and julianday(lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"

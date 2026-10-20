@@ -2047,7 +2047,7 @@ def test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads(tmp
         with original_connect() as db:
             def authorize(action, table, column, database, source):
                 if action == sqlite3.SQLITE_READ and table == "emails":
-                    if column in {"class_subject", "class_preview", "class_model_text", "class_agent_result_json"}:
+                    if column in {"message_subject", "message_preview", "class_model_text", "class_agent_result_json"}:
                         return sqlite3.SQLITE_DENY
                 return sqlite3.SQLITE_OK
             db.set_authorizer(authorize)
@@ -6816,7 +6816,7 @@ def test_locator_refresh_does_not_invalidate_stable_claim_identity(tmp_path: Pat
         db.execute(
             """
             update emails
-            set class_folder='Archive', uidvalidity=43, uid=8
+            set message_folder='Archive', uidvalidity=43, uid=8
             where classification_id=?
             """,
             (claimed.classification_id,),

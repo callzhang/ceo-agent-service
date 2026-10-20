@@ -89,13 +89,18 @@ Audit 自己的 return/reject 仍属于审核反馈协议。
   "reason": "access requested",
   "target": {},
   "payload": {},
-  "evidence_refs": ["original-verified-request-external-action-key"]
+  "evidence_refs": ["receipt:original-verified-request-external-action-key"]
 }
 ```
 
-该引用必须解析为当前任务恰好一条已核实的权限申请动作，且原候选 action
-确为 `request_access`。普通评论、模型自行声明、未知 key、其他任务回执以及
-uncertain 动作均不能启动权限等待。仅输出 `reason: access requested` 不满足条件。
+Consumer 可按证据来源返回原始 key，也可能带 `receipt:` 或
+`prior_receipt_id=` 标记。服务只剥离一个已知标记，再与已存储的原始
+`external_action_key` 做精确比较；不得省略或额外改写 key 的其余部分。最终必须解析为当前任务恰好一条已核实的权限申请动作，
+且原候选 action 确为 `request_access`。普通评论、模型自行声明、未知 key、其他任务回执以及
+uncertain 动作均不能启动权限等待。唯一兼容的旧候选是迁移前的 OA
+`material-read-access-block` 评论：它必须有本任务的已核验 comment 回执、完全相同的
+action identity，且旧候选只有一个对应评论动作。普通旧评论仍不满足条件。仅输出
+`reason: access requested` 不满足条件。
 `retry` 不是技术错误，不能同时携带非空技术错误码或置真的技术错误标志。
 
 ### 最多 10 次，最长 72 小时

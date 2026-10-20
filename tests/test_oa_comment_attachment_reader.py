@@ -1,10 +1,42 @@
 import asyncio
+import base64
 import hashlib
 import json
+import random
+from io import BytesIO
 
 import pytest
 
 from app import agent_cli
+
+
+def test_oversized_image_is_reencoded_for_bounded_ocr_and_keeps_source_digest(
+    tmp_path,
+):
+    from PIL import Image
+
+    source = Image.frombytes(
+        "RGB",
+        (1200, 1200),
+        random.Random(15421).randbytes(1200 * 1200 * 3),
+    )
+    encoded_source = BytesIO()
+    source.save(encoded_source, format="PNG")
+    original = encoded_source.getvalue()
+    assert len(original) > agent_cli.MAX_OCR_AGENT_INPUT_BYTES
+
+    result = agent_cli._read_image_material(
+        BytesIO(original), tmp_path / "large.png"
+    )
+
+    payload = base64.b64decode(result["ocr_input_base64"], validate=True)
+    assert len(payload) <= agent_cli.MAX_OCR_AGENT_INPUT_BYTES
+    assert result["ocr_mime_type"] == "image/jpeg"
+    assert result["sha256"] == hashlib.sha256(original).hexdigest()
+    assert result["ocr_input_transformed"] is True
+    assert result["ocr_source_dimensions"] == {"width": 1200, "height": 1200}
+    with Image.open(BytesIO(payload)) as bounded:
+        assert bounded.format == "JPEG"
 
 
 def test_oa_comment_attachment_is_read_through_premium_endpoint_and_ocr_input(

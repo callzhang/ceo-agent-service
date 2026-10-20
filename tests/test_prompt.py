@@ -60,12 +60,11 @@ def test_runtime_context_injects_deployment_values_without_skill_literals(monkey
 SKILLS_ROOT = bundled_business_skills_root()
 
 
-def test_consumer_common_capabilities_leave_domain_workflows_to_skills():
+def test_consumer_capability_guidance_is_generic_and_declares_native_ocr():
     instructions = " ".join(AGENT_CAPABILITY_INSTRUCTIONS.split())
     assert "originatorUserid/originatorOpenDingTalkId" not in instructions
-    assert "Ordinary work does not require a controlled-action proposal" in instructions
-    assert "Only the registered reviewed system actions" in instructions
-    assert "after whole-candidate approval" in instructions
+    assert "ai_services.ocr_document" in instructions
+    assert "ALL_TOOLS" in instructions
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
