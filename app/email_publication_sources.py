@@ -8,7 +8,7 @@ from app.action_email_schema_release import (
     SOURCE_STORE_VERSION,
 )
 from app.action_storage import email_action_projection
-from app.execution_owner_schema_release import (
+from app.shared_action_schema_release import (
     TARGET_STORE_VERSION, TARGET_EMAIL_VERSION, PREVIOUS_STORE_VERSIONS, PREVIOUS_EMAIL_PAIRS,
 )
 
@@ -37,6 +37,9 @@ def publication_email_action_source(db: sqlite3.Connection) -> str:
     pair = _markers(db)
     if pair == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
         return "select status from email_actions"
-    if pair == (TARGET_STORE_VERSION, TARGET_EMAIL_VERSION) or pair in PREVIOUS_EMAIL_PAIRS:
-        return email_action_projection("email_actions")
+    if pair == (TARGET_STORE_VERSION, TARGET_EMAIL_VERSION):
+        from app.shared_action_definitions import email_projection
+        return email_projection('email_actions')
+    if pair in PREVIOUS_EMAIL_PAIRS:
+        return email_action_projection('email_actions')
     raise ValueError("unknown or mixed Email action publication source schema")

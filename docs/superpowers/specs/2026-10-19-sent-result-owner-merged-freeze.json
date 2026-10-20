@@ -1,0 +1,21 @@
+{
+  "schema": "ceo-sent-result-owner-merged-freeze-v1",
+  "commit": "1b38a0e20bd495b597f092883173b222dbd3c5cd",
+  "files": 1208,
+  "sha256": "07995baffd63214a516366631228479e0b3fb67cdc66940bff8b289126333720",
+  "digest_format": "sorted unique path UTF-8 + NUL + raw SHA256(file bytes) + NUL",
+  "premerge_review_source": "25b2e2daf/1208/3a1495a0fba960a0d04851c19b00a514ad8ee1a08ceaa525f2edb49347396413",
+  "upstream_merge": "47db00411",
+  "changed_source_paths": [
+    "app/consumer_agent.py",
+    "app/wechat/codex_safety.py",
+    "tests/test_agent_role_tool_boundary.py",
+    "tests/test_prompt.py"
+  ],
+  "sent_storage_release_paths_unchanged": true,
+  "focused_merged_smoke": {
+    "passed": 4,
+    "seconds": 4.07
+  },
+  "acceptance": "Parent full-copy/native/live pending"
+}

@@ -11,6 +11,7 @@ from app.storage_payload import ACTION_RECORD_TYPES, PayloadLayout
 @dataclass(frozen=True)
 class ActionPayloads:
     layouts: Mapping[str, PayloadLayout]
+    record_types: object = ACTION_RECORD_TYPES
 
     def __post_init__(self):
         object.__setattr__(self, "layouts", MappingProxyType(dict(self.layouts)))
@@ -23,12 +24,12 @@ class ActionPayloads:
 
     def field_value(self, field, kinds=None, document="payload_json"):
         kinds = self.layouts if kinds is None else kinds
-        cases = ["when " + str(ACTION_RECORD_TYPES.code(kind)) + " then " + self.value(kind, field, document)
+        cases = ["when " + str(self.record_types.code(kind)) + " then " + self.value(kind, field, document)
                  for kind in kinds if field in self.layouts[kind].fields]
         return "case _kind " + " ".join(cases) + " end" if cases else "null"
 
     def scoped_value(self, kind, field, document="payload_json"):
-        return "case when _kind=" + str(ACTION_RECORD_TYPES.code(kind)) + " then " + self.value(kind, field, document) + " end"
+        return "case when _kind=" + str(self.record_types.code(kind)) + " then " + self.value(kind, field, document) + " end"
 
     def check(self, kind, field):
         return _encoded_value_check("payload_json", self.path(kind, field))

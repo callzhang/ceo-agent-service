@@ -1,3 +1,4 @@
+from app import shared_action_lifecycle
 import errno
 import hashlib
 import json
@@ -271,7 +272,6 @@ from app.action_storage import (
     delete_action,
     insert_sync_action,
     reply_action_projection,
-    email_action_projection,
     _reply_variant_for,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
@@ -296,6 +296,8 @@ from app.action_storage import (
 )
 from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS, TASK_DELIVERY_DEFAULTS_FRESH, TASK_DELIVERY_KINDS
 from app.action_error_definitions import error_projection
+
+from app.shared_action_definitions import email_projection as email_action_projection
 
 MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
 TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
@@ -447,7 +449,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.4"
+STORE_SCHEMA_VERSION = "2026-10-19.6"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1973,7 +1975,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1981,7 +1983,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, metadata_owner=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2305,7 +2307,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -6772,7 +6774,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     db, action_variant=variant, include_business_actions=True,
                     include_email_history=True,
                     canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True)
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
@@ -6786,9 +6788,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
                         include_business_actions=True,
                         include_email_history=True,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
                         canonical_email="emails" in tables,
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True)
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
@@ -6809,7 +6811,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.4 schema"
+                    "or the current 2026-10-19.6 schema"
                 )
             return True
         finally:
@@ -16988,61 +16990,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "feedback_token": feedback_token,
             })
 
-    def record_agent_message_delivery(
-        self,
-        *,
-        agent_run_id: int,
-        external_action_key: str,
-        conversation_id: str,
-        trigger_message_id: str,
-        reply_text: str,
-        provider_result: dict[str, object],
-    ) -> SentReply:
-        """Project one durable external send into History exactly once."""
-        action_key = external_action_key.strip()
-        if not action_key or not reply_text.strip():
-            raise ValueError("external action key and reply text are required")
-        provider_result_json = _json_object_text(
-            provider_result, field="provider_result"
-        )
-        feedback_context = extract_configured_feedback_link_context(
-            reply_text,
-            vercel_base_url=feedback_spike_vercel_base_url(),
-        )
-        feedback_token = (
-            feedback_context.feedback_token if feedback_context is not None else ""
-        )
-        with self._immediate_write_transaction() as db:
-            run = db.execute(
-                f'select reply_task_id from ({AGENT_RUN_SQL}) as agent_runs where id=?',
-                (agent_run_id,),
-            ).fetchone()
-            if run is None:
-                raise ValueError("agent run does not exist")
-            insert_action(db, "sent_replies", {
-                "conversation_id": conversation_id,
-                "trigger_message_id": trigger_message_id,
-                "reply_text": reply_text,
-                "send_result_json": provider_result_json,
-                "feedback_token": feedback_token,
-                "agent_run_id": agent_run_id,
-                "external_action_key": action_key,
-            }, ignore=True)
-            row = db.execute(
-                f"select * from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
-                (action_key,),
-            ).fetchone()
-            if row is None:
-                raise RuntimeError("sent reply projection was not persisted")
-            if row["reply_text"] != reply_text:
-                raise ValueError("conflicting message delivery projection")
-            insert_action(db, "sent_reply_observers", {
-                "sent_reply_id": row["id"],
-                "agent_run_id": agent_run_id,
-                "reply_task_id": run["reply_task_id"],
-            }, ignore=True)
-            return SentReply.model_validate(dict(row))
-
     def record_completed_agent_message_delivery(
         self,
         *,
@@ -20690,136 +20637,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             return attempt_id
 
-    def record_reply_attempt_for_trigger(
-        self,
-        *,
-        conversation_id: str,
-        conversation_title: str,
-        trigger_message_id: str,
-        trigger_sender: str,
-        trigger_text: str,
-        action: str,
-        sensitivity_kind: str,
-        codex_reason: str = "",
-        draft_reply_text: str = "",
-        direct_user_id: str = "",
-        direct_open_dingtalk_id: str = "",
-        codex_session_id: str = "",
-        codex_transcript_start_line: int = 0,
-        codex_transcript_end_line: int = 0,
-        audit_documents_json: str = "[]",
-        audit_tool_events_json: str = "[]",
-        audit_summary: str = "",
-        human_decision_options_json: str = "[]",
-        oa_process_instance_id: str = "",
-        oa_task_id: str = "",
-        oa_url: str = "",
-        oa_action: str = "",
-        oa_remark: str = "",
-        oa_action_result_json: str = "",
-        calendar_event_id: str = "",
-        calendar_response_status: str = "",
-        calendar_response_result_json: str = "",
-        mail_mailbox: str = "",
-        mail_message_id: str = "",
-        mail_subject: str = "",
-        mail_reply_text: str = "",
-        mail_action_result_json: str = "",
-        send_status: str = "pending",
-    ) -> int:
-        existing_attempt = self.get_latest_reply_attempt_for_trigger(
-            conversation_id, trigger_message_id
-        )
-        if (
-            existing_attempt is None
-            or self.has_sent_reply_for_trigger(conversation_id, trigger_message_id)
-        ):
-            return self.record_reply_attempt(
-                conversation_id=conversation_id,
-                conversation_title=conversation_title,
-                trigger_message_id=trigger_message_id,
-                trigger_sender=trigger_sender,
-                trigger_text=trigger_text,
-                action=action,
-                sensitivity_kind=sensitivity_kind,
-                codex_reason=codex_reason,
-                draft_reply_text=draft_reply_text,
-                direct_user_id=direct_user_id,
-                direct_open_dingtalk_id=direct_open_dingtalk_id,
-                codex_session_id=codex_session_id,
-                codex_transcript_start_line=codex_transcript_start_line,
-                codex_transcript_end_line=codex_transcript_end_line,
-                audit_documents_json=audit_documents_json,
-                audit_tool_events_json=audit_tool_events_json,
-                audit_summary=audit_summary,
-                human_decision_options_json=human_decision_options_json,
-                oa_process_instance_id=oa_process_instance_id,
-                oa_task_id=oa_task_id,
-                oa_url=oa_url,
-                oa_action=oa_action,
-                oa_remark=oa_remark,
-                oa_action_result_json=oa_action_result_json,
-                calendar_event_id=calendar_event_id,
-                calendar_response_status=calendar_response_status,
-                calendar_response_result_json=calendar_response_result_json,
-                mail_mailbox=mail_mailbox,
-                mail_message_id=mail_message_id,
-                mail_subject=mail_subject,
-                mail_reply_text=mail_reply_text,
-                mail_action_result_json=mail_action_result_json,
-                send_status=send_status,
-            )
-        with self._connect() as db:
-            db.execute("update sqlite_sequence set seq=seq where 0")
-            updated_at = db.execute("select current_timestamp").fetchone()[0]
-            update_action(db, "reply_attempts", existing_attempt.id, {
-                'conversation_id': conversation_id,
-                'conversation_title': conversation_title,
-                'trigger_message_id': trigger_message_id,
-                'trigger_sender': trigger_sender,
-                'trigger_text': trigger_text,
-                'action': action,
-                'sensitivity_kind': sensitivity_kind,
-                'codex_reason': codex_reason,
-                'draft_reply_text': draft_reply_text,
-                'direct_user_id': direct_user_id,
-                'direct_open_dingtalk_id': direct_open_dingtalk_id,
-                'codex_session_id': codex_session_id,
-                'codex_transcript_start_line': codex_transcript_start_line,
-                'codex_transcript_end_line': codex_transcript_end_line,
-                'audit_documents_json': audit_documents_json,
-                'audit_tool_events_json': _audit_event_metadata_json(audit_tool_events_json),
-                'audit_summary': audit_summary,
-                'human_decision_options_json': human_decision_options_json,
-                'oa_process_instance_id': oa_process_instance_id,
-                'oa_task_id': oa_task_id,
-                'oa_url': oa_url,
-                'oa_action': oa_action,
-                'oa_remark': oa_remark,
-                'oa_action_result_json': oa_action_result_json,
-                'calendar_event_id': calendar_event_id,
-                'calendar_response_status': calendar_response_status,
-                'calendar_response_result_json': calendar_response_result_json,
-                'mail_mailbox': mail_mailbox,
-                'mail_message_id': mail_message_id,
-                'mail_subject': mail_subject,
-                'mail_reply_text': mail_reply_text,
-                'mail_action_result_json': mail_action_result_json,
-                'send_status': send_status,
-                'final_reply_text': "",
-                'permission_action': "",
-                'permission_reason': "",
-                'send_error': "",
-                'retry_count': 0,
-                "updated_at": updated_at,
-            })
-            self._record_memory_write_events_in_connection(
-                db,
-                existing_attempt.id,
-                audit_tool_events_json,
-            )
-        return existing_attempt.id
-
     def update_reply_attempt(
         self,
         attempt_id: int,
@@ -20935,8 +20752,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         oa_action: str = "",
         oa_remark: str = "",
         oa_action_result_json: str = "",
-        sent_reply_text: str = "",
-        sent_reply_result_json: str = "",
     ) -> int:
         """Persist one orchestration result and its task transition atomically.
 
@@ -20947,19 +20762,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        if sent_reply_text and (task_status != "done" or send_status != "completed"):
-            raise ValueError("sent reply ledger requires completed task delivery")
-        feedback_context = (
-            extract_configured_feedback_link_context(
-                sent_reply_text,
-                vercel_base_url=feedback_spike_vercel_base_url(),
-            )
-            if sent_reply_text
-            else None
-        )
-        sent_reply_feedback_token = (
-            feedback_context.feedback_token if feedback_context is not None else ""
-        )
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 f"""
@@ -20988,10 +20790,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     f'select structured_error_json from ({AGENT_RUN_SQL}) as agent_runs where id=?',
                     (run_id,),
                 ).fetchone()
-                if sent_reply_text:
-                    raise ValueError(
-                        "failed agent run cannot finalize a newly sent reply"
-                    )
                 task_status = "failed"
                 task_error = self._agent_run_failure_code(
                     failed_run["structured_error_json"] if failed_run is not None else ""
@@ -21060,7 +20858,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "oa_remark": oa_remark,
                 "oa_action_result_json": oa_action_result_json,
                 "send_status": send_status, "send_error": send_error,
-                "final_reply_text": sent_reply_text,
+                "final_reply_text": "",
             }
             if current_attempt is None:
                 result = insert_action(db, "reply_attempts", {
@@ -21103,18 +20901,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     task_id=task_id,
                     execution_generation=expected_execution_generation,
                 )
-            if sent_reply_text:
-                if db.execute(
-                    f"select 1 from ({SENT_REPLY_SQL}) where conversation_id=? and trigger_message_id=?",
-                    (conversation_id, trigger_message_id),
-                ).fetchone() is None:
-                    insert_action(db, "sent_replies", {
-                        "conversation_id": conversation_id,
-                        "trigger_message_id": trigger_message_id,
-                        "reply_text": sent_reply_text,
-                        "send_result_json": sent_reply_result_json,
-                        "feedback_token": sent_reply_feedback_token,
-                    })
             if task_status in {"done", "skipped"}:
                 self._compact_settled_reply_task_input(db, task_id)
             return attempt_id
@@ -22242,7 +22028,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 insert_action(db, "candidate_supplements", {
                     "candidate_id": review_candidate_id, "instruction": supplement_instruction,
                 })
-                update_action(db, "review_candidates", review_candidate_id, {
+                shared_action_lifecycle.update_plan(db, "reviewed", review_candidate_id, {
                     "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
                     "invalidation_reason": "supplement",
                 })

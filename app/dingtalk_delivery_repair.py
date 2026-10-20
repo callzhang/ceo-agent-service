@@ -17,6 +17,8 @@ from app.run_storage import AGENT_RUN_SQL
 from app.task20_definitions import task20_column, task20_projection
 from app.task8_storage import task8_set_parts
 
+from app import shared_action_lifecycle
+
 
 REPLY_TASK_SQL = task20_projection('reply_tasks')
 
@@ -159,7 +161,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             "provider_result_json": body, "result_digest": hashlib.sha256(body.encode()).hexdigest(),
         })
         for attempt in attempts:
-            update_action(db, "candidate_action_attempts", attempt["id"], {
+            shared_action_lifecycle.transition(db, "reviewed", "outcome", identity=attempt["id"], values={
                 "result_json": None if action_status == "verified" else body, "status": action_status,
                 "updated_at": proof["queried_at"],
             })
@@ -463,7 +465,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         for attempt in attempts:
             status = "verified" if attempt["id"] == candidate["action_attempt_id"] else attempt["status"]
             result = None if attempt["id"] == candidate["action_attempt_id"] else attempt["result_json"]
-            update_action(db, "candidate_action_attempts", attempt["id"], {
+            shared_action_lifecycle.transition(db, "reviewed", "outcome", identity=attempt["id"], values={
                 "status": status, "result_json": result, "updated_at": queried_at,
             })
         execution_result = SystemExecutionResult(

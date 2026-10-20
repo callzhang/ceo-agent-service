@@ -107,6 +107,98 @@ def test_manual_oa_rerun_refuses_to_copy_a_snapshot_when_refresh_is_unavailable(
         )
 
 
+def test_compacted_oa_scan_rerun_restores_saved_run_without_reading_synthetic_message(
+    monkeypatch,
+):
+    ref = ScheduledTaskSkillRef(
+        skill_source="managed", skill_name="stardust-oa-people-review",
+        managed_skill_id=7, managed_revision_id=11, position=0,
+    )
+    prior_context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=20,
+        prompt="Review current OA approvals.",
+        skill_names=("stardust-oa-people-review",),
+        skill_protocol="read exact frozen Skills",
+        skill_materials=(ServiceCommandSkillMaterial(
+            name="stardust-oa-people-review", content="old people rules revision 11"
+        ),),
+        skill_protocol_source="generated_discovery",
+    )
+    original = DingTalkMessage(
+        open_conversation_id="oa_pending_scan:proc-1",
+        open_message_id="oa-pending:proc-1:revision-1:2026-10-19",
+        conversation_title="审批待办", single_chat=True, sender_name="Derek OA",
+        create_time="2026-10-19T10:00:00Z", content="Review this OA process.",
+        raw_payload={
+            "source": "oa_pending_scan", "processInstanceId": "proc-1",
+            "taskId": "task-1", "scheduled_consumer": prior_context.to_payload(),
+        },
+    )
+    compacted = AutoReplyStore._compact_reply_input_json(
+        AutoReplyStore._reply_input_provenance("Review this OA process.", original.model_dump_json())
+    )
+    task = SimpleNamespace(
+        id=405350, channel="dingtalk", conversation_id="oa_pending_scan:proc-1",
+        conversation_title="审批待办", single_chat=True,
+        trigger_message_id=original.open_message_id,
+        trigger_create_time=original.create_time, trigger_sender="Derek OA",
+        trigger_text="", trigger_message_json=compacted, input_compacted=True,
+        business_object_key="oa:proc-1:task-1", oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        execution_generation="generation-1",
+    )
+    attempt = SimpleNamespace(
+        id=15716, conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender="Derek OA",
+        trigger_text="", channel="dingtalk", action="agent_run", agent_run_id=None,
+        resolved_at="", send_status="done", send_error="", codex_reason="",
+        oa_process_instance_id="proc-1", oa_url=task.oa_url,
+    )
+    refs = (ref,)
+    scheduled_run = SimpleNamespace(
+        id=20,
+        snapshot=SimpleNamespace(
+            task_id=3, prompt="Review current OA approvals.", skill_refs=refs,
+        ),
+    )
+    scheduled_task = SimpleNamespace(
+        id=3, command="scan-oa-approvals", prompt="Review current OA approvals.",
+        skill_refs=refs,
+    )
+    captured = {}
+    store = SimpleNamespace(
+        get_reply_attempt=lambda attempt_id: attempt if attempt_id == attempt.id else None,
+        get_reply_task_for_message=lambda *_args, **_kwargs: task,
+        get_conversation=lambda *_args: None,
+        get_agent_run=lambda *_args, **_kwargs: None,
+        get_scheduled_task_run=lambda run_id: scheduled_run if run_id == 20 else None,
+        get_scheduled_task=lambda task_id: scheduled_task if task_id == 3 else None,
+        enqueue_manual_rerun_reply_task=lambda **kwargs: captured.update(kwargs),
+    )
+
+    def forbidden_provider_read(*_args, **_kwargs):
+        raise AssertionError("scanner-generated OA IDs are not provider message IDs")
+
+    monkeypatch.setattr("app.audit_web.DwsClient.read_message_by_id", forbidden_provider_read)
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt.id, skill_options_factory=Options,
+    )
+
+    rerun = json.loads(captured["trigger_message_json"])
+    consumer = ServiceCommandConsumerContext.from_payload(
+        rerun["raw_payload"]["scheduled_consumer"]
+    )
+    assert status == 303
+    assert captured["trigger_message_id"] == task.trigger_message_id
+    assert captured["expected_execution_generation"] == "generation-1"
+    assert rerun["raw_payload"]["source"] == "oa_pending_scan"
+    assert rerun["raw_payload"]["processInstanceId"] == "proc-1"
+    assert rerun["raw_payload"]["taskId"] == "task-1"
+    assert consumer is not None
+    assert consumer.skill_materials[0].content.endswith("People rules revision 12")
+
+
 def test_manual_oa_rerun_rotates_pending_generation_when_refreshed_skill_changes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid", title="OA", single_chat=False, codex_session_id="")

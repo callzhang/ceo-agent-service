@@ -240,7 +240,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
                                                 inline_legacy_owner: bool = False,
                                                 physical_provenance: bool = False,
                                                 compact_payload: bool = False,
-                                                selection_references: bool = False, result_references: bool = False, execution_owner: bool = False) -> bool:
+                                                selection_references: bool = False, result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False) -> bool:
     """Exact target, allowing only Store's known missing Skill guard repair."""
     if current_configs_schema_is_current(
         db,
@@ -255,7 +255,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
         canonical_email=canonical_email,
         inline_legacy_owner=inline_legacy_owner,
         physical_provenance=physical_provenance, compact_payload=compact_payload,
-        selection_references=selection_references, result_references=result_references, execution_owner=execution_owner,
+        selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle,
     ):
         return True
     target = _config_target_declarations()
@@ -283,9 +283,9 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
                                      include_email_history=include_email_history,
                                      canonical_email=canonical_email,
                                      inline_legacy_owner=inline_legacy_owner,
-                                     physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner)
+                                     physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle)
             and action_storage.email_action_auxiliary_objects_are_current(
-                db, reply_variant=action_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner)
+                db, reply_variant=action_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle)
             and current_run11_schema_is_current(db, allow_missing_objects=True)
             and actual_runs.get("runs") == expected_runs["runs"]
             and set(actual_runs) <= set(expected_runs)
@@ -299,7 +299,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
 
 
 def require_current_email_pair(path: Path, *, store_version: str, email_version: int,
-                               selection_references: bool = False, result_references: bool = False, execution_owner: bool = False,
+                               selection_references: bool = False, result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False,
                                metadata_owner: bool = False) -> None:
     """Read-only source selection before constructor caches or journal changes."""
     path = Path(path).resolve()
@@ -338,7 +338,7 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
                                                                include_business_actions=True,
                                                                include_email_history=True,
                                                                canonical_email=True,
-                                                               inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner)
+                                                               inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle)
                     for variant in ('actual_no_memory_fk', 'fresh_memory_fk')
                 )):
                     return
@@ -347,7 +347,7 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
                 if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant,
                                                                                   include_business_actions=True,
                                                                                   include_email_history=True, canonical_email=True,
-                                                                                  inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner)
+                                                                                  inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle)
                        for variant in ('actual_no_memory_fk', 'fresh_memory_fk')):
                     return  # Complete Store-first, before Email's fresh transaction.
                 raise sqlite3.IntegrityError("malformed current Store-first config declaration")

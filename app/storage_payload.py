@@ -177,7 +177,11 @@ SOURCE_ACTION_RECORD_TYPES = RecordTypes((
     'email_historical_operations',
 ))
 
-ACTION_RECORD_TYPES = RecordTypes((*SOURCE_ACTION_RECORD_TYPES.names, 'candidate_execution_alias'))
+EXECUTION_ACTION_RECORD_TYPES = RecordTypes((*SOURCE_ACTION_RECORD_TYPES.names, 'candidate_execution_alias'))
+
+ACTION_RECORD_TYPES = RecordTypes((*EXECUTION_ACTION_RECORD_TYPES.names,
+    'plan_version_reviewed', 'plan_version_email', 'effect_step_email',
+    'action_attempt_reviewed', 'action_attempt_email'))
 
 
 TASK_RECORD_TYPES = RecordTypes((

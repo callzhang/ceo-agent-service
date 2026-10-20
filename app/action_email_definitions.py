@@ -635,10 +635,17 @@ def _encoded_value_check(document, path):
             f"and ({blob} or {nonfinite} or {finite})),0) else 0 end")
 
 
-def email_schema_parts(reply_value_check, *, payloads=None):
+def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=False):
     """Return only the finite Email additions to the existing actions declaration."""
+    fields_by_kind = EMAIL_FIELDS
+    if shared_lifecycle:
+        from app.shared_action_definitions import DIRECT_DERIVED_FIELDS
+        fields_by_kind = {**EMAIL_FIELDS, 'email_actions': tuple(
+            field for field in EMAIL_FIELDS['email_actions'] if field not in DIRECT_DERIVED_FIELDS)}
     generated = []
     for field, affinity in EMAIL_TYPES.items():
+        if shared_lifecycle and field == 'attempt_count':
+            continue
         if field == "id":
             expr = ("case when record_type in ('email_action_attempts','email_unsubscribe_steps') "
                     "then cast(legacy_key as integer) end")
@@ -648,7 +655,7 @@ def email_schema_parts(reply_value_check, *, payloads=None):
                 if field in pair:
                     cases.append(f"when record_type='{kind}' then {_encoded_value('legacy_key', '$[' + str(pair.index(field)) + ']')}")
             payload_kinds = tuple(
-                kind for kind, fields in EMAIL_FIELDS.items()
+                kind for kind, fields in fields_by_kind.items()
                 if field in fields and field not in EMAIL_COMPOSITE_KEYS.get(kind, ())
             )
             if payload_kinds:
@@ -670,13 +677,14 @@ def email_schema_parts(reply_value_check, *, payloads=None):
         generated.append(f"{discriminator} text generated always as (case when record_type in ({scope}) then '{parent}' end) virtual")
 
     checks = []
-    for kind, fields in EMAIL_FIELDS.items():
+    for kind, fields in fields_by_kind.items():
         stored = tuple(field for field in fields if field != "id" and field not in EMAIL_COMPOSITE_KEYS.get(kind, ()))
         paths = ",".join(repr("$." + field) for field in stored)
         values = [payloads.check(kind, field) if payloads else reply_value_check(field) for field in stored]
         values.append(payloads.shape(kind) if payloads else f"json_remove(payload_json,{paths})='{{}}'")
-        values.extend(f"email_{field} is not null" for field in EMAIL_NOT_NULL[kind])
-        values.extend(f"({expr})" for expr in EMAIL_CHECKS[kind])
+        values.extend(f"email_{field} is not null" for field in EMAIL_NOT_NULL[kind] if field in fields)
+        values.extend(f"({expr})" for expr in EMAIL_CHECKS[kind]
+                      if not (shared_lifecycle and kind == 'email_actions' and 'email_attempt_count' in expr))
         if kind in EMAIL_COMPOSITE_KEYS:
             values.append("json_type(legacy_key)='array' and json_array_length(legacy_key)=2")
             values.extend(_encoded_value_check("legacy_key", f"$[{i}]") for i in range(2))
@@ -730,6 +738,9 @@ def email_schema_parts(reply_value_check, *, payloads=None):
         "and email_attempt_number=new.email_attempt_number) "
         "begin select raise(abort,'email_direct_retry_request_immutable'); end",
     ]
+    if shared_lifecycle:
+        triggers = triggers[2:]  # Count is now the attempt ledger's derived value.
+        checks.append("check(record_type<>'email_actions' or (email_status='processing' or email_started_at=''))")
     return generated, checks, fks, indexes, triggers
 
 

@@ -127,6 +127,7 @@ from app.developer_prompt import (
 
 from app.prompt import work_profile_instruction, write_work_profile
 from app.dingtalk_models import DingTalkMessage
+from app.business_identity import oa_identifiers_from_url
 from app.wechat.models import WechatMessage
 from app.dws_client import DingTalkConversation, DwsClient
 from app.feedback_spike import (
@@ -142,7 +143,6 @@ from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.email_canonical_storage import email_classification_projection
 from app.email_publication_sources import current_email_actions_available
-from app.action_storage import email_action_projection
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -200,6 +200,8 @@ from app.action_storage import (
     task_delivery_projection,
     _reply_variant_for,
 )
+
+from app.shared_action_definitions import email_projection as email_action_projection
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
@@ -9894,7 +9896,28 @@ def handle_rerun_attempt_post(
                 f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
             ),
         )
-    if existing_task is not None and not existing_task.input_compacted and _is_valid_rerun_trigger_json(
+    if (
+        existing_task is not None
+        and existing_task.input_compacted
+        and channel == "dingtalk"
+        and existing_task.conversation_id.startswith("oa_pending_scan:")
+    ):
+        try:
+            trigger_message_json = _restore_compacted_oa_pending_trigger(
+                existing_task, attempt, store=store,
+                skill_options=(skill_options_factory() if skill_options_factory else None),
+            )
+            trigger = DingTalkMessage.model_validate_json(trigger_message_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>Compacted OA review source could not be restored; rerun was not queued.</p>",
+            )
+        trigger_text = trigger.content
+        trigger_create_time = trigger.create_time
+        conversation_title = existing_task.conversation_title
+        single_chat = existing_task.single_chat
+    elif existing_task is not None and not existing_task.input_compacted and _is_valid_rerun_trigger_json(
         existing_task.trigger_message_json,
         channel=channel,
     ):
@@ -9974,6 +9997,85 @@ def handle_rerun_attempt_post(
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def _restore_compacted_oa_pending_trigger(
+    task: ReplyTask,
+    attempt: ReplyAttempt,
+    *,
+    store: AutoReplyStore,
+    skill_options: object | None,
+) -> str:
+    """Rebuild a scanner-created OA trigger from its typed scheduled run.
+
+    OA scan IDs are internal event identities, not DingTalk message IDs. Their
+    compacted payload retains the scheduled run reference and the OA identity
+    is bound to the task's persisted business key and detail URL.
+    """
+    try:
+        payload = json.loads(task.trigger_message_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("compacted OA trigger is invalid") from exc
+    raw_payload = payload.get("raw_payload") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("input_compacted") is not True
+        or not isinstance(raw_payload, dict)
+        or raw_payload.get("source") != "oa_pending_scan"
+        or skill_options is None
+    ):
+        raise ValueError("compacted OA scan provenance is unavailable")
+
+    process_id, task_id = oa_identifiers_from_url(task.oa_url)
+    if (
+        not process_id
+        or not task_id
+        or process_id != attempt.oa_process_instance_id
+        or f"oa:{process_id}:{task_id}" != task.business_object_key
+    ):
+        raise ValueError("compacted OA identity does not match its task")
+
+    context = payload.get("context")
+    trigger_raw = (
+        context.get("trigger_raw_payload") if isinstance(context, dict) else None
+    )
+    run_id = (
+        trigger_raw.get("scheduled_task_run_id")
+        if isinstance(trigger_raw, dict) else None
+    )
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError("compacted OA scheduled run is unavailable")
+    run = store.get_scheduled_task_run(run_id)
+    if run is None:
+        raise ValueError("compacted OA scheduled run is unavailable")
+
+    from app.agent_cron.context import ScheduledAgentContextBuilder
+
+    builder = ScheduledAgentContextBuilder(skill_options)
+    prior = builder.build_consumer_context(run)
+    scheduled_task = store.get_scheduled_task(run.snapshot.task_id)
+    if prior is None or scheduled_task is None:
+        raise ValueError("compacted OA scheduled task is unavailable")
+    refreshed = builder.refresh_oa_review_context(prior, scheduled_task)
+    trigger = DingTalkMessage(
+        open_conversation_id=task.conversation_id,
+        open_message_id=task.trigger_message_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        sender_name=task.trigger_sender,
+        create_time=task.trigger_create_time,
+        content=(
+            "请基于当前 OA 流程重新审阅已保存的审批对象："
+            f"{process_id}，当前任务：{task_id}。"
+        ),
+        raw_payload={
+            "source": "oa_pending_scan",
+            "processInstanceId": process_id,
+            "taskId": task_id,
+            "scheduled_consumer": refreshed.to_payload(),
+        },
+    )
+    return trigger.model_dump_json()
 
 
 def refresh_oa_rerun_skill_snapshot(

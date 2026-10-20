@@ -1,0 +1,24 @@
+{
+  "schema": "ceo-shared-actions-merged-freeze-v1",
+  "commit": "8172fbc757a6ef763ca6c0de6b0429c7635f9a69",
+  "files": 1216,
+  "sha256": "201756cb4812572741a79a0e03f9670ca7ec9af87ab65381656b7a39a7584170",
+  "digest_format": "sorted path UTF-8 + NUL + raw file SHA256 + NUL",
+  "reviewed_source": "93058af1f/1215/fccf517e8877972089a10200a71ed9b06dacf71f3f21f553af2e0b705323ff7b",
+  "merged_upstream": "1319e2557efb1bf510517868c8bc8cb3631ee4a8",
+  "changed_source_paths": [
+    "app/agent_cli.py",
+    "app/consumer_purpose_retry.py",
+    "app/wechat/codex_safety.py",
+    "app/wechat/decision_runner.py",
+    "app/worker.py",
+    "tests/test_agent_role_tool_boundary.py",
+    "tests/test_consumer_purpose_retry.py",
+    "tests/test_oa_ai_services_namespace.py",
+    "tests/test_oa_comment_attachment_reader.py",
+    "tests/test_worker.py",
+    "tests/wechat/test_decision_runner.py"
+  ],
+  "shared_lifecycle_and_release_core_unchanged": true,
+  "acceptance": "parent copy/native/current inverse/live pending"
+}

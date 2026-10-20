@@ -484,7 +484,68 @@ def read_text_file(path: str) -> dict[str, object]:
 
 
 def _read_image_material(material_file, material_path: Path) -> dict[str, object]:
-    return _ocr_input_for_agent(material_file, material_path, file_format="image")
+    material_file.seek(0)
+    source_sha256 = hashlib.file_digest(material_file, "sha256").hexdigest()
+    material_file.seek(0)
+    original = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+    if len(original) <= MAX_OCR_AGENT_INPUT_BYTES:
+        return {
+            "format": "image",
+            "ocr_required": True,
+            "ocr_input_base64": base64.b64encode(original).decode("ascii"),
+            "ocr_mime_type": mimetypes.guess_type(material_path.name)[0]
+            or "application/octet-stream",
+            "path": str(material_path),
+            "sha256": source_sha256,
+        }
+
+    try:
+        from PIL import Image, ImageOps
+
+        material_file.seek(0)
+        with Image.open(material_file) as source:
+            width, height = source.size
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+        background = Image.new("RGB", image.size, "white")
+        background.paste(image, mask=image.getchannel("A"))
+        image.close()
+        if max(background.size) > 3000:
+            background.thumbnail((3000, 3000))
+        try:
+            for scale in (1.0, 0.85, 0.7, 0.55):
+                current = background.copy()
+                try:
+                    if scale < 1.0:
+                        current.thumbnail((
+                            int(background.width * scale),
+                            int(background.height * scale),
+                        ))
+                    for quality in (88, 80, 72, 64):
+                        encoded = BytesIO()
+                        current.save(encoded, format="JPEG", quality=quality, optimize=True)
+                        payload = encoded.getvalue()
+                        if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                            return {
+                                "format": "image",
+                                "ocr_required": True,
+                                "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                                "ocr_mime_type": "image/jpeg",
+                                "ocr_source_mime_type": mimetypes.guess_type(material_path.name)[0]
+                                or "application/octet-stream",
+                                "ocr_source_dimensions": {"width": width, "height": height},
+                                "ocr_input_transformed": True,
+                                "path": str(material_path),
+                                "sha256": source_sha256,
+                            }
+                finally:
+                    current.close()
+        finally:
+            background.close()
+        raise AgentReadOnlyViolationError("image_ocr_bounded_render_too_large")
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("image_ocr_bounded_render_failed") from exc
 
 
 def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
