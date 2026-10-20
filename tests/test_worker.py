@@ -11771,6 +11771,36 @@ def test_quoted_media_download_error_keeps_trigger_identity_and_names_owner(
     assert error.detail.startswith("quoted-1: resource @quoted-image-token error")
 
 
+def test_quoted_media_without_owner_id_does_not_download_as_reply_media(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 看下这张图",
+        message_id="reply-with-quote",
+        quoted_content="[图片消息](mediaId=@quoted-image-token)",
+    )
+    trigger.quoted_message_id = None
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws_local_path = tmp_path / "reply-image.png"
+    dws_local_path.write_bytes(TINY_PNG)
+    dws.resource_download_urls[
+        ("cid-1", "reply-with-quote", "@quoted-image-token", "mediaId")
+    ] = {"localPath": str(dws_local_path)}
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+
+    script_no_action(worker)
+    worker.run_once()
+
+    assert dws.resource_download_url_calls == []
+    error = worker.store.list_errors()[0]
+    assert "quoted media source message id unavailable" in error.detail
+
+
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "app.notification.request.urlopen",
