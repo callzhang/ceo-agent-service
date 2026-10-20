@@ -122,3 +122,18 @@ outside B1's exact 19.2 / 52 source contract and was not run or bypassed here.
 No full test suite, production-copy cycle or production service action was run
 by this implementer. Root will append the distinct current-copy/native/deploy
 evidence after independent review.
+
+The native lifecycle harness initially failed on a fresh current database
+because its Store/Email marker assertions imported historical Store14.1/Email52
+release constants. The harness now compares against the selected
+`STORE_SCHEMA_VERSION` and `EMAIL_SCHEMA_VERSION`; the existing Store and Email
+constructors validate their selected declarations, while the test asserts the
+returned markers match those current constants. RED: the focused fresh-current
+test first failed at the historical Store marker assertion; replacing those
+constants then exposed `final_action_schema_is_current()` rejecting the current
+Actions declaration because it describes the previous declaration. That
+historical-only assertion was removed; constructor initialization already
+validates the selected declarations. GREEN: after the harness and regression
+assertion changed, both tests in
+`tests/test_native_copy_final_schema.py` passed; Ruff and `git diff --check`
+passed. No application runtime code changed.

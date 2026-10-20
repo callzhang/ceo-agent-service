@@ -17,7 +17,7 @@
   "all_source": {
     "paths_command": "git ls-files -z --cached --others --exclude-standard -- app tests scripts",
     "file_count": 1195,
-    "sha256": "e6041ee817c0be27ec5f30c6caba18d48bbbcb459ff20f3d21647e5e8c98a417",
+    "sha256": "125cc463541b7ca34bcfe7e2c70b5f6e1187b489377ef262ffbbe18f7921e210",
     "digest_format": "SHA-256 of UTF-8 json.dumps(entries,ensure_ascii=False,separators=(comma,colon)); entries sorted by unique path, each object insertion order path then sha256; per-file SHA-256 of raw bytes"
   },
   "changed_files": [
@@ -106,6 +106,10 @@
       "sha256": "d310788602166f106afc969bb306c976c8b76a70e4c29b4770f3a0b134677c6d"
     },
     {
+      "path": "scripts/validate_native_copy_lifecycle.py",
+      "sha256": "90240ec83f85475d0277a01605f5f5568fc6be40644d3b2d435308ef374acf49"
+    },
+    {
       "path": "tests/test_email_body_source.py",
       "sha256": "26cdb4a5e7d0ea2248cb672473fd9dce7ff11cd3b076bd9ebb46ecc03c486408"
     },
@@ -132,6 +136,10 @@
     {
       "path": "tests/test_email_store.py",
       "sha256": "da00297b5d98b81c8051e02dfa41d256fcec138f897e6736812bdd670bfb5d8a"
+    },
+    {
+      "path": "tests/test_native_copy_final_schema.py",
+      "sha256": "390bfcf9c0768157638799b24496523db1e0b63f2ab9207b091c2ed198986431"
     },
     {
       "path": "tests/test_retire_verified_email_inputs.py",
