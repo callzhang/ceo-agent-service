@@ -144,6 +144,7 @@ from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.email_canonical_storage import email_classification_projection
 from app.email_publication_sources import current_email_actions_available
+from app.repository_updater import ExistingSchemaUpgradeStateStore
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -10908,7 +10909,7 @@ def create_audit_app(
         app,
         service_factory=lambda: RepositoryUpgradeService(
             repository=GitRepository(_repo_root()),
-            store=AutoReplyStore(db_path),
+            store=ExistingSchemaUpgradeStateStore(db_path),
             remote=os.getenv("CEO_REPOSITORY_UPGRADE_REMOTE", "origin") or "origin",
             branch=os.getenv("CEO_REPOSITORY_UPGRADE_BRANCH", "main") or "main",
         ),

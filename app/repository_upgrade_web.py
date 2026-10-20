@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -15,7 +16,16 @@ from app.repository_upgrade import (
     RepositoryUpgradeService,
     UpgradeStatus,
 )
-from app.repository_updater import UpgradeOperation, persist_operation
+from app.repository_updater import (
+    UpgradeOperation,
+    persist_operation,
+    UPGRADE_OPERATION_STATE_KEY,
+)
+from app.repository_release_notes import (
+    release_notes,
+    ReleaseSummaryAgent,
+    ReleaseNotesError,
+)
 
 
 class StartUpgradeRequest(BaseModel):
@@ -45,8 +55,25 @@ def register_repository_upgrade_routes(
 ) -> None:
     @app.get("/api/repository-upgrade/status")
     def status() -> dict[str, object]:
-        state = service_factory().load_state()
+        service = service_factory()
+        state = service.load_state()
+        raw_progress = service.store.get_service_state(UPGRADE_OPERATION_STATE_KEY)
+        progress = json.loads(raw_progress) if raw_progress else None
         return {
+            "current_commit": service.repository.resolve_ref("HEAD"),
+            "progress": {
+                key: progress.get(key, "")
+                for key in (
+                    "operation_id",
+                    "status",
+                    "target_commit",
+                    "installed_commit",
+                    "error",
+                    "updated_at",
+                )
+            }
+            if progress
+            else None,
             "snapshot": _snapshot_payload(state.snapshot),
             "operation": state.operation.model_dump(mode="json")
             if state.operation is not None
@@ -57,6 +84,30 @@ def register_repository_upgrade_routes(
     def check() -> dict[str, object]:
         snapshot = service_factory().check()
         return {"snapshot": _snapshot_payload(snapshot)}
+
+    @app.post("/api/repository-upgrade/notes")
+    def notes(request: SuggestPreservationRequest) -> dict[str, object]:
+        service = service_factory()
+        snapshot = service.load_state().snapshot
+        if snapshot is None or snapshot.fingerprint != request.fingerprint:
+            raise HTTPException(status_code=409, detail="repository_state_changed")
+        try:
+            return release_notes(
+                service.repository,
+                service.store,
+                snapshot.local_commit,
+                snapshot.remote_commit,
+                ReleaseSummaryAgent(service.repository.root),
+            )
+        except ReleaseNotesError as exc:
+            return dict(
+                local_commit=snapshot.local_commit,
+                target_commit=snapshot.remote_commit,
+                commits=exc.commits,
+                summary="",
+                summary_source="ai",
+                summary_error=str(exc),
+            )
 
     @app.post("/api/repository-upgrade/start", status_code=202)
     def start(request: StartUpgradeRequest) -> dict[str, object]:
@@ -84,6 +135,8 @@ def register_repository_upgrade_routes(
             )
         except RepositoryUpgradeConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if reservation.idempotent:
+            return {"operation_id": reservation.operation.operation_id, "pid": None}
         operation = UpgradeOperation(
             operation_id=reservation.operation.operation_id,
             expected_fingerprint=request.fingerprint,
@@ -94,7 +147,14 @@ def register_repository_upgrade_routes(
         )
         persist_operation(service.store, operation)
         launcher = updater_launcher or _default_updater_launcher
-        pid = launcher(operation)
+        try:
+            pid = launcher(operation)
+        except OSError as exc:
+            from app.service_update_runner import record_result
+
+            record_result(service.store, operation, "failed", error="无法启动更新进程")
+            service.release_operation(operation.operation_id)
+            raise HTTPException(status_code=503, detail="无法启动更新进程") from exc
         return {"operation_id": operation.operation_id, "pid": pid}
 
 
@@ -112,7 +172,7 @@ def launch_repository_updater(
         [
             sys.executable,
             "-m",
-            "app.repository_updater",
+            "app.service_update_runner",
             "--operation-id",
             operation.operation_id,
             "--repo",

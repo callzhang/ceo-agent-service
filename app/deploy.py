@@ -191,6 +191,7 @@ def deploy(
     maintenance_tasks: tuple[int, ...] = (),
     skip_quiet_wait: bool = False,
     target_commit: str | None = None,
+    operation_id: str | None = None,
 ) -> str:
     if publish_contracts and publish_prompt_templates:
         raise SystemExit("Consumer/Audit contracts and prompt templates require separate deployments")
@@ -248,7 +249,7 @@ def deploy(
             f"Commits only in production (move them to main, then reset production to origin/{BRANCH}):\n{stray}"
         )
     operation = UpgradeOperation(
-        operation_id=f"deploy-{uuid4()}",
+        operation_id=operation_id or f"deploy-{uuid4()}",
         expected_fingerprint=repository.fingerprint(BRANCH, current, target, records),
         original_commit=current,
         target_commit=target,
