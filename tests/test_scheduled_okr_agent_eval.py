@@ -624,3 +624,22 @@ def test_summary_markdown_cannot_be_rewritten_after_render(tmp_path):
         "https://docs.example.invalid/main",
     )
     assert not okr_eval.grade(case, tmp_path, output)["passed"]
+
+
+def test_release_manifest_pins_verified_current_installation():
+    root = Path(__file__).resolve().parents[1]
+    expected = json.loads(
+        (root / "evals/scheduled_task_generic/okr-release-preconditions.json").read_text()
+    )
+    entries = {
+        row["source"]: row for row in json.loads(
+            (root / "ci/consumer-system-contract-release.json").read_text()
+        )["files"]
+    }
+    assert set(entries) == {row["source"] for row in expected["files"]}
+    for row in expected["files"]:
+        entry = entries[row["source"]]
+        assert entry["old_sha256"] == row["installed_sha256"], row["source"]
+        assert entry["new_sha256"] == row["approved_new_sha256"], row["source"]
+        if "managed_sha256" in row:
+            assert entry["old_managed_sha256"] == row["managed_sha256"]
