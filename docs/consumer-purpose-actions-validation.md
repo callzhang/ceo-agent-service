@@ -81,4 +81,29 @@ action was processing, without a new failure; History returned processing,
 done and skipped as its latest three rows. No OA write or historical retry
 was started for this verification. These observations establish publication
 and runtime loading; the maximum count/deadline behavior is covered by the
-controlled-clock regression tests above, not a real three-day wait.
+
+## Historical incident: OA Attempt 15681
+
+The production History detail for Attempt `15681` records 235 role runs: 233
+failed Consumer runs, one completed Consumer run, and one completed Audit run.
+Among the 233 failed Consumer runs, 232 were classified as
+`runtime_business_result_failed` and one as `codex_result_invalid`. The
+successful Consumer ran after those 233 failed Consumer runs; Audit then
+approved the candidate. The System Execution record verifies exactly one OA comment, at
+`2026-10-19T18:11:53.364Z`, asking the file owner or space administrator to
+grant read-only access. The Attempt's terminal `done` status therefore means
+the approved comment was delivered and verified; it does not mean the files
+became readable or that the underlying OA review was completed.
+
+The unbounded loop came from the pre-release dependency classification:
+`dependency_read_unavailable` was included in
+`EXTERNAL_DEPENDENCY_WAIT_ERRORS`. That path deferred the task and refunded
+the worker attempt budget, so repeated Consumer failures did not reach the
+persisted consecutive technical-failure limit. Commit `d9d326d63` removed
+ordinary `dependency_read_unavailable` from that wait set. The fix now lets
+these failures reach the existing six-consecutive-technical-turn terminal
+limit; only service-side context refresh and the audited purpose `retry`
+remain in the dependency wait set. For permission-request retries, the
+separate persisted purpose budget remains capped at ten subsequent Consumer
+starts within 72 hours. This was a historical run before the bounded behavior
+was deployed; no historical Consumer or OA action was replayed to verify it.
