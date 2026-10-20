@@ -354,6 +354,7 @@ Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务�
 人工重跑 OA Attempt 会创建新执行代际，并从当前选中的 OA 定时任务 Skill 重新冻结输入；若无法读取
 当前所选 Skill 或对应任务配置，则不排入重跑。原 Attempt、旧代际和旧 Skill 快照保留不变。
 人工重跑内部 OA 待办使用持久化任务中的 `oa-pending:` 合成触发 ID；按触发 ID 定位当前任务并恢复其实际 `oa_pending_scan:<process>` 会话。该类 ID 不是钉钉消息 ID，不调用钉钉会话读取或按 ID 读取；若当前任务已不存在，按未找到任务失败。
+输入已压缩时，按任务保存的审批 URL、业务身份和定时扫描 run ID 恢复当前 OA 触发及其最新选中 Skill；身份或运行快照无法对应时拒绝排队，不把合成 ID 交给钉钉消息读取。
 
 Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
 `list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、
