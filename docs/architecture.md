@@ -624,8 +624,8 @@ headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；�
 ### Agent Cron 与统一 Dispatcher
 
 用户可见的定时任务是 `任务描述 + Cron + Agent 能力（结构化 Skill 引用）+ Runtime`。任务描述是所有
-定时任务共有的可读用途说明；Agent 任务另有执行提示词，服务命令不把描述伪装成 Agent prompt。Scheduler 只计算
-当前时间之后的下一个触发点，并把一次触发保存为 `scheduled_task_run`；它不执行领域业务，
+定时任务共有的可读用途说明；Agent 任务另有执行提示词，服务命令不把描述伪装成 Agent prompt。Scheduler 维护
+下一个触发点，并把一次触发保存为 `scheduled_task_run`；它不执行领域业务，
 也不把 Consumer/Audit 的完成或失败复制回调度记录。若 SQLite 写入因 `BUSY`/`LOCKED` 冲突在
 存储层有限重试后仍失败，Scheduler 保留该触发点，等待 1 秒再重试；该数据库错误不会被记录为
 运行结果，也不会让 Service worker 退出。Dispatcher 先领取该 trigger，原子创建
@@ -687,8 +687,11 @@ OA 的钉钉系统通知和聊天催办是外部观察事件，不是第二条�
 催办人。结果回复有自己的事件状态和回执，不改变 OA 审批 Attempt 的业务结论，也不会重新
 启动一个聊天 Agent。
 
-调度层不补跑停机期间错过的时间点；上一轮仍未终态时，本轮 trigger 记为 `skipped`，不会并行
-创建第二个执行输入。手动运行会创建独立 trigger，但不移动正常计划。任务指定的 Runtime route 是
+服务启动或主机从睡眠恢复后，调度层补最近的一个已错过触发；更早的错过点合并到该次执行，
+避免恢复时突发排出多份历史报告。任务创建时间之前的触发不会补造，已有触发继续由唯一键去重。
+若补跑时上一轮仍未终态，Scheduler 保留该补跑时间点，待上一轮终态后再提交；正常到期的
+触发仍按 `skipped` 收口，不会并行创建第二个执行输入。手动运行会创建独立 trigger，但不移动
+正常计划。任务指定的 Runtime route 是
 **首选**而不是唯一线路（Derek 2026-09-24）：执行先上首选线路，失败时走与其他 Agent 轮次相同的统一
 fallback（`app/runtime_fallback.py`：满载先同线路重试，再暂停该线路、按配置顺序换下一条）；任务的
 model、thinking 只作用于首选线路。managed Skill 必须绑定精确、已加载且启用的 revision。派发前按
