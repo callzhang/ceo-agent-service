@@ -9841,6 +9841,7 @@ def handle_rerun_attempt_post(
     return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
     skill_options_factory: Callable[[], object] | None = None,
+    explicit_resend_message_id: str = "",
 ) -> tuple[int, dict[str, str], str]:
     del worker_factory
     attempt = store.get_reply_attempt(attempt_id)
@@ -9851,11 +9852,35 @@ def handle_rerun_attempt_post(
         if attempt.agent_run_id else None
     )
     channel = attempt.channel or "dingtalk"
+    if explicit_resend_message_id and channel != "wechat":
+        return 409, {}, render_page(
+            "Resend unavailable", "<p>再次发送入口只支持已发送的微信回复。</p>",
+        )
+    if channel == "wechat":
+        already_sent = attempt.send_status.strip().lower() == "sent"
+        if already_sent and explicit_resend_message_id != attempt.trigger_message_id:
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>已发送的微信回复不能通过普通重跑再次投递；请核对原消息后选择再次发送。</p>",
+            )
+        if explicit_resend_message_id and not already_sent:
+            return 409, {}, render_page(
+                "Resend unavailable", "<p>只有已发送的微信回复可以再次发送。</p>",
+            )
     existing_task = store.get_reply_task_for_message(
         attempt.conversation_id,
         attempt.trigger_message_id,
         channel=channel,
     )
+    if (
+        channel == "wechat" and explicit_resend_message_id
+        and existing_task is not None
+        and existing_task.manual_rerun_attempt_id == attempt.id
+        and existing_task.status not in {"pending", "processing"}
+    ):
+        return 409, {}, render_page(
+            "Resend unavailable", "<p>这条已发送回复已再次处理；请从最新 Attempt 发起。</p>",
+        )
     allow_skipped_oa_review = can_reopen_skipped_oa_review(attempt, existing_task)
     rerun_block_reason = _attempt_rerun_block_reason(
         attempt,
@@ -9976,6 +10001,7 @@ def handle_rerun_attempt_post(
             force_rotation=force_rotation,
             expected_execution_generation=existing_task.execution_generation,
             allow_skipped_oa_review=allow_skipped_oa_review,
+            explicit_resend_message_id=explicit_resend_message_id,
         )
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
@@ -10107,6 +10133,7 @@ def handle_needs_human_decision_post(
     body: bytes,
     *,
     return_to: str = "",
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -10162,6 +10189,7 @@ def handle_needs_human_decision_post(
                 ), actionable_source_attempt_id=source.id,
                 review_candidate_id=candidate_id,
                 supplement_instruction=instruction,
+                skill_options_factory=skill_options_factory,
             )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
@@ -10231,6 +10259,7 @@ def handle_reviewed_message_reply(
     actionable_source_attempt_id: int = 0,
     review_candidate_id: int = 0,
     supplement_instruction: str = "",
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> dict[str, object]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -10252,6 +10281,17 @@ def handle_reviewed_message_reply(
         single_chat = task.single_chat
     else:
         raise ValueError("original reply task input is unavailable")
+    if source.oa_process_instance_id:
+        if skill_options_factory is None:
+            raise ValueError("OA rerun Skill snapshot could not be refreshed")
+        try:
+            trigger_message_json = refresh_oa_rerun_skill_snapshot(
+                trigger_message_json,
+                store=store,
+                skill_options=skill_options_factory(),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("OA rerun Skill snapshot could not be refreshed") from exc
     if actionable_source_attempt_id > 0:
         reviewed_attempt_id, _task = store.record_actionable_attempt_decision(
             actionable_source_attempt_id,
@@ -10809,6 +10849,9 @@ def create_audit_app(
                     ),
                 )
             return email_learning_service
+
+    from app.web_api.dashboard import register_dashboard_routes
+    register_dashboard_routes(app, store_factory=lambda: audit_store)
 
     register_console_routes(
         app,
@@ -11594,6 +11637,7 @@ def create_audit_app(
             attempt_id,
             await request.body(),
             return_to=request.query_params.get("return_to", ""),
+            skill_options_factory=scheduled_task_option_service,
         )
         return _fastapi_post_response(status, headers, html)
 
@@ -11609,6 +11653,7 @@ def create_audit_app(
                 reviewer_feedback=str(
                     payload.get("reviewer_feedback") or payload.get("feedback") or ""
                 ),
+                skill_options_factory=scheduled_task_option_service,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -12553,11 +12598,11 @@ def _history_attention_html(
 ) -> str:
     if attention is None:
         return ""
-    heading = (
-        "需要你处理"
-        if attention.kind == "needs_manager"
-        else "系统失败，正在自动恢复"
-    )
+    heading = {
+        "needs_manager": "需要你处理",
+        "automatic_recovery": "系统失败，正在自动恢复",
+        "failed": "处理失败，尚未完成",
+    }.get(attention.kind, "处理状态待确认")
     retry_html = ""
     if attention.retry_at:
         retry_html = (
@@ -12568,11 +12613,11 @@ def _history_attention_html(
         )
     next_step_html = ""
     if actions_html:
-        next_step = (
-            "请选择一种处理方式。"
-            if attention.kind == "needs_manager"
-            else "系统会按计划自动重试，你当前无需操作。"
-        )
+        next_step = {
+            "needs_manager": "请选择一种处理方式。",
+            "automatic_recovery": "系统会按计划自动重试，你当前无需操作。",
+            "failed": "这是执行或技术失败，不需要你判断业务规则；可查看技术详情，必要时重新处理。",
+        }.get(attention.kind, "请查看当前状态和技术详情。")
         next_step_html = (
             '<div class="history-attention-next"><strong>你需要做什么：</strong>'
             f"{escape(next_step)}</div>"

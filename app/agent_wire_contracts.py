@@ -104,7 +104,7 @@ class _ConsumerWire(_ConsumerWireBase, ConsumerPurposeOutput):
 
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=4)
     requested_input: str | None = None
-    needs_human_reason: str | None = None
+    needs_human_reason: str | None = Field(default=None, max_length=100)
     decision_basis: DecisionBasis | None = None
     stage_index: int = Field(default=0, ge=0)
     predecessor_review_id: int | None = Field(default=None, ge=1)
@@ -159,7 +159,7 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
             "decision_basis": payload.decision_basis,
             "stage_index": payload.stage_index,
             "predecessor_review_id": payload.predecessor_review_id,
-            "continue_after_execution": payload.continue_after_execution or payload.action == "request_access",
+            "continue_after_execution": payload.continue_after_execution,
             "risk": payload.risk,
             "confidence": payload.confidence,
             "rule_coverage": payload.rule_coverage,

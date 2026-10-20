@@ -91,8 +91,14 @@ verified for the same task, operation is `comment`, the receipt and the
 candidate's sole comment have the exact same `material-read-access-block`
 identity, and the candidate has no `purpose_output`. Existing exact key,
 uniqueness, task binding, retry-budget, Audit and execution requirements remain
-in force; ordinary comments remain ineligible. Focused tests and production
-deployment/readback are pending. No historical attempt has been replayed.
+in force; ordinary comments remain ineligible. The focused retry tests passed
+(10 tests) on 2026-10-20. No historical attempt was replayed.
+
+The fix commit `012a1fc3f61146bd1ebedea6f44480cacfb6fd64` is an ancestor of the
+production checkout `63504af9f1b7c456010cc5a808722054dfffe780`. Production
+readback showed service PID `7444` and `/healthz` returned `ok=true,status=ok`.
+Attempt 15681 retains its verified comment receipt; neither Attempt 15681 nor
+15707 was replayed to validate this release.
 
 ## Release
 
@@ -135,3 +141,27 @@ error; its System Execution already records the OA comment as verified. Attempt
 historical task was replayed after deployment, so no new OA comment or other
 external action was generated as release verification. The repair is covered
 by the scoped 38-test group above; the 10-retry / 72-hour budget is unchanged.
+
+## Attempt 15760: request-stage continuation flag repair
+
+Root cause: the Consumer wire adapter changed
+`continue_after_execution=false` to `true` whenever `action=request_access`.
+Audit had correctly approved the permission request as a stop point, but the
+adapter overrode that decision. The orchestrator also tied permission waiting
+to the continuation flag, so removing the coercion alone would have skipped
+the approved wait.
+
+The fix preserves the Consumer/Audit value exactly. After the audited
+`request_access` action is verified executed, the orchestrator starts the
+existing bounded permission wait independently of immediate continuation. It
+does the same when recovering a completed request execution after restart and
+advances the candidate stage lineage for the next Consumer attempt. It does
+not treat request delivery as permission restoration, relax Audit, or change
+the ten-read/72-hour backoff budget.
+
+Focused regressions in
+`tests/test_consumer_access_request_continuation.py` check that a false flag
+stays false and that a verified request still starts the wait. The merged-main
+focused run passed 125 tests across request continuation, purpose orchestration,
+permission retry budgets and wire contracts. Ruff passed on the changed Python
+files. Production deployment and live readback remain pending.

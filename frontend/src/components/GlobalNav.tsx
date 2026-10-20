@@ -3,7 +3,7 @@ import { NavLink, useInRouterContext } from "react-router-dom";
 
 const destinations = [
   ["Agent", "/"],
-  ["History", "/history"],
+  ["Dashboard", "/history"],
   ["Tasks", "/tasks"],
   ["定时任务", "/scheduled-tasks"],
   ["Email", "/email"],

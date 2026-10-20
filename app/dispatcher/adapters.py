@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from app.deployment_drain import claim_connection
 from app.run_storage import SCHEDULED_RUN_SQL
 from app.state_definitions import state_projection
 from app.state_storage import state_json_field, update_state, upsert_state
@@ -215,7 +217,9 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
             )
             if candidate is None:
                 return None
-        with self.store._immediate_write_transaction() as db:
+        with claim_connection(self.store, immediate=True) as db:
+            if db is None:
+                return None
             candidate = _scan_scheduled_claimable_candidate(
                 fetch_page,
                 now=now_text,
@@ -492,7 +496,9 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
         with self.store._connect() as db:
             if candidate(db) is None:
                 return None
-        with self.store._immediate_write_transaction() as db:
+        with claim_connection(self.store, immediate=True) as db:
+            if db is None:
+                return None
             row = candidate(db)
             if row is None:
                 return None
@@ -651,7 +657,9 @@ class TaskMemoryWriteQueueAdapter(_LedgerClaimLifecycle):
         with self.store._connect() as db:
             if db.execute(candidate_sql, (now_text, now_text)).fetchone() is None:
                 return None
-        with self.store._immediate_write_transaction() as db:
+        with claim_connection(self.store, immediate=True) as db:
+            if db is None:
+                return None
             row = db.execute(candidate_sql, (now_text, now_text)).fetchone()
             if row is None:
                 return None
@@ -777,7 +785,9 @@ class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()
         if needs_write is None:
             return None
-        with self.store._immediate_write_transaction() as db:
+        with claim_connection(self.store, immediate=True) as db:
+            if db is None:
+                return None
             expired = db.execute(
                 f"select id from {BUSINESS_TASK_TODO_OUTBOX_PROJECTION} "
                 "where status='running' and lease_expires_at<=?",

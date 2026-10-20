@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+from app.deployment_drain import QUIET_WAIT_SECONDS, deployment_drain
+from app.task20_definitions import task20_projection
 from app.state_publication_sources import publication_dispatcher_source
 from app.logical_run_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 from app.scheduled_config_storage import publication_scheduled_source
@@ -386,7 +389,6 @@ def _default_health() -> bool:
 #: under load that took eight minutes on 2026-09-25, so one ten-second probe
 #: would roll back a healthy upgrade.
 HEALTH_WAIT_SECONDS = 15 * 60
-QUIET_WAIT_SECONDS = 30 * 60
 POLL_SECONDS = 5.0
 
 
@@ -416,10 +418,17 @@ def in_flight_work(database_path: Path) -> int:
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, meeting_runs = publication_meeting_sources(db)
         return int(db.execute(
-            f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
-            "        where status not in ('completed','failed','superseded'))"
+            f"select (select count(*) from ({runtime_source}) as runtime "
+            "        where runtime.status not in ('completed','failed','superseded') "
+            "        and ((runtime.lease_owner<>'' "
+            "          and julianday(runtime.lease_expires_at)>julianday('now')) "
+            "          or not exists ("
+            f"            select 1 from ({agent_source}) as parent "
+            f"            join ({reply_source}) as current on current.id=parent.reply_task_id "
+            "            where parent.id=runtime.agent_run_id "
+            "              and parent.execution_generation<>current.execution_generation)))"
             f" + (select count(*) from ({reply_source}) as task "
-            "    where task.status='processing' and ("
+            "    where task.status='processing' and (task.channel='email' or "
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
@@ -443,6 +452,20 @@ def in_flight_work(database_path: Path) -> int:
             f" + (select count(*) from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)})"
             "    where claim_active"
             "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('email_agent_classification_tasks')}) "
+            "    where status='running' and owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('workbench_turns')}) "
+            "    where status='running' and lease_owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('weekly_okr_analysis_jobs')}) "
+            "    where status='running' and lease_owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            " + (select count(*) from actions where record_type='email_actions' "
+            "    and email_status='processing')"
+            " + (select count(*) from actions where record_type='meeting_memory_write_events' "
+            "    and td_status='processing' and td_lease_owner<>'' "
+            "    and julianday(td_lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
@@ -539,6 +562,7 @@ class RepositoryUpdater:
         publication: Callable[[], UpgradePublication] | None = None,
         database_publication: Callable[[Path | None], UpgradePublication | None] | None = None,
         pre_checkout_cleanup: Callable[[], None] | None = None,
+        pin_target_commit: bool = False,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -554,6 +578,7 @@ class RepositoryUpdater:
         self.publication = publication
         self.database_publication = database_publication
         self.pre_checkout_cleanup = pre_checkout_cleanup
+        self.pin_target_commit = pin_target_commit
 
     @property
     def target_ref(self) -> str:
@@ -567,7 +592,8 @@ class RepositoryUpdater:
         self, operation: UpgradeOperation, *, already_locked: bool = False
     ) -> UpgradeResult:
         lock = nullcontext() if already_locked else self.repository.mutex()
-        with lock:
+        drain = deployment_drain(self.database_path) if self.database_path is not None else nullcontext()
+        with lock, drain:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
             self.wait_for_quiet()
@@ -584,8 +610,9 @@ class RepositoryUpdater:
                     records = self.repository.status_records()
                 if records:
                     self._preserve_local_changes(operation)
+                merge_ref = operation.target_commit if self.pin_target_commit else self.remote_ref
                 self.repository._run(
-                    ["merge", "--ff-only", self.remote_ref],
+                    ["merge", "--ff-only", merge_ref],
                     category="upgrade_merge",
                 )
                 if self.database_publication is not None:
@@ -691,9 +718,17 @@ class RepositoryUpdater:
     def _recheck(self, operation: UpgradeOperation) -> list[object]:
         current = self.repository.resolve_ref(self.target_ref)
         remote = self.repository.resolve_ref(self.remote_ref)
-        if current != operation.original_commit or remote != operation.target_commit:
+        if current != operation.original_commit:
             raise UpgradePreconditionError("repository revision changed")
-        if not self.repository.is_ancestor(current, remote):
+        if self.pin_target_commit:
+            if not self.repository.is_ancestor(operation.target_commit, remote):
+                raise UpgradePreconditionError("target commit is not in origin/main")
+            selected_target = operation.target_commit
+        else:
+            if remote != operation.target_commit:
+                raise UpgradePreconditionError("repository revision changed")
+            selected_target = remote
+        if not self.repository.is_ancestor(current, selected_target):
             raise UpgradePreconditionError("repository target is diverged")
         records = self.repository.status_records()
         if records and not operation.branch_name.strip():
@@ -701,7 +736,7 @@ class RepositoryUpdater:
         fingerprint = self.repository.fingerprint(
             self.branch,
             current,
-            remote,
+            selected_target,
             records,
         )
         if fingerprint != operation.expected_fingerprint:

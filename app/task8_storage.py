@@ -113,12 +113,16 @@ def task8_set_parts(
     structural_sql=None,
     structural_parameters=(),
     payload_source="tasks.payload_json",
+    source_alias="",
 ):
     """Compile native scalar SET; each RHS is evaluated once on the original row."""
     expressions = {} if update_sql is None else update_sql
     physical_sql = {} if structural_sql is None else structural_sql
     payload, physical = _partition(kind, values, expressions, physical_sql)
-    owned = source_assignments(kind, payload, expressions, payload_source=payload_source)
+    owned = source_assignments(
+        kind, payload, expressions,
+        payload_source=payload_source, source_alias=source_alias,
+    )
     assignments = []
     if owned.sql:
         assignments.append(owned.sql)

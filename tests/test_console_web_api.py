@@ -42,7 +42,7 @@ from app.task20_definitions import task20_column
 from app.task8_storage import task8_set_parts
 from app.action_task_delivery_definitions import task_delivery_projection
 from app.setup_wizard_models import SetupWizardEvent
-from app.wechat.models import WechatReplyScope
+from app.wechat.models import WechatMessage, WechatReplyScope
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
 from app.web_api.status import ComponentStatus, DispatcherQueueStatus, SystemHealth
@@ -3646,3 +3646,59 @@ def test_reply_memory_queue_reads_current_action_schema_and_its_own_events(tmp_p
     assert result["counts"] == {"failed": 1, "pending": 1}
     assert result["pending"] == result["failed"] == 1
     assert result["latest_error"] == "source unavailable"
+
+
+def test_sent_wechat_history_has_separate_exact_message_resend_route(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id="melody115", message_id="wx-1",
+        sender_id="melody115", sender_display_name="Melody",
+        conversation_type="direct", direction="inbound",
+        sent_at="2026-09-26T14:12:52-07:00", kind="text",
+        text="他说 memory 不仅是 data", source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Melody", single_chat=True,
+        trigger_message_id=trigger.message_id, trigger_create_time=trigger.sent_at,
+        trigger_sender="Melody", trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
+    assert task is not None
+    with store._connect() as db:
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task.id),
+        )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Melody", trigger_message_id=trigger.message_id,
+        trigger_sender="Melody", trigger_text=trigger.text,
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    task = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
+    assert task is not None
+    original_generation = task.execution_generation
+
+    with _client(tmp_path) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        assert detail.status_code == 200
+        actions = detail.json()["item"]["actions"]
+        assert actions["can_rerun"] is False
+        assert actions["can_resend_wechat"] is True
+        assert actions["resend_message_id"] == "wx-1"
+        assert client.post(f"/api/console/history/{attempt_id}/rerun").status_code == 409
+        assert client.post(
+            f"/api/console/history/{attempt_id}/resend-wechat",
+            json={"trigger_message_id": "wx-other"},
+        ).status_code == 409
+        assert store.get_reply_task(task.id).execution_generation == original_generation
+        response = client.post(
+            f"/api/console/history/{attempt_id}/resend-wechat",
+            json={"trigger_message_id": "wx-1"},
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+    assert store.get_reply_task(task.id).execution_generation != original_generation

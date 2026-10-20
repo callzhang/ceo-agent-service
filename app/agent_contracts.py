@@ -96,7 +96,7 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
                 "proposal": {"type": "null"},
                 "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
                 "requested_input": {"type": "null"},
-                "needs_human_reason": {"type": "string", "minLength": 1},
+                "needs_human_reason": {"type": "string", "minLength": 1, "maxLength": 100},
                 "decision_basis": {"type": "object"},
             },
             "required": [
@@ -487,6 +487,8 @@ class ConsumerAgentResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rule_coverage: float = Field(ge=0.0, le=1.0)
     information_completeness: float = Field(ge=0.0, le=1.0)
+    # Historical persisted results remain readable; new model output is bounded
+    # by ConsumerAgentWireResult and the transport JSON Schema.
     needs_human_reason: str | None = None
     decision_basis: DecisionBasis | None = None
     requested_input: str | None = None

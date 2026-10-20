@@ -282,8 +282,8 @@ connection completion. The send-claim method itself has identical ASTs. This
 single comparison did not show a new C1 regression; it does not isolate every
 SQLite preparation/commit cost or establish throughput.
 
-No full-copy migration, production startup or native Consumer/Audit acceptance
-is claimed here. The parent separately observed slow pre-C1 schema parsing
+The local batches above do not establish full-copy migration, production
+startup or native Consumer/Audit acceptance; parent copy evidence follows below. The parent separately observed slow pre-C1 schema parsing
 during upstream startup; local per-row results do not settle that capacity
 question. Fresh SPEC/QUALITY review, upstream integration, full-copy/native
 acceptance and release remain parent-owned.
@@ -308,3 +308,90 @@ uses indexed point SEARCH in both source/current, with no current Task/Action
 scan. No UPDATE was executed for that check. The baseline deadline failure
 remains a failed node. Upstream integration, fresh full-copy/native/current-data
 inverse and production publication remain separate parent gates.
+
+
+## Parent full-copy and native acceptance
+
+On merged source `c4a9e794d0fe7b8954a8746b01fec118337dc188`, the parent
+rehashes 1,233 code/test/script files to `eb3d16cf…`; all four extra runtime
+pins are recorded in the merged freeze. The only accepted C1 application
+delta from the local reviewed source is the upstream OA manual-rerun method.
+Eight affected integration checks passed in 158.41 seconds. These observations
+are separate from the original local batch source bindings above.
+
+The fresh read-only production backup is Store19.7/Email53 at actual predecessor
+`63504af9…`, 479,956,992 bytes, SHA256 `493741fc…`. Official paired publication
+took 158.245 seconds. All twenty public Task declarations compare exactly, with sixteen populated
+kinds and four empty kinds in this snapshot. Values and SQLite types in every
+populated kind are exact; every source-shaped stored cell, unrelated table, ROWID and sequence
+watermark is unchanged. All five claim facts match their exact source-qualified
+ledger for 17,613 source-kind rows checked: 16,497 adapter-eligible rows and
+1,116 ineligible email Reply rows. There are 153 matching eligible ledger
+records; the five Task claim fields are NULL for ineligible email rows.
+The existing `runs/190042/tasks/1` FK finding is preserved, not hidden.
+
+An actual Codex Consumer and Audit read only the synthetic artifact, action
+contract and shared AGENTS instructions. Both native session/ranges were read
+back from native storage. The reviewed candidate reaches `needs_human` with no
+provider call. An actual browser click selects `execute`; the fake provider
+records exactly one send and one verification. The Task ends done with one
+verified Action and one receipt; sent-result and attempt-result readers resolve
+the same authority without storing duplicate JSON. No extra model turn occurs.
+All original records in the eleven business tables remain unchanged. The exact
+synthetic conversation is absent from production in a read-only check.
+
+The inverse uses current data including the new Task/selection/Run/Action/result,
+not the source backup. Every old declaration is exact and current source-shaped
+facts/types/ROWIDs survive. Actual archived predecessor Store, strict EmailStore
+and WorkbenchStore cold-open and read the new completed Task, chosen branch,
+execution and receipt. This proves constructor/read compatibility, not every
+old-worker recovery branch. Native range reads are independently proved by the
+current prepare trace; the old snippet checks only run-record count. Reforward
+retains all current facts and passes full integrity and original-FK comparison.
+
+This native case uses a direct Store claim; automatic common-adapter/nine-kind
+behavior has its separate actual DAO tests. It explicitly permits the existing
+postfix and does not fix the earlier exact-body contract failure. No real send,
+production test Task or C1 production publication is claimed.
+
+At identical population, Task plus indexes grows from 52,846,592 to 55,345,152
+bytes (+2,498,560); payload grows by 2,077,713 bytes. The database file remains
+479,956,992 bytes (4,096-byte pages, 117,177 pages). Freelist falls from
+976 to 373 pages; this consumption of existing free pages differs from the
+Task/index allocation delta. Source has no WAL/SHM; pristine target WAL is
+zero bytes and SHM is 32,768 bytes. No VACUUM was performed. C1 unifies lifecycle ownership and
+writers; it is not a storage-reduction result.
+
+Exact evidence, raw-artifact hashes and scope limits are in
+[`2026-10-19-task-lifecycle-parent-acceptance.json`](superpowers/specs/2026-10-19-task-lifecycle-parent-acceptance.json).
+The synthetic completed-page screenshot is retained in
+[`2026-10-19-task-lifecycle-native-receipt.png`](validation/2026-10-19-task-lifecycle-native-receipt.png).
+Fresh independent parent SPEC then QUALITY both APPROVE the c4a9/eb3d16
+source and this evidence boundary. Standard publication remains pending.
+
+
+## Final upstream integration before publication
+
+Normal merge `2f76a101…` includes upstream `120291fd…`. All 39 C1 paths and
+every application file except the independently changed runtime tool-name
+renderer remain byte-exact to the accepted c4 source. The final 1,233-file
+aggregate is `ae4d28da…`, with six extra runtime pins. The c4 native evidence
+keeps its original binding; this does not claim another native run for the new
+tool catalog.
+
+The four focused runtime-context, preview, publication and finance-rule files
+report **74 passed, 2 failed in 343.04 seconds, exit 1**. Both failures are old OA
+exact-wording assertions at lines 128/161. The exact upstream module reproduces
+the same two failures in 0.09 seconds. Their functions are AST-identical across
+c4/upstream/current; the repository OA Skill in all three versions and actual
+installed Skill are byte-identical (`66dfb8dd…`). No assertion, policy or Skill
+was changed to make this release pass. Independent incremental QUALITY APPROVE
+accepts this as no new C1 failure, not an all-green run or a gate exemption.
+
+The newly verified latest predecessor backup is 479,956,992 bytes,
+SHA256 `cc1fbba7…`, full integrity/FK and exact paired preflight passed before
+atomic replacement. Production PID7444 and four degraded observations are
+recorded before C1, not attributed to it or suppressed. Standard quiet wait,
+schema/import/health/loaded-state checks and rollback remain unchanged.
+Detailed pins, failed-test baseline and review are in
+[`2026-10-19-task-lifecycle-final-integration.json`](superpowers/specs/2026-10-19-task-lifecycle-final-integration.json).

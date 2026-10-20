@@ -7364,7 +7364,7 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
-def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Path):
+def test_history_failed_item_is_not_presented_as_a_business_decision(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-actionable",
@@ -7380,15 +7380,14 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert "状态：</strong>需要你处理" in html
+    assert "状态：</strong>处理失败，尚未完成" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
-    assert f'<a href="/attempts/{attempt_id}">暂不处理</a>' in html
-    assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
-    assert "你需要做什么：</strong>请选择一种处理方式" in html
+    assert "不需要你判断业务规则" in html
+    assert "请选择一种处理方式" not in html
     assert "重试会沿用同一任务，不会创建新的业务事项" in html
     assert '<span class="attempt-label">答</span>' not in html
     assert '<span class="attempt-label">结果</span>' not in html
@@ -10892,6 +10891,53 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     assert task.status == "pending"
     assert task.force_new_decision is True
     assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
+
+
+def test_sent_wechat_attempt_needs_explicit_resend_with_exact_message_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id="melody115", message_id="wx-sent-1",
+        sender_id="melody115", sender_display_name="Morgan",
+        conversation_type="direct", direction="inbound",
+        sent_at="2026-07-28T14:00:00+08:00", kind="text",
+        text="他说 memory 不仅是 data", source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Morgan", single_chat=True,
+        trigger_message_id=trigger.message_id, trigger_create_time=trigger.sent_at,
+        trigger_sender=trigger.sender_display_name, trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Morgan", trigger_message_id=trigger.message_id,
+        trigger_sender=trigger.sender_display_name, trigger_text=trigger.text,
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    task = store.get_reply_task_for_message(
+        trigger.conversation_id, trigger.message_id, channel="wechat",
+    )
+    assert task is not None
+    original_generation = task.execution_generation
+
+    status, _, _ = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 409
+    assert store.get_reply_task(task.id).execution_generation == original_generation
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, explicit_resend_message_id="another-message",
+    )
+    assert status == 409
+    assert store.get_reply_task(task.id).execution_generation == original_generation
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, explicit_resend_message_id=trigger.message_id,
+    )
+    assert status == 303
+    rerun = store.get_reply_task(task.id)
+    assert rerun.execution_generation != original_generation
+    assert rerun.manual_rerun_attempt_id == attempt_id
 
 
 def test_scheduled_rerun_payload_is_valid_execution_context():

@@ -4164,6 +4164,7 @@ def test_audit_reviews_proposal_and_human_question_as_separate_stages():
     assert "An approved human request authorizes only publication of the question" in text
     assert "no branch executes until the person selects it" in text
     assert "Audit never originates a human question" in text
+    assert "needs_human reason is one short sentence in ordinary Chinese, at most 100 characters" in text
 
 
 def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
@@ -4174,7 +4175,12 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
     assert "DingTalk bodies use structured Markdown" not in text
     assert "OA comments and email use plain text" not in text
-    assert "the reusable task class rule that is missing and why it matters" in text
+
+
+def test_needs_human_reason_prompt_is_plain_language_and_bounded():
+    text = " ".join(consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS.split())
+    assert "one plain-Chinese sentence of at most 100 characters" in text
+    assert "Avoid jargon; keep evidence in decision_basis" in text
 
 
 def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):

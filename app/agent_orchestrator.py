@@ -316,6 +316,14 @@ class AgentOrchestrator:
                         predecessor_review_id=state.consumer_result.predecessor_review_id,
                     )
                 elif (
+                    executed.outcome == "executed"
+                    and (state.consumer_result.purpose_output or {}).get("action") == "request_access"
+                ):
+                    next_state = self._purpose_retry_state(task, state, request_completed=True)
+                    if isinstance(next_state, OrchestrationResult):
+                        return next_state
+                    state = next_state
+                elif (
                     executed.outcome != "executed"
                     or not state.consumer_result.continue_after_execution
                 ):
@@ -327,11 +335,6 @@ class AgentOrchestrator:
                     return self._candidate_terminal(
                         state, status, executed.error, executed
                     )
-                elif (state.consumer_result.purpose_output or {}).get("action") == "request_access":
-                    next_state = self._purpose_retry_state(task, state, request_completed=True)
-                    if isinstance(next_state, OrchestrationResult):
-                        return next_state
-                    state = next_state
                 elif state.consumer_result.stage_index + 1 >= MAX_EXECUTION_STAGES:
                     return self._candidate_terminal(
                         state,
@@ -774,9 +777,9 @@ class AgentOrchestrator:
             executed = SystemExecutionResult.model_validate_json(
                 execution["result_json"]
             )
+            if executed.outcome == "executed" and (result.purpose_output or {}).get("action") == "request_access":
+                return self._purpose_retry_state(task, state, request_completed=True)
             if executed.outcome == "executed" and result.continue_after_execution:
-                if (result.purpose_output or {}).get("action") == "request_access":
-                    return self._purpose_retry_state(task, state, request_completed=True)
                 if result.stage_index + 1 >= MAX_EXECUTION_STAGES:
                     return self._candidate_terminal(
                         state,
@@ -942,7 +945,10 @@ class AgentOrchestrator:
         review = self.store.get_candidate_review_for_audit_run(parent.id)
         execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
         if (self._audit_result(parent).outcome is AuditOutcome.APPROVE
-            and previous_candidate.continue_after_execution
+            and (
+                previous_candidate.continue_after_execution
+                or (previous_candidate.purpose_output or {}).get("action") == "request_access"
+            )
             and execution and execution["status"] == "done"):
             review_id = review["id"]
             return {

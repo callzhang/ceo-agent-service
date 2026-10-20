@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.deployment_drain import claim_connection
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -449,7 +451,9 @@ class EmailClassificationTaskAdapter:
         lease_expires_at = self._timestamp(
             self._now() + timedelta(seconds=self.lease_seconds)
         )
-        with self.email_store._connect() as db:
+        with claim_connection(self.email_store) as db:
+            if db is None:
+                return None
             eligible = db.execute(
                 f"""
                 select 1 from ({_EMAIL_CLASSIFICATION_SQL})

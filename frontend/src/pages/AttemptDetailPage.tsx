@@ -140,7 +140,7 @@ function HumanDecisionBasis({ detail }: { detail: AttemptDetail }) {
   const basis = decision.basis;
   const factList = (items: Array<{ assertion: string; references: string[] }>) => items.map((item) => <li key={`${item.assertion}-${item.references.join(",")}`}>{item.assertion}{item.references.length > 0 && <small>依据：{item.references.join("、")}</small>}</li>);
   return <section className="console-card attempt-decision-basis" aria-label="人工判断依据">
-    <h2>为什么需要你判断</h2>
+    <h2>这次要你决定什么</h2>
     <p>{decision.reason}</p>
     <h3>已核验事实</h3><ul>{factList(basis.verified_facts)}</ul>
     <h3>适用规则</h3><ul>{factList(basis.rule_evidence)}</ul>
@@ -496,10 +496,10 @@ export function AttemptDetailPage() {
     return () => controller.abort();
   }, [attemptId]);
 
-  const runAction = async (url: string, success: string) => {
+  const runAction = async (url: string, success: string, payload?: Record<string, unknown>) => {
     setMessage("操作进行中…");
     try {
-      const result = await command(url);
+      const result = payload ? await command(url, payload) : await command(url);
       const refreshed = await getAttemptDetail(attemptId);
       setDetail(refreshed.item);
       setSnapshot(refreshed.meta.snapshot_at);
@@ -547,6 +547,12 @@ export function AttemptDetailPage() {
           {detail.actions.audit_url && <Link className="agent-log-button" to={detail.actions.audit_url} title="查看 Agent 如何核验方案、边界和实际结果">查看审计过程</Link>}
           {detail.actions.agent_url && <Link className="agent-log-button" to={detail.actions.agent_url} title="查看关联的 Agent 会话">查看 Agent session</Link>}
           {detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm(detail.actions.rerun_confirmation)) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>{detail.actions.rerun_label}</button>}
+          {detail.actions.can_resend_wechat && <button type="button" className="danger-button" onClick={() => {
+            const messageId = detail.actions.resend_message_id || "";
+            if (window.confirm(`确认再次发送微信回复？\n原消息 ID：${messageId}\n${detail.trigger.text}`)) {
+              void runAction(detail.actions.resend_wechat_url || "", "再次发送已提交", { trigger_message_id: messageId });
+            }
+          }}>再次发送</button>}
           {detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}
           {!detail.agent_execution_record && <span className="muted">未记录 Agent 过程</span>}
           {detail.actions.terminal && <span className="disabled-action">无需操作</span>}

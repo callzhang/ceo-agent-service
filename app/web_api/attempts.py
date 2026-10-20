@@ -505,6 +505,8 @@ def _action_links(
     rerun: RerunPresentation,
     *,
     rerun_block_reason: str = "",
+    source_send_status: str = "",
+    source_is_latest: bool = False,
 ) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
@@ -540,6 +542,15 @@ def _action_links(
             delivery_action_label = "重试发送"
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
+    can_resend_wechat = (
+        source_send_status == "sent"
+        and source_is_latest
+        and str(getattr(attempt, "channel", "") or "") == "wechat"
+        and reply_task is not None
+        and not bool(getattr(reply_task, "input_compacted", False))
+        and str(getattr(reply_task, "trigger_message_id", "") or "") == str(attempt.trigger_message_id)
+        and int(getattr(reply_task, "manual_rerun_attempt_id", 0) or 0) != int(attempt.id)
+    )
     return {
         "can_rerun": (
             (status == "failed" and not rerun_block_reason)
@@ -551,6 +562,9 @@ def _action_links(
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
+        "can_resend_wechat": can_resend_wechat,
+        "resend_wechat_url": f"/api/console/history/{int(attempt.id)}/resend-wechat",
+        "resend_message_id": str(attempt.trigger_message_id) if can_resend_wechat else "",
         "recall_url": f"/api/console/history/{int(attempt.id)}/recall",
         "feedback_url": f"/api/console/history/{int(attempt.id)}/feedback",
         "consumer_url": _execution_url(attempt, agent_sessions, "consumer"),
@@ -870,6 +884,9 @@ def build_attempt_detail(
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
              if attempt.send_status == "failed" else RerunPresentation())
+    latest_attempt = store.get_latest_reply_attempt_for_trigger(
+        historical_attempt.conversation_id, historical_attempt.trigger_message_id,
+    ) if historical_attempt.channel == "wechat" else None
     status_message, requires_decision = _status_message(attempt, attention, rerun_block_reason=rerun_block_reason)
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
@@ -1093,7 +1110,14 @@ def build_attempt_detail(
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun, rerun_block_reason=rerun_block_reason
+            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun,
+            rerun_block_reason=rerun_block_reason,
+            source_send_status=historical_attempt.send_status,
+            source_is_latest=(
+                latest_attempt is not None
+                and latest_attempt.channel == "wechat"
+                and latest_attempt.id == historical_attempt.id
+            ),
         ),
         "agent_sessions": agent_sessions,
         "runtime_attempts": runtime_attempts,

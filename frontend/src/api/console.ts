@@ -265,7 +265,7 @@ export interface HistoryItem { id: string; occurred_at: string; title: string; t
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
-export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
+export interface AttentionItem { statuses?: string[]; id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
 export interface FeedbackProcessingRound {
   id: number;
@@ -1243,7 +1243,7 @@ export function listAttention(signal?: AbortSignal) {
         const label = displayValue(item.category) === "Service error" ? "查看错误详情" : "查看详情";
         return { label, href: detailUrl };
       }).filter((link): link is { label: string; href: string } => Boolean(link));
-      return { id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, detail_label: displayValue(row.detail_label || "状态"), detail: row.detail ?? row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
+      return { statuses: [...new Set(records.map((record) => displayValue(asRecord(record).status)))], id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, detail_label: displayValue(row.detail_label || "状态"), detail: row.detail ?? row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
     }),
   }));
 }

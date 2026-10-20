@@ -109,6 +109,49 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_pat
         )
 
 
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    (("done", "done"), ("skipped_no_reliable_entry", "skipped")),
+)
+def test_startup_reconciles_failed_unsubscribe_task_from_terminal_receipt(
+    tmp_path, outcome, expected_status,
+):
+    from app.email_store import EmailStore
+    from tests.test_email_action_storage import _cases
+
+    path = tmp_path / "unsubscribe-startup.sqlite3"
+    store = AutoReplyStore(path)
+    EmailStore(path)
+    identity = "email-action:" + "c" * 64
+    with store._connect() as db:
+        # This fixture exercises the startup projection from a persisted receipt;
+        # provider-plan ancestry is outside the recovery query under test.
+        db.execute("pragma foreign_keys=off")
+        task_id = _insert_current_task8(db, "reply_tasks", {
+            "channel": "email", "conversation_id": "email-thread",
+            "conversation_title": "Email", "single_chat": 0,
+            "trigger_message_id": identity, "trigger_create_time": "",
+            "trigger_sender": "", "status": "failed",
+            "error": "worker_interrupted",
+        }).lastrowid
+        insert_email_action(
+            db, "email_unsubscribe_receipts",
+            _cases()["email_unsubscribe_receipts"] | {
+                "action_identity": identity,
+                "outcome": outcome,
+            },
+        )
+
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 1
+    with store._connect() as db:
+        task = db.execute(
+            f"select status, error from ({store_module.REPLY_TASK_SQL}) where id=?",
+            (task_id,),
+        ).fetchone()
+    assert tuple(task) == (expected_status, "")
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 0
+
+
 def test_agent_authored_message_requires_verified_provider_readback(tmp_path):
     store = AutoReplyStore(tmp_path / "agent-message-origin.sqlite3")
     with store._connect() as db:
@@ -5157,6 +5200,64 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
     assert rerun.trigger_text == "@Alex Chen 重新看"
     claimed = store.claim_reply_tasks(limit=1)
     assert [claimed_task.id for claimed_task in claimed] == [task.id]
+
+
+def test_sent_wechat_rerun_requires_exact_explicit_resend_at_store_boundary(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    source = dict(
+        channel="wechat", conversation_id="melody115", conversation_title="Melody",
+        single_chat=True, trigger_message_id="wx-1",
+        trigger_create_time="2026-09-26T14:12:52-07:00",
+        trigger_sender="Melody", trigger_text="他说 memory 不仅是 data",
+        trigger_message_json='{"message_id":"wx-1","text":"他说 memory 不仅是 data"}',
+    )
+    store.enqueue_reply_task(**source)
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=source["conversation_id"],
+        conversation_title="Melody", trigger_message_id=source["trigger_message_id"],
+        trigger_sender="Melody", trigger_text=source["trigger_text"],
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    original = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
+    assert original is not None
+
+    with pytest.raises(store_module.ManualRerunConflict, match="explicit resend"):
+        store.enqueue_manual_rerun_reply_task(**source, attempt_id=attempt_id)
+    with pytest.raises(store_module.ManualRerunConflict, match="explicit resend"):
+        store.enqueue_manual_rerun_reply_task(
+            **source, attempt_id=attempt_id, explicit_resend_message_id="wx-other",
+        )
+    assert store.get_reply_task(original.id).execution_generation == original.execution_generation
+
+    resent = store.enqueue_manual_rerun_reply_task(
+        **source, attempt_id=attempt_id, explicit_resend_message_id="wx-1",
+    )
+    assert resent.execution_generation != original.execution_generation
+    assert resent.manual_rerun_attempt_id == attempt_id
+    repeated_pending = store.enqueue_manual_rerun_reply_task(
+        **source, attempt_id=attempt_id, explicit_resend_message_id="wx-1",
+    )
+    assert repeated_pending.execution_generation == resent.execution_generation
+    with store._connect() as db:
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, resent.id),
+        )
+    with pytest.raises(store_module.ManualRerunConflict, match="already resent"):
+        store.enqueue_manual_rerun_reply_task(
+            **source, attempt_id=attempt_id, explicit_resend_message_id="wx-1",
+        )
+    store.record_reply_attempt(
+        channel="wechat", conversation_id=source["conversation_id"],
+        conversation_title="Melody", trigger_message_id=source["trigger_message_id"],
+        trigger_sender="Melody", trigger_text=source["trigger_text"],
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    with pytest.raises(store_module.ManualRerunConflict, match="newer WeChat Attempt"):
+        store.enqueue_manual_rerun_reply_task(
+            **source, attempt_id=attempt_id, explicit_resend_message_id="wx-1",
+        )
 
 
 def test_manual_rerun_dedupes_same_pending_source_attempt(tmp_path: Path):

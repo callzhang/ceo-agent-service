@@ -24,11 +24,12 @@ def test_context_uses_final_role_directory_and_declared_tools(monkeypatch):
     consumer = render_runtime_context(role="consumer", route=route(), command=command("consumer", monkeypatch), task=None, current_time="2026-10-05T18:00:00-07:00")
     audit = render_runtime_context(role="audit", route=route(), command=command("audit", monkeypatch), task=None, current_time="2026-10-05T18:00:00-07:00")
     assert "/task/current" in consumer
-    assert "agent_cli.list_dingtalk_calendar_events" in consumer
+    assert "mcp__agent_cli__list_dingtalk_calendar_events" in consumer
     assert "Read the principal's events over an explicit time window" not in consumer
-    assert "agent_cli.consumer_artifact_write" in consumer
-    assert "agent_cli.consumer_artifact_write" not in audit
-    assert "exa.web_search_exa" in consumer
+    assert "mcp__agent_cli__consumer_artifact_write" in consumer
+    assert "mcp__agent_cli__consumer_artifact_write" not in audit
+    assert "mcp__exa__web_search_exa" in consumer
+    assert "agent_cli.list_dingtalk_calendar_events" not in consumer
     assert "命令网络关闭" in consumer
     assert "只读审核" in audit
     assert "未绑定" in consumer
@@ -106,7 +107,7 @@ def test_claude_context_uses_inherited_process_directory_not_materials_root(monk
 @pytest.mark.parametrize("role", ["consumer", "audit"])
 def test_undeclared_codex_tools_are_not_described_as_available(role):
     text = render_runtime_context(role=role, route=route(), command=["codex", "exec", "task"], task=None, current_time="2026-10-05T18:00:00-07:00")
-    assert "agent_cli.list_dingtalk_calendar_events" not in text
+    assert "mcp__agent_cli__list_dingtalk_calendar_events" not in text
     assert "本轮未声明" in text
 
 
@@ -201,7 +202,10 @@ def test_context_preserves_every_declared_tool_without_repeating_schema_descript
     selected = route(kind)
     text = render_runtime_context(role=role, route=selected, command=value, task=None, current_time='2026-10-05T18:00:00-07:00')
     tools = declared_role_tools(role, selected, value)
-    expected = [f'{server}.{name}' for server, names in sorted(tools.items()) for name in names]
+    expected = [
+        f'mcp__{server}__{name}' if kind is RuntimeKind.CODEX_CLI else f'{server}.{name}'
+        for server, names in sorted(tools.items()) for name in names
+    ]
     actual = [line.removeprefix('  - ') for line in text.splitlines() if line.startswith('  - ')]
     assert actual == expected
     assert '参数以本轮工具 schema 为准' in text

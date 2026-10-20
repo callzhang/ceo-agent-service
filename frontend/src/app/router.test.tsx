@@ -8,7 +8,7 @@ describe("console router", () => {
 
   it.each([
     ["/", "Agent 工作台"],
-    ["/history", "History"],
+    ["/history", "Dashboard"],
     ["/history/attempts/8320", "Attempt"],
     ["/history/meeting-attempts/1", "Meeting Attempt"],
     ["/history/oa-approvals/unknown", "OA Approval"],

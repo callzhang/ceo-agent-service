@@ -807,6 +807,7 @@ def _materialize_oa_attachment(
             "file_id": file_id,
             "file_name": file_name,
             **extracted,
+            "path": str(material_path),
             "sha256": hashlib.sha256(contents).hexdigest(),
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
