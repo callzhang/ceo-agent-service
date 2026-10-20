@@ -17,4 +17,8 @@ The new first-turn contract tests failed before the edit and pass after it. In a
 
 Focused pytest: `tests/wechat/test_decision_runner.py tests/wechat/test_consumer.py tests/test_codex_decision.py` yielded 87 passed and one unrelated failure. `test_corrected_generation_replaces_unsent_wechat_delivery` directly executes `UPDATE tasks SET status=...` against the current compact Tasks schema, where `status` is no longer a physical column. It uses `FakeCodexRunner` and does not execute the changed Developer instruction. Ruff on the two changed Python files and `git diff --check` pass. No full suite was run beside the live service.
 
-Release and production readback: pending.
+## Release and production readback
+
+PR [#172](https://github.com/callzhang/ceo-agent-service/pull/172) merged as `1e0e13d376550eaa1bd084717fc5c8b3776d9cb4` on 2026-10-20. The normal `python -m app.deploy` command waited for in-flight work to drain from six to zero, then reported `deployed beaf7b1e -> 1e0e13d3`. No quiet-wait bypass or manual process control was used. The new production checkout has the merge commit and the two-line WeChat envelope instruction. The restarted launchd process is PID 1458, started 2026-10-20 02:00:06 UTC.
+
+Postdeploy `/healthz`, Console Status, Attention and History each returned HTTP 200. Status reported `running`, system health `healthy` with zero quality-gate violations. Reply tasks showed pending 1, processing 0; Work items and Meeting jobs each showed pending 0, processing 0; WeChat deliveries showed pending 0, processing 0. Attention contained two groups, and History totalled 36,406 records. A read-only in-flight check returned zero. No Agent run had started after the new PID at this readback, so the production evidence proves installation and service health, not a new natural WeChat decision or its business outcome. The automatic GitHub Quality check was still queued at merge; it was not used as the behavior gate.
