@@ -147,7 +147,7 @@ Sort unique paths returned by
 hash each path's UTF-8 bytes, NUL, raw SHA-256 digest of its bytes, then NUL into
 one SHA-256 accumulator. This includes unchanged source and excludes ignored
 runtime/cache files. Source count increased by six files from the 1,202-path
-base. The implementer leaves HEAD and index unchanged for parent review.
+base. The implementer left HEAD and index unchanged at handoff. Parent verified the exact digest and committed the frozen source at25b2e2daf; independent SPEC approved that commit, QUALITY and parent acceptance remain pending.
 The machine-readable freeze is
 [`2026-10-19-sent-result-owner-freeze.json`](superpowers/specs/2026-10-19-sent-result-owner-freeze.json).
 
