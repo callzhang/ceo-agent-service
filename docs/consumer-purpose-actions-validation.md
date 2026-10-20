@@ -91,8 +91,14 @@ verified for the same task, operation is `comment`, the receipt and the
 candidate's sole comment have the exact same `material-read-access-block`
 identity, and the candidate has no `purpose_output`. Existing exact key,
 uniqueness, task binding, retry-budget, Audit and execution requirements remain
-in force; ordinary comments remain ineligible. Focused tests and production
-deployment/readback are pending. No historical attempt has been replayed.
+in force; ordinary comments remain ineligible. The focused retry tests passed
+(10 tests) on 2026-10-20. No historical attempt was replayed.
+
+The fix commit `012a1fc3f61146bd1ebedea6f44480cacfb6fd64` is an ancestor of the
+production checkout `63504af9f1b7c456010cc5a808722054dfffe780`. Production
+readback showed service PID `7444` and `/healthz` returned `ok=true,status=ok`.
+Attempt 15681 retains its verified comment receipt; neither Attempt 15681 nor
+15707 was replayed to validate this release.
 
 ## Release
 
