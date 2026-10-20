@@ -19,4 +19,12 @@
 
 回归 RED：新增的四个定向测试先因缺少原生 schema 读取与 Runner 参数失败。最小实现后它们通过；Work Profile 中引用同名标题及原生前置 Developer 的边界用例也先失败再通过。生产原生文件只读核对返回旧根字段，与当前根字段不等价。
 
-修改中的宽组检查在最后两个边界测试加入前完成：Consumer、Skill 会话、native-input 和 turn-runner 共 210 通过、4 跳过（481.93 秒）。独立审查发现原生 JSONL 中非对象记录会抛异常；新增回归先失败，修复后将无法核实的 schema 视为新会话。最终代码对旧／缺失／相同 schema、默认原生读取路径、非对象记录及现有 Skill 会话条件定向重跑，11 项通过。Ruff、`py_compile` 与 diff check 通过；独立审查确认没有剩余 Critical 或 Important 问题，并独立核对生产 run 385883 的错误与续会话范围。合并与发布回读待补。此前 Consumer 能力去重的十组匿名原生配对已覆盖当前 schema 的冷启动与同 session 后续轮次，且本变更没有改动这两轮的 Developer、Task、模型、工具或结果解析，故未重复调用模型。
+修改中的宽组检查在最后两个边界测试加入前完成：Consumer、Skill 会话、native-input 和 turn-runner 共 210 通过、4 跳过（481.93 秒）。独立审查发现原生 JSONL 中非对象记录会抛异常；新增回归先失败，修复后将无法核实的 schema 视为新会话。最终代码对旧／缺失／相同 schema、默认原生读取路径、非对象记录及现有 Skill 会话条件定向重跑，11 项通过。Ruff、`py_compile` 与 diff check 通过；独立审查确认没有剩余 Critical 或 Important 问题，并独立核对生产 run 385883 的错误与续会话范围。此前 Consumer 能力去重的十组匿名原生配对已覆盖当前 schema 的冷启动与同 session 后续轮次，且本变更没有改动这两轮的 Developer、Task、模型、工具或结果解析，故未重复调用模型。
+
+## 生产回读（2026-10-20 UTC）
+
+PR #167 已合并为 `c4f332417158384d8cb2bfbeb42efffd17f00a1b`。正式 `python -m app.deploy` 报告 `deployed 5a0cb051 -> c4f33241`；持久化操作 `deploy-60a85588-d171-4d07-a60a-dbfa5e593d2c` 为 `succeeded`，安装提交与目标一致，错误为空，所用数据库备份通过完成标记检查。生产 checkout 回读为该提交且干净；launchd 新 PID 为 `64733`，没有跳过空闲等待。
+
+`/healthz`、Status、Tasks、Attention、History 均返回 HTTP 200。Status 显示服务运行、系统健康且当前 quality-gate violations 为 0；队列快照为 pending 8、processing 3、failed 9、retryable 0，Attention 4，History 总数 36,375，Tasks 总数 735。这些是回读时状态，不把既有失败归因于本次发布。
+
+Settings 的 `codex_oauth` Consumer 当前公共预览提交状态为 `preview`，服务 Developer 长 40,376 字符，wire 根字段含 `action/reason/target/payload/evidence_refs`；历史 run `385883`／attempt `385884` 状态为 `invoked`，保留当时 37,442 字符的 Developer、23,883 字符的 Task，wire 根字段仍是 `outcome/proposal`。这验证当前与历史输入按各自来源展示；没有新的真实业务回合用于声称修复后业务判断已改善。GitHub Quality job 在回读时仍排队，行为验收依据为本地回归和独立审查。
