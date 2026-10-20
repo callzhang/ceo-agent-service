@@ -21,5 +21,16 @@
     "deselected": 171,
     "seconds": 14.08
   },
-  "native_proof_boundary": "Earlier A2 CLI proof did not run these later upstream wire/OA changes; upstream PRs contain their own validation. B1 parent-copy proof remains pinned to9d410990."
+  "native_proof_boundary": "Earlier A2 CLI proof did not run these later upstream wire/OA changes; upstream PRs contain their own validation. B1 parent-copy proof remains pinned to9d410990.",
+  "later_ci_integration": {
+    "commit": "d423b045a5b83b087c9bf67e59912f68457db914",
+    "upstream": "a4ceb7a63",
+    "files": 1196,
+    "sha256": "eddfb6b9d58dce8fdee8f68dc95ec13cd3be120289cf7f6e074c9243bc38207d",
+    "source_change_since_0f1d": "tests/test_consumer_system_release.py only; no app/scripts change",
+    "focused_digest_test": {
+      "passed": 1,
+      "seconds": 0.28
+    }
+  }
 }
