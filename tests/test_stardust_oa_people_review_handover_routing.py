@@ -80,7 +80,10 @@ def test_org_structure_material_gap_is_asked_of_responsible_party_before_human_e
         assert "No basis: request the missing business rationale from the submitter" in text
         assert "Do not escalate solely because the agent cannot independently verify" in text
         assert "business need, affected work and people, receiving arrangement, and reporting line" in text
-        assert "Keep the approval pending and independently verify the response" in text
+        assert "After a return/comment, independently verify any response" in text
+        assert "formal return for correction" in text
+        assert "rather than leaving it in Derek's pending queue" in text
+        assert "Comment only when no valid return path exists" in text
         assert "Use `needs_human` only for a genuine policy or authority gap" in text
         assert "If the given basis cannot be proven by evidence, `needs_human`" not in text
 
