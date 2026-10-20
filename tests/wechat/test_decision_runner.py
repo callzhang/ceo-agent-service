@@ -1,6 +1,30 @@
 import json
 
-from app.wechat.decision_runner import WechatDecisionRunner
+from app.agent_envelope import AgentEnvelope, AgentKind, UserResponseMode
+from app.wechat.decision_runner import (
+    WECHAT_DECISION_DEVELOPER_INSTRUCTIONS,
+    WechatDecisionRunner,
+)
+
+
+def test_wechat_first_turn_instruction_contains_valid_envelope_example():
+    marker = "Example AgentEnvelope for no reply: "
+    assert marker in WECHAT_DECISION_DEVELOPER_INSTRUCTIONS
+    example = WECHAT_DECISION_DEVELOPER_INSTRUCTIONS.split(marker, 1)[1].splitlines()[0]
+    decision = AgentEnvelope.model_validate_json(example)
+
+    assert decision.kind is AgentKind.NO_ACTION
+    assert decision.user_response.mode is UserResponseMode.NO_REPLY
+    assert decision.system_actions == []
+    assert decision.audit.summary
+
+
+def test_wechat_instruction_describes_reply_using_same_envelope():
+    instruction = WECHAT_DECISION_DEVELOPER_INSTRUCTIONS
+    assert "kind=reply" in instruction
+    assert "user_response.mode=send_reply" in instruction
+    assert "user_response.text" in instruction
+    assert "delivery remains a separate persisted service step" in instruction
 
 
 class CapturingExecutor:
@@ -24,17 +48,11 @@ class CapturingExecutor:
         )
 
 
-def test_wechat_decision_runner_uses_normal_runtime_command(
-    tmp_path, monkeypatch
-):
+def test_wechat_decision_runner_uses_normal_runtime_command(tmp_path, monkeypatch):
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
         json.dumps(
-            {
-                "servers": {
-                    "memory_connector": {"url": "https://memory.example/mcp"}
-                }
-            }
+            {"servers": {"memory_connector": {"url": "https://memory.example/mcp"}}}
         ),
         encoding="utf-8",
     )
@@ -55,3 +73,4 @@ def test_wechat_decision_runner_uses_normal_runtime_command(
     # the WeChat decision runner carries the same flags as the normal command.
     assert "features.multi_agent=false" in command_text
     assert "features.apps=false" in command_text
+    assert "Example AgentEnvelope for no reply" in command_text

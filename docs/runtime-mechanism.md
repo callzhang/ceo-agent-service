@@ -608,8 +608,11 @@ must fit below the 1 MiB MCP text-block boundary using the same indented
 escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
 business evidence as complete. Textless PDF pages and supported image attachments
 are read through the installed Stardust OCR client; PDF page order, source hash,
-and OCR confidence remain visible, while image results include extracted text,
-confidence, warnings, and source hash. OCR errors are technical read failures
+and OCR confidence remain visible. Supported raster images that exceed the
+700 KiB OCR MCP input bound are re-encoded as a bounded JPEG for OCR while the
+original source SHA-256 and dimensions remain in the reader result; images
+already under the bound are passed through unchanged. Image OCR results include
+extracted text, confidence, warnings, and source hash. OCR errors are technical read failures
 rather than evidence of missing applicant material. Process-owned
 temporary directory cleanup remains unchanged; failed extraction/serialization removes the
 new material file. These limits do not grant shell access to DWS credentials.
@@ -778,6 +781,13 @@ provider-rendered or serialized text is not a native resource envelope and
 remains unchanged under the existing source security validation.
 signed URLs elsewhere, including authored results, retain the existing rejection.
 This changes source representation, not action permissions or historic replay.
+
+Worker image downloads bind media IDs in `content` to the current message and
+media IDs in `quoted_content` to `quoted_message_id`. Download requests and
+task-local cache keys use that source message identity. Failure details name the
+resource owner while the error row remains bound to the trigger message for task
+recovery. A quoted image without a source message ID remains a technical read
+failure instead of being fetched against the reply message.
 
 Runtime result security validation budgets authored fields, captured-source
 metadata and each captured-source value separately. Candidate/list/binding
@@ -1768,7 +1778,7 @@ OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。任务终态清理该任务全部代次目录；未到终态时保留工件供恢复及 Audit 读取。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点；`read_dingtalk_oa_process_attachment` 按审批实例和表单文件 ID 走 DWS 只读下载地址，不要求通用钉盘节点权限，也不执行授权写入；`read_dingtalk_oa_comment_attachment` 只按当前审批记录提供的流程实例、评论附件 ID 和文件名走官方 Premium 只读下载；`read_dingtalk_oa_comment_image` 读取审批记录 `images[]` 中没有 file ID 的钉钉评论图片 URL。该 URL 读取只接受 HTTPS `static.dingtalk.com/media/`，拒绝重定向，并限制下载时长和响应大小。所有材料工具均抽取可读文本；扫描 PDF 的无文本页和受支持的图片材料返回有界的精确源 base64、MIME 类型、PDF 页码与 SHA-256，由 Consumer/Audit 通过服务清单中的原生 `ai_services.ocr_document` MCP 读取。Consumer/Audit 的 MCP 调用只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，不改全局审批策略，也不放宽其他 MCP 工具；其可用性以本轮真实工具调用为准。保留 OCR 页码、置信度与警告；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。任务终态清理该任务全部代次目录；未到终态时保留工件供恢复及 Audit 读取。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点；`read_dingtalk_oa_process_attachment` 按审批实例和表单文件 ID 走 DWS 只读下载地址，不要求通用钉盘节点权限，也不执行授权写入；`read_dingtalk_oa_comment_attachment` 只按当前审批记录提供的流程实例、评论附件 ID 和文件名走官方 Premium 只读下载；`read_dingtalk_oa_comment_image` 读取审批记录 `images[]` 中没有 file ID 的钉钉图片 URL。该 URL 读取只接受 HTTPS `static.dingtalk.com/media/`，拒绝重定向，并限制下载时长和响应大小。所有材料工具均抽取可读文本；扫描 PDF 的无文本页和受支持的图片材料返回有界的精确源 base64、MIME 类型、PDF 页码与 SHA-256，由 Consumer/Audit 通过服务清单中的原生 `ai_services.ocr_document` MCP 读取。Consumer/Audit 的 direct-only MCP 命名空间必须同时包含 `mcp__agent_cli` 和 `mcp__ai_services`，而服务角色清单仍仅暴露 `ai_services.ocr_document`；这使 OCR 可调用而其他 AI Services 工具仍不可见。工具审批配置只对经批准的 AI Services 工具逐工具应用，不改全局审批策略，也不放宽其他 MCP 工具；工具可用性以本轮真实调用为准。保留 OCR 页码、置信度与警告；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
@@ -2241,6 +2251,8 @@ AgentRun 的终态重复完成先在写事务外读取准确原生引用。独�
 或来源缺失不能被视为成功重放。候选及审核记录仍按既有事务校验。返回对象的
 原生轨迹加载发生在写事务释放后，不用 SQL 正文副本代替原生证据。这只是
 终态收尾路径的锁暴露修复，不代表全部生产延迟或 SQLite 竞争已经根治。
+
+微信专用 Runner 在首轮 Developer 指令中给出有效的最小 `AgentEnvelope` 字段示例；首次格式错误仍由原有同 session 校验修正处理，业务结果仍由完整模型校验。原生 output-schema 开关、路线、工具、会话和交付阶段均未因此改变。
 
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
@@ -4422,7 +4434,7 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 `request_access` 使用既有受控 OA 评论或原会话回复动作，完整候选经 Audit 和执行器验证后才是成功权限请求。权限未恢复时 Consumer 输出 `retry`，引用该请求的 external_action_key。解析准备阶段和编排层均从当前任务的已验证动作及其原候选核对它确为 request_access，不解析 reason 关键词。其他评论、未知 key、uncertain 回执和其他任务的请求不能充当成功申请。
 
-预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时期限；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Audit 同意的 request_access 完成后先等待，再进入后续 Consumer；Audit 同意的 retry 延后同一目的的新 revision。首次间隔 300 秒，此后按已预留次数指数增长，单次最多 43200 秒；next_at 截在 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
+预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时期限；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的回执引用在匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，随后与已验证动作存储的原始 key 精确比较。Audit 同意的 request_access 完成后先等待，再进入后续 Consumer；Audit 同意的 retry 延后同一目的的新 revision。首次间隔 300 秒，此后按已预留次数指数增长，单次最多 43200 秒；next_at 截在 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
 
 每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 10 次。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 10 次或 72 小时后不再刷新来源或启动新 Consumer，结果为 failed_terminal，错误 consumer_purpose_retry_exhausted。未读取到新事实不等于业务不合格；预算耗尽本身不会自动执行 return、reject 或发送消息。Consumer 若核实无法申请权限，可形成正常 OA return 候选；实际执行仍经现有完整审核和节点读回。
 

@@ -254,7 +254,7 @@ def make_role_agent_command(
         "-c", "features.code_mode.enabled=true",
         "-c", "features.code_mode.excluded_tool_namespaces="
         + json.dumps([] if role == "consumer" else ["functions"]),
-        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]',
+        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]',
         "-c",
         'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',
         "-c",

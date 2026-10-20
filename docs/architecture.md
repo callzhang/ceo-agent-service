@@ -422,7 +422,7 @@ or parsing. Return values retain that written metadata snapshot and the existing
 native event/result projection. File I/O never extends these writer leases.
 
 Consumer 和只读 Audit 可通过精确节点读取 DingTalk Drive 附件。PDF 下载上限为 64 MiB，其他附件为 20 MiB；扫描 PDF 超过 700 KiB 的内联 MCP 输入上限时，工具返回原始一基页码，之后按页渲染为受限 JPEG，由 `ai_services.ocr_document` 读取。源文件仅在当前 MCP 进程临时目录中保留，技术读取或 OCR 失败继续保持真实技术故障。
-Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。工具审批配置本身不决定可见性，角色清单也必须包含该工具。
+Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。Native CodeMode 还必须把 `mcp__ai_services` 与 `mcp__agent_cli` 一起列入 direct-only MCP 命名空间，否则虽有服务器和工具清单，模型仍不能直接调用 OCR。工具审批配置本身不决定可见性，角色清单和 direct-only 命名空间都必须包含该工具。
 
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
@@ -1627,6 +1627,7 @@ Consumer 可以直接使用普通工作工具，写入并读回本任务本代�
 完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
 
 上述新审核执行契约适用于实际使用 AgentOrchestrator 的业务候选。已授权微信会话的 task3 保留原有 WechatReplyConsumer / WechatDecisionRunner 决策与持久化 delivery，随后由独立 Sender 循环发送；它没有独立 Audit 回合，本次未迁移到 candidate/review/SystemExecutor。微信结果中的 audit_summary 不是独立审核回执。系统任务对应表不代表新增该任务的审核流程。
+WechatDecisionRunner 的首轮 Developer 指令提供一个简短且有效的 `AgentEnvelope` 不回复示例，以及回复时须填写的字段；完整 Pydantic 校验、同 session 格式修正和独立发送阶段保持原有契约。该示例只进入微信决策入口，不注入通用 Consumer/Audit。
 
 发布可达性使用独立的显式单任务调度暂缓入口 `app.reply_task_deferral`，默认只读；本次操作
 仅授权原 386130/386131。应用需完整备份及精确业务对象/代次/输入版本/失败 run 指纹，锁内
@@ -1729,7 +1730,7 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取支持的图片、PDF、文本或表格内容；`read_dingtalk_oa_process_attachment` 按当前审批实例和表单附件 ID 经 DWS 的 OA 附件下载地址读取正文，不要求通用钉盘节点权限；`read_dingtalk_oa_comment_attachment` 按流程实例 ID、评论附件 ID 和文件名，通过 OA Premium 评论附件接口读取精确的评论附件；`read_dingtalk_oa_comment_image` 则读取 OA 记录 `images[]` 返回的钉钉图片 URL，供没有 file ID 的评论截图进入相同 OCR 流程。图片 URL 读取仅允许 HTTPS `static.dingtalk.com/media/`，不跟随重定向、限制响应体大小和读取时长；所有下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中。扫描图片和无文本层的 PDF 返回精确来源的 base64、MIME、页码及 SHA-256，Consumer/Audit 使用原生 MCP `ai_services.ocr_document` 识别并保留页码、置信度和警告；不使用本地 OCR 脚本。后台 Consumer/Audit 命令只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，以便角色在既有工具范围内直接调用已配置服务；全局审批策略不变，其他 MCP 工具不增加自动授权。`ai_services` 通过后台服务 MCP 清单按名称和 URL 连接，OAuth 沿用 Codex 原生配置，不增加 token 代理。下载权限/权益失败、输入超过工具响应上限、MCP 失败或 OCR 为空时返回技术阻塞，不能解释为申请人未提供材料。进程退出时清理临时文件。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
+后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取支持的图片、PDF、文本或表格内容；`read_dingtalk_oa_process_attachment` 按当前审批实例和表单附件 ID 经 DWS 的 OA 附件下载地址读取正文，不要求通用钉盘节点权限；`read_dingtalk_oa_comment_attachment` 按流程实例 ID、评论附件 ID 和文件名，通过 OA Premium 评论附件接口读取精确的评论附件；`read_dingtalk_oa_comment_image` 则读取 OA 记录 `images[]` 返回的钉钉图片 URL，供没有 file ID 的评论截图进入相同 OCR 流程。图片 URL 读取仅允许 HTTPS `static.dingtalk.com/media/`，不跟随重定向、限制响应体大小和读取时长；所有下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中。扫描图片和无文本层的 PDF 返回精确来源的 base64、MIME、页码及 SHA-256，Consumer/Audit 使用原生 MCP `ai_services.ocr_document` 识别并保留页码、置信度和警告；不使用本地 OCR 脚本。超过 700 KiB OCR 输入上限的支持型栅格图片先转为有界 JPEG 输入，读取结果仍保留原始图片 SHA-256 和源尺寸；未超限图片保持原始字节。后台 Consumer/Audit 命令只对 `ai_services` 的 `health`、`ocr_document`、`transcribe_audio`、`synthesize_speech` 设置逐工具自动授权，以便角色在既有工具范围内直接调用已配置服务；全局审批策略不变，其他 MCP 工具不增加自动授权。`ai_services` 通过后台服务 MCP 清单按名称和 URL 连接，OAuth 沿用 Codex 原生配置，不增加 token 代理。下载权限/权益失败、输入超过工具响应上限、MCP 失败或 OCR 为空时返回技术阻塞，不能解释为申请人未提供材料。进程退出时清理临时文件。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
 
 Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由 Consumer 在 `durable_memories` 提出、系统写入，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
@@ -2034,6 +2035,11 @@ approve 是审核结论，decision_selected 是选择事实；两者均不能投
 | `app.channel_gate` / `app.mcp_doctor` | 在运行前检查 CLI 与 MCP 依赖。 |
 | `app.store.AutoReplyStore` | 保存队列、run 关系、租约、revision 和最小恢复状态。 |
 | `app.audit_web` | History、Agent session、Audit Rules、配置和恢复入口。 |
+
+Worker 下载消息图片时，`content` 中的媒体资源归当前消息所有，`quoted_content` 中的媒体资源归
+`quoted_message_id` 指向的原消息所有。资源下载和任务内缓存使用资源来源消息 ID；失败诊断明确记录
+该来源 ID，而错误行仍绑定触发消息 ID 以便与原任务恢复。引用内容缺少来源 ID 时保留技术错误，不把
+回复消息 ID 冒充资源所属消息。
 
 ## 运维入口
 
@@ -3481,7 +3487,7 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 Consumer 的业务核心输出统一为 `action/reason/target/payload/evidence_refs`，评分、阶段绑定和长期记忆保留为元数据。服务在推理前选择 purpose，生成动作集合及严格的 target/payload 分支；普通 purpose 支持 typed plan、reply/react 等动作，OA purpose 支持 approve/reject/return/comment。`return` 明确映射到真实 OA `revert_task`。自然语言 reason 不用于分流。多动作 plan 保留既有完整提案结构。新输出先规范化为现有 ConsumerAgentResult，再绑定来源、计算摘要并交 Audit；历史候选保持原样。Consumer 的 purpose 输出另存于候选中，以保留动作来源和回执关联。
 
-`request_access` 是经过审核的权限请求；OA 通过流程评论，普通会话通过原消息回复向可核验责任人提出。成功执行后，服务绑定该请求的已核验回执并安排第一次延后重读。后续 Consumer 可以选择普通 purpose `retry` 并引用原回执；未经核验的请求、其他普通评论、其他任务的回执不满足条件。Audit 审核 retry；只在审核通过后排队。预算按业务对象和 purpose 在既有 service_state 中以短事务持久化，不因 session、revision、attempt 退款或进程重启重置，也不能换回执清零。
+`request_access` 是经过审核的权限请求；OA 通过流程评论，普通会话通过原消息回复向可核验责任人提出。成功执行后，服务绑定该请求的已核验回执并安排第一次延后重读。后续 Consumer 可以选择普通 purpose `retry` 并引用原回执；匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，再与存储的原始 key 精确比较。未经核验的请求、其他普通评论、其他任务的回执不满足条件。Audit 审核 retry；只在审核通过后排队。预算按业务对象和 purpose 在既有 service_state 中以短事务持久化，不因 session、revision、attempt 退款或进程重启重置，也不能换回执清零。
 
 从原请求发出时刻起最多 72 小时、最多启动 10 次后续 Consumer 调用，先达到任一限制即停止。请求发出时间只从已验证动作记录取值，不信任模型时间；以 dispatch 记录时间作保守边界。退避从 5 分钟指数增长、单次封顶 12 小时，预约不晚于期限。每次重读前事务预留次数；重复检查同一预约不递增。崩溃时已预留的次数保留，不会突破上限。到期检查在刷新来源和调用 Consumer 之前完成。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
 
