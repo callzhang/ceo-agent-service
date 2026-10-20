@@ -2966,6 +2966,8 @@ Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指�
 
 服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
 
+Consumer 的代码生成「Capability Instructions」只说明当前角色的工具使用细节：任务工件／文档写入入口、原生工作区、钉钉直连只读工具、依赖读取失败与风险拒绝的结果码。通用的按需取证、普通工作与受控动作边界、回执及失败原则已在同一 Developer 输入的已保存模板和角色合同中提供，不在能力段复述。能力目录仍提供精确 `read_system_action_contract` 入口；完整结果校验、Audit 规则、Task 事实和现有 session 绑定不变。Settings 当前预览与执行使用相同装配段，历史预览读取保存的原输入。
+
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
 角色命令只在最终角色构建器生成一次原生 Skill 配置。AgentTurnProcess 不再让适配器先按任务 Skill 生成随后被角色构建器丢弃的配置，避免重复扫描 Skill 目录和序列化。任务选择仍用于每轮 Task 的 Skill 入口及运行来源回执；最终原生配置、工具权限、会话和路由不变。独立直接使用 CodexRuntimeAdapter 的调用仍可传入自己的 task Skill 选择。
