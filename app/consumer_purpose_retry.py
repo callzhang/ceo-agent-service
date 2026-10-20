@@ -104,9 +104,16 @@ class PurposeRetryBudget:
 
 def verified_access_request(store, task, evidence_refs):
     """Bind retry evidence to an actually verified, reviewed request action."""
+    # Purpose evidence references use the native `receipt:<id>` form, while
+    # the verified-action store keeps the external_action_key without a label.
+    # Normalize only that one canonical prefix; retain exact key matching.
+    referenced_keys = {
+        ref[len('receipt:'):] if ref.startswith('receipt:') else ref
+        for ref in evidence_refs
+    }
     eligible = []
     for row in store.list_verified_candidate_actions(task.id):
-        if row['external_action_key'] not in evidence_refs:
+        if row['external_action_key'] not in referenced_keys:
             continue
         candidate = store.get_review_candidate(row['candidate_id'])
         output = json.loads(candidate['candidate_json']).get('purpose_output') or {}

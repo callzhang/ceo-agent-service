@@ -4366,7 +4366,7 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 `request_access` 使用既有受控 OA 评论或原会话回复动作，完整候选经 Audit 和执行器验证后才是成功权限请求。权限未恢复时 Consumer 输出 `retry`，引用该请求的 external_action_key。解析准备阶段和编排层均从当前任务的已验证动作及其原候选核对它确为 request_access，不解析 reason 关键词。其他评论、未知 key、uncertain 回执和其他任务的请求不能充当成功申请。
 
-预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时期限；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Audit 同意的 request_access 完成后先等待，再进入后续 Consumer；Audit 同意的 retry 延后同一目的的新 revision。首次间隔 300 秒，此后按已预留次数指数增长，单次最多 43200 秒；next_at 截在 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
+预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时期限；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的 `receipt:<external_action_key>` 引用只在匹配前剥离一个 `receipt:` 前缀，随后与已验证动作存储的原始 key 精确比较。Audit 同意的 request_access 完成后先等待，再进入后续 Consumer；Audit 同意的 retry 延后同一目的的新 revision。首次间隔 300 秒，此后按已预留次数指数增长，单次最多 43200 秒；next_at 截在 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
 
 每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 10 次。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 10 次或 72 小时后不再刷新来源或启动新 Consumer，结果为 failed_terminal，错误 consumer_purpose_retry_exhausted。未读取到新事实不等于业务不合格；预算耗尽本身不会自动执行 return、reject 或发送消息。Consumer 若核实无法申请权限，可形成正常 OA return 候选；实际执行仍经现有完整审核和节点读回。
 

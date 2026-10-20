@@ -53,6 +53,16 @@ to empty code/false technical flags in both JSON Schema and Pydantic. The two
 accepted native probes ran after that repair. Earlier harness startup/argument
 failures are not counted as model or application acceptance.
 
+A later rerun exposed a receipt-reference representation mismatch: the Consumer
+returned `receipt:<external_action_key>`, while retry eligibility compared it
+directly with the unlabeled key persisted on the verified action. The retry
+validator now removes only one leading `receipt:` label before exact matching;
+task identity, unique verified-action selection and `request_access` candidate
+checks remain required. A focused regression reproduces the previously rejected
+canonical reference. This parser fix does not broaden which receipts are trusted.
+After this change, the focused purpose retry/orchestration/output/action-contract
+group passed 38 tests; Ruff and the scoped diff check passed.
+
 These probes demonstrate model/schema interoperability on two fixed synthetic
 cases. The persistent limits are established by controlled-clock SQLite tests;
 no real three-day permission wait or production OA write was used as a test.
