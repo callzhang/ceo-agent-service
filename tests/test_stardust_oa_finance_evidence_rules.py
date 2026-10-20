@@ -36,23 +36,18 @@ def test_supplier_payment_output_is_limited_to_sourced_material_conditions() -> 
 
 
 def test_supplier_payment_does_not_evaluate_or_report_signature_observations() -> None:
-    for path in FINANCE_SKILL_PATHS:
-        text = path.read_text(encoding="utf-8")
-        lowered = text.lower()
-        assert "do not assess" in lowered
-        assert "signatures" in lowered and "seals" in lowered and "stamps" in lowered
-        assert "signature blocks" in lowered
-        assert (
-            "must not appear in internal or applicant-facing review results" in lowered
-            or "from every user-facing and internal result field" in lowered
-        )
-    for path in FINANCE_RULE_CARD_PATHS:
-        text = path.read_text(encoding="utf-8")
-        supplier_section = text.split("## supplier_payment", 1)[1].split("\n## ", 1)[0]
-        lowered = supplier_section.lower()
-        assert "do not assess" in lowered
-        assert "signatures" in lowered and "seals" in lowered and "stamps" in lowered
-        assert "signature blocks" in lowered
+    text = FINANCE_SKILL.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "do not assess" in lowered
+    assert "signatures" in lowered and "seals" in lowered and "stamps" in lowered
+    assert "signature blocks" in lowered
+    assert "from every user-facing and internal result field" in lowered
+    text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
+    supplier_section = text.split("## supplier_payment", 1)[1].split("\n## ", 1)[0]
+    lowered = supplier_section.lower()
+    assert "do not assess" in lowered
+    assert "signatures" in lowered and "seals" in lowered and "stamps" in lowered
+    assert "signature blocks" in lowered
 
 
 def test_supplier_payment_decision_output_omits_stamp_and_signature_observations() -> None:

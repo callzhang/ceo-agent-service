@@ -62,11 +62,21 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     )
     entries = {item["source"]: item for item in manifest["files"]}
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
+    finance_skill_source = "ci/shared-skills/stardust-oa-finance-review/SKILL.md"
+    installed_finance_skill = Path.home().joinpath(
+        ".agents/skills/stardust-oa-finance-review/SKILL.md"
+    )
 
     assert entries[finance_source]["old_sha256"] == _digest(
         Path.home().joinpath(".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md").read_bytes()
     )
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
+    assert entries[finance_skill_source]["old_sha256"] == _digest(
+        installed_finance_skill.read_bytes()
+    )
+    assert entries[finance_skill_source]["new_sha256"] == _digest(
+        (root / finance_skill_source).read_bytes()
+    )
     assert {
         source: entries[source]["old_managed_sha256"]
         for source in (

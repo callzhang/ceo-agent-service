@@ -1,4 +1,4 @@
-# Supplier-payment Consumer validation — 2026-10-19
+# Supplier-payment Consumer validation — 2026-10-20
 
 ## Scope
 
@@ -12,9 +12,9 @@ action.
 
 - Native Claude Code CLI `/Users/derek/.local/bin/claude`, version 2.1.269;
   resolved runtime model `claude-sonnet-5`, medium effort.
-- Used the service Consumer instruction builder and the general Consumer
-  structured-output schema. Tools were disabled and session persistence was
-  disabled.
+- Used the unchanged service Consumer instruction builder and the general
+  Consumer structured-output schema. Tools were disabled with an empty strict
+  MCP configuration, and session persistence was disabled.
 - Supplied only the approved historical facts: the tracker records
   `已回复邮件`, the customer email body is unavailable, the submitted settlement
   image was unreadable to the reviewer, and the available evidence does not
@@ -27,24 +27,19 @@ action.
 
 ## Result
 
-The Consumer returned `action=no_action` with empty target, payload, and
-evidence references, and no proposal or applicant question. Its rationale
-kept customer acceptance unverified, separated reviewer-side read failure
-from applicant omission, and preserved the historical-review boundary. The
-result did not include any observation from the excluded category. Claude's
-structured-output validation accepted the response.
+The service parser accepted the native `JSONL item.completed/agent_message`
+envelope through `parse_consumer_agent_wire_result`. The Consumer returned
+`action=no_action` with empty target, payload, and evidence references, and no
+proposal or applicant question. Its rationale kept customer acceptance
+unverified, separated reviewer-side read failure from applicant omission, and
+preserved the historical-review boundary. The result did not include any
+observation from the excluded category. Claude's structured-output validation
+and the service Pydantic parser both accepted the response.
 
 No Audit, System Executor, business MCP, or external action was invoked.
 
 ## Verification limit
 
-A separate Pydantic post-validation was not completed: the probe harness
-assumed the output wrapper had a `reason` attribute that it does not expose.
-Therefore this run proves acceptance by the CLI structured-output schema, not
-by a separate service Pydantic parse. The first unauthenticated `--bare`
-startup failed before model work; the authenticated retry completed and is the
-result reported above.
-
-The run is one fixed historical Consumer probe. It does not prove general
-model behavior, change the historical workflow, or establish production
-publication of this candidate Skill.
+This is one fixed historical Consumer probe. It does not prove general model
+behavior, change the historical workflow, or establish production publication
+of this candidate Skill.
