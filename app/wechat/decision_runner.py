@@ -1,12 +1,16 @@
 """Codex runner for creating a typed WeChat reply decision."""
+
 from __future__ import annotations
 
 from app.codex_decision import CodexDecisionRunner
+
 WECHAT_DECISION_DEVELOPER_INSTRUCTIONS = """You are a WeChat reply decision worker.
 
 - Use the supplied WeChat context and the capabilities available in the runtime.
 - Decide the requested reply; delivery remains a separate persisted service step.
 - Return only the requested AgentEnvelope JSON.
+Example AgentEnvelope for no reply: {"kind":"no_action","user_response":{"mode":"no_reply","text":"","sensitivity_kind":"general"},"system_actions":[],"domain_payload":{},"audit":{"summary":"No reply needed","documents":[],"confidence":1}}
+For a reply, use kind=reply, user_response.mode=send_reply, and put the reply in user_response.text. Keep the same envelope fields.
 """
 
 
