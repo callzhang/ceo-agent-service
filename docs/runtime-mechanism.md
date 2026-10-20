@@ -2279,9 +2279,10 @@ Meeting 群发现提交给 Agent 的候选列表保留每个群的 ID、完整�
 ### Cron trigger 与 Consumer Dispatcher
 
 Agent Cron 保存任务定义及其结构化 Skill refs、首选 Runtime route/model/options、工作目录、Cron
-和时区。Scheduler 每次只计算当前时间之后的最近触发点，不枚举停机窗口，所以没有 catch-up。
-手动运行只追加一次 manual trigger，不改变 `next_run_at`。若上一轮关联 execution 尚未终态，
-本轮以 `skipped` 和稳定原因结束，不等待后补。
+和时区。启动或主机恢复后，Scheduler 为每个任务最多补一个最近的已错过触发；更早的错过点合并，
+任务创建时间之前的触发不补造，已有触发仍由唯一约束去重。之后恢复到下一个未来触发点。
+手动运行只追加一次 manual trigger，不改变 `next_run_at`。正常到期时若上一轮关联 execution 尚未
+终态，本轮以 `skipped` 和稳定原因结束；补跑则保留最近错过时间点，等上一轮终态后再提交。
 
 `scheduled_task_runs.snapshot_id` 必须引用 `scheduled_task_config_versions` 中的非空 `snapshot_json`。
 完全相同的冻结配置只存一份；修改任务会产生新的配置版本，已排队的运行仍引用原版本。测试夹具使用
@@ -2311,8 +2312,9 @@ Agent 任务，不增加日报或周报专属规则，也不改变 Audit 的独�
 producer 的一次增量读取，与 `app.cli produce-once` 相同），成功后把
 `execution_kind=service_command`、`execution_id=<命令名>` 链接到 trigger 并标记 `dispatched`。
 服务命令本身不经过 Runtime、Skill 或 synthetic scheduled Agent；只有命令发现真实对象后，
-对应的 reply、meeting 或 work-summary Consumer 才会处理业务队列。上一轮仍未终态时，下一次
-触发记为 `skipped`（`scheduled_task_previous_execution_active`），不并行执行，也不补跑。命令抛错时 trigger 以 `failed` 和
+对应的 reply、meeting 或 work-summary Consumer 才会处理业务队列。正常触发遇到上一轮未终态时，
+记为 `skipped`（`scheduled_task_previous_execution_active`），不并行执行；补跑时间点则等待上一轮终态。
+命令抛错时 trigger 以 `failed` 和
 `scheduled_task_service_command_failed: <原因>` 收口；除依赖短暂不可达（DNS、网关繁忙、超时）
 以外的原因每次写入 Attention。依赖不可达按持续时间判断：同一任务连续失败不足 15 分钟时只留在
 trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串同样的条目；连续失败超过 15 分钟则写

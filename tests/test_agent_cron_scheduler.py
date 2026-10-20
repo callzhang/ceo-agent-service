@@ -222,7 +222,7 @@ def test_tick_observer_failure_never_stops_scheduler_work(tmp_path: Path, caplog
     )
 
 
-def test_start_tracks_only_the_first_future_instant_and_never_backfills(
+def test_start_tracks_the_latest_missed_instant_and_coalesces_older_misses(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -237,11 +237,11 @@ def test_start_tracks_only_the_first_future_instant_and_never_backfills(
     scheduler.tick(NOW + timedelta(minutes=5, seconds=30))
 
     runs = store.list_scheduled_task_runs(task.id)
-    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(minutes=1),)
+    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(minutes=5),)
     assert scheduler.next_run_at(task.id) == NOW + timedelta(minutes=6)
 
 
-def test_service_restart_after_missed_instants_does_not_create_catch_up_runs(
+def test_service_restart_after_missed_instants_creates_one_latest_catch_up_run(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -250,10 +250,86 @@ def test_service_restart_after_missed_instants_does_not_create_catch_up_runs(
     first_process.start(NOW)
 
     restarted = _scheduler(store)
-    restarted.start(NOW + timedelta(hours=3, seconds=10))
+    resumed_at = NOW + timedelta(hours=3, seconds=10)
+    restarted.start(resumed_at)
 
     assert store.list_scheduled_task_runs(task.id) == ()
+    assert restarted.next_run_at(task.id) == NOW + timedelta(hours=3)
+
+    restarted.tick(resumed_at)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(hours=3),)
     assert restarted.next_run_at(task.id) == NOW + timedelta(hours=3, minutes=1)
+
+
+def test_same_process_resume_coalesces_sleep_period_to_latest_missed_instant(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    scheduler = _scheduler(store)
+    scheduler.start(NOW)
+
+    resumed_at = NOW + timedelta(hours=3, seconds=10)
+    scheduler.tick(resumed_at)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(hours=3),)
+    assert scheduler.next_run_at(task.id) == NOW + timedelta(hours=3, minutes=1)
+
+
+def test_missed_trigger_waits_for_prior_execution_to_settle_before_catch_up(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    prior_at = NOW + timedelta(hours=2)
+    prior = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=prior_at,
+        now=prior_at,
+    )
+    claimed = store.claim_scheduled_task_run(
+        prior.id,
+        owner="dispatcher",
+        lease_seconds=60,
+        now=prior_at,
+    )
+    assert claimed is not None
+    store.link_scheduled_task_run_execution(
+        prior.id,
+        owner="dispatcher",
+        execution_kind="scheduled_agent",
+        execution_id="execution-active",
+        now=prior_at,
+    )
+    store.finish_scheduled_task_dispatch(
+        prior.id,
+        owner="dispatcher",
+        status="dispatched",
+        now=prior_at,
+    )
+    terminal_executions: set[str] = set()
+    resolver = ExecutionTerminalResolverRegistry(
+        {"scheduled_agent": lambda execution_id: execution_id in terminal_executions}
+    )
+    scheduler = _scheduler(store, resolver=resolver)
+    resumed_at = NOW + timedelta(hours=3, seconds=10)
+    scheduler.start(resumed_at)
+
+    scheduler.tick(resumed_at)
+
+    assert len(store.list_scheduled_task_runs(task.id)) == 1
+    assert scheduler.next_run_at(task.id) == NOW + timedelta(hours=3)
+    assert scheduler.seconds_until_next(resumed_at) == 60.0
+
+    terminal_executions.add("execution-active")
+    scheduler.tick(resumed_at)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert tuple(run.scheduled_for for run in runs[1:]) == (NOW + timedelta(hours=3),)
 
 
 def test_two_schedulers_atomically_deduplicate_the_same_planned_instant(
@@ -297,7 +373,7 @@ def test_different_due_instants_atomically_serialize_overlap_decisions(
     second.start(NOW + timedelta(minutes=1))
 
     threads = [
-        threading.Thread(target=first.tick, args=(NOW + timedelta(minutes=2),)),
+        threading.Thread(target=first.tick, args=(NOW + timedelta(minutes=1),)),
         threading.Thread(target=second.tick, args=(NOW + timedelta(minutes=2),)),
     ]
     for thread in threads:
