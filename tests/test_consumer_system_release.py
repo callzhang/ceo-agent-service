@@ -144,6 +144,18 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
+def test_people_review_orders_new_evidence_after_the_most_recent_verified_return():
+    root = Path(__file__).resolve().parents[1]
+    skill = (root / "ci/shared-skills/stardust-oa-people-review/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "most recent verified return for the same unresolved facts" in skill
+    assert "only material submitted after that return counts as new post-return evidence" in skill
+    assert "A later approval click, comment view, or reread does not make old material newly submitted." in skill
+    assert "If timestamps are missing, incomparable, or ambiguous, do not infer" in skill
+
+
 def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(
