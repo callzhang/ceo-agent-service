@@ -105,6 +105,56 @@ def test_clean_upgrade_fast_forwards_and_verifies(tmp_path: Path):
     assert calls == ["restart", "health"]
 
 
+def test_pinned_upgrade_merges_selected_commit_even_if_remote_moves_after_stop(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    updater_clone = tmp_path / "updater"
+
+    def advance_remote() -> None:
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+        git(local, "fetch", "origin")
+
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        stop=advance_remote,
+        restart=lambda: None,
+        health=lambda: True,
+        pin_target_commit=True,
+    ).execute(op)
+
+    assert result.installed_commit == op.target_commit
+    assert git(local, "rev-parse", "HEAD") == op.target_commit
+    assert git(local, "rev-parse", "origin/main") != op.target_commit
+
+
+def test_pinned_upgrade_accepts_main_ahead_before_repository_recheck(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    updater_clone = tmp_path / "updater"
+    (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+    git(updater_clone, "add", "version.txt")
+    git(updater_clone, "commit", "-m", "newer")
+    git(updater_clone, "push", "origin", "main")
+
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        restart=lambda: None,
+        health=lambda: True,
+        pin_target_commit=True,
+    ).execute(op)
+
+    assert result.installed_commit == op.target_commit
+    assert git(local, "rev-parse", "HEAD") == op.target_commit
+    assert git(local, "rev-parse", "origin/main") != op.target_commit
+
+
 def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     op = operation(local)
@@ -183,6 +233,40 @@ def test_failed_verification_rolls_back_installed_revision(tmp_path: Path):
         verification=fail_verification,
         restart=lambda: calls.append("restart"),
         health=lambda: True,
+    )
+
+    with pytest.raises(UpgradeFailed, match="verification"):
+        updater.execute(op)
+
+    assert git(local, "rev-parse", "HEAD") == op.original_commit
+    assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
+
+
+def test_pinned_upgrade_rolls_back_selected_commit_after_remote_advances(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    store = StateStore()
+
+    def advance_remote() -> None:
+        updater_clone = tmp_path / "updater"
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+        git(local, "fetch", "origin")
+
+    def fail_verification() -> None:
+        raise RuntimeError("verification failed")
+
+    updater = RepositoryUpdater(
+        local,
+        store,
+        database_path=tmp_path / "missing.sqlite3",
+        stop=advance_remote,
+        verification=fail_verification,
+        restart=lambda: None,
+        health=lambda: True,
+        pin_target_commit=True,
     )
 
     with pytest.raises(UpgradeFailed, match="verification"):
@@ -580,6 +664,131 @@ def test_deploy_that_loses_the_race_reports_the_winner(tmp_path: Path, monkeypat
     message = deploy_module.deploy(local, tmp_path / "db.sqlite3")
 
     assert message == f"another deploy got there first; production is at {moved_to[0][:8]}"
+
+
+def test_deploy_target_commit_rejects_commit_outside_main_before_wait_or_stop(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    original = git(local, "rev-parse", "HEAD")
+    git(local, "checkout", "-b", "unrelated")
+    (local / "unrelated.txt").write_text("other branch\n", encoding="utf-8")
+    git(local, "add", "unrelated.txt")
+    git(local, "commit", "-m", "unrelated")
+    unrelated = git(local, "rev-parse", "HEAD")
+    git(local, "checkout", "main")
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: pytest.fail("quiet wait reached"))
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: pytest.fail("service stop reached"))
+
+    with pytest.raises(SystemExit, match="target commit is not in origin/main"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=unrelated)
+
+    assert git(local, "rev-parse", "HEAD") == original
+
+
+def test_deploy_target_commit_can_select_older_pushed_main_commit(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    updater_clone = tmp_path / "updater"
+    (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+    git(updater_clone, "add", "version.txt")
+    git(updater_clone, "commit", "-m", "newer")
+    git(updater_clone, "push", "origin", "main")
+    selected: list[tuple[str, bool]] = []
+
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.pinned = kwargs["pin_target_commit"]
+
+        def execute_locked(self, op):
+            selected.append((op.target_commit, self.pinned))
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert selected == [(target, True)]
+    assert git(local, "rev-parse", "origin/main") != target
+
+
+def test_deploy_target_commit_rejects_invalid_sha_before_repository_work(tmp_path: Path):
+    import app.deploy as deploy_module
+
+    with pytest.raises(SystemExit, match="full 40-character SHA"):
+        deploy_module.deploy(tmp_path / "missing", tmp_path / "db.sqlite3", target_commit="abc")
+
+
+def test_deploy_target_commit_accepts_main_advance_during_quiet_wait(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    original = git(local, "rev-parse", "HEAD")
+    selected: list[tuple[str, bool]] = []
+
+    def advance_during_wait(_db: Path) -> None:
+        updater_clone = tmp_path / "updater"
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", advance_during_wait)
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.wait_for_quiet = kwargs["wait_for_quiet"]
+            self.pinned = kwargs["pin_target_commit"]
+
+        def execute_locked(self, op):
+            self.wait_for_quiet()
+            selected.append((op.target_commit, self.pinned))
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    message = deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert message == f"deployed {original[:8]} -> {target[:8]}"
+    assert selected == [(target, True)]
+    assert git(local, "rev-parse", "origin/main") != target
+    assert git(local, "rev-parse", "HEAD") == original
+
+
+def test_deploy_target_commit_rejects_main_rewrite_during_quiet_wait(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    original = git(local, "rev-parse", "HEAD")
+    stopped: list[str] = []
+
+    def rewrite_during_wait(_db: Path) -> None:
+        git(tmp_path / "updater", "push", "--force", "origin", f"{original}:main")
+
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", rewrite_during_wait)
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: stopped.append("stop"))
+
+    with pytest.raises(SystemExit, match="target commit is not in origin/main"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert stopped == []
+    assert git(local, "rev-parse", "HEAD") == original
+
+
+def test_deploy_cli_passes_optional_target_commit(monkeypatch, tmp_path: Path):
+    import sys
+    import app.deploy as deploy_module
+
+    target = "a" * 40
+    captured: list[str] = []
+    monkeypatch.setattr(deploy_module, "deploy", lambda _root, _db, **kwargs: captured.append(kwargs["target_commit"]) or "ok")
+    monkeypatch.setattr(sys, "argv", ["app.deploy", "--root", str(tmp_path), "--target-commit", target])
+
+    assert deploy_module.main() == 0
+    assert captured == [target]
 
 
 def test_deploy_names_commits_made_in_the_production_checkout(tmp_path: Path):

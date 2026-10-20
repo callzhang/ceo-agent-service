@@ -1,4 +1,4 @@
-"""Deploy the latest pushed ``main`` to the production checkout.
+"""Deploy pushed ``main`` code to the production checkout.
 
 Derek, 2026-09-25: the service runs from its own checkout (``~/Services`` by
 default, ``CEO_SERVICE_ROOT`` to override) that nobody edits, so any session
@@ -11,6 +11,8 @@ and wait for health, rolling back on failure.
 Usage: ``python -m app.deploy`` from any checkout. An explicitly requested
 ``--skip-quiet-wait`` bypasses only the in-flight-work wait; the service is
 still stopped through the normal updater before backup or checkout changes.
+``--target-commit`` optionally pins a full SHA already in ``origin/main``;
+without it, the ordinary current-main deployment behavior is unchanged.
 Two sessions deploying at
 once are serialized by the repository lock; the second finds the checkout
 already moved and stops.
@@ -22,6 +24,7 @@ import argparse
 import os
 from pathlib import Path
 import plistlib
+import re
 import stat
 from uuid import uuid4
 
@@ -43,7 +46,7 @@ from app.repository_updater import (
     wait_for_health,
     wait_until_quiet,
 )
-from app.repository_upgrade import GitRepository
+from app.repository_upgrade import GitCommandError, GitRepository
 
 REMOTE = "origin"
 BRANCH = "main"
@@ -183,16 +186,35 @@ def deploy(
     publish_prompt_templates: bool = False,
     maintenance_tasks: tuple[int, ...] = (),
     skip_quiet_wait: bool = False,
+    target_commit: str | None = None,
 ) -> str:
     if publish_contracts and publish_prompt_templates:
         raise SystemExit("Consumer/Audit contracts and prompt templates require separate deployments")
+    if target_commit is not None:
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", target_commit):
+            raise SystemExit("--target-commit requires a full 40-character SHA")
+        target_commit = target_commit.lower()
     ensure_production_guards(root)
     repository = GitRepository(root)
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
-    target = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
+    remote_head = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
+
+    def target_is_in_main(main_head: str) -> bool:
+        if target_commit is None:
+            return True
+        try:
+            return repository.is_ancestor(target_commit, main_head)
+        except GitCommandError:
+            return False
+
+    if not target_is_in_main(remote_head):
+        raise SystemExit("target commit is not in origin/main; nothing was deployed")
+    target = target_commit or remote_head
     if current == target and not publish_contracts and not publish_prompt_templates:
         return f"already current at {current[:8]}"
+    if target_commit is not None and not repository.is_ancestor(current, target):
+        raise SystemExit("target commit is behind or diverges from production; nothing was deployed")
     records = repository.status_records()
     target_doc_changes = _target_matching_doc_changes(repository, records, target)
     if records and target_doc_changes is None:
@@ -235,7 +257,18 @@ def deploy(
         _default_start()
 
     def quiet() -> None:
+        def recheck_pinned_target() -> None:
+            if target_commit is None:
+                return
+            repository.fetch(REMOTE)
+            actual = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
+            if not target_is_in_main(actual):
+                raise UpgradePreconditionError(
+                    "target commit is not in origin/main"
+                )
+
         if skip_quiet_wait:
+            recheck_pinned_target()
             return
         if maintenance_tasks:
             processes = check_maintenance(database_path, maintenance_tasks)
@@ -243,11 +276,13 @@ def deploy(
             try:
                 prepare_maintenance(database_path, maintenance_tasks, operation.operation_id, processes)
                 wait_until_quiet(database_path)
+                recheck_pinned_target()
             except Exception:
                 start()
                 raise
         else:
             wait_until_quiet(database_path)
+            recheck_pinned_target()
 
     publication = None
     if publish_contracts:
@@ -291,6 +326,7 @@ def deploy(
         publication=publication,
         database_publication=lambda backup: prepare_database_schema_release(root, database_path, recovery_source_path=backup),
         pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
+        pin_target_commit=target_commit is not None,
     )
     # Unlocked for exactly the checkout + build + verify window; the source
     # tree is locked again in `finally` whether this succeeds, rolls back, or
@@ -344,6 +380,10 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=None, help="production checkout (default: CEO_SERVICE_ROOT)")
     parser.add_argument("--db", type=Path, default=None, help="service database (default: CEO_WORKER_DB)")
     parser.add_argument(
+        "--target-commit", type=str, default=None,
+        help="deploy only this exact origin/main commit (full 40-character SHA)",
+    )
+    parser.add_argument(
         "--restart",
         action="store_true",
         help="restart on the current code (a setting changed), instead of deploying a commit",
@@ -368,6 +408,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.restart and args.maintenance_task:
         parser.error("maintenance requires a commit deployment")
+    if args.restart and args.target_commit is not None:
+        parser.error("--target-commit requires a commit deployment")
     if args.restart and args.publish_consumer_system_contracts:
         parser.error("--restart cannot publish Consumer/Audit contracts")
     if args.restart and args.publish_prompt_templates:
@@ -379,12 +421,14 @@ def main() -> int:
             args.db or worker_db_path(), skip_quiet_wait=args.skip_quiet_wait
         ), flush=True)
         return 0
+    target_options = {"target_commit": args.target_commit} if args.target_commit is not None else {}
     print(deploy(
         args.root or service_root(), args.db or worker_db_path(),
         publish_contracts=args.publish_consumer_system_contracts,
         publish_prompt_templates=args.publish_prompt_templates,
         maintenance_tasks=tuple(args.maintenance_task),
         skip_quiet_wait=args.skip_quiet_wait,
+        **target_options,
     ), flush=True)
     return 0
 
