@@ -17,6 +17,7 @@ from app.consumer_purpose import purpose_output_model
 from app.action_contract_catalog import system_action_contract_document
 from evals.scheduled_task_generic import run
 from evals.scheduled_task_generic.okr_fixture import (
+    Fixture,
     SKILL,
     digest,
     key,
@@ -47,8 +48,8 @@ def persisted_call(call):
     return call
 
 
-def restore_first_case(saved, case, work):
-    """Restore exact saved bytes for an Audit-only fixture repair recheck."""
+def restore_saved_case(saved, case, work, prior=None):
+    """Restore exact saved bytes after a fixture repair, without new samples."""
     if saved["cases_sha256"] != digest(CASES_PATH.read_bytes()):
         raise ValueError("Saved case inputs changed")
     for name, expected in saved["source_sha256"].items():
@@ -56,9 +57,9 @@ def restore_first_case(saved, case, work):
                 if name.startswith("operation/") else run.ROOT / name)
         if digest(path.read_bytes()) != expected:
             raise ValueError("Saved business Skill source changed")
-    row = saved["cases"][0]
+    row = next(c for c in saved["cases"] if c["case_id"] == case["id"])
     if row["case_id"] != case["id"] or not row["final_grade"]["passed"]:
-        raise ValueError("Only a mechanically passing saved first case can be rechecked")
+        raise ValueError("Only a mechanically passing saved case can be rechecked")
     for call in row["raw_tool_trace"]:
         if (call["tool"] == "read_task_artifact"
                 and call["arguments"].get("offset", 0) == 0
@@ -68,12 +69,13 @@ def restore_first_case(saved, case, work):
                 continue
             if Path(name).name != name:
                 raise ValueError("Saved artifact must have a flat name")
-            (work / name).write_text(call["result"]["content"])
+            path = Fixture(case["facts"], work).docs_path if name == "documents.json" else work / name
+            path.write_text(call["result"]["content"])
     trace = work.with_name(work.name + "-tool-calls.jsonl")
     trace.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n"
                              for c in row["raw_tool_trace"]))
     output = (row["correction"] or row["consumer"])["output"]
-    restored = grade(case, work, output)
+    restored = grade(case, work, output, prior)
     if (not restored["passed"]
             or restored["analysis_hashes"] != row["final_grade"]["analysis_hashes"]
             or restored["rendered_full"] != row["final_grade"]["rendered_full"]):
@@ -116,9 +118,9 @@ def _grade(case, work, output, prior=None):
         "full.md",
         "main.md",
         "summary.md",
-        "documents.json",
     )
     checks = {"complete_artifacts": all((work / name).is_file() for name in required)}
+    checks["complete_provider_state"] = Fixture(case["facts"], work).docs_path.is_file()
     if not checks["complete_artifacts"]:
         return {
             "passed": False,
@@ -211,7 +213,7 @@ def _grade(case, work, output, prior=None):
         checks["changed_analysis_replaced"] = all(
             actual_hashes[uid] != prior[uid] for uid in expected["rewrite_ids"]
         )
-    documents = read_json(work / "documents.json")
+    documents = Fixture(case["facts"], work).documents()
     mains = [
         (node, doc)
         for node, doc in documents.items()
@@ -495,6 +497,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
     parser.add_argument("--recheck-first-case-from", help="Audit-only recheck of a saved passing candidate after a fixture repair")
+    parser.add_argument("--reuse-passed-prefix-from", help="Reuse accepted cases after exact artifact and fixture verification")
     args = parser.parse_args()
     destination = HERE / args.output
     if not destination.parent.is_dir():
@@ -520,7 +523,10 @@ def main():
     ]
     settings["ignore_user_config"] = True
     settings["ignore_rules"] = True
-    saved = read_json(HERE / args.recheck_first_case_from) if args.recheck_first_case_from else None
+    if args.recheck_first_case_from and args.reuse_passed_prefix_from:
+        raise ValueError("Select one saved-candidate mode")
+    saved_name = args.recheck_first_case_from or args.reuse_passed_prefix_from
+    saved = read_json(HERE / saved_name) if saved_name else None
     if saved and saved["settings"] != settings:
         raise ValueError("Saved native runtime settings changed")
     result = {
@@ -528,6 +534,7 @@ def main():
         "created_at": datetime.now(UTC).isoformat(),
         "cases_sha256": digest(CASES_PATH.read_bytes()),
         "grader_sha256": digest(Path(__file__).read_bytes()),
+        "fixture_sha256": digest((HERE / "okr_fixture.py").read_bytes()),
         "cli_version": subprocess.check_output(
             ["codex", "--version"], text=True
         ).strip(),
@@ -565,6 +572,8 @@ def main():
                 prior = None
                 if case.get("resume_from"):
                     shutil.copytree(completed[case["resume_from"]], artifacts)
+                    source_provider = Fixture(case["facts"], completed[case["resume_from"]]).docs_path
+                    shutil.copyfile(source_provider, Fixture(case["facts"], artifacts).docs_path)
                     prior = {
                         uid: digest(
                             (artifacts / f"analysis-{key(uid)}.json").read_bytes()
@@ -575,7 +584,19 @@ def main():
                     artifacts.mkdir()
                 facts = root / "facts.json"
                 facts.write_text(json.dumps(case["facts"], ensure_ascii=False))
-                rechecked = restore_first_case(saved, case, artifacts) if saved and not result["cases"] else None
+                saved_row = next((r for r in saved["cases"] if r["case_id"] == case["id"]), None) if saved else None
+                if args.reuse_passed_prefix_from and saved_row and saved_row["passed"]:
+                    row = dict(restore_saved_case(saved, case, artifacts, prior))
+                    row["reused_accepted_case"] = {"result": saved_name,
+                        "sha256": digest((HERE / saved_name).read_bytes()),
+                        "consumer_rerun": False, "audit_rerun": False,
+                        "restored_grade": grade(case, artifacts, (row["correction"] or row["consumer"])["output"], prior)}
+                    result["cases"].append(row)
+                    completed[case["id"]] = artifacts
+                    destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+                    print(case["id"], "PASS (verified saved candidate)", flush=True)
+                    continue
+                rechecked = restore_saved_case(saved, case, artifacts) if args.recheck_first_case_from and not result["cases"] else None
                 consumer = rechecked["consumer"] if rechecked else native(
                     "consumer", facts, artifacts, root / "consumer", flags
                 )

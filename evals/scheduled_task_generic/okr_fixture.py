@@ -106,7 +106,7 @@ class Fixture:
         self.facts, self.work = facts, Path(work)
         self.work.mkdir(parents=True, exist_ok=True)
         self.trace_path = self.work.with_name(self.work.name + "-tool-calls.jsonl")
-        self.docs_path = self.work / "documents.json"
+        self.docs_path = self.work.with_name(self.work.name + "-provider.json")
 
     def write_json(self, name, payload):
         (self.work / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -364,7 +364,7 @@ class Fixture:
                 "content": content,
                 "artifact_name": artifact_name,
             }
-            self.write_json("documents.json", docs)
+            self.docs_path.write_text(json.dumps(docs, ensure_ascii=False, indent=2))
             readback = "readback-" + node_id + ".md"
             (self.work / readback).write_text(content)
             return self.record(

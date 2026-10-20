@@ -122,7 +122,7 @@ def complete_fixture(tmp_path, case=None):
             "content": (tmp_path / appendix["artifact_name"]).read_text(),
             "artifact_name": appendix["artifact_name"],
         }
-    f.write_json("documents.json", docs)
+    f.docs_path.write_text(json.dumps(docs))
     for node, doc in docs.items():
         name = "readback-" + node + ".md"
         (tmp_path / name).write_text(doc["content"])
@@ -184,6 +184,14 @@ def test_fixture_trace_is_not_a_business_artifact(tmp_path):
     assert okr_eval.calls(tmp_path)[0]["tool"] == "read_okr_member"
 
 
+def test_fixture_provider_state_is_not_a_business_artifact(tmp_path):
+    case, output = complete_fixture(tmp_path)
+    f = Fixture(case["facts"], tmp_path)
+    assert f.docs_path.parent != f.work
+    (tmp_path / "documents.json").write_text('{"authored_publication_summary": true}')
+    assert okr_eval.grade(case, tmp_path, output)["passed"]
+
+
 def test_saved_trace_skill_redaction_is_idempotent():
     call = {"tool": "read_task_skill", "arguments": {"name": "selected"},
             "result": {"content": "exact selected Skill"}}
@@ -194,7 +202,7 @@ def test_saved_trace_skill_redaction_is_idempotent():
 
 def test_fixture_repair_rechecks_exact_saved_candidate_without_new_consumer(tmp_path):
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v9.json").read_text())
-    row = okr_eval.restore_first_case(saved, CASES[0], tmp_path)
+    row = okr_eval.restore_saved_case(saved, CASES[0], tmp_path)
     result = okr_eval.grade(CASES[0], tmp_path, row["correction"]["output"])
     assert result["passed"]
     assert result["analysis_hashes"] == saved["cases"][0]["final_grade"]["analysis_hashes"]
@@ -207,7 +215,18 @@ def test_saved_candidate_recheck_rejects_changed_skill_source(tmp_path):
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v9.json").read_text())
     saved["source_sha256"]["ci/shared-skills/ceo-weekly-okr-report/SKILL.md"] = "changed"
     with pytest.raises(ValueError, match="Skill source changed"):
-        okr_eval.restore_first_case(saved, CASES[0], tmp_path)
+        okr_eval.restore_saved_case(saved, CASES[0], tmp_path)
+
+
+def test_accepted_recovery_prefix_keeps_original_analysis_and_provider_bytes(tmp_path):
+    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v11.json").read_text())
+    prior = saved["cases"][0]["final_grade"]["analysis_hashes"]
+    row = okr_eval.restore_saved_case(saved, CASES[1], tmp_path, prior)
+    result = okr_eval.grade(CASES[1], tmp_path, row["correction"]["output"], prior)
+    assert result["passed"]
+    assert result["checks"]["unchanged_analysis_reused"]
+    assert result["checks"]["changed_analysis_replaced"]
+    assert result["checks"]["complete_provider_state"]
 
 
 def test_native_output_directory_is_checked_before_model_configuration(monkeypatch):
@@ -392,7 +411,7 @@ def test_actual_analysis_cannot_reuse_a_stale_source_digest(tmp_path):
 
 def test_actual_publication_requires_current_parent_and_full_readback(tmp_path):
     case, output = complete_fixture(tmp_path)
-    path = tmp_path / "documents.json"
+    path = Fixture(case["facts"], tmp_path).docs_path
     docs = json.loads(path.read_text())
     node = next(n for n, d in docs.items() if d["parent_id"] == "main")
     docs[node]["parent_id"] = "other-document"
