@@ -155,3 +155,7 @@ This slice completes local Sent exact-result ownership and the three confirmed
 unused writer paths. Full A remains incomplete: Postfix preparation/first-accepted
 proof cannot universally derive from external results; active OKR and Attempt
 retirement, historical unowned fields, B2, C and D are outside this slice.
+
+## Parent merged source
+
+SPEC and QUALITY approve25b2e2daf, source1208/3a1495a0. Parent normally merged upstream47db00411 at1b38a0e20; the only app/tests/scripts changes are the already separately accepted Consumer/OCR guidance/role allowlist and their two tests. Sent DDL, release, projection, inverse and writers are byte-identical. A claim-file append conflict retained both sessions' rows. Merged native-final-schema/source-freeze/unused-API smoke passed4/4.07s. The separate merged manifest records the final source used for parent acceptance; local implementation tests above remain bound to their original source. Full A/B2/C/D are incomplete.
