@@ -1,0 +1,27 @@
+{
+  "schema": "ceo-email-metadata-merged-freeze-v1",
+  "commit": "cb156951ba1119599961da140361dff91ad74db8",
+  "files": 1195,
+  "sha256": "9d4109905acea0be33e145056a14b6308a1d6a3c71291d0a1422dcbaf64a58be",
+  "pre_merge_manifest": "2026-10-19-email-metadata-source-freeze.json",
+  "pre_merge_source_sha256": "125cc463541b7ca34bcfe7e2c70b5f6e1187b489377ef262ffbbe18f7921e210",
+  "source_changes_since_pre_merge": [
+    {
+      "path": "app/consumer_agent.py",
+      "sha256": "f00b5e5b55b1b21c3bb2f5471b60892e49c28e216aa054c8ad35e00f6075704c"
+    },
+    {
+      "path": "tests/test_consumer_agent.py",
+      "sha256": "71fe601d2948502e144f7e8de1fc6b8a01f2f15fb8a986dc3a1e2a23f59a4f98"
+    }
+  ],
+  "digest_format": "SHA-256 of UTF-8 json.dumps(entries,ensure_ascii=False,separators=(comma,colon)), unique sorted paths, entry key order path then sha256",
+  "merged_tests": {
+    "files": [
+      "tests/test_email_metadata_schema.py",
+      "tests/test_native_copy_final_schema.py"
+    ],
+    "passed": 39,
+    "seconds": 96.14
+  }
+}

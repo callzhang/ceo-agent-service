@@ -67,16 +67,25 @@ Final focused results:
 `ruff check` and Python compilation passed for all 29 changed/new Python files;
 `git diff --check` passed. No full-suite result is claimed.
 
-The source freeze is
-[`2026-10-19-email-metadata-source-freeze.json`](superpowers/specs/2026-10-19-email-metadata-source-freeze.json).
-It lists individual hashes for the 29 changed/new app/test/script files and
-the reproducible aggregate over all 1,195 tracked or unignored source files in
-those three directories. Aggregate SHA-256:
-`e6041ee817c0be27ec5f30c6caba18d48bbbcb459ff20f3d21647e5e8c98a417`.
-Manifest file SHA-256:
-`b9b7ac6ee51a498a5eec2f824083b1943480b36fa21ff6bd2156b0c475a3c571`.
-App/tests/scripts remain frozen for root acceptance; subsequent edits in this
-handoff only record documentation and the implementer's claim status.
+The initial implementer snapshot covered 29 changed source files, with 1,195-file
+aggregate `e6041ee817c0be27ec5f30c6caba18d48bbbcb459ff20f3d21647e5e8c98a417`.
+After the reviewed native-harness correction, the immutable pre-merge snapshot
+[`2026-10-19-email-metadata-source-freeze.json`](superpowers/specs/2026-10-19-email-metadata-source-freeze.json)
+covers 31 changed source files and aggregate
+`125cc463541b7ca34bcfe7e2c70b5f6e1187b489377ef262ffbbe18f7921e210`;
+its manifest file SHA-256 is
+`5e6f5cc6385335fffe0a2a2fffac1b0193a0490f49a8c057c444541d4ae1a3ad`.
+These are historical evidence boundaries, not the final merged app tree.
+
+Root merged accepted A2 and upstream Consumer capability wording at `cb156951b`.
+The only app/test/script differences from pre-merge `07738a55d` are
+`app/consumer_agent.py` and `tests/test_consumer_agent.py`; B1 schema/runtime and
+native helper remain byte-identical. The final merged source for parent acceptance
+is recorded in
+[`2026-10-19-email-metadata-merged-freeze.json`](superpowers/specs/2026-10-19-email-metadata-merged-freeze.json):
+1,195 files, aggregate `9d4109905acea0be33e145056a14b6308a1d6a3c71291d0a1422dcbaf64a58be`.
+The merged metadata-schema and native-harness tests passed 39/96.14s.
+No source body or native trajectory is included in either manifest.
 
 The eleven EmailStore nodes cover direct primary-key lookup, feedback, training
 eligibility, pending-feedback persistence, both rescan locator paths,
