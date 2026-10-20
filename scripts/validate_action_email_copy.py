@@ -1468,12 +1468,14 @@ def _current_business_public_writes(path):
         work_cluster_id = store.create_business_work_cluster_in_transaction(
             title="copy-only current work cluster", _db=db
         )
-        work_project_id = store.create_work_project(
-            _db=db, title="copy-only current work project"
-        )
-        work_todo_id = store.create_work_todo(
-            _db=db, project_id=work_project_id, title="copy-only current work todo"
-        )
+        from app.business_storage import insert_business
+        work_project_id = int(insert_business(
+            db, "work_project", {"title": "copy-only current work project"}
+        ).lastrowid)
+        work_todo_id = int(insert_business(
+            db, "work_todo", {"project_id": work_project_id,
+                              "title": "copy-only current work todo"}
+        ).lastrowid)
         todo_evidence = store.upsert_todo_evidence_candidate(
             project_id=work_project_id, todo_id=work_todo_id,
             source_type="copy-only", source_ref="current-copy-only-evidence", _db=db,

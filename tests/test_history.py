@@ -1,7 +1,8 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import sqlite3
 
 from app.run_storage import insert_run
-from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action, update_sync_action
 from app.task_storage import REPLY_TASK_SQL
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
@@ -166,7 +167,7 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
 
 def test_history_includes_task_updates_and_follow_ups(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="AI 待办推进",
         category="product",
         priority="P1",
@@ -175,14 +176,14 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         current_state="等待 Avery 反馈",
         next_step="补充 TODO 描述",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="向 Avery 解释待办更新",
         description="说明重要事项判断口径，并同步更新后的 TODO。",
         owner_name="Avery",
         priority="P1",
     )
-    update_id = store.create_work_update(
+    update_id = seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="42",
@@ -201,20 +202,15 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         scheduled_at="2026-07-15 10:00:00",
         status="sent",
     )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update work_updates set created_at='2026-07-15 10:00:00' where id=?",
-            (update_id,),
-        )
-        db.execute(
-            """
-            update follow_up_drafts
-            set sent_at='2026-07-15 10:01:00',
-                updated_at='2026-07-15 10:01:00'
-            where id=?
-            """,
-            (follow_up_id,),
-        )
+    with store._connect() as db:
+        db.execute("begin immediate")
+        update_sync_action(db, "work_updates", update_id, {
+            "created_at": "2026-07-15 10:00:00",
+        })
+        update_sync_action(db, "follow_up_drafts", follow_up_id, {
+            "sent_at": "2026-07-15 10:01:00",
+            "updated_at": "2026-07-15 10:01:00",
+        })
 
     items = store.list_history_items(limit=20, query_text="Avery")
 

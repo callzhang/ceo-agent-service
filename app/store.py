@@ -24035,42 +24035,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError(f"Unsupported column(s): {unknown}")
         return dict(values)
 
-    def create_work_project(
-        self, *, _db: sqlite3.Connection | None = None, **values
-    ) -> int:
-        if _db is None:
-            with self._immediate_write_transaction() as db:
-                return self.create_work_project(_db=db, **values)
-        allowed_columns = set(BUSINESS_PROJECTIONS["work_project"].split(" from ", 1)[0].split(","))
-        allowed_columns = {field.split(" as ")[-1].strip() for field in allowed_columns} - {"id"}
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        if "needs_derek_attention" in filtered:
-            filtered["needs_derek_attention"] = int(
-                bool(filtered["needs_derek_attention"])
-            )
-        with self._optional_connection(_db) as db:
-            return int(insert_business(db, "work_project", filtered).lastrowid)
 
-    def update_work_project(
-        self, project_id: int, *, _db: sqlite3.Connection | None = None, **values
-    ) -> None:
-        if _db is None:
-            with self._immediate_write_transaction() as db:
-                return self.update_work_project(project_id, _db=db, **values)
-        if not values:
-            return
-        allowed_columns = {field.split(" as ")[-1].strip()
-                           for field in BUSINESS_PROJECTIONS["work_project"].split(" from ", 1)[0].split(",")} - {"id"}
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        if "needs_derek_attention" in filtered:
-            filtered["needs_derek_attention"] = int(
-                bool(filtered["needs_derek_attention"])
-            )
-        with self._optional_connection(_db) as db:
-            timestamp = db.execute("select current_timestamp").fetchone()[0]
-            update_business(db, "work_project", project_id,
-                            {**filtered, "updated_at": timestamp,
-                             "last_activity_at": timestamp})
 
     def get_work_project(
         self, project_id: int, *, _db: sqlite3.Connection | None = None
@@ -24100,71 +24065,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
             ]
 
-    def create_work_todo(
-        self, *, _db: sqlite3.Connection | None = None, **values
-    ) -> int:
-        if _db is None:
-            with self._immediate_write_transaction() as db:
-                return self.create_work_todo(_db=db, **values)
-        allowed_columns = {
-            "project_id",
-            "title",
-            "description",
-            "owner_user_id",
-            "owner_name",
-            "owner_evidence_json",
-            "status",
-            "priority",
-            "deadline_at",
-            "next_follow_up_at",
-            "follow_up_question",
-            "blocker",
-            "completion_evidence_json",
-            "created_from_update_id",
-        }
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        with self._optional_connection(_db) as db:
-            return int(insert_business(db, "work_todo", filtered).lastrowid)
 
-    def update_work_todo(
-        self, todo_id: int, *, _db: sqlite3.Connection | None = None, **values
-    ) -> None:
-        if _db is None:
-            with self._immediate_write_transaction() as db:
-                return self.update_work_todo(todo_id, _db=db, **values)
-        if not values:
-            return
-        allowed_columns = {
-            "project_id",
-            "title",
-            "description",
-            "owner_user_id",
-            "owner_name",
-            "owner_evidence_json",
-            "status",
-            "priority",
-            "deadline_at",
-            "next_follow_up_at",
-            "follow_up_question",
-            "blocker",
-            "completion_evidence_json",
-            "created_from_update_id",
-            "completed_at",
-        }
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        if filtered.get("status") == "done" and "completed_at" not in filtered:
-            filtered["completed_at"] = "__CURRENT_TIMESTAMP__"
-        normalized = {key: value for key, value in filtered.items()
-                      if not (key == "completed_at" and value == "__CURRENT_TIMESTAMP__")}
-        if filtered.get("completed_at") == "__CURRENT_TIMESTAMP__":
-            normalized["completed_at"] = None
-        with self._optional_connection(_db) as db:
-            timestamp = db.execute("select current_timestamp").fetchone()[0]
-            if normalized.get("completed_at") is None and filtered.get("completed_at") == "__CURRENT_TIMESTAMP__":
-                normalized["completed_at"] = timestamp
-            if normalized:
-                update_business(db, "work_todo", todo_id,
-                                {**normalized, "updated_at": timestamp})
 
     def get_work_todo(
         self, todo_id: int, *, _db: sqlite3.Connection | None = None
@@ -25018,27 +24919,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (outbox_id,),
             ).fetchone()
 
-    def create_work_update(
-        self, *, _db: sqlite3.Connection | None = None, **values
-    ) -> int:
-        allowed_columns = {
-            "project_id",
-            "source_type",
-            "source_ref",
-            "summary",
-            "changes_json",
-            "merge_reason",
-            "confidence",
-        }
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        with self._optional_connection(_db) as db:
-            cursor = insert_sync_action(db, "work_updates", filtered)
-            timestamp = db.execute("select current_timestamp").fetchone()[0]
-            update_business(db, "work_project", filtered["project_id"], {
-                "updated_at": timestamp,
-                "last_activity_at": timestamp,
-            })
-            return int(cursor.lastrowid)
 
     def has_work_update(
         self,

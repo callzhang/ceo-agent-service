@@ -4,7 +4,7 @@ from pathlib import Path
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
-from tests.support.legacy_todo_facts import seed_legacy_todo_link
+from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_work_project, seed_legacy_work_todo
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     maybe_create_dingtalk_todo,
@@ -86,7 +86,7 @@ def _store(tmp_path: Path) -> AutoReplyStore:
 
 
 def _project_and_todo(store: AutoReplyStore, **todo_values):
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="客户交付",
         category="projects",
         tags_json=json.dumps(["客户交付"], ensure_ascii=False),
@@ -109,7 +109,7 @@ def _project_and_todo(store: AutoReplyStore, **todo_values):
         "deadline_at": "2026-07-01 18:00:00",
     }
     defaults.update(todo_values)
-    return project_id, store.create_work_todo(**defaults)
+    return project_id, seed_legacy_work_todo(store, **defaults)
 
 
 def _formal_business_task(store: AutoReplyStore, **values) -> int:

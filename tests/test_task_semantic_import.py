@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, revise_legacy_work_todo, seed_legacy_work_update
 
 import json
 import sqlite3
@@ -49,9 +50,9 @@ def _update_business(path, kind, public_id, values):
 
 def _legacy_store(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    project_id = store.create_work_project(title="客户推进")
-    todo_id = store.create_work_todo(project_id=project_id, title="准备报价")
-    update_id = store.create_work_update(
+    project_id = seed_legacy_work_project(store, title="客户推进")
+    todo_id = seed_legacy_work_todo(store, project_id=project_id, title="准备报价")
+    update_id = seed_legacy_work_update(store,
         project_id=project_id, source_type="reply_attempt", source_ref="msg-1",
         summary="会议讨论了客户推进", changes_json="{}",
     )
@@ -88,7 +89,7 @@ def _source_backed_todo(store, *, basis, source_type, author_user_id,
                         authorized=True, source_ref="source-1"):
     if basis == "meeting_action_item" and source_ref == "source-1":
         source_ref = "source-1#todos-sha256=abc"
-    project_id = store.create_work_project(title="报价相关工作")
+    project_id = seed_legacy_work_project(store, title="报价相关工作")
     excerpt = "王明负责提交报价"
     evidence = {
         "formal_basis": basis,
@@ -105,7 +106,7 @@ def _source_backed_todo(store, *, basis, source_type, author_user_id,
         "deliverable_is_explicit": True,
         "owner_is_explicit": True,
     }
-    update_id = store.create_work_update(
+    update_id = seed_legacy_work_update(store,
         project_id=project_id, source_type=source_type, source_ref=source_ref,
         summary=excerpt, changes_json=json.dumps({"formal_task_evidence": evidence}),
     )
@@ -123,7 +124,7 @@ def _source_backed_todo(store, *, basis, source_type, author_user_id,
             },
         }),
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id, title="提交报价", owner_user_id="wangming",
         owner_name="王明", created_from_update_id=update_id,
         owner_evidence_json=json.dumps({"source_ref": source_ref, "excerpt": "王明"}),
@@ -270,10 +271,10 @@ def test_compacted_source_is_explicitly_unavailable_for_semantic_import(tmp_path
 
 def test_candidate_evidence_is_retained_in_history_not_promoted(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    project_id = store.create_work_project(title="客户推进")
+    project_id = seed_legacy_work_project(store, title="客户推进")
     source_type, source_ref = "reply_attempt", "candidate-msg"
     summary = "可以研究美国报价方案"
-    update_id = store.create_work_update(
+    update_id = seed_legacy_work_update(store,
         project_id=project_id, source_type=source_type, source_ref=source_ref,
         summary=summary, changes_json=json.dumps({
             "candidate_task_evidence": {"source_excerpt": summary}
@@ -283,7 +284,7 @@ def test_candidate_evidence_is_retained_in_history_not_promoted(tmp_path):
         "source": {"type": source_type, "ref": source_ref}, "summary": summary,
         "context": {"source_conversation_kind": "group"},
     }))
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id, title="研究美国报价方案", created_from_update_id=update_id,
     )
     manifest = build_task_semantic_import_manifest(store.path)
@@ -310,8 +311,8 @@ def test_cancelled_project_cache_does_not_create_official_registry_match(tmp_pat
     resolution.register_official_project(
         anchor_id=anchor_id, registry_source="registry"
     )
-    cached_only = store.create_work_project(title="旧项目名称")
-    same_title = store.create_work_project(title="正式报价项目")
+    cached_only = seed_legacy_work_project(store, title="旧项目名称")
+    same_title = seed_legacy_work_project(store, title="正式报价项目")
     manifest = build_task_semantic_import_manifest(store.path)
     by_id = {item.legacy_row_id: item for item in manifest.items}
     assert by_id[cached_only].disposition == "history_only"
@@ -328,7 +329,7 @@ def test_cancelled_project_cache_does_not_create_official_registry_match(tmp_pat
 def test_changed_source_fingerprint_rejects_before_first_write(tmp_path):
     store, _, todo_id, _ = _legacy_store(tmp_path)
     manifest = build_task_semantic_import_manifest(store.path)
-    store.update_work_todo(todo_id, title="被更改的任务")
+    revise_legacy_work_todo(store, todo_id, title="被更改的任务")
     with pytest.raises(ValueError, match="fingerprint"):
         apply_task_semantic_import_manifest(store.path, manifest)
     assert len(_mapping_rows(store.path)) == 0
@@ -358,8 +359,8 @@ def test_limited_apply_reports_history_only_without_creating_links(tmp_path):
 
 def test_plan_limit_selects_recent_legacy_rows_first(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    old_id = store.create_work_project(title="旧工作")
-    new_id = store.create_work_project(title="近期工作")
+    old_id = seed_legacy_work_project(store, title="旧工作")
+    new_id = seed_legacy_work_project(store, title="近期工作")
     _update_business(store.path, "work_project", old_id,
                      {"last_activity_at": "2026-01-01 00:00:00"})
     _update_business(store.path, "work_project", new_id,
@@ -370,9 +371,9 @@ def test_plan_limit_selects_recent_legacy_rows_first(tmp_path):
 
 def test_manifest_for_one_database_rejects_another_copy(tmp_path):
     source = AutoReplyStore(tmp_path / "source.sqlite3")
-    source.create_work_project(title="同一工作")
+    seed_legacy_work_project(source, title="同一工作")
     target = AutoReplyStore(tmp_path / "target.sqlite3")
-    target.create_work_project(title="同一工作")
+    seed_legacy_work_project(target, title="同一工作")
     manifest = build_task_semantic_import_manifest(source.path)
     with pytest.raises(ValueError, match="fingerprint"):
         apply_task_semantic_import_manifest(target.path, manifest)
@@ -498,7 +499,7 @@ def test_per_item_transaction_rechecks_supporting_source_before_write(
 
     def change_source_after_preflight(path, checked_manifest):
         original_check(path, checked_manifest)
-        with sqlite3.connect(path) as db:
+        with store._connect() as db:
             db.execute("begin immediate")
             if changed_source == "work_updates":
                 update_sync_action(db, "work_updates", 1, {"summary": "changed"})
@@ -534,7 +535,7 @@ def test_manifest_roundtrip_and_version_validation(tmp_path):
 
 def test_plan_reads_current_business_source_without_creating_semantic_tasks(tmp_path):
     store = AutoReplyStore(tmp_path / "current.sqlite3")
-    project_id = store.create_work_project(title="旧项目")
+    project_id = seed_legacy_work_project(store, title="旧项目")
     manifest = build_task_semantic_import_manifest(store.path, limit=100)
     assert len(manifest.items) == 1
     assert manifest.items[0].disposition == "history_only"

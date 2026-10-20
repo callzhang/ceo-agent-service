@@ -1,4 +1,5 @@
 """Release contracts for semantic Tasks links and complete detail readback."""
+from tests.support.legacy_todo_facts import seed_legacy_work_project
 
 from datetime import datetime
 
@@ -18,7 +19,7 @@ def _signal(store, db, key: str) -> int:
 def test_semantic_detail_links_match_frontend_routes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment")
-    legacy_id = store.create_work_project(title="Historical", category="dev", status="active", priority="P1", risk_level="low")
+    legacy_id = seed_legacy_work_project(store, title="Historical", category="dev", status="active", priority="P1", risk_level="low")
     with store._immediate_write_transaction() as db:
         signal_id = _signal(store, db, "link-source")
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="launch", title="Launch", _db=db)

@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import json
 from app.business_source_reader import (
     AvailableSource, PreparedSources, RequestSourceReader, SourceUnavailableReason,
@@ -784,7 +785,7 @@ def test_semantic_store_read_methods_use_stable_pages(tmp_path):
 
 def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    sales_project_id = store.create_work_project(
+    sales_project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
@@ -798,7 +799,7 @@ def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
         ),
         current_state="正在整理",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="招聘复盘",
         category="recruiting",
         tags_json=json.dumps(["招聘"], ensure_ascii=False),
@@ -822,7 +823,7 @@ def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
 
 def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    authoritative_project_id = store.create_work_project(
+    authoritative_project_id = seed_legacy_work_project(store,
         title="实际项目",
         category="projects",
         status="active",
@@ -831,7 +832,7 @@ def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path)
         background="与文本检索词不相似。",
     )
     for index in range(5):
-        store.create_work_project(
+        seed_legacy_work_project(store,
             title=f"项目闭环 {index}",
             category="projects",
             status="active",
@@ -860,7 +861,7 @@ def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path)
 
 def test_render_candidate_prompt_uses_persisted_project_facts_only(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
@@ -896,7 +897,7 @@ def test_render_candidate_prompt_uses_persisted_project_facts_only(tmp_path):
 
 def test_retrieve_project_candidates_excludes_archived_and_done_projects(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="售前知识库归档",
         category="sales",
         tags_json=json.dumps(["售前"], ensure_ascii=False),
@@ -905,7 +906,7 @@ def test_retrieve_project_candidates_excludes_archived_and_done_projects(tmp_pat
         risk_level="low",
         background="归档项目。",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="售前知识库完成",
         category="sales",
         tags_json=json.dumps(["售前"], ensure_ascii=False),
@@ -926,13 +927,13 @@ def test_retrieve_project_candidates_excludes_archived_and_done_projects(tmp_pat
 
 def test_retrieve_project_candidates_searches_all_active_projects(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    target_id = store.create_work_project(
+    target_id = seed_legacy_work_project(store,
         title="极光协议客户迁移",
         category="projects",
         status="active",
     )
     for index in range(600):
-        store.create_work_project(
+        seed_legacy_work_project(store,
             title=f"普通项目 {index}",
             category="projects",
             status="active",
@@ -952,7 +953,7 @@ def test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_project
 
     assert retrieve_project_candidates(store, summary="", project_name="") == []
 
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         tags_json=json.dumps(["售前"], ensure_ascii=False),
@@ -976,29 +977,29 @@ def test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_project
 
 def test_resolve_task_owner_display_summarizes_multiple_todo_owners(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="多 owner 项目")
-    store.create_work_todo(
+    project_id = seed_legacy_work_project(store, title="多 owner 项目")
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="任务 A",
         owner_name="孙伟",
         owner_user_id="owner-1",
         status="open",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="任务 B",
         owner_name="张晓民",
         owner_user_id="owner-2",
         status="open",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="任务 C",
         owner_name="Avery",
         owner_user_id="owner-3",
         status="open",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="任务 D",
         owner_name="ET",
@@ -1015,7 +1016,7 @@ def test_resolve_task_owner_display_summarizes_multiple_todo_owners(tmp_path):
 
 def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="技术部招聘",
         category="recruiting",
         status="active",
@@ -1032,7 +1033,7 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
             ensure_ascii=False,
         ),
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="评估 Colin 售前解决方案候选人",
         description="确认技术面、售前方案能力、薪资预期和下一轮安排。",
@@ -1053,7 +1054,7 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         question_text="Colin 的复试结论和下一步安排定了吗？",
         scheduled_at="2026-07-24 15:00:00",
     )
-    store.create_work_update(
+    seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="123",
@@ -1081,20 +1082,20 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
 
 def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="批量读取 follow-up",
         category="projects",
         status="active",
         priority="P1",
         risk_level="medium",
     )
-    todo_one = store.create_work_todo(
+    todo_one = seed_legacy_work_todo(store,
         project_id=project_id,
         title="TODO A",
         status="open",
         priority="P1",
     )
-    todo_two = store.create_work_todo(
+    todo_two = seed_legacy_work_todo(store,
         project_id=project_id,
         title="TODO B",
         status="open",
@@ -1141,7 +1142,7 @@ def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
 
 def test_render_project_task_details_uses_todo_owner_as_project_display_fallback(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="客户交付",
         category="projects",
         status="active",
@@ -1152,7 +1153,7 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
             ensure_ascii=False,
         ),
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="确认客户验收 ETA",
         owner_user_id="owner-1",

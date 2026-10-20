@@ -7,7 +7,7 @@ from app import todo_completion, todo_sync
 from app.dispatcher import adapters
 from app.store import AutoReplyStore
 from app.web_api.tasks import sent_todo_payload
-from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox
+from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox, seed_legacy_work_project, seed_legacy_work_todo
 
 
 def test_legacy_todo_operational_api_is_retired():
@@ -21,6 +21,8 @@ def test_legacy_todo_operational_api_is_retired():
     for name in ("close_todo_with_completion_evidence", "complete_follow_ups_for_todo"):
         assert not hasattr(todo_completion, name), name
     for name in (
+        "create_work_project", "update_work_project", "create_work_todo",
+        "update_work_todo", "create_work_update",
         "create_work_todo_dingtalk_link", "update_work_todo_dingtalk_link",
         "enqueue_task_todo_sync_outbox", "claim_task_todo_sync_outbox",
         "finish_task_todo_sync_outbox", "retry_task_todo_sync_outbox",
@@ -32,8 +34,8 @@ def test_legacy_todo_operational_api_is_retired():
 
 def test_recorded_active_legacy_todo_collision_stays_readable_and_cannot_dispatch(tmp_path):
     store = AutoReplyStore(tmp_path / "history.sqlite3")
-    project_id = store.create_work_project(title="Historical delivery", status="active")
-    legacy_id = store.create_work_todo(
+    project_id = seed_legacy_work_project(store, title="Historical delivery", status="active")
+    legacy_id = seed_legacy_work_todo(store,
         project_id=project_id, title="Original assignment", owner_user_id="old-owner",
         status="open", deadline_at="2026-07-01 18:00:00",
     )

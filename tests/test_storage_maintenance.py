@@ -1,9 +1,11 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_update
 import hashlib
 import json
-import sqlite3
 
-from app.run_storage import TASK_AGENT_RUN_SQL, insert_run
-from app.task_storage import insert_task
+from app.logical_run_storage import logical_run_projection
+from app.task8_storage import task8_set_parts
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.action_storage import SYNC_ACTION_PROJECTIONS
 
 from app.storage_maintenance import (
     compact_done_email_classification_inputs,
@@ -17,39 +19,36 @@ from app.email_task_adapter import EmailClassificationTaskAdapter, EmailClassifi
 
 def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_rows(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    project_id = store.create_work_project(title="Adopted project")
-    update_id = store.create_work_update(
+    project_id = seed_legacy_work_project(store, title="Adopted project")
+    update_id = seed_legacy_work_update(store,
         project_id=project_id, source_type="local_file", source_ref="file#v1",
         summary="Adopted business result",
     )
     payload = json.dumps({"source": {"type": "local_file", "ref": "file#v1",
                                      "created_at": "2026-01-01T00:00:00Z"},
                           "summary": "old copied input body"})
-    with sqlite3.connect(store.path) as db:
-        terminal_physical_id = insert_task(db, "work_summary_inputs", {
-            "source_type": "local_file", "source_ref": "file#v1",
-            "payload_json": payload, "status": "done",
-        }).lastrowid
-        terminal_id = db.execute(
-            "select cast(legacy_key as integer) from tasks "
-            "where record_type='work_summary_inputs' and id=?",
-            (terminal_physical_id,),
-        ).fetchone()[0]
-        insert_run(db, "task_agent_runs", {
-            "summary_input_id": terminal_id, "session_id": "native-session",
-            "status": "completed",
-        })
-        skipped_physical_id = insert_task(db, "work_summary_inputs", {
-            "source_type": "local_file", "source_ref": "file#skipped",
-            "payload_json": payload, "status": "skipped", "attempts": 2,
-            "error": "no task", "created_at": "2026-02-01 01:00:00",
-            "updated_at": "2026-02-02 02:00:00",
-        }).lastrowid
-        skipped_id = db.execute(
-            "select cast(legacy_key as integer) from tasks "
-            "where record_type='work_summary_inputs' and id=?",
-            (skipped_physical_id,),
-        ).fetchone()[0]
+    terminal_id = store.enqueue_work_summary_input("local_file", "file#v1", payload)
+    skipped_id = store.enqueue_work_summary_input("local_file", "file#skipped", payload)
+    with store._connect() as db:
+        db.execute("begin immediate")
+        for input_id, values in (
+            (terminal_id, {"status": "done"}),
+            (skipped_id, {
+                "status": "skipped", "attempts": 2, "error": "no task",
+                "created_at": "2026-02-01 01:00:00",
+                "updated_at": "2026-02-02 02:00:00",
+            }),
+        ):
+            parts = task8_set_parts("work_summary_inputs", values)
+            db.execute(
+                f"update tasks set {parts.sql} "
+                "where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+                (*parts.parameters, input_id),
+            )
+    store.create_logical_run(
+        "task_agent_runs", terminal_id, codex_session_id="native-session",
+        status="completed",
+    )
     pending_id = store.enqueue_work_summary_input("local_file", "file#pending", payload)
     failed_id = store.enqueue_work_summary_input("local_file", "file#failed", payload)
     store.mark_work_summary_input_failed(failed_id, "retryable")
@@ -72,9 +71,9 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
     assert store.get_work_summary_input(pending_id).payload_json == payload
     assert store.get_work_summary_input(failed_id).payload_json == payload
     with store._connect() as db:
-        assert db.execute("select title from work_projects where id=?", (project_id,)).fetchone()[0] == "Adopted project"
-        assert db.execute("select summary from work_updates where id=?", (update_id,)).fetchone()[0] == "Adopted business result"
-        assert db.execute(f"select codex_session_id from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?", (terminal_id,)).fetchone()[0] == "native-session"
+        assert db.execute(f"select title from ({BUSINESS_PROJECTIONS['work_project']}) where id=?", (project_id,)).fetchone()[0] == "Adopted project"
+        assert db.execute(f"select summary from ({SYNC_ACTION_PROJECTIONS['work_updates']}) where id=?", (update_id,)).fetchone()[0] == "Adopted business result"
+        assert db.execute(f"select codex_session_id from ({logical_run_projection('task_agent_runs')}) where summary_input_id=?", (terminal_id,)).fetchone()[0] == "native-session"
 
 
 def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):

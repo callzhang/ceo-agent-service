@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project
 from app.task8_storage import task8_set_parts
 from app.task20_definitions import task20_projection
 from app.action_error_definitions import error_projection
@@ -207,7 +208,7 @@ def test_task_semantic_import_plan_cli_writes_manifest_without_database_changes(
 ):
     db_path = tmp_path / "copy.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(title="待核实事项")
+    seed_legacy_work_project(store, title="待核实事项")
     output = tmp_path / "manifest.json"
     before_bytes = db_path.read_bytes()
     monkeypatch.setattr(sys, "argv", [
@@ -233,7 +234,7 @@ def test_task_semantic_import_apply_cli_uses_reviewed_fixture_manifest(
 
     db_path = tmp_path / "fixture.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(title="待核实事项")
+    seed_legacy_work_project(store, title="待核实事项")
     manifest_path = tmp_path / "manifest.json"
     write_task_semantic_import_manifest(
         build_task_semantic_import_manifest(db_path), manifest_path

@@ -487,6 +487,8 @@ Tasks 不再把 Project 当作所有事项的容器。来源先形成候选 Task
 
 核心语义表以 `business_*` 命名：来源信号、Task、证据、日期、Task 事件、关系/聚类、业务锚点、正式 Project/候选 Project、CEO Attention 投影、Task 键控跟进与钉钉 TODO 链接。旧 `work_projects`、`work_todos`、`work_updates` 仍作为历史证据读取；`task-semantic-import-plan` 生成带来源指纹的只读导入计划，`task-semantic-import-apply` 只接受与清单完全匹配的有界批次。**生产库导入须在审阅清单后另行明确批准；目前没有执行生产导入。**
 
+旧 Work Project、Work Todo、Work Update 的五个 Store 创建/更新入口已退休。历史行仍由现有 reader、History 和 legacy-project 详情读取；语义导入仍须依据来源证据与已审阅清单显式执行。
+
 Task Agent 为每个来源判断 0 到多个 Task 决定。正式任务必须有来源明确的负责人以及四种正式依据之一；明确指派不等于负责人已接受。外部钉钉 TODO 只是 Task 的镜像，只有正式、开放、已接受且有可解析承诺期限的 Task 才能排入创建队列。Agent 不直接创建、修改或完成外部 TODO；本地完成、提供者回执和有界重试按 Task ID 关联保存。跟进日期必须是来源明确的 `next_check_at`，不从通用截止日推算，也不猜收件人：群聊发回精确来源会话并提及有证据的负责人；单聊只发给来源明确指定的负责人。
 
 Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，每个 Work Item 仍有独立处理记录；后续输入续接同一路由会话，context compact 由 CLI 原生管理。主服务每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费 reply worker 写入的 Work Item（默认 60 秒）；每日维护由 `CEO_TASK_DAILY_INTERVAL_SECONDS` 控制（默认 86400 秒），包含开放正式 Task 的完成检查且无需先有 Project。旧历史读取/排空路径仍暂时保留；历史队列和待跟进的最终排空边界须在切换时核实。

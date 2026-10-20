@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project
 import json
 import subprocess
 from datetime import datetime, timezone
@@ -629,7 +630,7 @@ def test_check_dry_run_ignores_legacy_follow_up_drafts(tmp_path: Path):
     # Derek, 2026-09-25: follow-ups are sent only when he clicks one, so a due
     # legacy draft will never be sent and is not backlog.
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="宝马项目周末攻坚与客户Demo推进",
         category="sales",
         status="active",

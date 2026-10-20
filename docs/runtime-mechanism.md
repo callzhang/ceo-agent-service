@@ -2538,6 +2538,8 @@ reconcile 写入及 `reclassify_unmirrored_todo_outbox.py` 维护命令已退休
 `maybe_create_dingtalk_todo` 必须提供当前 `business_task_id`；Todo dispatcher adapter
 及 Status 中该 adapter 的队列展示只保留当前 BusinessTask Todo outbox。旧 link/outbox 的 schema、已保存状态、来源和
 provider 回执保持原样，读取仍供 History、已发送 Todo 和 legacy-project 详情使用。
+旧 Work Project、Work Todo、Work Update 的五个无调用者 Store 创建/更新方法已移除；
+保留各自 typed 历史行、reader 和由明确来源清单驱动的 task-semantic-import apply。
 Derek 2026-10-20 选择：旧记录无法核验 current Task 身份时仅保留历史，不按公共整数
 ID 关联或晋升、不取消或完成外部 Todo、不重发。完成扫描和未知创建回执核对仍只读取
 当前 BusinessTask 的链接；旧 `active` 不再触发任何 provider 操作。独立 D1c 已从 Status 聚合移除旧 `DingTalk Todos` 及其专属 retryable 分支，

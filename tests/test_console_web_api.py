@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 from app.action_storage import (
     insert_email_action,
     error_set_parts,
@@ -122,7 +123,7 @@ def test_console_client_restores_settings_environment_after_close(tmp_path: Path
 
 
 def _project(store: AutoReplyStore, title: str) -> int:
-    return store.create_work_project(
+    return seed_legacy_work_project(store,
         title=title,
         category="dev",
         status="active",
@@ -750,14 +751,14 @@ def test_console_task_detail_contains_persisted_project_facts_todos_and_updates(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "Detailed project")
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="Prepare release",
         description="Keep the description available to React.",
         status="open",
         priority="P1",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="Confirm release evidence",
         description="Evidence candidate should be visible in detail.",
@@ -1049,14 +1050,14 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "History project")
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="Review history links",
         description="Check that history entries jump back to the task detail page.",
         owner_name="Avery",
         priority="P1",
     )
-    update_id = store.create_work_update(
+    update_id = seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="update-1",

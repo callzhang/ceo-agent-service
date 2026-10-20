@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -55,8 +56,8 @@ def test_manifest_plans_latest_traceable_value(tmp_path, monkeypatch):
     historical_path = tmp_path / "historical.sqlite3"
     current = AutoReplyStore(current_path)
     historical = AutoReplyStore(historical_path)
-    project_id = current.create_work_project(title="", goal="")
-    historical_id = historical.create_work_project(
+    project_id = seed_legacy_work_project(current, title="", goal="")
+    historical_id = seed_legacy_work_project(historical,
         title="历史快照标题",
         goal="历史快照目标",
     )
@@ -83,8 +84,8 @@ def test_manifest_plans_latest_traceable_value(tmp_path, monkeypatch):
 def test_manifest_archives_only_old_local_file_only_project(tmp_path):
     db_path = tmp_path / "current.sqlite3"
     store = AutoReplyStore(db_path)
-    eligible_id = store.create_work_project(title="历史材料项目")
-    excluded_id = store.create_work_project(title="仍有 TODO 的历史材料项目")
+    eligible_id = seed_legacy_work_project(store, title="历史材料项目")
+    excluded_id = seed_legacy_work_project(store, title="仍有 TODO 的历史材料项目")
     old_source_time = datetime(2026, 1, 1, 9, 0, 0)
     project_time = old_source_time + timedelta(days=60)
     for project_id in (eligible_id, excluded_id):
@@ -94,7 +95,7 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
             created_at=project_time.strftime("%Y-%m-%d %H:%M:%S"),
         )
         source_ref = f"/tmp/history-{project_id}.md#sha256=test"
-        store.create_work_update(
+        seed_legacy_work_update(store,
             project_id=project_id,
             source_type="local_file",
             source_ref=source_ref,
@@ -111,7 +112,7 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
                 },
             }),
         )
-    store.create_work_todo(project_id=excluded_id, title="真实 TODO")
+    seed_legacy_work_todo(store, project_id=excluded_id, title="真实 TODO")
 
     manifest = build_repair_manifest(db_path)
 
@@ -125,10 +126,10 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
 def test_repair_uses_source_created_at_after_input_compaction(tmp_path):
     db_path = tmp_path / "repair.sqlite3"
     store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(title="历史材料项目")
+    project_id = seed_legacy_work_project(store, title="历史材料项目")
     _set_project_times(db_path, project_id, created_at="2026-03-01 09:00:00")
     source_ref = "/tmp/historical.md#sha256=v1"
-    store.create_work_update(project_id=project_id, source_type="local_file",
+    seed_legacy_work_update(store, project_id=project_id, source_type="local_file",
                              source_ref=source_ref, summary="历史材料")
     input_id = store.enqueue_work_summary_input("local_file", source_ref, json.dumps({
         "source": {"type": "local_file", "ref": source_ref,

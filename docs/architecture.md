@@ -314,6 +314,8 @@ TODO evidence、Work Project、Work Todo 及候选业务对象。Work Project �
 `repair-task-projects-plan` 仍只生成清单。历史 Work Project／Work Todo／Work Update
 行与已有回执继续供读取和 History 使用；本切片不迁移或删除这些数据，也不改变
 当前 Task Agent、Task 写入及 task-semantic-import 的 plan/apply。
+五个无运行时调用者的旧 Store writer（创建/更新 Work Project、创建/更新 Work Todo、
+创建 Work Update）已退休；历史测试用当前 typed 存储原语在测试事务中建立来源事实。
 旧 Work Todo 的钉钉镜像执行代码也已退休：不再注册 `task_todo_sync_outbox`
 dispatcher adapter，Status 中该 adapter 的队列展示也已移除；不再创建、重试、回读恢复、完成外部旧 Todo，也不再通过
 旧 Store API 改写 link/outbox。当前镜像继续只按 `business_task_id` 使用

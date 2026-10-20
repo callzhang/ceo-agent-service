@@ -190,6 +190,8 @@ D1b/D1c 的本地回归与源码冻结不表示完整 D、root 副本回退验�
 - [ ] 负责人/截止日期/完成证据迁入 task 与现有证据关系；旧 priority/blocker/follow_up 等不能默默丢弃，逐字段决定保留业务结果、转现有关注/跟进机制或取消功能。
 - [ ] work_updates 的已采用结论进入 task/project_context_revision 与现有业务事件；来源仍是 provenance；旧摘要和 changes_json 不另建历史镜像。
 - [ ] 停止 create/update_work_project/work_todo/create_work_update；替换 task_retrieval、todo_completion、todo_sync 和 Console reader；删除启动补写旧模型代码。
+
+2026-10-20 D2 有界进展：源码确认五个旧 Store writer 无运行时调用者并已移除；历史测试改用 typed 事实种子。reader、物理事实及正式来源支持的 `task-semantic-import-apply` 保留。上项的完整 reader/URL 迁移与 D 总体验收尚未完成；本地验证见 `docs/business-model-legacy-write-retirement-validation.md`。
 - [ ] 当前钉钉 link 和 sync outbox 只使用同一权威 business task；旧记录无法核验 current Task 身份时仅保留原身份的来源、业务事实和回执。退出其运营查询、调度和写入，保留历史查询，不按共享整数 ID 关联或晋升，也不取消、完成或重发真实外部 Todo。D1b 执行代码及 dispatcher adapter 队列、D1c 旧 Status 聚合/retryable 分支及旧来源质量检查、后续 DDL 分别验收。
 - [ ] legacy-project URL 不再回读旧表：可唯一映射时转正式目标；多对象分解时提供该历史身份已有事实的列表；退休且无业务价值时明确不存在，不返回空白成功。
 - [ ] 对 project/task/anchor/证据/关系/关注项分别验证：stage/formal_basis/commitment_status/status 的语义、合并 lineage、来源引用、多项目关系仍完整。

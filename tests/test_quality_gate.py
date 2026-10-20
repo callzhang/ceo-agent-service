@@ -1,4 +1,4 @@
-from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox
+from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox, seed_legacy_work_project, seed_legacy_work_todo
 import json
 import sqlite3
 
@@ -1177,8 +1177,8 @@ def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path)
 
 def test_quality_gate_preserves_historical_todo_links_without_monitoring_them(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    project_id = store.create_work_project(title="project", status="active")
-    todo_id = store.create_work_todo(
+    project_id = seed_legacy_work_project(store, title="project", status="active")
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id, title="follow up", owner_user_id="owner",
         status="open", deadline_at="2026-08-08 12:00:00",
     )
