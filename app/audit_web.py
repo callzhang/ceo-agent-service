@@ -101,6 +101,7 @@ from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
+    can_reopen_skipped_oa_review,
     follow_up_history_attention,
     meeting_history_attention,
     reply_history_attention,
@@ -9871,8 +9872,17 @@ def handle_rerun_attempt_post(
         store.get_agent_run(attempt.agent_run_id, load_events=False)
         if attempt.agent_run_id else None
     )
+    channel = attempt.channel or "dingtalk"
+    existing_task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        channel=channel,
+    )
+    allow_skipped_oa_review = can_reopen_skipped_oa_review(attempt, existing_task)
     rerun_block_reason = _attempt_rerun_block_reason(
-        attempt, [terminal_run] if terminal_run is not None else []
+        attempt,
+        [terminal_run] if terminal_run is not None else [],
+        allow_skipped_oa_review=allow_skipped_oa_review,
     )
     if rerun_block_reason:
         return (
@@ -9880,12 +9890,6 @@ def handle_rerun_attempt_post(
             {},
             render_page("Rerun unavailable", f"<p>{escape(rerun_block_reason)}</p>"),
         )
-    channel = attempt.channel or "dingtalk"
-    existing_task = store.get_reply_task_for_message(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-        channel=channel,
-    )
     conversation_record = store.get_conversation(attempt.conversation_id)
     if conversation_record is None and existing_task is None:
         return (
@@ -9993,6 +9997,7 @@ def handle_rerun_attempt_post(
             channel=channel,
             force_rotation=force_rotation,
             expected_execution_generation=existing_task.execution_generation,
+            allow_skipped_oa_review=allow_skipped_oa_review,
         )
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
@@ -12030,9 +12035,12 @@ def _agent_failure_reason_card(
 def _attempt_rerun_block_reason(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
+    *,
+    allow_skipped_oa_review: bool = False,
 ) -> str:
     if attempt.resolved_at and attempt.send_status.strip().lower() in {"needs_human", "skipped"}:
-        return attempt.resolution or "这条旧问题已退役，无需重新处理。"
+        if not (allow_skipped_oa_review and attempt.send_status.strip().lower() == "skipped"):
+            return attempt.resolution or "这条旧问题已退役，无需重新处理。"
     if attempt.send_status.strip().lower() != "failed":
         return ""
     terminal_run = next(

@@ -1235,6 +1235,9 @@ Attention 只投影当前未解决状态；已完成／已跳过任务不继续�
 任务本身不进入 Attention；旧代次失败也不污染新代次。同一定时任务的较早 Reply task 若失败，后续 run 已派发且对应 Reply task 进入 done/skipped，则较早失败及绑定该 run 的读取错误仅保留在 History，不再作为当前 Attention；仅派发、pending 或另一个任务成功均不满足恢复条件。
 从失败 Attempt 手动重跑时，Consumer 与 Audit 的上下文必须带入来源代次的结构化 Audit 反馈；
 旧候选被否决的点仍须解决，或用新证据明确说明其不再适用，不得把相同候选当作未审核的新建议。
+已结案的 `skipped` OA review 仅在审核者提交明确反馈、同一钉钉 OA task 仍为 pending、流程/task
+身份仍匹配且原审核没有外部动作回执时，允许手动创建新一代 Consumer→Audit 审核。该入口不重开
+`needs_human`、其他 skipped 项或已有外部动作的 OA 审核；新的业务动作仍须经过原有审核与效果回执。
 Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视为本地 session 冲突，
 在原路由和原 session 上限次指数退避重试，不因此暂停整个 provider。
 服务启动时恢复被中断的会议作业，会在同一事务内将作业改为 `retry`、关闭运行记录并释放

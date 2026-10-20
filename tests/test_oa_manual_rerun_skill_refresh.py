@@ -199,6 +199,111 @@ def test_compacted_oa_scan_rerun_restores_saved_run_without_reading_synthetic_me
     assert consumer.skill_materials[0].content.endswith("People rules revision 12")
 
 
+def test_reviewer_feedback_can_reopen_skipped_oa_review_only_while_same_task_is_pending(
+    monkeypatch,
+):
+    ref = ScheduledTaskSkillRef(
+        skill_source="managed", skill_name="stardust-oa-people-review",
+        managed_skill_id=7, managed_revision_id=11, position=0,
+    )
+    prior_context = ServiceCommandConsumerContext(
+        scheduled_task_id=3, scheduled_task_run_id=20,
+        prompt="Review current OA approvals.",
+        skill_names=("stardust-oa-people-review",),
+        skill_protocol="read exact frozen Skills",
+        skill_materials=(ServiceCommandSkillMaterial(
+            name="stardust-oa-people-review", content="old people rules revision 11"
+        ),), skill_protocol_source="generated_discovery",
+    )
+    original = DingTalkMessage(
+        open_conversation_id="oa_pending_scan:proc-1",
+        open_message_id="oa-pending:proc-1:revision-1:2026-10-19",
+        conversation_title="审批待办", single_chat=True, sender_name="Derek OA",
+        create_time="2026-10-19T10:00:00Z", content="Review this OA process.",
+        raw_payload={
+            "source": "oa_pending_scan", "processInstanceId": "proc-1",
+            "taskId": "task-1", "scheduled_consumer": prior_context.to_payload(),
+        },
+    )
+    compacted = AutoReplyStore._compact_reply_input_json(
+        AutoReplyStore._reply_input_provenance("Review this OA process.", original.model_dump_json())
+    )
+    task = SimpleNamespace(
+        id=405350, channel="dingtalk", conversation_id="oa_pending_scan:proc-1",
+        conversation_title="审批待办", single_chat=True,
+        trigger_message_id=original.open_message_id,
+        trigger_create_time=original.create_time, trigger_sender="Derek OA",
+        trigger_text="", trigger_message_json=compacted, input_compacted=True,
+        business_object_key="oa:proc-1:task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        execution_generation="generation-1", status="done",
+    )
+    attempt = SimpleNamespace(
+        id=15716, conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender="Derek OA",
+        trigger_text="", channel="dingtalk", action="agent_run", agent_run_id=None,
+        resolved_at="2026-10-20 04:00:00", resolution="no_action",
+        send_status="skipped",
+        send_error="", codex_reason="", reviewer_feedback="Re-review using the supplied business evidence.",
+        oa_process_instance_id="proc-1", oa_task_id="task-1", oa_action="review",
+        oa_action_result_json="", oa_url=task.oa_url,
+    )
+    refs = (ref,)
+    scheduled_run = SimpleNamespace(
+        id=20, snapshot=SimpleNamespace(
+            task_id=3, prompt="Review current OA approvals.", skill_refs=refs,
+        ),
+    )
+    scheduled_task = SimpleNamespace(
+        id=3, command="scan-oa-approvals", prompt="Review current OA approvals.",
+        skill_refs=refs,
+    )
+    captured = {}
+    store = SimpleNamespace(
+        get_reply_attempt=lambda attempt_id: attempt if attempt_id == attempt.id else None,
+        get_reply_task_for_message=lambda *_args, **_kwargs: task,
+        get_conversation=lambda *_args: None,
+        get_agent_run=lambda *_args, **_kwargs: None,
+        get_scheduled_task_run=lambda run_id: scheduled_run if run_id == 20 else None,
+        get_scheduled_task=lambda task_id: scheduled_task if task_id == 3 else None,
+        enqueue_manual_rerun_reply_task=lambda **kwargs: captured.update(kwargs),
+    )
+    monkeypatch.setattr(
+        "app.audit_web.DwsClient.read_message_by_id",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("OA review reruns must restore saved context")
+        ),
+    )
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt.id, skill_options_factory=Options,
+    )
+
+    assert status == 303
+    assert captured["attempt_id"] == attempt.id
+    assert captured["expected_execution_generation"] == "generation-1"
+
+
+def test_skipped_oa_review_without_feedback_cannot_be_reopened():
+    attempt = SimpleNamespace(
+        id=15716, conversation_id="oa_pending_scan:proc-1",
+        trigger_message_id="oa-pending:proc-1:revision-1:2026-10-19",
+        channel="dingtalk", action="agent_run", agent_run_id=None,
+        resolved_at="2026-10-20 04:00:00", send_status="skipped",
+        reviewer_feedback="", oa_process_instance_id="proc-1",
+        oa_task_id="task-1", oa_action="review", oa_action_result_json="",
+    )
+    task = SimpleNamespace(
+        channel="dingtalk", conversation_id="oa_pending_scan:proc-1",
+        business_object_key="oa:proc-1:task-1", status="skipped",
+    )
+
+    from app.history_actions import can_reopen_skipped_oa_review
+
+    assert not can_reopen_skipped_oa_review(attempt, task)
+
+
 def test_manual_oa_rerun_rotates_pending_generation_when_refreshed_skill_changes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid", title="OA", single_chat=False, codex_session_id="")

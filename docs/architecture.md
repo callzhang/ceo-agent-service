@@ -408,8 +408,13 @@ remain terminal. See `docs/email-unsubscribe-conditional-copy-validation.md`.
 
 Console manual rerun loads only the terminal Agent run metadata used by the
 existing refusal check. It does not discover sessions or read/parse native
-trajectory/result files before queueing. Refusal behavior, original-input
-verification and the appended execution generation remain unchanged.
+trajectory/result files before queueing. A resolved `skipped` OA review can be
+reopened only when the reviewer supplied new explicit feedback, the same
+DingTalk OA task remains pending, its process/task identity still matches, and
+the prior review has no recorded external effect. The new generation goes
+through the ordinary Consumer and Audit review; this does not reopen `needs_human`
+or other skipped work. Refusal behavior, original-input verification and the
+appended execution generation remain unchanged.
 
 Empty dispatcher polls are read-only across all queue adapters. A candidate
 probe does not reserve an item: the existing writer transaction rechecks the
