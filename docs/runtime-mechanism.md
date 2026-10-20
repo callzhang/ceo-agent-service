@@ -4586,3 +4586,9 @@ processing provider operations and meeting Memory leases count as in-flight even
 before a native Agent starts. Existing quiet timeout, backup and recovery rules
 remain in force. Initial installation uses the prior normal quiet path because
 already running old code has not loaded the new claim hooks.
+
+Deployment's runtime count excludes an unleased historical runtime when its
+parent AgentRun generation has been explicitly superseded by the current Task
+generation. A runtime with a valid independent native lease still counts, as do
+current-generation and unbound runtimes. This is a passive read: historical Run
+records and recovery state are unchanged.

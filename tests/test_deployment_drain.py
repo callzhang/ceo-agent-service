@@ -545,3 +545,53 @@ def test_email_provider_admission_lock_spans_writer_recheck_and_commit(
     action = store.claim_next_direct_action(claimed_at=NOW.isoformat())
     assert action.action_id == action_id
     assert checks == 2
+
+
+@pytest.mark.parametrize(
+    "generation, runtime_lease, expected",
+    [
+        ("initial", False, 1),
+        ("superseded-generation", False, 0),
+        ("superseded-generation", True, 1),
+    ],
+)
+def test_quiet_excludes_only_superseded_runtime_without_live_ownership(
+    tmp_path, generation, runtime_lease, expected
+):
+    from app.repository_updater import in_flight_work
+    from app.run_storage import insert_run
+
+    store = AutoReplyStore(tmp_path / "worker.db")
+    enqueue(store)
+    with store._immediate_write_transaction() as db:
+        task_id = db.execute(
+            "select id from tasks where record_type='reply_tasks'"
+        ).fetchone()[0]
+        parent = insert_run(
+            db,
+            "agent_runs",
+            {
+                "task_id": task_id,
+                "execution_generation": generation,
+                "role": "consumer",
+                "status": "running",
+            },
+        ).lastrowid
+        insert_run(
+            db,
+            "agent_runtime_attempts",
+            {
+                "parent_id": parent,
+                "workload_kind": "agent_run",
+                "workload_key": str(parent),
+                "attempt_number": 1,
+                "route_name": "primary",
+                "runtime_kind": "codex_cli",
+                "credential_mode": "native",
+                "model": "test",
+                "status": "running",
+                "lease_owner": "native" if runtime_lease else "",
+                "lease_expires_at": "2999-01-01 00:00:00" if runtime_lease else "",
+            },
+        )
+    assert in_flight_work(store.path) == expected

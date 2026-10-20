@@ -26,3 +26,7 @@ existing backup, upgrade serialization, rollback, health and quiet timeout rules
 A genuine hung job can still time out: restore admission and leave production
 unchanged instead of forcing a deployment. The first installation must use the
 existing normal release path because old processes do not yet read the lock.
+
+Quiet means current execution. An unleased runtime whose parent generation is
+explicitly superseded by the current Task is historical and does not block;
+a valid independent native lease still blocks. Preserve historical rows.

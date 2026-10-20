@@ -66,3 +66,13 @@ provider action eligibility/mutation are preserved.
 Corrected final deploy/dispatcher regression batch: 117 passed in219.39s,
 including the unchanged two-second wake case. No remaining test failure.
 Independent review findings addressed in one RED/GREEN fix pass; no rereview.
+
+First deployment stopped only its own waiting CLI (Service PID75708 unchanged)
+after finding runtime388062's native task_complete at22:38:19.587Z and a different
+current Task generation. Existing counter included all nonterminal history.
+RED: superseded/unleased runtime counted1 instead of0; current-generation and
+independently leased runtime controls stayed1. Correct quiet read excludes only
+explicitly superseded, unleased history; no persisted history/recovery change.
+
+Final historical-counter regression batch: 73 passed (30 feature cases and
+43 repository-updater cases); Ruff/compile/diff checks pass.

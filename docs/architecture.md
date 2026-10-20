@@ -3653,3 +3653,9 @@ and claimed meeting Memory writes, in addition to the existing runtime and
 dispatcher ownership facts. Retry policy, external-action rules and task
 lifecycle are unchanged. The first release installs the claim hooks through
 the existing quiet deployment path; older processes cannot honor the new lock.
+
+Deployment's runtime count excludes an unleased historical runtime when its
+parent AgentRun generation has been explicitly superseded by the current Task
+generation. A runtime with a valid independent native lease still counts, as do
+current-generation and unbound runtimes. This is a passive read: historical Run
+records and recovery state are unchanged.

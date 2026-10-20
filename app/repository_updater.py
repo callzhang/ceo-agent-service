@@ -418,8 +418,15 @@ def in_flight_work(database_path: Path) -> int:
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, meeting_runs = publication_meeting_sources(db)
         return int(db.execute(
-            f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
-            "        where status not in ('completed','failed','superseded'))"
+            f"select (select count(*) from ({runtime_source}) as runtime "
+            "        where runtime.status not in ('completed','failed','superseded') "
+            "        and ((runtime.lease_owner<>'' "
+            "          and julianday(runtime.lease_expires_at)>julianday('now')) "
+            "          or not exists ("
+            f"            select 1 from ({agent_source}) as parent "
+            f"            join ({reply_source}) as current on current.id=parent.reply_task_id "
+            "            where parent.id=runtime.agent_run_id "
+            "              and parent.execution_generation<>current.execution_generation)))"
             f" + (select count(*) from ({reply_source}) as task "
             "    where task.status='processing' and (task.channel='email' or "
             f"      exists (select 1 from ({agent_source}) as runs "
