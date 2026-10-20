@@ -248,8 +248,8 @@ def make_role_agent_command(
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
           )
           for option in ("-c", f"features.{feature}=false")),
-        # Expose the task-bound MCP namespace directly; keep native CodeMode
-        # for the remaining tools. Role tool selection and sandbox stay intact.
+        # Ordinary tasks expose role MCPs directly. OA Consumer composes reads
+        # and OCR inside CodeMode; role tool selection and sandbox stay intact.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
         "-c", "features.code_mode.enabled=true",
