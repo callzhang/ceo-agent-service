@@ -36,6 +36,27 @@ def _task_scheduled_consumer_payload(context: Any) -> dict[str, object]:
     return payload
 
 
+def _oa_review_skill_digest(context: Any) -> str:
+    """Fingerprint the exact selected Skill bodies that govern a review round."""
+    if context is None:
+        return ""
+    materials = getattr(context, "skill_materials", ()) or ()
+    snapshot = [
+        {
+            "name": str(getattr(material, "name", "") or ""),
+            "sha256": hashlib.sha256(
+                str(getattr(material, "content", "") or "").encode("utf-8")
+            ).hexdigest(),
+        }
+        for material in materials
+    ]
+    if not snapshot:
+        return ""
+    return hashlib.sha256(
+        json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _read_text_excerpt_and_digest(path: Path, limit: int = 6000) -> tuple[str, str]:
     try:
         raw = path.read_bytes()
@@ -576,6 +597,7 @@ def scan_pending_oa_approvals(
             reconciled_completed_attempt_ids.append(attempt.id)
 
     previous_revisions: dict[str, str] = {}
+    previous_skill_digests: dict[str, str] = {}
     previous_queued_days: dict[str, str] = {}
     previous_pending_keys: set[str] = set()
     reconciled_legacy_oa_attempt_ids: set[int] = set()
@@ -594,6 +616,12 @@ def scan_pending_oa_approvals(
                     str(process_id): str(revision)
                     for process_id, revision in revisions.items()
                 }
+            skill_digests = cursor.get("skill_digests", {})
+            if isinstance(skill_digests, dict):
+                previous_skill_digests = {
+                    str(process_id): str(digest)
+                    for process_id, digest in skill_digests.items()
+                }
             queued_days = cursor.get("queued_days", {})
             if isinstance(queued_days, dict):
                 previous_queued_days = {
@@ -608,10 +636,18 @@ def scan_pending_oa_approvals(
     read_failures: list[str] = []
     seen_process_ids: set[str] = set()
     queued_process_ids: list[str] = []
-    process_revisions: dict[str, str] = {}
+    process_revisions: dict[str, str] = dict(previous_revisions)
+    process_skill_digests: dict[str, str] = dict(previous_skill_digests)
     queued_days: dict[str, str] = dict(previous_queued_days)
     scheduled_consumer = current_service_command_consumer_context()
     skill_binding_checked = False
+    active_review_tasks = {
+        task.conversation_id: task
+        for task in store.list_reply_tasks(
+            statuses=("pending", "processing"), channel="dingtalk"
+        )
+        if task.conversation_id.startswith("oa_pending_scan:")
+    }
 
     def bind_current_oa_skills_for_new_round() -> None:
         nonlocal scheduled_consumer, skill_binding_checked
@@ -628,6 +664,8 @@ def scan_pending_oa_approvals(
             skill_options
         ).refresh_oa_review_context(scheduled_consumer, scheduled_task)
         skill_binding_checked = True
+
+    skill_digest = ""
     for approval in approvals:
         process_instance_id = str(
             getattr(approval, "process_instance_id", "") or ""
@@ -655,6 +693,22 @@ def scan_pending_oa_approvals(
             skipped_missing_task_id.append(process_instance_id)
             continue
         task_id = task_ids[0]
+        if (
+            not skill_binding_checked
+            and scheduled_consumer is not None
+            and skill_options is not None
+        ):
+            try:
+                bind_current_oa_skills_for_new_round()
+            except ValueError as exc:
+                store.set_daily_scan_state(
+                    OA_PENDING_SCANNER,
+                    last_success_at="",
+                    cursor_json=previous_cursor,
+                    last_error=f"could not bind current OA Skills: {exc}",
+                )
+                return 0
+            skill_digest = _oa_review_skill_digest(scheduled_consumer)
         store.adopt_oa_notification_events(process_instance_id, task_id)
         applicant_user_id, applicant_open_dingtalk_id = _cache_oa_applicant_profile(
             store,
@@ -674,7 +728,30 @@ def scan_pending_oa_approvals(
         )
         if not revision:
             continue
+        if skill_digest:
+            revision = hashlib.sha256(
+                f"{revision}:{skill_digest}".encode("utf-8")
+            ).hexdigest()
+        active_task = active_review_tasks.get(
+            f"oa_pending_scan:{process_instance_id}"
+        )
+        changed_skill = (
+            skill_digest
+            and previous_skill_digests.get(process_instance_id) != skill_digest
+        )
+        if active_task is not None and changed_skill:
+            # A changed Skill requires another review, but never run two OA
+            # decisions for one approval concurrently. Keep the last queued
+            # revision so a later scan queues the new rule after this turn ends.
+            if active_task.trigger_message_id.startswith(
+                f"oa-pending:{process_instance_id}:{revision}:"
+            ):
+                process_revisions[process_instance_id] = revision
+                process_skill_digests[process_instance_id] = skill_digest
+            continue
         process_revisions[process_instance_id] = revision
+        if skill_digest:
+            process_skill_digests[process_instance_id] = skill_digest
         # An unchanged approval is normally skipped, but it can still be waiting
         # on the principal: a turn that ended without a decision and without a
         # comment leaves it pending forever, because nothing else will change
@@ -693,16 +770,6 @@ def scan_pending_oa_approvals(
             or previous_queued_days.get(process_instance_id) == scan_date
         ):
             continue
-        try:
-            bind_current_oa_skills_for_new_round()
-        except ValueError as exc:
-            store.set_daily_scan_state(
-                OA_PENDING_SCANNER,
-                last_success_at="",
-                cursor_json=previous_cursor,
-                last_error=f"could not bind current OA Skills: {exc}",
-            )
-            return 0
         queued_days[process_instance_id] = scan_date
         title = str(getattr(approval, "title", "") or "").strip()
         process_name = str(getattr(approval, "process_name", "") or "").strip()
@@ -925,6 +992,7 @@ def scan_pending_oa_approvals(
                 "pending_business_object_keys": sorted(pending_business_object_keys),
                 "queued_process_instance_ids": queued_process_ids,
                 "process_revisions": process_revisions,
+                "skill_digests": process_skill_digests,
                 "queued_days": queued_days,
                 "skipped_missing_task_id_process_instance_ids": skipped_missing_task_id,
                 "read_failure_process_instance_ids": read_failures,
