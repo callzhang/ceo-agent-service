@@ -7728,7 +7728,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
 
                 current = db.execute(
-                    f"select id,execution_generation,error,status,business_object_key "
+                    f"select id,execution_generation,error,status,business_object_key,conversation_id "
                     f"from ({REPLY_TASK_SQL}) as reply_tasks "
                     "where channel=? and conversation_id=? and trigger_message_id=?",
                     (channel, conversation_id, trigger_message_id),
@@ -7745,7 +7745,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ).fetchone()
                 if attempt is None:
                     raise ManualRerunConflict("manual rerun attempt identity changed")
-                if attempt["resolved_at"] and attempt["send_status"] in {"needs_human", "skipped"}:
+                if attempt["send_status"] == "skipped" or (
+                    attempt["resolved_at"] and attempt["send_status"] == "needs_human"
+                ):
                     process_id = str(attempt["oa_process_instance_id"] or "").strip()
                     oa_task_id = str(attempt["oa_task_id"] or "").strip()
                     no_effect_result = str(attempt["oa_action_result_json"] or "").strip() in {
@@ -7764,6 +7766,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         and no_effect_result
                         and str(attempt["reviewer_feedback"] or "").strip()
                         and process_id and oa_task_id
+                        and channel == "dingtalk"
+                        and str(current["conversation_id"] or "").strip()
+                        == f"oa_pending_scan:{process_id}"
                         and str(current["business_object_key"] or "").strip()
                         == f"oa:{process_id}:{oa_task_id}"
                         and str(current["status"] or "").strip().lower() in {"done", "skipped"}
