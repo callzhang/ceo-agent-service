@@ -229,3 +229,56 @@ exact upstream controls already passed14+1 at B2a; no specialized source is used
 by those mocked controls, so they are not counted again as B2b verification.
 Parent real-copy/native/substitute provider/current-data inverse/actual published
 19.6 old-code cold/reforward and live publication remain pending.
+
+
+## Parent copy, native chain and current-fact inverse acceptance
+
+Frozen source773468fe0 has independent merged SPEC then QUALITY approval. Parent
+used the accepted B2a current-data19.6/53 working copy (including earlier synthetic
+native/direct outcomes), not a raw production19.6 snapshot. Its immutable SHA is
+f715ca67fc6a44d3c3843d00e2ceeb65e0107ac2d7b44322cc9cfa743c930e16.
+The pristine19.7/53 forward passed complete public tuples/types, stored
+payloads/IDs, unrelated facts, allocator waters and original FK-multiset checks.
+It migrated1109unsubscribe claims and0Reply claims. Same-population Actions+
+indexes and payload deltas are both0bytes; no storage reduction is claimed.
+
+The first real native fixture failed after four Consumer/Audit cycles, before
+any provider call. Each raw Consumer execute option imposed exact body text;
+existing Consumer preparation appended(via agent), conflicting with that option
+instruction. Actual native session/line provenance and candidate/body hashes are
+recorded in the copy JSON; preparation source is byte-identical to predecessor7e.
+This failure and all its candidate/review history remain preserved. No Audit rule
+was relaxed. An independent new fixture explicitly permitting existing formatting
+then passed actual Consumer/Audit, real copy-console choice, one InMemoryProvider
+send, one readback and one verified receipt. Task5131569106897310/Attempt15719,
+Candidate1046/Review1036, execution333 reached done. Its Sent and attempt results
+remain references with exact public bodies. Only those observed pages are
+counted; screenshots and test databases remain disposable working artifacts.
+The second success does not fix the first exact-body/Postfix contract issue;
+A5 remains open.
+
+Real domain code with substitute providers additionally preserved successful
+Reply replay (one SMTP call/acceptance), uncertain accepted Reply (no terminal
+receipt, no second dispatch), retryable definitely-not-dispatched failure,
+verified unsubscribe/replay (one browser call), and unfinished awaiting_audit
+continuation without receipt. No synthetic AgentRun/global verified receipt was
+created. Automatic SMTP Reply enqueue remains disabled in the source, so these
+SMTP outcomes cover its existing legacy/recovery domain, not a reactivated task
+producer. Disposable fixture enum/string and duplicate-address assembly mistakes
+were corrected in the harness only; incomplete fixture accounts remain facts in
+the copy rather than being hidden by restoring a baseline.
+
+Current-data inverse restored exact source declaration and original FK findings.
+Actual predecessor7e033bd65120a623c6a1eaaeaece3afc359d25d8 Store and strict
+EmailStore cold-opened the new native selection/execution/receipt/Sent and all
+specialized current outcomes, including unfinished control and prior failure,
+without replay or provider calls. Re-forward/finalize preserved all current
+physical facts and SQLite classes except the one expected Store marker clock;
+full integrity is ok and immutable input SHA is unchanged. Test console closed
+cleanly with0provider calls. See validation/2026-10-19-specialized-actions-copy.json
+for exact source pins, task/run/session/range identities and evidence boundaries.
+Live preflight/publication/readback remain pending; C/A5/D are incomplete.
+
+Independent final acceptance SPEC then QUALITY both APPROVE after checking the
+underlying disposable procedures, artifacts and final evidence JSON. Neither
+review reran tests or providers; source remains the approved773468fe0 freeze.
