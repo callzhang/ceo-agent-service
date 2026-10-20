@@ -1064,5 +1064,36 @@
   "independent_acceptance_reviews": {
     "spec": "APPROVE: evidence matches underlying artifacts, source freeze unchanged; live/A5/C/D not claimed",
     "quality": "APPROVE after SPEC: current-fact inverse, raw/public scalar types, native/substitute provenance and preserved-failure bounds verified"
+  },
+  "production_predeploy_backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-19.sqlite3",
+    "source_pair": [
+      "2026-10-19.6",
+      53
+    ],
+    "integrity_check": "ok",
+    "fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "migration_preflight_eligible": true,
+    "complete_application_id": 1128615746,
+    "bytes": 479956992,
+    "sha256": "a0c888db30ef341dd5904bb230576f29a80b6f0b2cc0bf900d3c39bee7b9f170",
+    "promoted_only_after_full_verification": true,
+    "older_workflow_backups_removed_after_verification": []
+  },
+  "publication_refresh": {
+    "source_commit": "6b4574575",
+    "aggregate": "af007868dd0100d449d383d26c85bfacf0137ebf939f574b24b3f14da37c0912",
+    "specialized_core_27_paths_unchanged": true,
+    "spec": "APPROVE",
+    "quality": "APPROVE after SPEC",
+    "global_health": "Retained pre-cutover unresolved feedback; existing deployment gate unchanged.",
+    "live": "pending"
   }
 }

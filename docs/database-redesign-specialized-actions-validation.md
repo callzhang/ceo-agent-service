@@ -296,3 +296,11 @@ controls4passed at B2a after restart; they are not counted again as specialized
 verification. Parent copy/native/current-fact inverse evidence remains bound to
 773468fe0; it does not silently claim a re-execution on this merged source.
 B2b production19.6preflight/verified-backup and publication remain separate.
+
+Final publication-refresh SPEC then QUALITY both APPROVE. Fresh current
+production19.6/53 SQLite backup passed full integrity, originalFK, complete
+application marker, and exact19.7migration eligibility before atomic promotion
+under the existing backup-directory lock. Latest backup is479956992bytes/SHA
+a0c888db30ef341dd5904bb230576f29a80b6f0b2cc0bf900d3c39bee7b9f170.
+Only after verification did it replace this workflow's prior19.5 daily backup;
+no unrelated backup or temporary artifact was removed. B2b live remainspending.
