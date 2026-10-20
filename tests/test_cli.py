@@ -148,7 +148,7 @@ def test_native_chat_readback_cli_preview_uses_read_only_database_connection(
     assert db_path.read_bytes() == before
 
 
-def test_task_project_repair_commands_parse_required_paths():
+def test_task_project_repair_plan_parses_required_paths():
     plan = build_parser().parse_args(
         [
             "repair-task-projects-plan",
@@ -160,21 +160,31 @@ def test_task_project_repair_commands_parse_required_paths():
             "/tmp/repair.json",
         ]
     )
-    apply = build_parser().parse_args(
-        [
-            "repair-task-projects-apply",
-            "--db",
-            "/tmp/current.sqlite3",
-            "--manifest",
-            "/tmp/repair.json",
-            "--archive-limit",
-            "10",
-        ]
-    )
-
     assert plan.historical_db == "/tmp/historical.sqlite3"
     assert plan.manifest == "/tmp/repair.json"
-    assert apply.archive_limit == 10
+
+
+@pytest.mark.parametrize("command,options", [
+    ("backfill-routine-process-todos", ["--todo-id", "1", "--reason", "retired"]),
+    ("backfill-todo-deadlines", []),
+    ("backfill-todo-owner-ids", []),
+    ("repair-task-projects-apply", ["--manifest", "/tmp/repair.json"]),
+])
+def test_retired_legacy_mutation_commands_are_not_parsed(command, options):
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args([command, *options])
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("command,options", [
+    ("repair-task-projects-plan", ["--manifest", "/tmp/repair.json"]),
+    ("task-semantic-import-plan", ["--output", "/tmp/import.json"]),
+    ("task-semantic-import-apply", ["--manifest", "/tmp/import.json"]),
+    ("backfill-minutes-owners", []),
+    ("process-work-items", []),
+])
+def test_retained_task_commands_still_parse(command, options):
+    assert build_parser().parse_args([command, *options]).command == command
 
 
 def test_task_semantic_import_commands_parse_manifest_and_limits():
@@ -1484,39 +1494,8 @@ def test_retry_work_summary_input_command_requeues_failed_input(tmp_path, capsys
     assert store.claim_work_summary_inputs(1)[0].id == input_id
 
 
-def test_parser_supports_backfill_routine_process_todos():
-    args = build_parser().parse_args(
-        [
-            "backfill-routine-process-todos",
-            "--todo-id",
-            "2622",
-            "--todo-id",
-            "2623",
-            "--reason",
-            "routine HR offer-flow step",
-            "--apply",
-        ]
-    )
-
-    assert args.command == "backfill-routine-process-todos"
-    assert args.todo_id == [2622, 2623]
-    assert args.reason == "routine HR offer-flow step"
-    assert args.apply is True
 
 
-def test_parser_supports_backfill_todo_owner_ids():
-    args = build_parser().parse_args(
-        [
-            "backfill-todo-owner-ids",
-            "--limit",
-            "50",
-            "--apply",
-        ]
-    )
-
-    assert args.command == "backfill-todo-owner-ids"
-    assert args.limit == 50
-    assert args.apply is True
 
 
 def test_parser_supports_process_okr_reviews():
@@ -3779,406 +3758,18 @@ def test_process_work_items_command_respects_zero_max_batches(
     assert len(AutoReplyStore(db_path).claim_work_summary_inputs(limit=1)) == 1
 
 
-def test_backfill_routine_process_todos_dry_run_reports_without_writing(
-    tmp_path, capsys
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=False,
-        now="2026-07-02 12:00:00",
-    )
-
-    captured = capsys.readouterr()
-    todo = store.get_work_todo(todo_id)
-    follow_up = store.get_follow_up_draft(follow_up_id)
-
-    assert result.changed == 0
-    assert result.planned == 1
-    assert todo is not None
-    assert todo.status == "open"
-    assert follow_up is not None
-    assert follow_up.status == "draft"
-    assert "dry_run=True planned=1 changed=0" in captured.out
-    assert str(todo_id) in captured.out
 
 
-def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_followup(
-    tmp_path, capsys
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-    link_id = store.create_work_todo_dingtalk_link(
-        work_todo_id=todo_id,
-        executor_user_id="mina-user-1",
-        executor_name="Avery",
-        title_snapshot="将唐华 offer 和试用目标压实成一页纸",
-        deadline_at_snapshot="2026-07-03 18:00:00",
-        priority_snapshot="P1",
-        status="active",
-        dingtalk_task_id="dt-task-1",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    captured = capsys.readouterr()
-    todo = store.get_work_todo(todo_id)
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    link = store.get_work_todo_dingtalk_link(link_id)
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert result.changed == 1
-    assert result.planned == 1
-    assert todo is not None
-    assert todo.status == "cancelled"
-    assert todo.blocker == "routine HR offer-flow step"
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-    assert follow_up.suppressed_reason == "routine HR offer-flow step"
-    assert link is not None
-    assert link.status == "cancelled"
-    assert "external cancellation is not part of this change" in link.last_error
-    assert updates[-1].source_type == "routine_process_backfill"
-    assert "routine HR offer-flow step" in updates[-1].summary
-    assert "dry_run=False planned=1 changed=1" in captured.out
-
-    second_result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:05:00",
-    )
-    second_updates = store.list_work_updates(project_id=project_id)
-
-    assert second_result.changed == 0
-    assert second_result.planned == 0
-    assert len(second_updates) == len(updates)
 
 
-def test_backfill_routine_process_todos_rerun_repairs_partial_cancellation(
-    tmp_path,
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="cancelled",
-        priority="P1",
-        blocker="routine HR offer-flow step",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert result.changed == 1
-    assert result.planned == 1
-    assert result.items[0].before_status == "cancelled"
-    assert result.items[0].suppressed_follow_up_ids == [follow_up_id]
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-    assert updates[-1].source_type == "routine_process_backfill"
 
 
-def test_backfill_routine_process_todos_rerun_repairs_missing_audit(tmp_path):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="cancelled",
-        priority="P1",
-        blocker="routine HR offer-flow step",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert result.changed == 1
-    assert result.planned == 1
-    assert result.items[0].before_status == "cancelled"
-    assert result.items[0].suppressed_follow_up_ids == []
-    assert result.items[0].dingtalk_link_ids == []
-    assert updates[-1].source_type == "routine_process_backfill"
-    assert updates[-1].source_ref == str(todo_id)
 
 
-def test_backfill_routine_process_todos_rerun_complete_is_noop(tmp_path):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="cancelled",
-        priority="P1",
-        blocker="routine HR offer-flow step",
-    )
-    store.create_work_update(
-        project_id=project_id,
-        source_type="routine_process_backfill",
-        source_ref=str(todo_id),
-        summary="Cancelled routine-process TODO.",
-    )
-
-    first = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-    second = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:05:00",
-    )
-
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert first.changed == 0
-    assert first.planned == 0
-    assert first.items[0].skipped_reason == "todo already cancelled and cleanup complete"
-    assert second.changed == 0
-    assert second.planned == 0
-    assert len(updates) == 1
 
 
-def test_backfill_routine_process_todos_targets_followups_beyond_global_page(
-    tmp_path,
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    unrelated_project_id = store.create_work_project(
-        title="Unrelated project",
-        category="ops",
-        status="active",
-    )
-    unrelated_todo_id = store.create_work_todo(
-        project_id=unrelated_project_id,
-        title="Unrelated TODO",
-        owner_user_id="ops-user-1",
-        owner_name="Ops",
-        status="open",
-    )
-    for index in range(501):
-        store.create_follow_up_draft(
-            project_id=unrelated_project_id,
-            todo_id=unrelated_todo_id,
-            owner_user_id="ops-user-1",
-            owner_name="Ops",
-            target_conversation_id="cid-ops",
-            target_kind="direct",
-            question_text=f"Unrelated follow-up {index}",
-            status="draft",
-        )
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-
-    assert result.changed == 1
-    assert result.items[0].suppressed_follow_up_ids == [follow_up_id]
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
 
 
-def test_backfill_routine_process_todos_suppresses_all_followups_for_todo(
-    tmp_path,
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_ids = [
-        store.create_follow_up_draft(
-            project_id=project_id,
-            todo_id=todo_id,
-            owner_user_id="mina-user-1",
-            owner_name="Avery",
-            target_conversation_id="cid-mina",
-            target_kind="direct",
-            question_text=f"这个一页纸完成了吗？#{index}",
-            status="draft",
-        )
-        for index in range(1001)
-    ]
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    remaining = store.list_follow_up_drafts(
-        todo_id=todo_id,
-        statuses=("draft", "approved"),
-        limit=2000,
-    )
-
-    assert result.changed == 1
-    assert result.items[0].suppressed_follow_up_ids == follow_up_ids
-    assert remaining == []
 
 
 def test_scan_task_sources_command_reads_minutes_only(

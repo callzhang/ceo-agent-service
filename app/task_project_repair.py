@@ -1,13 +1,11 @@
-"""Auditable, idempotent repair planning for task project metadata."""
+"""Read-only repair planning for historical task project metadata."""
 
 from __future__ import annotations
 from app.task20_definitions import task20_projection
 from app.logical_run_storage import logical_run_projection
 
 from app.business_definitions import BUSINESS_PROJECTIONS
-from app.business_storage import update_business
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
-from app.action_storage import insert_sync_action
 
 import hashlib
 import json
@@ -81,15 +79,6 @@ class RepairManifest:
     restorations: tuple[FieldRestoration, ...]
     archives: tuple[ArchiveDecision, ...]
     unresolved_project_ids: tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class ApplyResult:
-    changed_fields: int
-    archived_projects: int
-    skipped_fields: int
-    skipped_archives: int
-    audit_updates: int
 
 
 def build_repair_manifest(
@@ -178,127 +167,8 @@ def write_manifest(manifest: RepairManifest, path: str | Path) -> None:
     )
 
 
-def read_manifest(path: str | Path) -> RepairManifest:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    return RepairManifest(
-        version=int(payload["version"]),
-        manifest_id=str(payload["manifest_id"]),
-        database_fingerprint=str(payload["database_fingerprint"]),
-        created_at=str(payload["created_at"]),
-        restorations=tuple(FieldRestoration(**item) for item in payload["restorations"]),
-        archives=tuple(
-            ArchiveDecision(
-                **{**item, "evidence_refs": tuple(item["evidence_refs"])}
-            )
-            for item in payload["archives"]
-        ),
-        unresolved_project_ids=tuple(payload.get("unresolved_project_ids", ())),
-    )
 
 
-def apply_manifest(
-    db_path: str | Path,
-    manifest: RepairManifest,
-    *,
-    archive_limit: int | None = None,
-) -> ApplyResult:
-    changed_fields = 0
-    archived_projects = 0
-    skipped_fields = 0
-    skipped_archives = 0
-    changed_by_project: dict[int, list[dict[str, str]]] = {}
-    path = Path(db_path)
-    with _connect(path) as db:
-        db.execute("begin immediate")
-        try:
-            if manifest.version != 1:
-                raise RuntimeError(f"unsupported repair manifest version: {manifest.version}")
-            if _database_fingerprint(db) != manifest.database_fingerprint:
-                raise RuntimeError("repair manifest database fingerprint mismatch")
-            for restoration in manifest.restorations:
-                if restoration.field not in RESTORABLE_FIELDS:
-                    raise RuntimeError(
-                        f"unsupported repair field: {restoration.field}"
-                    )
-                row = db.execute(
-                    f"select {restoration.field} from ({_project_sql(db)}) where id=?",
-                    (restoration.project_id,),
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError(f"project {restoration.project_id} no longer exists")
-                current = str(row[restoration.field] or "")
-                if current == restoration.replacement:
-                    skipped_fields += 1
-                    continue
-                if current != restoration.expected:
-                    raise RuntimeError(
-                        f"project {restoration.project_id} field {restoration.field} "
-                        "changed since manifest planning"
-                    )
-                update_business(db, "work_project", restoration.project_id,
-                                {restoration.field: restoration.replacement,
-                                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-                changed_fields += 1
-                changed_by_project.setdefault(restoration.project_id, []).append(
-                    {
-                        "field": restoration.field,
-                        "evidence_kind": restoration.evidence_kind,
-                        "evidence_ref": restoration.evidence_ref,
-                    }
-                )
-
-            archive_decisions = manifest.archives
-            if archive_limit is not None:
-                archive_decisions = archive_decisions[: max(0, archive_limit)]
-            for archive in archive_decisions:
-                row = db.execute(
-                    f"select status from ({_project_sql(db)}) where id=?",
-                    (archive.project_id,),
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError(f"project {archive.project_id} no longer exists")
-                current_status = str(row["status"] or "")
-                if current_status == "archived":
-                    skipped_archives += 1
-                    continue
-                if current_status != archive.expected_status:
-                    raise RuntimeError(
-                        f"project {archive.project_id} status changed since manifest planning"
-                    )
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                update_business(db, "work_project", archive.project_id,
-                                {"status": "archived", "updated_at": timestamp})
-                archived_projects += 1
-                changed_by_project.setdefault(archive.project_id, []).append(
-                    {
-                        "field": "status",
-                        "evidence_kind": archive.reason,
-                        "evidence_ref": ";".join(archive.evidence_refs),
-                    }
-                )
-
-            for project_id, changes in changed_by_project.items():
-                insert_sync_action(db, "work_updates", {
-                    "project_id": project_id,
-                    "source_type": "repair_task_projects",
-                    "source_ref": f"manifest:{manifest.manifest_id}",
-                    "summary": "Restored or archived by reviewed task-project repair manifest.",
-                    "changes_json": _canonical_json({"changes": changes}),
-                    "merge_reason": "auditable_repair",
-                    "confidence": 1.0,
-                })
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-
-    return ApplyResult(
-        changed_fields=changed_fields,
-        archived_projects=archived_projects,
-        skipped_fields=skipped_fields,
-        skipped_archives=skipped_archives,
-        audit_updates=len(changed_by_project),
-    )
 
 
 def _latest_agent_refs(db: sqlite3.Connection) -> list[tuple[int, str, object]]:

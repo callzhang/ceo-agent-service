@@ -309,6 +309,11 @@ TODO evidence、Work Project、Work Todo 及候选业务对象。Work Project �
 `memory_context_json` 退休，无替代缓存。WorkTodo 的正式 Task 关联直接存
 `business.import_task_id`；独立 LegacyLinks 表和旧 Action guard 退休。
 真实字段、公共 ID、父子 FK、普通子行 ROWID 和分配水位由当前 typed DAO 保持。
+四个手工旧业务模型写入 CLI 已退休：`backfill-routine-process-todos`、
+`backfill-todo-deadlines`、`backfill-todo-owner-ids`、`repair-task-projects-apply`。
+`repair-task-projects-plan` 仍提供只读清单；旧 Project／Todo／Update 历史行和
+既有回执继续读取，当前 Task Agent、Task 写入、task-semantic-import 的 plan/apply
+不变。本次 D1a 没有 DDL 或历史数据迁移，不能据此称整个 D 已完成。
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 

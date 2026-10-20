@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from app.run_storage import insert_run
 from app import native_trajectory
 from app.store import AutoReplyStore
-from app.task_project_repair import apply_manifest, build_repair_manifest
+from app.task_project_repair import build_repair_manifest
 
 
 def _set_project_times(db_path, project_id, *, created_at):
@@ -42,7 +42,7 @@ def _record_agent_value(db_path, project_id, *, title, created_at):
         )
 
 
-def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path, monkeypatch):
+def test_manifest_plans_latest_traceable_value(tmp_path, monkeypatch):
     native = tmp_path / "native-task.jsonl"
     native.write_text("\n".join(json.dumps({"type": "response_item", "payload": {
         "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]
@@ -76,17 +76,8 @@ def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path, m
     assert restorations[(project_id, "goal")].replacement == "历史快照目标"
     assert restorations[(project_id, "goal")].evidence_kind == "historical_snapshot"
 
-    first = apply_manifest(current_path, manifest)
-    second = apply_manifest(current_path, manifest)
-
-    restored = current.get_work_project(project_id)
-    assert restored is not None
-    assert restored.title == "最近 Agent 标题"
-    assert restored.goal == "历史快照目标"
-    assert first.changed_fields == 2
-    assert first.audit_updates == 1
-    assert second.changed_fields == 0
-    assert second.audit_updates == 0
+    assert current.get_work_project(project_id).title == ""
+    assert current.get_work_project(project_id).goal == ""
 
 
 def test_manifest_archives_only_old_local_file_only_project(tmp_path):
@@ -127,9 +118,7 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
     assert [item.project_id for item in manifest.archives] == [eligible_id]
     assert manifest.archives[0].reason == "historical_local_file_only"
 
-    result = apply_manifest(db_path, manifest)
-    assert result.archived_projects == 1
-    assert store.get_work_project(eligible_id).status.value == "archived"
+    assert store.get_work_project(eligible_id).status.value == "active"
     assert store.get_work_project(excluded_id).status.value == "active"
 
 

@@ -101,14 +101,6 @@ from app.task_agent import (
     TaskDecisionRepairExhausted,
     process_work_item,
 )
-from app.task_noise_backfill import (
-    RoutineProcessBackfillResult,
-    backfill_routine_process_todos,
-)
-from app.task_owner_backfill import (
-    TodoOwnerBackfillResult,
-    backfill_todo_owner_ids_from_follow_ups,
-)
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_claimed_task_todo_sync_outbox,
@@ -363,9 +355,6 @@ def build_parser() -> argparse.ArgumentParser:
         "retry-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
-        "backfill-routine-process-todos",
-        "backfill-todo-owner-ids",
-        "backfill-todo-deadlines",
         "backfill-minutes-owners",
         "process-okr-reviews",
         "refresh-okr-archive",
@@ -402,7 +391,6 @@ def build_parser() -> argparse.ArgumentParser:
         "replay-recent-meetings",
         "repository-updater",
         "repair-task-projects-plan",
-        "repair-task-projects-apply",
         "task-semantic-import-plan",
         "task-semantic-import-apply",
     ):
@@ -563,9 +551,6 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "repair-task-projects-plan":
             subparser.add_argument("--historical-db")
             subparser.add_argument("--manifest", required=True)
-        if command == "repair-task-projects-apply":
-            subparser.add_argument("--manifest", required=True)
-            subparser.add_argument("--archive-limit", type=_non_negative_int)
         if command == "task-semantic-import-plan":
             subparser.add_argument("--output", required=True)
             subparser.add_argument("--limit", type=_positive_int)
@@ -648,24 +633,6 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "replay-recent-meetings":
             subparser.add_argument("--limit", type=_positive_int, required=True)
             subparser.add_argument("--offset", type=_non_negative_int, default=0)
-        if command == "backfill-routine-process-todos":
-            subparser.add_argument(
-                "--todo-id",
-                action="append",
-                type=int,
-                required=True,
-                help="Work TODO id to cancel. Repeat for multiple reviewed IDs.",
-            )
-            subparser.add_argument(
-                "--reason",
-                required=True,
-                help="Audit reason explaining why these TODOs are routine process noise.",
-            )
-            subparser.add_argument(
-                "--apply",
-                action="store_true",
-                help="Apply changes. Omit for dry-run.",
-            )
         if command == "backfill-minutes-owners":
             subparser.add_argument(
                 "--limit",
@@ -677,30 +644,6 @@ def build_parser() -> argparse.ArgumentParser:
                 "--apply",
                 action="store_true",
                 help="Queue the meetings. Omit for dry-run.",
-            )
-        if command == "backfill-todo-deadlines":
-            subparser.add_argument(
-                "--limit",
-                type=_positive_int,
-                default=None,
-                help="maximum open TODOs without a deadline to inspect. Omit for all.",
-            )
-            subparser.add_argument(
-                "--apply",
-                action="store_true",
-                help="Write deadlines and queue DingTalk mirrors. Omit for dry-run.",
-            )
-        if command == "backfill-todo-owner-ids":
-            subparser.add_argument(
-                "--limit",
-                type=_positive_int,
-                default=None,
-                help="maximum ownerless TODOs to inspect. Omit for all.",
-            )
-            subparser.add_argument(
-                "--apply",
-                action="store_true",
-                help="Apply changes. Omit for dry-run.",
             )
         if command == "setup-memory-connector":
             subparser.add_argument(
@@ -2104,77 +2047,6 @@ def _work_summary_retry_available_at(
     )
 
 
-def _print_routine_process_backfill_result(
-    result: RoutineProcessBackfillResult,
-) -> None:
-    print(
-        "backfill-routine-process-todos "
-        f"dry_run={result.dry_run} planned={result.planned} changed={result.changed}"
-    )
-    for item in result.items:
-        status = "skip" if item.skipped_reason else "plan"
-        print(
-            f"- {status} todo_id={item.todo_id} project_id={item.project_id} "
-            f"before={item.before_status} after={item.after_status} "
-            f"follow_ups={item.suppressed_follow_up_ids} "
-            f"dingtalk_links={item.dingtalk_link_ids} "
-            f"reason={item.skipped_reason or item.reason} title={item.title}"
-        )
-
-
-def backfill_routine_process_todos_command(
-    settings: WorkerSettings,
-    *,
-    todo_ids: list[int],
-    reason: str,
-    apply: bool = False,
-    now: str = "",
-) -> RoutineProcessBackfillResult:
-    store = AutoReplyStore(settings.db_path)
-    result = backfill_routine_process_todos(
-        store,
-        todo_ids=todo_ids,
-        reason=reason,
-        dry_run=not apply,
-        now=now,
-    )
-    _print_routine_process_backfill_result(result)
-    return result
-
-
-def _print_todo_owner_backfill_result(result: TodoOwnerBackfillResult) -> None:
-    print(
-        "backfill-todo-owner-ids "
-        f"dry_run={result.dry_run} planned={result.planned} changed={result.changed}"
-    )
-    for item in result.items:
-        status = "skip" if item.skipped_reason else "plan"
-        print(
-            f"- {status} todo_id={item.todo_id} project_id={item.project_id} "
-            f"owner_user_id={item.owner_user_id} owner={item.owner_name} "
-            f"follow_ups={item.follow_up_ids} "
-            f"reason={item.skipped_reason or item.reason} title={item.title}"
-        )
-
-
-def backfill_todo_owner_ids_command(
-    settings: WorkerSettings,
-    *,
-    limit: int | None = None,
-    apply: bool = False,
-    now: str = "",
-) -> TodoOwnerBackfillResult:
-    store = AutoReplyStore(settings.db_path)
-    result = backfill_todo_owner_ids_from_follow_ups(
-        store,
-        dry_run=not apply,
-        limit=limit,
-        now=now,
-    )
-    _print_todo_owner_backfill_result(result)
-    return result
-
-
 def backfill_minutes_owners_command(
     settings: WorkerSettings,
     *,
@@ -2192,41 +2064,6 @@ def backfill_minutes_owners_command(
     print(
         "backfill-minutes-owners "
         f"dry_run={result.dry_run} inspected={result.inspected} queued={result.queued}",
-        flush=True,
-    )
-    return result
-
-
-def backfill_todo_deadlines_command(
-    settings: WorkerSettings,
-    *,
-    limit: int | None = None,
-    apply: bool = False,
-    now: str = "",
-):
-    from app.task_deadline_backfill import (
-        TodoDeadlineCodexRunner,
-        backfill_todo_deadlines,
-    )
-
-    store = AutoReplyStore(settings.db_path)
-    runner = TodoDeadlineCodexRunner(
-        store=store,
-        workspace=settings.workspace,
-        timeout_seconds=settings.task_codex_timeout_seconds,
-        idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
-    )
-    result = backfill_todo_deadlines(
-        store, runner, dry_run=not apply, limit=limit, now=now
-    )
-    for decision in result.decisions:
-        print(json.dumps(decision, ensure_ascii=False), flush=True)
-    print(
-        "backfill-todo-deadlines "
-        f"dry_run={result.dry_run} inspected={result.inspected} "
-        f"deadlines_set={result.deadlines_set} "
-        f"mirrors_queued={result.mirrors_queued} failed={result.failed} "
-        f"deferred={result.deferred}",
         flush=True,
     )
     return result
@@ -5230,28 +5067,8 @@ def main() -> None:
             reason=args.reason,
             max_retries=args.max_retries,
         )
-    elif args.command == "backfill-routine-process-todos":
-        backfill_routine_process_todos_command(
-            settings,
-            todo_ids=args.todo_id,
-            reason=args.reason,
-            apply=args.apply,
-        )
     elif args.command == "backfill-minutes-owners":
         backfill_minutes_owners_command(settings, limit=args.limit, apply=args.apply)
-    elif args.command == "backfill-todo-deadlines":
-        initialize_agent_runtime_routes(settings)
-        backfill_todo_deadlines_command(
-            settings,
-            limit=args.limit,
-            apply=args.apply,
-        )
-    elif args.command == "backfill-todo-owner-ids":
-        backfill_todo_owner_ids_command(
-            settings,
-            limit=args.limit,
-            apply=args.apply,
-        )
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
         initialize_agent_runtime_routes(settings)
@@ -5379,15 +5196,6 @@ def main() -> None:
                 sort_keys=True,
             )
         )
-    elif args.command == "repair-task-projects-apply":
-        from app.task_project_repair import apply_manifest, read_manifest
-
-        result = apply_manifest(
-            settings.db_path,
-            read_manifest(_expand_path_arg(args.manifest)),
-            archive_limit=args.archive_limit,
-        )
-        print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "task-semantic-import-plan":
         from app.task_semantic_import import (
             build_task_semantic_import_manifest,
