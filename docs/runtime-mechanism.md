@@ -459,6 +459,7 @@ Audit 独立性、结果校验、反馈次数及任务生命周期均不变。
 若重刷后的完整触发输入与当前代际相同，重跑按原幂等键返回当前代际；若所选 Skill 导致输入变化，
 则在单一事务中轮换到新代际。轮换前会校验 Attempt 仍绑定原预期代际；若旧代际仍有运行中的
 Agent，则返回冲突，不报告已入队。旧输入、Attempt 和运行历史不改写。
+对已审核 `needs_human` 候选提交补充信息时，也按新审核代际处理：入队前从当前 OA 定时任务重新冻结已选 Skill，而不是沿用该候选生成时的旧快照。当前 Skill 或任务配置不可读时拒绝入队；成功后仍经 Consumer、Audit 和原有 System 动作门禁。旧候选、审核及证据不改写。
 人工重跑内部 OA 待办使用持久化任务中的 `oa-pending:` 合成触发 ID；按触发 ID 定位当前任务并恢复其实际 `oa_pending_scan:<process>` 会话。该类 ID 不是钉钉消息 ID，不调用钉钉会话读取或按 ID 读取；若当前任务已不存在，按未找到任务失败。
 压缩后的输入从任务所绑定的 OA URL/业务键核对 process 与 task 身份，并通过保存的定时扫描 run 恢复 OA Consumer 上下文后重新冻结当前所选 Skill。无法精确核对身份或找回 run/Skill 时拒绝排队；不会尝试把内部触发 ID 当作钉钉消息读取。
 待办扫描的复审指纹包括当前选择的 Skill 正文摘要。Skill 规则更新时，即使外部审批流水未改变，也为仍在本人待办中的流程排入一轮新 Consumer/Audit；相同 Skill 正文继续去重。新一轮仍冻结实际选中的完整 Skill 正文，并使用原有审批身份、Audit、System Executor 和外部回执门禁。
@@ -4527,7 +4528,7 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 新 Consumer wire 用 `action`、`reason`、`target`、`payload`、`evidence_refs` 表达业务核心；保留 summary、评分、阶段及长期记忆元数据。purpose 来自当前任务已选择的 OA Skill 或明确 OA 动作上下文，否则使用普通 purpose。schema 和解析器由同一 purpose 动作定义生成，拒绝未知动作、不完整参数及非法 ID 类型。`plan` 的 payload 是现有完整 ConsumerProposal；直接动作规范化为同样的提案。OA `return` 规范化为 dingtalk-oa/revert_task；它与 Audit 的 return 反馈分属不同协议。OA 请求参数 revert_action 是 REVERT_FOR_APPROVAL 或 REVERT_FOR_RESUBMIT，REDIRECT_PROCESS 是外部操作记录类型。候选追加服务绑定的 purpose_output；旧候选不重写。
 
-`request_access` 使用既有受控 OA 评论或原会话回复动作，完整候选经 Audit 和执行器验证后才是成功权限请求。权限未恢复时 Consumer 输出 `retry`，引用该请求的 external_action_key。解析准备阶段和编排层均从当前任务的已验证动作及其原候选核对它确为 request_access，不解析 reason 关键词。兼容迁移前缺少 purpose_output 的 OA 候选时，只接受本任务唯一且完全匹配 `material-read-access-block` identity 的已核验评论；其他评论、未知 key、uncertain 回执和其他任务的请求不能充当成功申请。
+`request_access` 使用既有受控 OA 评论或原会话回复动作，完整候选经 Audit 和执行器验证后才是成功权限请求。Consumer 的 request stage 必须输出 `continue_after_execution=false`，因为成功送达请求并不证明权限已恢复。编排器仅在该 `request_access` 动作执行结果验证为成功后安排权限等待；新执行路径和进程重启后的已完成动作恢复路径都遵守此规则。权限未恢复时 Consumer 输出 `retry`，引用该请求的 external_action_key。解析准备阶段和编排层均从当前任务的已验证动作及其原候选核对它确为 request_access，不解析 reason 关键词。兼容迁移前缺少 purpose_output 的 OA 候选时，只接受本任务唯一且完全匹配 `material-read-access-block` identity 的已核验评论；其他评论、未知 key、uncertain 回执和其他任务的请求不能充当成功申请。
 
 预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时期限；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的回执引用在匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，随后与已验证动作存储的原始 key 精确比较。Audit 同意的 request_access 完成后先等待，再进入后续 Consumer；Audit 同意的 retry 延后同一目的的新 revision。首次间隔 300 秒，此后按已预留次数指数增长，单次最多 43200 秒；next_at 截在 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
 

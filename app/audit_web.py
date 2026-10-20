@@ -10155,6 +10155,7 @@ def handle_needs_human_decision_post(
     body: bytes,
     *,
     return_to: str = "",
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -10210,6 +10211,7 @@ def handle_needs_human_decision_post(
                 ), actionable_source_attempt_id=source.id,
                 review_candidate_id=candidate_id,
                 supplement_instruction=instruction,
+                skill_options_factory=skill_options_factory,
             )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
@@ -10279,6 +10281,7 @@ def handle_reviewed_message_reply(
     actionable_source_attempt_id: int = 0,
     review_candidate_id: int = 0,
     supplement_instruction: str = "",
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> dict[str, object]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -10300,6 +10303,17 @@ def handle_reviewed_message_reply(
         single_chat = task.single_chat
     else:
         raise ValueError("original reply task input is unavailable")
+    if source.oa_process_instance_id:
+        if skill_options_factory is None:
+            raise ValueError("OA rerun Skill snapshot could not be refreshed")
+        try:
+            trigger_message_json = refresh_oa_rerun_skill_snapshot(
+                trigger_message_json,
+                store=store,
+                skill_options=skill_options_factory(),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("OA rerun Skill snapshot could not be refreshed") from exc
     if actionable_source_attempt_id > 0:
         reviewed_attempt_id, _task = store.record_actionable_attempt_decision(
             actionable_source_attempt_id,
@@ -11642,6 +11656,7 @@ def create_audit_app(
             attempt_id,
             await request.body(),
             return_to=request.query_params.get("return_to", ""),
+            skill_options_factory=scheduled_task_option_service,
         )
         return _fastapi_post_response(status, headers, html)
 
@@ -11657,6 +11672,7 @@ def create_audit_app(
                 reviewer_feedback=str(
                     payload.get("reviewer_feedback") or payload.get("feedback") or ""
                 ),
+                skill_options_factory=scheduled_task_option_service,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
