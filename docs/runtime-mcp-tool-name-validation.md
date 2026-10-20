@@ -12,7 +12,7 @@ Task Skill discovery still uses `agent_cli.read_skill(...)` and `agent_cli.read_
 
 1. A focused regression must fail on the old Codex Runtime Context and pass when the declared list contains the exact `mcp__agent_cli__...` and `mcp__exa__...` names. Claude retains its previous representation. Undeclared tools do not appear.
 2. An anonymous fixed native case must complete with a valid tool result using the native name, without an empty dotted catalog lookup. Compare the prior and changed labels under the same tool, task and model. A synthetic case cannot prove natural latency or call reduction.
-3. The affected local tests, lint and independent review must pass. After normal merge and quiet deploy, read back version, PID, health, queues, Attention, History and Settings preview. Do not replay a business task to create acceptance evidence.
+3. The affected local tests, lint and independent review must pass. After merge and repository deployment, read back version, PID, health, queues, Attention, History and Settings preview. Do not replay a business task to create acceptance evidence.
 
 ## Verification so far
 
@@ -20,4 +20,12 @@ Task Skill discovery still uses `agent_cli.read_skill(...)` and `agent_cli.read_
 - `tests/test_prompt_preview.py`: 14 passed on the first run; one expected-name assertion was updated, and that case passed independently. No prompt assembly or business rules changed.
 - In a paired anonymous Codex OAuth case, both the dotted and native label variants completed with one native read call, the expected synthetic marker, zero empty catalog lookups and exit 0. This shows the native label works and shows no measured reduction in that simplified case.
 
-Production acceptance is pending merge and deployment. The first natural post-release cold role trajectory is the measurement for whether the empty dotted lookup recurs.
+## Production readback, 2026-10-20
+
+PR #177 merged as `30dca89f4`. Derek authorized `--skip-quiet-wait` after repeated natural-idle timeouts. The first code deployment loaded `7021ce675`, then exposed an unrelated startup unsubscribe-receipt SQL ambiguity in the background worker. A separate fail-first repair, `b6f87c14a`, qualified task fields in that joined update; 309 focused tests and Ruff passed. The repository deployment returned `deployed 61370307 -> b6f87c14`.
+
+Production readback on `b6f87c14a`: supervisor PID 11652 and its service child remained running, `/healthz` returned OK, Reply failed count was 6, Work and Meeting had no processing or failed items, Attention had 4 groups and History had 36,534 entries. The nine older Reply failures surfaced during the first restart were eight DingTalk tasks and one scheduled task; after the worker started, they projected `done` with `reconciled_from_failed`. They were not email unsubscribe tasks. No Reply task created after 09:00 UTC became failed, and no processing Reply was older than five minutes at the checked snapshot. Settings Prompt Preview for the Codex OAuth route showed `mcp__agent_cli__...` in both Consumer and Audit Runtime Context and no `agent_cli.` listing in that section. The preview is evidence of rendered service input, not of a natural Agent tool choice.
+
+An independent retrospective review approved both diffs with no blocking findings. For PR #177, eight before/after render comparisons covered Consumer/Audit, OA/general and Codex/Claude; only the Codex callable names changed. For `b6f87c14a`, an isolated probe reproduced the original SQL ambiguity, then verified six terminal outcomes, six nonmatching cases, preserved task and receipt fields, and an idempotent second pass. The probe did not replay provider actions.
+
+The first natural post-release cold Consumer/Audit trajectory is still needed to measure whether an empty dotted catalog lookup recurs or tool-call count changes. No business task was replayed for this release check.
