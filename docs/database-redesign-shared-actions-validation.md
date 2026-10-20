@@ -250,3 +250,65 @@ merged manifests remain bound to their original reviewed commits. Independent
 SPEC/QUALITY of this correction and the fresh parent full-copy/native/current-data
 inverse/live checks remain parent-owned. No full-copy timing improvement or live
 outcome is claimed by these focused tests.
+
+## Fresh parent full-copy, native and current-fact inverse acceptance
+
+Independent correction SPEC and QUALITY approved `6ad34bcd2`. A fresh production
+snapshot was then used for the complete acceptance. It contains479186944bytes,
+Store19.5/Email53, full integrity `ok`, and the original single Runs190042 Tasks
+FK finding. Actual archived `cee038b13` Store **and default strict EmailStore**
+cold-opened the source with every stored fact and declaration unchanged. After
+checkpoint/DELETE it was frozen read-only at SHA-256
+`be50ca02d0e8cf94d9e879d59fa2ab7dfb7487ba7173334601112b2cde490d97`.
+
+Publication/load took222.164seconds under concurrent local test load. All source
+public values and SQLite types, IDs, non-step payload bytes, unrelated physical
+facts, allocators, and FK multiset matched after forward migration. The identical
+population contains1040reviewed plans,331execution owners,321reviewed attempts,
+10602email plans,11026email steps and13090email attempts. Actions and its indexes
+use4026368fewer bytes, and total Actions payload uses2503145fewer bytes. These are
+logical dbstat/population measures, not a VACUUM or file-size shrink claim.
+
+Real native Consumer386803/runtime386804 and Audit386805/runtime386806 both
+completed and actually read `case-input.json` plus the send contract. Source
+ranges/session IDs are in the receipt; only allowed agent_cli tools were called.
+The Consumer's single command read shared AGENTS with sed; Audit ran no command.
+The actual copy UI saved execute for Task5131569106897304/Attempt15717; then the
+actual worker/SystemExecutor completed one InMemoryProvider send, one verify,
+one verified attempt and one receipt, with no additional native turn. Public Sent
+result is exact while raw result is NULL/reference; reviewed attempt raw result
+is likewise NULL/reference. The UI showed done,1/1verified, and the expanded
+`native-copy-provider-receipt`. Eleven pre-existing table populations remained
+unchanged. Copy console shut down normally with zero provider calls.
+
+Default strict EmailStore then wrote six new source-shaped direct plans/actions:
+archive has a failed first attempt and a second current processing claim; five
+other kinds completed via StatefulFakeImapProvider. Direct completion created
+neither fake AgentRuns nor verified global receipts. Inverse reconstructed the
+exact source schema, actual archived Store and strict EmailStore cold-read all
+new native selection/execution/Sent/receipt facts and all direct outcomes plus
+the current retry claim. Reforward preserved every current physical fact except
+the deliberate Store marker clock, passed full integrity, retained the original
+FK multiset and left the immutable source hash unchanged. No source-original or
+real provider was accessed. See [structured copy evidence](validation/2026-10-19-shared-actions-copy.json).
+
+The earlier staged source carried one partial B1 synthetic email90261019 whose
+RFC/thread mismatch existed before and after B2a; production had no such mismatch.
+That staged proof is not the strict EmailStore acceptance. This fresh source
+supersedes it for complete parent acceptance. The source DTO harness's separate
+strict-Python type assembly failure was corrected only in the disposable harness;
+application validation was not weakened.
+
+After acceptance, root normally merged origin9297581a9 at6753e9a2d. Its changes
+are separately authored OA OCR/session/legacy-access-receipt behavior and tests;
+no B2a core file changed. AST comparison confirms the non-OA capability text is
+exact; the selected native general path remains the same. Final merged tests,
+publication freeze/review and production readback are recorded separately.
+
+Final merged focused controls passed14/14 in2.68seconds, covering the changed OA
+session handoff, unchanged general-role command/instructions, exact canonical,
+prior and legacy verified receipt matching, and source chronology instruction.
+All B2a core source/test files match6ad34bcd2 byte-for-byte. The separate
+[publication freeze](superpowers/specs/2026-10-19-shared-actions-publication-freeze.json)
+binds this merged tree without overwriting earlier acceptance freezes. Fresh
+publication SPEC/QUALITY and production readback remain pending.
