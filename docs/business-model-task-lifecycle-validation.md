@@ -368,3 +368,30 @@ The synthetic completed-page screenshot is retained in
 [`2026-10-19-task-lifecycle-native-receipt.png`](validation/2026-10-19-task-lifecycle-native-receipt.png).
 Fresh independent parent SPEC then QUALITY both APPROVE the c4a9/eb3d16
 source and this evidence boundary. Standard publication remains pending.
+
+
+## Final upstream integration before publication
+
+Normal merge `2f76a101…` includes upstream `120291fd…`. All 39 C1 paths and
+every application file except the independently changed runtime tool-name
+renderer remain byte-exact to the accepted c4 source. The final 1,233-file
+aggregate is `ae4d28da…`, with six extra runtime pins. The c4 native evidence
+keeps its original binding; this does not claim another native run for the new
+tool catalog.
+
+The four focused runtime-context, preview, publication and finance-rule files
+report **74 passed, 2 failed in 343.04 seconds, exit 1**. Both failures are old OA
+exact-wording assertions at lines 128/161. The exact upstream module reproduces
+the same two failures in 0.09 seconds. Their functions are AST-identical across
+c4/upstream/current; the repository OA Skill in all three versions and actual
+installed Skill are byte-identical (`66dfb8dd…`). No assertion, policy or Skill
+was changed to make this release pass. Independent incremental QUALITY APPROVE
+accepts this as no new C1 failure, not an all-green run or a gate exemption.
+
+The newly verified latest predecessor backup is 479,956,992 bytes,
+SHA256 `cc1fbba7…`, full integrity/FK and exact paired preflight passed before
+atomic replacement. Production PID7444 and four degraded observations are
+recorded before C1, not attributed to it or suppressed. Standard quiet wait,
+schema/import/health/loaded-state checks and rollback remain unchanged.
+Detailed pins, failed-test baseline and review are in
+[`2026-10-19-task-lifecycle-final-integration.json`](superpowers/specs/2026-10-19-task-lifecycle-final-integration.json).
