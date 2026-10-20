@@ -28,4 +28,12 @@ Production readback on `b6f87c14a`: supervisor PID 11652 and its service child r
 
 An independent retrospective review approved both diffs with no blocking findings. For PR #177, eight before/after render comparisons covered Consumer/Audit, OA/general and Codex/Claude; only the Codex callable names changed. For `b6f87c14a`, an isolated probe reproduced the original SQL ambiguity, then verified six terminal outcomes, six nonmatching cases, preserved task and receipt fields, and an idempotent second pass. The probe did not replay provider actions.
 
-The first natural post-release cold Consumer/Audit trajectory is still needed to measure whether an empty dotted catalog lookup recurs or tool-call count changes. No business task was replayed for this release check.
+At this initial readback, natural post-release trajectories were still needed to measure whether an empty dotted catalog lookup recurred or tool-call count changed. No business task was replayed for the release check.
+
+## Natural post-release trajectory readback
+
+Sixteen complete Codex OAuth Consumer/Audit native turn ranges after the code release were checked against their saved session files. The ranges contained twelve `ALL_TOOLS` catalog queries and **zero searches for dotted `agent_cli.read_*` names**. This is bounded evidence that the original naming mismatch did not recur in these turns; it does not establish a population-wide call reduction.
+
+Consumer run 387735 and Audit run 387740 for the same ordinary message task still made an empty catalog lookup. The Consumer first tried `tools.mcp__agent_cli__read_task_skill` inside `functions.exec` and received `TypeError: ... is not a function`; the Audit queried the catalog and received `[]`. Both then completed the selected Skill and action-contract reads through native MCP calls. Their role command config uses `mcp__agent_cli` as a direct-only namespace, which is callable natively but absent from CodeMode's nested catalog. This is a different transport-selection issue from the dotted-name mismatch.
+
+An extra Runtime Context line explaining direct-only transport passed a fail-first rendering test, but two anonymous fixed Codex OAuth comparisons showed **no behavioral improvement**: both old and candidate prompts performed exactly one native Skill read in the simple case, and exactly two Skill reads plus one action-contract read in the production-shaped case, with no empty catalog lookup in either arm. The candidate prompt change and its test were withdrawn; no code, tool declaration, route, permission or business action changed. Reconsider only with a fixed case that reproduces the wasted catalog path and shows its removal without business regression.
