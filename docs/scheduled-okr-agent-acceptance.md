@@ -52,6 +52,20 @@ v1 将已按原承诺完全交付、客户验收且投入使用的业务 KR 错�
   最终轨迹随临时目录清理，不能计分。保留无语义通过声明的保存失败记录；新增
   输出目录启动检查（先 RED 后 GREEN），在模型配置与调用之前拒绝错误路径。
 
+- v9：机械核查全部通过，但二次 Audit 错把评测日志中的早期片段当作当前产物。
+  日志放在业务产物目录，并在读取自身时递归追加；最终 main.md 与读回均为同一
+  SHA-256 `f80ee279b928cc2aeb55dcdc5fe7cca0eae1a67419134c53cf8e1e2ce3cdea42`，
+  轨迹实际包含多次带链接的 render，与审核所称“只有一次未带链接 render”相反。
+  将日志移出 Agent 可见目录，回归先 RED 后 GREEN。v11 从 v9 完整保存的产物
+  恢复原始字节，严格验证全部机械断言、分析摘要、完整正文、固定事实/Skill/runtime
+  不变后，只重新执行独立只读 Audit；不重新抽样 Consumer，也不增加修订次数。
+  v9 的失败结论和两次审核反馈仍原样保留。v10 另因已脱敏的历史 Skill 调用
+  被重复当作原始正文脱敏而保存失败；修正脱敏的幂等性，并先保存完整角色阶段
+  checkpoint 再整理轨迹（回归先 RED 后 GREEN），不作语义通过声明。
+
+当前 v11 主流程的全部机械断言通过，独立只读重新审核 approve；未重跑 Consumer、
+未增加修订。其余三场景仍在执行。
+
 每次修改前核对实际输入、工具返回与模型结果。所有 failed JSON 留存，未用反复
 抽样掩盖失败。Codex 内置资源目录查询仅记录为 native_inventory_calls；所有真正
 provider 工具必须属于唯一合成服务器，外部同名工具仍被回归拒绝。
@@ -59,7 +73,7 @@ provider 工具必须属于唯一合成服务器，外部同名工具仍被回�
 ## 定向测试
 
 最新一次相关运行：`test_scheduled_okr_agent_eval.py`、`test_weekly_okr_report.py`、
-`test_scheduled_task_generic_eval.py` 共 **113 passed**。渲染两项回归与新增
+`test_scheduled_task_generic_eval.py` 共 **117 passed**。渲染两项回归与新增
 恢复/当前来源两项回归均先 RED 后 GREEN。原七案例的 13 项保护保持通过。
 发布整文件 `test_consumer_system_release.py` 最近一次 **27 passed**；其中旧
 finance 预置摘要错误地与已更新的安装文件比较，改为固定原有批准摘要，保留全部

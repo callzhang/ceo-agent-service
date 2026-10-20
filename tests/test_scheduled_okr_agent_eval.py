@@ -146,7 +146,7 @@ def complete_fixture(tmp_path, case=None):
                 },
             ]
         )
-    (tmp_path / "tool-calls.jsonl").write_text("\n".join(json.dumps(c) for c in trace))
+    f.trace_path.write_text("\n".join(json.dumps(c) for c in trace) + "\n")
     output = {
         "action": "plan",
         "reason": "Synthetic report ready after exact mock provider readback",
@@ -174,6 +174,40 @@ def complete_fixture(tmp_path, case=None):
 def test_complete_actual_skill_output_passes_okr_acceptance(tmp_path):
     case, output = complete_fixture(tmp_path)
     assert okr_eval.grade(case, tmp_path, output)["passed"]
+
+
+def test_fixture_trace_is_not_a_business_artifact(tmp_path):
+    f = Fixture(CASES[0]["facts"], tmp_path)
+    f.record("read_okr_member", {"user_id": "eval-a"}, {"ok": True})
+    assert f.trace_path.parent != f.work
+    assert not (f.work / "tool-calls.jsonl").exists()
+    assert okr_eval.calls(tmp_path)[0]["tool"] == "read_okr_member"
+
+
+def test_saved_trace_skill_redaction_is_idempotent():
+    call = {"tool": "read_task_skill", "arguments": {"name": "selected"},
+            "result": {"content": "exact selected Skill"}}
+    first = okr_eval.persisted_call(call)
+    assert first["result"] == {"skill_source_sha256": okr_eval.digest(b"exact selected Skill")}
+    assert okr_eval.persisted_call(first) == first
+
+
+def test_fixture_repair_rechecks_exact_saved_candidate_without_new_consumer(tmp_path):
+    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v9.json").read_text())
+    row = okr_eval.restore_first_case(saved, CASES[0], tmp_path)
+    result = okr_eval.grade(CASES[0], tmp_path, row["correction"]["output"])
+    assert result["passed"]
+    assert result["analysis_hashes"] == saved["cases"][0]["final_grade"]["analysis_hashes"]
+    assert not (tmp_path / "tool-calls.jsonl").exists()
+
+
+def test_saved_candidate_recheck_rejects_changed_skill_source(tmp_path):
+    import pytest
+
+    saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v9.json").read_text())
+    saved["source_sha256"]["ci/shared-skills/ceo-weekly-okr-report/SKILL.md"] = "changed"
+    with pytest.raises(ValueError, match="Skill source changed"):
+        okr_eval.restore_first_case(saved, CASES[0], tmp_path)
 
 
 def test_native_output_directory_is_checked_before_model_configuration(monkeypatch):

@@ -33,12 +33,52 @@ def read_json(path):
 
 
 def calls(work):
-    path = Path(work) / "tool-calls.jsonl"
+    path = Path(work).with_name(Path(work).name + "-tool-calls.jsonl")
     return (
         [json.loads(line) for line in path.read_text().splitlines()]
         if path.exists()
         else []
     )
+
+
+def persisted_call(call):
+    if call["tool"] == "read_task_skill" and "content" in call["result"]:
+        return {**call, "result": {"skill_source_sha256": digest(call["result"]["content"].encode())}}
+    return call
+
+
+def restore_first_case(saved, case, work):
+    """Restore exact saved bytes for an Audit-only fixture repair recheck."""
+    if saved["cases_sha256"] != digest(CASES_PATH.read_bytes()):
+        raise ValueError("Saved case inputs changed")
+    for name, expected in saved["source_sha256"].items():
+        path = (Path.home() / ".agents/skills/dingtang-okr-review/SKILL.md"
+                if name.startswith("operation/") else run.ROOT / name)
+        if digest(path.read_bytes()) != expected:
+            raise ValueError("Saved business Skill source changed")
+    row = saved["cases"][0]
+    if row["case_id"] != case["id"] or not row["final_grade"]["passed"]:
+        raise ValueError("Only a mechanically passing saved first case can be rechecked")
+    for call in row["raw_tool_trace"]:
+        if (call["tool"] == "read_task_artifact"
+                and call["arguments"].get("offset", 0) == 0
+                and not call["result"].get("has_more")):
+            name = call["arguments"]["name"]
+            if name == "tool-calls.jsonl":
+                continue
+            if Path(name).name != name:
+                raise ValueError("Saved artifact must have a flat name")
+            (work / name).write_text(call["result"]["content"])
+    trace = work.with_name(work.name + "-tool-calls.jsonl")
+    trace.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n"
+                             for c in row["raw_tool_trace"]))
+    output = (row["correction"] or row["consumer"])["output"]
+    restored = grade(case, work, output)
+    if (not restored["passed"]
+            or restored["analysis_hashes"] != row["final_grade"]["analysis_hashes"]
+            or restored["rendered_full"] != row["final_grade"]["rendered_full"]):
+        raise ValueError("Saved artifact bytes do not reproduce original passing checks")
+    return row
 
 
 def _grade(case, work, output, prior=None):
@@ -454,6 +494,7 @@ def native(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
+    parser.add_argument("--recheck-first-case-from", help="Audit-only recheck of a saved passing candidate after a fixture repair")
     args = parser.parse_args()
     destination = HERE / args.output
     if not destination.parent.is_dir():
@@ -479,6 +520,9 @@ def main():
     ]
     settings["ignore_user_config"] = True
     settings["ignore_rules"] = True
+    saved = read_json(HERE / args.recheck_first_case_from) if args.recheck_first_case_from else None
+    if saved and saved["settings"] != settings:
+        raise ValueError("Saved native runtime settings changed")
     result = {
         "version": 1,
         "created_at": datetime.now(UTC).isoformat(),
@@ -521,7 +565,6 @@ def main():
                 prior = None
                 if case.get("resume_from"):
                     shutil.copytree(completed[case["resume_from"]], artifacts)
-                    (artifacts / "tool-calls.jsonl").unlink()
                     prior = {
                         uid: digest(
                             (artifacts / f"analysis-{key(uid)}.json").read_bytes()
@@ -532,7 +575,8 @@ def main():
                     artifacts.mkdir()
                 facts = root / "facts.json"
                 facts.write_text(json.dumps(case["facts"], ensure_ascii=False))
-                consumer = native(
+                rechecked = restore_first_case(saved, case, artifacts) if saved and not result["cases"] else None
+                consumer = rechecked["consumer"] if rechecked else native(
                     "consumer", facts, artifacts, root / "consumer", flags
                 )
                 if consumer["output"] is None:
@@ -545,8 +589,8 @@ def main():
                         }
                     )
                     break
-                first = grade(case, artifacts, consumer["output"], prior)
-                audit = native(
+                first = rechecked["first_grade"] if rechecked else grade(case, artifacts, consumer["output"], prior)
+                audit = rechecked["audit"] if rechecked else native(
                     "audit",
                     facts,
                     artifacts,
@@ -554,8 +598,8 @@ def main():
                     flags,
                     previous=consumer["output"],
                 )
-                correction = None
-                if audit["output"]["verdict"] == "revise":
+                correction = rechecked["correction"] if rechecked else None
+                if not rechecked and audit["output"]["verdict"] == "revise":
                     correction = native(
                         "consumer",
                         facts,
@@ -566,15 +610,20 @@ def main():
                         feedback=audit["output"],
                     )
                 final_audit = audit
-                if correction:
+                if correction or rechecked:
                     final_audit = native(
                         "audit",
                         facts,
                         artifacts,
                         root / "audit-after-correction",
                         flags,
-                        previous=correction["output"],
+                        previous=(correction or consumer)["output"],
                     )
+                result["pending_case"] = {
+                    "case_id": case["id"], "consumer": consumer,
+                    "audit": audit, "correction": correction, "final_audit": final_audit,
+                }
+                destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
                 final = grade(
                     case, artifacts, (correction or consumer)["output"], prior
                 )
@@ -611,21 +660,18 @@ def main():
                         }
                         for c in calls(artifacts)
                     ],
-                    "raw_tool_trace": [
-                        {
-                            **c,
-                            "result": {
-                                "skill_source_sha256": digest(
-                                    c["result"]["content"].encode()
-                                )
-                            },
-                        }
-                        if c["tool"] == "read_task_skill"
-                        else c
-                        for c in calls(artifacts)
-                    ],
+                    "raw_tool_trace": [persisted_call(c) for c in calls(artifacts)],
                 }
+                if rechecked:
+                    row["rechecked_saved_candidate"] = {
+                        "result": args.recheck_first_case_from,
+                        "sha256": digest((HERE / args.recheck_first_case_from).read_bytes()),
+                        "consumer_rerun": False,
+                        "additional_corrections": 0,
+                        "original_final_audit": rechecked["final_audit"]["output"],
+                    }
                 result["cases"].append(row)
+                del result["pending_case"]
                 completed[case["id"]] = artifacts
                 destination.write_text(
                     json.dumps(result, ensure_ascii=False, indent=2) + "\n"

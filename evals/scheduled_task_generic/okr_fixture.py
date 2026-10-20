@@ -105,7 +105,7 @@ class Fixture:
     def __init__(self, facts, work):
         self.facts, self.work = facts, Path(work)
         self.work.mkdir(parents=True, exist_ok=True)
-        self.trace_path = self.work / "tool-calls.jsonl"
+        self.trace_path = self.work.with_name(self.work.name + "-tool-calls.jsonl")
         self.docs_path = self.work / "documents.json"
 
     def write_json(self, name, payload):

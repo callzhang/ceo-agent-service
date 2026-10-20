@@ -188,5 +188,13 @@
     "original_tool_error_preserved": "doc_write_verification_failed",
     "system_execution_id": 324,
     "sent_status": "SUCCESS"
+  },
+  "okr_real_children": {
+    "parent_node_id": "m9bN7RYPWdbednwAiRewoykjJZd1wyK0",
+    "count": 18,
+    "all_pages_complete": true,
+    "has_more": false,
+    "exact_linked_appendix_set": true,
+    "node_set_sha256": "7dd1d817f87f4d2caae013b98ed3f691b6a45d090dd5b0d5f64b6af02848da64"
   }
 }
