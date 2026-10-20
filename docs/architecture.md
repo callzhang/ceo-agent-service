@@ -147,6 +147,8 @@ A2 verified／NULL 正文与 A4 Sent receipt owner 继续使用原规则。
 Store `2026-10-19.5`／Email53 转到 `2026-10-19.6`／Email53。转前逐一验证 direct
 attempt 的整数连续序号、数量和最新镜像的精确 SQLite 值／类型；pending 必须无历史，
 processing 的终态字段必须已清空。任何来源例外在写入前拒绝，不擦除或修补。
+正逆迁的临时 Actions staging 在 CTAS 后立即按物理 `id` 建临时索引，逐行改写
+direct step 时按 ID 查找；索引随临时表删除，永久源／目标声明不变。
 逆迁从当前 plan／step／attempt 重建旧布局，包括发布后的新计划、新 reviewed 执行及
 可变槽位、新 Email retry attempt 和当前 claim；原 Actions 物理 ID、公开 identity、
 FK finding 多重集合、分配水位及原 marker 时间保留。Email53 账本不增版本，源行不归档。

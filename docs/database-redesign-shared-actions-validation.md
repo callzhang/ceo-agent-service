@@ -83,8 +83,11 @@ terminal data. File bytes remain unchanged after each refusal.
 
 Forward and inverse rebuild Actions in the caller-owned FK-off transaction.
 Only five physical discriminator codes and the direct step layout change.
-Other payload bytes and structural columns are copied unchanged. Temporary rows
-and water staging are dropped before commit. Both EXCEPT directions compare
+Other payload bytes and structural columns are copied unchanged. The temporary
+Actions staging table receives a physical-ID index immediately after CTAS, so
+each direct step transformation seeks its existing ID in both directions. The
+index is temporary and drops with the staging table; permanent declarations do
+not change. Temporary rows and water staging are dropped before commit. Both EXCEPT directions compare
 stored values plus `typeof`, and the direct public tuple compares every value and
 Python SQLite scalar type. Full declaration equality and the FK finding multiset
 are verified. All `sqlite_sequence` row IDs, names and values are restored.
@@ -195,4 +198,55 @@ acceptance, integration and live deployment are not claimed by this report.
 
 ## Parent source freeze and integration
 
-Parent independently verified1215paths/fccf517e and committed the exact handoff at93058af1f. Independent SPEC approved that frozen source. Parent normally merged origin1319e2557 at8172fbc75, retaining all claim rows in the append conflict. The11app/tests/scripts changes are independently developed image/OCR/WeChat/purpose-receipt fixes; shared lifecycle, schema, paired release and both migrated DAO implementations are unchanged. Merged manifest records1216paths/201756cb4812572741a79a0e03f9670ca7ec9af87ab65381656b7a39a7584170. Integration SPEC/QUALITY and parent full-copy/native/current-data inverse/live remain pending. Root read-only eligibility probe passed all10984direct steps on the accepted staged19.5copy, which was checkpointed to DELETE journal with all physical facts unchanged and made read-only; input SHA9a1c692c715e2554b1b124b988ee350a8542ae2718e3f595918cba0fd9be1c4f,476516352bytes. This is not a fresh raw production snapshot.
+Parent independently verified 1,215 paths / `fccf517e` and committed the exact
+handoff at `93058af1f`. Independent SPEC approved that frozen source. Parent
+normally merged origin `1319e2557` at `8172fbc75`, retaining all claim rows in the
+append conflict. The 11 app/tests/scripts changes are independently developed
+image/OCR/WeChat/purpose-receipt fixes; shared lifecycle, schema, paired release
+and both migrated DAO implementations were unchanged. The merged manifest records
+1,216 paths / `201756cb4812572741a79a0e03f9670ca7ec9af87ab65381656b7a39a7584170`.
+Parent reported independent integration SPEC and QUALITY approval of that source.
+
+Root's read-only eligibility probe passed all 10,984 direct steps on the accepted
+staged 19.5 copy, which was checkpointed to DELETE journal with all physical facts
+unchanged and made read-only: input SHA-256
+`9a1c692c715e2554b1b124b988ee350a8542ae2718e3f595918cba0fd9be1c4f`,
+476,516,352 bytes. This is not a fresh raw production snapshot.
+
+## Temporary staging lookup correction
+
+Parent's full-copy attempt spent approximately five minutes of CPU in the
+pre-native migration. Its interrupted stack identified the per-step
+`UPDATE temp._shared_action_rows ... WHERE id=?`. CTAS had discarded the source
+primary-key index, so each of 10,984 direct steps scanned the whole Actions staging
+table. Parent independently reproduced SCAN versus SEARCH with SQLite EXPLAIN,
+then interrupted only its owned process before native execution. Parent reported
+exit 130, complete source-fact/declaration/FK rollback equality, unchanged immutable
+input SHA-256, and removal of the aborted owned copy after checking open handles.
+
+The permanent correction adds one nonunique TEMP index on staging `id` immediately
+after CTAS. It changes no persistent schema, business field, transition, source
+eligibility condition or inverse fact. The regression observes EXPLAIN QUERY PLAN
+for the actual per-row UPDATE while staging exists, in forward and inverse, and
+asserts that no staging table or index remains after either rebuild. Before the
+fix it failed in 66.20 seconds with two `SCAN temp._shared_action_rows` plans.
+After the fix both use
+`SEARCH temp._shared_action_rows USING INDEX _shared_action_rows_id (id=?)`.
+
+The bounded follow-up run passed all seven selected cases in 291.06 seconds:
+the new lookup/cleanup regression, frozen declarations, both declaration-variant
+round trips, both current reviewed execution/A2/A4 inverse variants, and one
+archived-source release/current-fact inverse/old cold-open/reforward case. Ruff
+passed for the two changed Python files. Source and target declaration hashes
+remain exactly those recorded above. The previously adequate 86-case set was
+not rerun. The follow-up's fixed owned temporary root was removed after all test
+processes exited and `lsof` confirmed no open handles; its absence was verified.
+
+[The staging-index freeze](superpowers/specs/2026-10-19-shared-actions-stage-index-freeze.json)
+records the corrected 1,216 source paths and aggregate SHA-256
+`83ab27e3e28844bb07adf7bbc2ac572c2ca7d3ca641e2fc18b3dc28a67270317`.
+It supersedes the merged source for subsequent copy acceptance; the original and
+merged manifests remain bound to their original reviewed commits. Independent
+SPEC/QUALITY of this correction and the fresh parent full-copy/native/current-data
+inverse/live checks remain parent-owned. No full-copy timing improvement or live
+outcome is claimed by these focused tests.
