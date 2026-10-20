@@ -119,11 +119,15 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     audit = "\n".join(section.text for section in audit_developer_sections("rules"))
 
     for instructions in (AGENT_CAPABILITY_INSTRUCTIONS, audit):
-        normalized = instructions.replace("`", "").lower()
+        normalized = " ".join(instructions.replace("`", "").split()).lower()
         assert "call" in normalized
         assert "mcp__agent_cli" in normalized
         assert "never run local dws commands through" in normalized
         assert "interactive sessions" in normalized
+        assert "ai_services.ocr_document" in normalized
+        assert "call the native" in normalized
+        assert "do not infer" in normalized
+        assert "all_tools" in normalized
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:

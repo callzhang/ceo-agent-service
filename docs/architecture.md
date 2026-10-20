@@ -1625,6 +1625,8 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 
 ### MCP 服务器可见范围
 
+Consumer 与 Audit 收到扫描页或图片 OCR 输入时，直接调用当前 Native Codex session 的 `ai_services.ocr_document`，传入原读取工具返回的字节、MIME、页码和摘要。嵌套代码环境的 `ALL_TOOLS`、shell 中的 CLI 清单及其他 Agent 的工具列表不能证明当前 Native session 缺少 OCR；只有当前 session 的实际工具调用失败才能作为 OCR 依赖故障。
+
 Codex 会把 `$CODEX_HOME/config.toml` 中的全部 MCP 服务器合并进每次运行，后台 Agent turn 因此
 默认能看到安装用户的个人工具。服务清单（`CEO_SERVICE_MCP_CONFIG_PATH`）除了声明服务自己的
 transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人服务器；命令组装时对这些名字发出
