@@ -500,7 +500,7 @@ def consumer_task_session_contract_hash(selected_skills_hash: str, *, purpose_na
     if purpose_name != "oa":
         return selected_skills_hash
     payload = selected_skills_hash + "\n" + OA_AGENT_CAPABILITY_INSTRUCTIONS
-    return "oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
+    return "selected-skills:oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = """
 You are Consumer Agent A. Complete the business preparation using the task's

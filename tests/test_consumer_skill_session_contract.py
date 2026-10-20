@@ -37,7 +37,7 @@ def test_oa_ocr_handoff_refreshes_only_oa_consumer_sessions():
     assert consumer_task_session_contract_hash(selected, purpose_name="general") == selected
     assert consumer_task_session_contract_hash("", purpose_name="general") == ""
     oa_contract = consumer_task_session_contract_hash(selected, purpose_name="oa")
-    assert oa_contract.startswith("oa-ocr-handoff:")
+    assert oa_contract.startswith("selected-skills:oa-ocr-handoff:")
     assert oa_contract != selected
     assert oa_contract == consumer_task_session_contract_hash(selected, purpose_name="oa")
 
@@ -93,4 +93,43 @@ def test_consumer_route_session_requires_matching_skill_contract():
     assert calls == [
         ("conversation-1", "codex_oauth", "selected-skills:old-contract"),
         ("conversation-1", "codex_oauth", "selected-skills:current-contract"),
+    ]
+
+
+def test_oa_final_route_selection_rejects_old_session_and_reuses_matching_one():
+    process = object.__new__(AgentTurnProcess)
+    process.task = SimpleNamespace(conversation_id="oa-conversation")
+    current = consumer_task_session_contract_hash(
+        "selected-skills:current", purpose_name="oa",
+    )
+    calls = []
+
+    def get_session(conversation_id, route_name, *, required_contract_hash=None):
+        calls.append((conversation_id, route_name, required_contract_hash))
+        if required_contract_hash is None:
+            return "session-old"
+        return "session-current" if required_contract_hash == current else None
+
+    process.store = SimpleNamespace(get_conversation_runtime_session=get_session)
+    route = RuntimeRoute(
+        name="codex_oauth",
+        runtime_kind=RuntimeKind.CODEX_CLI,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
+        model="gpt-6.1-sol",
+    )
+    assert process._session_for_route(
+        route, role=AgentRole.CONSUMER, requested_session_id="session-old",
+        conversation_contract_hash=consumer_task_session_contract_hash(
+            "selected-skills:old", purpose_name="oa",
+        ),
+    ) is None
+    assert process._session_for_route(
+        route, role=AgentRole.CONSUMER, requested_session_id="session-old",
+        conversation_contract_hash=current,
+    ) == "session-current"
+    assert calls == [
+        ("oa-conversation", "codex_oauth", consumer_task_session_contract_hash(
+            "selected-skills:old", purpose_name="oa",
+        )),
+        ("oa-conversation", "codex_oauth", current),
     ]

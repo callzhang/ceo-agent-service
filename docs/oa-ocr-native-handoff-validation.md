@@ -42,6 +42,11 @@ requires separate post-deploy trajectory and receipt readback.
   select a nonexistent `lease_owner`, and the general capability-length test
   expects 3556 characters although the unchanged baseline is 3958. The OA
   capability text is shorter (about 3.6K characters) than that baseline.
+- PR #174 review found that the first OA session-key prefix did not pass the
+  final route selector's existing `selected-skills:` compatibility check.
+  The exact final-selector regression failed before the correction and passed
+  after the OA key retained that prefix; a matching OA session still resumes.
+  The post-correction OA role/session/attachment/PDF group passed 46 tests.
 
 ## Release boundary
 
