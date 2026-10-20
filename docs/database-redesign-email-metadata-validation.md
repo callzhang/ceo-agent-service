@@ -186,3 +186,19 @@ synthetic target rows, so they are not an identical-population savings claim;
 the474,185,728-byte file was not VACUUMed. B1 is accepted locally but not yet
 deployed. A2 separately reached production5a0cb051c, Store19.2/Email52, PID63376
 with clean health, queues, Attention and History readback.
+
+## Subsequent upstream integration for publication
+
+After parent-copy acceptance, upstream `c4f332417` was merged at `3116110b0`.
+Changes under app/tests/scripts are exactly the seven paths listed in
+`superpowers/specs/2026-10-19-email-metadata-publication-freeze.json`: OA scanner
+routing and Consumer native wire-session compatibility with their tests.
+Every B1 schema, storage, reader/writer, release and native-harness file remains
+byte-identical to the accepted source. The post-merge tree contains1196
+source files, aggregate`0f1db0987f6a636f1ac39a7cc8f4561f7d3116bfdd26cf1123af5ae8787aaaf6`.
+Eight focused native-wire/session tests passed14.08s (171deselected). This is
+not a new native CLI run. Prior B1 copy proof stays pinned to its1195-file source;
+upstream PR166/167 validation applies to their separate changes. Fresh current
+Store19.2/Email52 backup passed full integrity and original FK-multiset checks;
+only then atomically replaced the previous verified daily backup. B1 deployment
+remains pending final integration reviews.
