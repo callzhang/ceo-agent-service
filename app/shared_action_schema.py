@@ -85,6 +85,8 @@ def _rebuild(db, variant, steps, *, shared):
     names = ','.join(map(_quote, columns))
     foreign_keys = sorted(tuple(row) for row in db.execute('pragma foreign_key_check'))
     db.execute(f'create temp table {_STAGING} as select {names} from main.actions')
+    # CTAS loses the source primary key; each step transform must seek its physical ID.
+    db.execute(f'create index temp.{_STAGING}_id on {_STAGING}(id)')
     db.execute(f'create temp table {_WATER} as select rowid,name,seq from main.sqlite_sequence')
     before_layout = actions.action_payloads(variant, selection_references=True,
         execution_owner=True, shared_lifecycle=not shared).layouts['email_actions']

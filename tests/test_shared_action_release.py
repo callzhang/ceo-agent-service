@@ -97,6 +97,32 @@ def _facts(path, *, shared):
         )
 
 
+def test_staging_step_updates_seek_physical_id_in_both_directions(source_path):
+    from app.shared_action_schema import migrate_shared_actions, restore_shared_actions
+
+    plans = []
+
+    class ObservedConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            if sql.startswith('update temp._shared_action_rows set payload_json='):
+                plans.extend(row[3] for row in super().execute('explain query plan ' + sql, parameters))
+            return super().execute(sql, parameters)
+
+    _, path = source_path
+    with closing(sqlite3.connect(path, factory=ObservedConnection)) as db:
+        db.execute('pragma foreign_keys=off')
+        db.execute('begin immediate')
+        metadata = migrate_shared_actions(db)
+        assert db.execute("select name from sqlite_temp_master where tbl_name='_shared_action_rows'").fetchall() == []
+        restore_shared_actions(db, metadata)
+        assert db.execute("select name from sqlite_temp_master where tbl_name='_shared_action_rows'").fetchall() == []
+        db.rollback()
+    # The archived source has one direct step, transformed once each way.
+    assert len(plans) == 2
+    assert all(plan.startswith('SEARCH temp._shared_action_rows USING INDEX ') and '(id=?)' in plan
+               for plan in plans), plans
+
+
 def test_archived_source_new_attempt_plan_and_claim_inverse_cold_and_reforward(source_path, monkeypatch):
     original, path = source_path
     before = _facts(path, shared=False)
