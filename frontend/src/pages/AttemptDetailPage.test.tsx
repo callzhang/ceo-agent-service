@@ -888,6 +888,34 @@ describe("AttemptDetailPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("sends an exact message ID through the separate WeChat resend action", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        trigger: { title: "Trigger", text: "Melody: 他说 memory 不仅是 data" },
+        actions: {
+          ...detail.actions,
+          can_rerun: false,
+          can_resend_wechat: true,
+          resend_wechat_url: "/api/console/history/8448/resend-wechat",
+          resend_message_id: "wx-1",
+        },
+      },
+      meta: { snapshot_at: "2026-09-26T21:19:35Z" },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "再次发送" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("原消息 ID：wx-1"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Melody: 他说 memory 不仅是 data"));
+    expect(command).toHaveBeenCalledWith(
+      "/api/console/history/8448/resend-wechat", { trigger_message_id: "wx-1" },
+    );
+    vi.restoreAllMocks();
+  });
+
   it("uses server-owned reevaluation wording only when the backend permits rerun", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);

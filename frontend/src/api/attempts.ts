@@ -178,6 +178,9 @@ export interface AttemptDetail {
   calendar: { event_id: string; response_status: string; result: unknown };
   actions: {
     can_rerun: boolean;
+    can_resend_wechat?: boolean;
+    resend_wechat_url?: string;
+    resend_message_id?: string;
     rerun_block_reason: string;
     can_recall: boolean;
     can_submit_feedback: boolean;

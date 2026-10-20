@@ -9863,6 +9863,7 @@ def handle_rerun_attempt_post(
     return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
     skill_options_factory: Callable[[], object] | None = None,
+    explicit_resend_message_id: str = "",
 ) -> tuple[int, dict[str, str], str]:
     del worker_factory
     attempt = store.get_reply_attempt(attempt_id)
@@ -9873,11 +9874,35 @@ def handle_rerun_attempt_post(
         if attempt.agent_run_id else None
     )
     channel = attempt.channel or "dingtalk"
+    if explicit_resend_message_id and channel != "wechat":
+        return 409, {}, render_page(
+            "Resend unavailable", "<p>再次发送入口只支持已发送的微信回复。</p>",
+        )
+    if channel == "wechat":
+        already_sent = attempt.send_status.strip().lower() == "sent"
+        if already_sent and explicit_resend_message_id != attempt.trigger_message_id:
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>已发送的微信回复不能通过普通重跑再次投递；请核对原消息后选择再次发送。</p>",
+            )
+        if explicit_resend_message_id and not already_sent:
+            return 409, {}, render_page(
+                "Resend unavailable", "<p>只有已发送的微信回复可以再次发送。</p>",
+            )
     existing_task = store.get_reply_task_for_message(
         attempt.conversation_id,
         attempt.trigger_message_id,
         channel=channel,
     )
+    if (
+        channel == "wechat" and explicit_resend_message_id
+        and existing_task is not None
+        and existing_task.manual_rerun_attempt_id == attempt.id
+        and existing_task.status not in {"pending", "processing"}
+    ):
+        return 409, {}, render_page(
+            "Resend unavailable", "<p>这条已发送回复已再次处理；请从最新 Attempt 发起。</p>",
+        )
     allow_skipped_oa_review = can_reopen_skipped_oa_review(attempt, existing_task)
     rerun_block_reason = _attempt_rerun_block_reason(
         attempt,
@@ -9998,6 +10023,7 @@ def handle_rerun_attempt_post(
             force_rotation=force_rotation,
             expected_execution_generation=existing_task.execution_generation,
             allow_skipped_oa_review=allow_skipped_oa_review,
+            explicit_resend_message_id=explicit_resend_message_id,
         )
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")

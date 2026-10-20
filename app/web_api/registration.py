@@ -910,6 +910,21 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "rerun_failed", "message": "无法重跑该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
         return command_result(message="重跑已提交")
 
+    @app.post("/api/console/history/{attempt_id}/resend-wechat")
+    async def console_history_resend_wechat(attempt_id: int, request: Request):
+        from app.audit_web import handle_rerun_attempt_post
+
+        payload = await json_object(request)
+        status, _headers, body = handle_rerun_attempt_post(
+            store_factory(),
+            attempt_id,
+            return_to="/history",
+            explicit_resend_message_id=str(payload.get("trigger_message_id") or ""),
+        )
+        if status >= 400:
+            return JSONResponse({"ok": False, "code": "resend_failed", "message": "无法再次发送该微信回复", "details": {"technical": normalize_display_value(body)}}, status_code=status)
+        return command_result(message="再次发送已提交")
+
     @app.post("/api/console/history/{attempt_id}/recall")
     async def console_history_recall(attempt_id: int, request: Request):
         del request

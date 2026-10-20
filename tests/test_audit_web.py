@@ -10962,6 +10962,53 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
 
 
+def test_sent_wechat_attempt_needs_explicit_resend_with_exact_message_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id="melody115", message_id="wx-sent-1",
+        sender_id="melody115", sender_display_name="Morgan",
+        conversation_type="direct", direction="inbound",
+        sent_at="2026-07-28T14:00:00+08:00", kind="text",
+        text="他说 memory 不仅是 data", source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Morgan", single_chat=True,
+        trigger_message_id=trigger.message_id, trigger_create_time=trigger.sent_at,
+        trigger_sender=trigger.sender_display_name, trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Morgan", trigger_message_id=trigger.message_id,
+        trigger_sender=trigger.sender_display_name, trigger_text=trigger.text,
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    task = store.get_reply_task_for_message(
+        trigger.conversation_id, trigger.message_id, channel="wechat",
+    )
+    assert task is not None
+    original_generation = task.execution_generation
+
+    status, _, _ = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 409
+    assert store.get_reply_task(task.id).execution_generation == original_generation
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, explicit_resend_message_id="another-message",
+    )
+    assert status == 409
+    assert store.get_reply_task(task.id).execution_generation == original_generation
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, explicit_resend_message_id=trigger.message_id,
+    )
+    assert status == 303
+    rerun = store.get_reply_task(task.id)
+    assert rerun.execution_generation != original_generation
+    assert rerun.manual_rerun_attempt_id == attempt_id
+
+
 def test_scheduled_rerun_payload_is_valid_execution_context():
     from app.audit_web import _is_valid_rerun_trigger_json
 

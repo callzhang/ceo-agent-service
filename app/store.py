@@ -7721,8 +7721,50 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         force_rotation: bool = False,
         expected_execution_generation: str | None = None,
         allow_skipped_oa_review: bool = False,
+        explicit_resend_message_id: str = "",
     ) -> ReplyTask:
         with self._immediate_write_transaction() as db:
+            if channel == "wechat" and attempt_id > 0:
+                prior = db.execute(
+                    "select send_status from (" + REPLY_ATTEMPT_COMMON_SQL + ") "
+                    "where id=? and channel='wechat' and conversation_id=? "
+                    "and trigger_message_id=?",
+                    (attempt_id, conversation_id, trigger_message_id),
+                ).fetchone()
+                if prior is None:
+                    raise ManualRerunConflict("WeChat source Attempt was not found")
+                if prior["send_status"] == "sent":
+                    if explicit_resend_message_id != trigger_message_id:
+                        raise ManualRerunConflict(
+                            "sent WeChat reply requires explicit resend of its exact message"
+                        )
+                    latest = db.execute(
+                        "select id from (" + REPLY_ATTEMPT_COMMON_SQL + ") "
+                        "where channel='wechat' and conversation_id=? and trigger_message_id=? "
+                        "order by id desc limit 1",
+                        (conversation_id, trigger_message_id),
+                    ).fetchone()
+                    if latest is None or int(latest["id"]) != attempt_id:
+                        raise ManualRerunConflict(
+                            "a newer WeChat Attempt exists; resend from the latest Attempt"
+                        )
+                    previous_resend = db.execute(
+                        "select manual_rerun_attempt_id,status from (" + REPLY_TASK_CURRENT_SQL + ") "
+                        "where channel='wechat' and conversation_id=? and trigger_message_id=?",
+                        (conversation_id, trigger_message_id),
+                    ).fetchone()
+                    if (
+                        previous_resend is not None
+                        and int(previous_resend["manual_rerun_attempt_id"] or 0) == attempt_id
+                        and previous_resend["status"] not in {"pending", "processing"}
+                    ):
+                        raise ManualRerunConflict(
+                            "this source Attempt was already resent; use the latest Attempt"
+                        )
+                elif explicit_resend_message_id:
+                    raise ManualRerunConflict("only sent WeChat replies can be resent")
+            elif explicit_resend_message_id:
+                raise ManualRerunConflict("explicit resend requires a WeChat source Attempt")
             if expected_execution_generation is not None:
                 from app.agent_reported_error import (
                     PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON, is_provider_risk_rejection,

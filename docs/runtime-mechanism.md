@@ -798,6 +798,18 @@ so malformed entries cannot be silently dropped to manufacture a unique match.
 Other channel payload requirements
 and the Consumer/Audit/System execution lifecycle are unchanged.
 
+For WeChat, a sent Attempt cannot enter the ordinary History rerun endpoint,
+including a direct API call. History exposes a separate resend operation only
+for the latest sent Attempt of a task whose exact original input is still
+available. Its request names the original trigger message ID, and the store
+checks that ID against the sent Attempt and conversation in the same enqueue
+transaction. Repeated submissions while the new generation is pending or
+processing reuse it; after that generation ends, the same source Attempt
+cannot enqueue another resend. A later explicit resend must start from its
+latest sent Attempt. Compacted WeChat inputs have no executable original
+payload, so they do not expose this action. Existing failed-Attempt reruns
+and WeChat Sender delivery/recovery behavior are unchanged.
+
 An instance supplement that rotates execution generation requires the original
 schema-valid execution payload. Missing source material rejects the request
 without persisting a supplement, invalidating the candidate, or changing its
