@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-20 — 权限申请阶段停止语义修复
+
+- 保留 Consumer 对 `request_access` 明确给出的 `continue_after_execution=false`，不再由 wire adapter 强行改为 true。
+- 经 Audit 批准且执行回执验证成功后，编排器独立启动原有的有界权限等待；重启恢复路径一致处理，并保持后续候选阶段关系正确。
+- 保留最多 10 次后续读取、从原始申请起最长 72 小时的退避预算；不把申请送达当成权限恢复。
+- 增加回归测试；部署与线上读回结果记录在 [验证记录](docs/consumer-purpose-actions-validation.md)。
+
 ## 2026-10-20 — 人工决策说明改为白话短句
 
 - Attempt 人工决策卡片改用“这次要你决定什么”；Consumer/Audit 要求原因用一句中文说明要决定什么及原因，不超过100字。
