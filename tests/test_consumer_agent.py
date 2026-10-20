@@ -37,6 +37,7 @@ from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
     audit_developer_instructions,
+    consumer_developer_sections,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
     _consumer_source_context_fingerprint,
@@ -1076,6 +1077,22 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert '"decision_options"' in instructions
     assert "error_code, error_retryable, error_authorization_required" in instructions
     assert "do not return a nested error object" in instructions
+
+
+def test_consumer_capability_section_keeps_tool_contract_without_repeating_common_rules():
+    sections = consumer_developer_sections(runtime_context="", work_profile="")
+    capability = next(section.text for section in sections if section.name == "能力边界")
+    common = next(section.text for section in sections if section.name == "共同工作原则")
+
+    assert len(capability) <= 3556
+    assert "Consumer 可做本轮普通文档" in common
+    assert "只有当前系统任务已注册且要求 Audit 的动作" in common
+    assert "consumer_artifact_write" in capability
+    assert "consumer_document_write" in capability
+    assert "consumer_run_skill_script" in capability
+    assert "mcp__agent_cli" in capability
+    assert "dependency_read_unavailable" in capability
+    assert "provider-risk refusal" in capability
 
 
 def test_consumer_document_action_keeps_body_out_of_description():
