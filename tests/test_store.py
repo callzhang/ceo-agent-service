@@ -24,7 +24,8 @@ from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mut
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
 from app.action_storage import insert_email_action, update_email_action, error_set_parts, insert_error_action
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
+from app.run_storage import AGENT_RUN_SQL,RUNTIME_ATTEMPT_SQL,RUN_STATE_EVENT_SQL,SCHEDULED_RUN_SQL,insert_run
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL
 from app.task_storage import task_id_expression, task_physical_id
 from app.task12_storage import insert_task12, task12_projection, task12_set_parts
@@ -662,7 +663,7 @@ def _seed_runtime_operation_parent(
             _insert_current_task8(db, 'okr_review_requests', {'legacy_key': int(workload_key), 'conversation_id': 'cid', 'conversation_title': 'title', 'trigger_message_id': 'msg', 'trigger_sender': 'sender', 'trigger_text': 'text', 'period_label': 'period', 'period_start': 'start', 'period_end': 'end', 'status': 'processing'})
         elif workload_kind == "meeting":
             job_id = _insert_current_task8(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-1'}).lastrowid
-            insert_run(db, 'meeting_alignment_runs', {'legacy_key': int(workload_key), 'task_id': job_id, 'status': 'running'})
+            db.execute("insert into runs(record_type,source_type,legacy_key,task_id,status,session_id,transcript_start,transcript_end,error,completed_at,updated_at) values('agent_runs','meeting_alignment_runs',?,?, 'running','',0,0,'','','')", (int(workload_key),job_id))
         elif workload_kind == "task":
             source_id, separator, _ = workload_key.partition(":")
             summary_input_id = _insert_current_task8(db, 'work_summary_inputs', {
@@ -679,10 +680,7 @@ def _seed_runtime_operation_parent(
                     where_sql='and id=?',
                     parameters=(summary_input_id,),
                 )
-                insert_run(db, 'task_agent_runs', {
-                    'legacy_key': source_id, 'summary_input_id': 1,
-                    'status': 'running',
-                })
+                db.execute("insert into runs(record_type,source_type,legacy_key,task_id,status,session_id,error,projection_json,completed_at,updated_at) values('agent_runs','task_agent_runs',?,?,'running','','','{}','','')", (source_id,summary_input_id))
         elif workload_kind == "weekly_okr":
             week_end, manager_user_id, source_digest = workload_key.split(":", 2)
             _insert_current_task8(db, 'weekly_okr_analysis_jobs', {'week_end': week_end, 'manager_user_id': manager_user_id, 'source_digest': source_digest, 'status': 'running'})
@@ -1248,7 +1246,7 @@ def test_runtime_attempt_requires_parent_to_be_in_runnable_state(tmp_path: Path)
     store = AutoReplyStore(tmp_path / "runtime-parent-state.sqlite3")
     _seed_runtime_operation_parent(store, "meeting", "13")
     with store._connect() as db:
-        db.execute("update runs set status='failed' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=13")
+        db.execute("update runs set status='failed' where record_type='agent_runs' and source_type='meeting_alignment_runs' and cast(legacy_key as integer)=13")
 
     with pytest.raises(ValueError, match="parent does not exist or is not running"):
         store.claim_runtime_operation_attempt(
@@ -1614,12 +1612,8 @@ def test_weekly_okr_cache_miss_reclaim_wrong_key_or_status_fails_closed(
 def _completed_projection_run(store):
     input_id = store.enqueue_work_summary_input("local_file", "receipt-source", "{}")
     store.claim_work_summary_inputs(1)
-    run_id = store.begin_task_agent_run(input_id)
-    store.finish_task_agent_run(
-        run_id, status="completed", decision_json='{"task_decisions":[]}',
-        audit_summary="Task facts committed", codex_session_id="receipt-session",
-        memory_recall_used=True,
-    )
+    run_id = store.claim_logical_run('task_agent_runs', input_id)
+    store.finish_logical_run('task_agent_runs', run_id, status="completed", codex_session_id="receipt-session")
     return input_id, run_id
 
 
@@ -1642,12 +1636,12 @@ def test_task_agent_projection_receipt_preserves_terminal_run(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "projection-receipt.sqlite3")
     _, run_id = _completed_projection_run(store)
     with store._connect() as db:
-        before = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
+        before = dict(db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone())
     assert TaskAgentRun.model_validate(before).projection_json == "{}"
     receipt = _projection_receipt_json()
     store.record_task_agent_projection(run_id, receipt)
     with store._connect() as db:
-        after = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
+        after = dict(db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone())
     assert TaskAgentRun.model_validate(after).projection_json == receipt
     assert after.pop("projection_json") == receipt
     assert before.pop("projection_json") == "{}"
@@ -1669,10 +1663,10 @@ def test_task_agent_projection_receipt_uses_existing_transaction(tmp_path: Path)
     with pytest.raises(RuntimeError, match="rollback receipt"):
         with store.business_task_transaction() as db:
             store.record_task_agent_projection(run_id, _projection_receipt_json(), _db=db)
-            assert db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone()[0] != "{}"
+            assert db.execute(f"select projection_json from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone()[0] != "{}"
             raise RuntimeError("rollback receipt")
     with store._connect() as db:
-        assert db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone()[0] == "{}"
+        assert db.execute(f"select projection_json from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone()[0] == "{}"
 
 
 def _create_receipt_attention(store, assessment_json=None):
@@ -1711,12 +1705,12 @@ def test_task_attention_receipt_reopen_does_not_claim_historical_success(tmp_pat
     _, run_id = _completed_projection_run(store)
     item_id = _create_receipt_attention(store)
     with store._connect() as db:
-        before_run = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
+        before_run = dict(db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone())
         before_item = dict(db.execute(f"select * from ({candidate_projection('attention_item')}) where id=?", (item_id,)).fetchone())
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     reopened = AutoReplyStore(path)
     with reopened._connect() as db:
-        run = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
+        run = dict(db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone())
         item = dict(db.execute(f"select * from ({candidate_projection('attention_item')}) where id=?", (item_id,)).fetchone())
     assert run == before_run
     assert item == before_item
@@ -1734,7 +1728,7 @@ def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: P
 
     def begin() -> None:
         barrier.wait(timeout=5)
-        run_ids.append(store.begin_task_agent_run(summary_id))
+        run_ids.append(store.claim_logical_run('task_agent_runs', summary_id))
 
     threads = [Thread(target=begin) for _ in range(2)]
     for thread in threads:
@@ -1746,24 +1740,10 @@ def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: P
     assert len(run_ids) == 2
     assert len(set(run_ids)) == 1
     run_id = run_ids[0]
-    store.finish_task_agent_run(
-        run_id,
-        status="completed",
-        codex_session_id="session-task",
-        decision_json='{"action":"discard"}',
-        audit_summary="done",
-        memory_recall_used=True,
-    )
-    store.finish_task_agent_run(
-        run_id,
-        status="completed",
-        codex_session_id="session-task",
-        decision_json='{"action":"discard"}',
-        audit_summary="done",
-        memory_recall_used=True,
-    )
+    store.finish_logical_run('task_agent_runs', run_id, status="completed", codex_session_id="session-task")
+    store.finish_logical_run('task_agent_runs', run_id, status="completed", codex_session_id="session-task")
     with store._connect() as db:
-        row = db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone()
+        row = db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone()
     assert row["status"] == "completed"
     assert row["finished_at"]
 
@@ -1774,7 +1754,7 @@ def test_expired_runtime_attempt_is_closed_after_its_task_run_is_terminal(
     store = AutoReplyStore(tmp_path / "terminal-task-runtime.sqlite3")
     summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")
     store.claim_work_summary_inputs(1)
-    run_id = store.begin_task_agent_run(summary_id)
+    run_id = store.claim_logical_run('task_agent_runs', summary_id)
     attempt = store.claim_runtime_operation_attempt(
         "task",
         str(run_id),
@@ -1792,11 +1772,7 @@ def test_expired_runtime_attempt_is_closed_after_its_task_run_is_terminal(
         lease_seconds=5,
         now="2026-08-22 16:01:19",
     )
-    store.finish_task_agent_run(
-        run_id,
-        status="failed",
-        error="runtime_attempt_active",
-    )
+    store.finish_logical_run('task_agent_runs', run_id, status="failed", error="runtime_attempt_active")
 
     assert store.recover_expired_terminal_task_runtime_attempts(
         now="2026-08-22 16:01:25"
@@ -1817,7 +1793,7 @@ def test_expired_terminal_task_runtime_with_effect_evidence_is_not_closed(
     store = AutoReplyStore(tmp_path / "effectful-terminal-task-runtime.sqlite3")
     summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")
     store.claim_work_summary_inputs(1)
-    run_id = store.begin_task_agent_run(summary_id)
+    run_id = store.claim_logical_run('task_agent_runs', summary_id)
     attempt = store.claim_runtime_operation_attempt(
         "task",
         str(run_id),
@@ -1836,7 +1812,7 @@ def test_expired_terminal_task_runtime_with_effect_evidence_is_not_closed(
         effectful=True,
         now="2026-08-22 16:01:19",
     )
-    store.finish_task_agent_run(run_id, status="failed", error="interrupted")
+    store.finish_logical_run('task_agent_runs', run_id, status="failed", error="interrupted")
 
     assert store.recover_expired_terminal_task_runtime_attempts(
         now="2026-08-22 16:01:25"
@@ -1852,7 +1828,7 @@ def test_recover_orphaned_task_agent_run_when_parent_input_is_pending(tmp_path: 
     store = AutoReplyStore(tmp_path / "orphaned-task-agent-run.sqlite3")
     input_id = store.enqueue_work_summary_input("local_file", "source", "{}")
     assert len(store.claim_work_summary_inputs(1)) == 1
-    run_id = store.begin_task_agent_run(input_id)
+    run_id = store.claim_logical_run('task_agent_runs', input_id)
     attempt = store.claim_runtime_operation_attempt(
         "task",
         str(run_id),
@@ -1874,7 +1850,7 @@ def test_recover_orphaned_task_agent_run_when_parent_input_is_pending(tmp_path: 
 
     with store._connect() as db:
         run = db.execute(
-            f"select status, error from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)
+            f"select status, error from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)
         ).fetchone()
     recovered = store.get_agent_runtime_attempt(attempt.id)
     assert run is not None
@@ -1897,12 +1873,10 @@ def test_meeting_run_begin_is_idempotent_and_finish_closes_running_parent(tmp_pa
     [job] = store.claim_meeting_alignment_jobs(1, now="2026-08-20T10:11:00+08:00")
     assert job.id == job_id
 
-    run_id = store.begin_meeting_alignment_run(job_id)
-    assert store.begin_meeting_alignment_run(job_id) == run_id
-    store.finish_meeting_alignment_run(
-        run_id, status="no_action", decision_json='{"action":"no_action"}'
-    )
-    assert store.get_meeting_alignment_run(run_id).status == "no_action"
+    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
+    assert store.claim_logical_run('meeting_alignment_runs', job_id) == run_id
+    store.finish_logical_run('meeting_alignment_runs', run_id, status="no_action")
+    assert store.get_logical_run('meeting_alignment_runs', run_id).status == "no_action"
 
 
 @pytest.mark.parametrize(
@@ -1920,10 +1894,10 @@ def test_meeting_run_finish_rejects_noncanonical_terminal_status(
         eligible_at="2026-08-20T10:10:00+08:00", status="pending",
     )
     store.claim_meeting_alignment_jobs(1, now="2026-08-20T10:11:00+08:00")
-    run_id = store.begin_meeting_alignment_run(job_id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
 
     with pytest.raises(ValueError, match="terminal status"):
-        store.finish_meeting_alignment_run(run_id, status=status)
+        store.finish_logical_run('meeting_alignment_runs', run_id, status=status)
 
 
 @pytest.mark.parametrize(
@@ -1940,11 +1914,11 @@ def test_meeting_run_finish_accepts_production_terminal_statuses(
         eligible_at="2026-08-20T10:10:00+08:00", status="pending",
     )
     store.claim_meeting_alignment_jobs(1, now="2026-08-20T10:11:00+08:00")
-    run_id = store.begin_meeting_alignment_run(job_id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
 
-    store.finish_meeting_alignment_run(run_id, status=status)
+    store.finish_logical_run('meeting_alignment_runs', run_id, status=status)
 
-    assert store.get_meeting_alignment_run(run_id).status == status
+    assert store.get_logical_run('meeting_alignment_runs', run_id).status == status
 
 
 def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
@@ -4200,13 +4174,7 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
             ended_at="2026-07-14T08:00:00+08:00",
             eligible_at="2026-07-14T08:10:00+08:00", status="no_action",
         )
-        run_id = store.record_meeting_alignment_run(
-            job_id=job_id, codex_session_id=session_id,
-            decision_json=decisions[index].model_dump_json(),
-            audit_summary="private audit", status="ready_to_send", error="",
-            codex_transcript_start_line=index * 2,
-            codex_transcript_end_line=index * 2 + 2,
-        )
+        run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id=session_id, status="ready_to_send", error="", codex_transcript_start_line=index * 2, codex_transcript_end_line=index * 2 + 2)
         with store._connect() as db:
             insert_run(
                 db, 'agent_runtime_attempts', {
@@ -8780,15 +8748,7 @@ def test_record_okr_review_run_and_items(tmp_path):
         period_end="2026-06-30",
         okr_source_json='{"objectives":[]}',
     )
-    run_id = store.record_okr_review_run(
-        request_id=request_id,
-        codex_session_id="session-1",
-        codex_transcript_start_line=1,
-        codex_transcript_end_line=10,
-        envelope_json='{"kind":"okr_review"}',
-        audit_tool_events_json='[]',
-        audit_summary="审核完成。",
-    )
+    run_id = store.create_logical_run('okr_review_runs', task_public_id=request_id, codex_session_id="session-1", codex_transcript_start_line=1, codex_transcript_end_line=10)
     item_id = store.record_okr_review_item(
         request_id=request_id,
         objective_title="O",
@@ -8822,17 +8782,14 @@ def test_create_okr_review_request_requires_source_json(tmp_path):
         )
 
 
-def test_record_okr_review_run_requires_audit_fields(tmp_path):
+def test_logical_okr_run_rejects_retired_output_parameters(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     with pytest.raises(TypeError):
-        store.record_okr_review_run(
-            request_id=1,
-            codex_session_id="session-1",
-            codex_transcript_start_line=1,
-            codex_transcript_end_line=10,
-            audit_tool_events_json="[]",
-        )
+        store.create_logical_run("okr_review_runs", task_public_id=1,
+            codex_session_id="session-1", codex_transcript_start_line=1,
+            codex_transcript_end_line=10, envelope_json="{}",
+            audit_tool_events_json="[]", audit_summary="retired")
 
 
 def test_record_okr_review_item_requires_item_json(tmp_path):
@@ -9529,22 +9486,8 @@ def test_history_preserves_superseded_meeting_failure(tmp_path: Path):
         eligible_at="2026-07-22T10:22:44+00:00",
         status="pending",
     )
-    failed_run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-failed",
-        decision_json="{}",
-        audit_summary="首次生成失败",
-        status="retry",
-        error="Codex did not return a valid MeetingAlignmentDecision",
-    )
-    sent_run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-sent",
-        decision_json='{"action":"send"}',
-        audit_summary="再次生成完成",
-        status="ready_to_send",
-        error="",
-    )
+    failed_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-failed", status="retry", error="Codex did not return a valid MeetingAlignmentDecision")
+    sent_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(
         job_id,
         status="sent",
@@ -11878,7 +11821,7 @@ def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_pare
         status="pending",
     )
     store.claim_meeting_alignment_jobs(limit=1, now="2026-08-27T05:01:00+00:00")
-    run_id = store.begin_meeting_alignment_run(job_id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
     attempt = store.claim_runtime_operation_attempt(
         "meeting",
         str(run_id),
@@ -11896,11 +11839,7 @@ def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_pare
         lease_seconds=3600,
         now="2026-08-27T05:01:00+00:00",
     )
-    store.finish_meeting_alignment_run(
-        run_id,
-        status="retry",
-        error='{"kind":"runtime_session_conflict"}',
-    )
+    store.finish_logical_run('meeting_alignment_runs', run_id, status="retry", error='{"kind":"runtime_session_conflict"}')
 
     assert store.recover_stale_runtime_attempts(
         stale_after_seconds=3600,
@@ -12651,7 +12590,7 @@ def _input_with_live_run(store):
 
     input_id = store.enqueue_work_summary_input("local_file", "source", "{}")
     assert len(store.claim_work_summary_inputs(1)) == 1
-    run_id = store.begin_task_agent_run(input_id)
+    run_id = store.claim_logical_run('task_agent_runs', input_id)
     attempt = store.claim_runtime_operation_attempt(
         "task",
         str(run_id),
@@ -12668,7 +12607,7 @@ def _input_with_live_run(store):
 def _live_counts(store, run_id: int, attempt_id: int) -> tuple[str, str]:
     with store._connect() as db:
         run = db.execute(
-            f"select status from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)
+            f"select status from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)
         ).fetchone()
     attempt = store.get_agent_runtime_attempt(attempt_id)
     return run["status"], attempt.status

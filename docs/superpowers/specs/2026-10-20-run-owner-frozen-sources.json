@@ -1,0 +1,63 @@
+{
+  "source_head": "45f3324be3c568b9f91709c25306e19d73a15087",
+  "source_versions": [
+    "2026-10-19.9",
+    53
+  ],
+  "target_versions": [
+    "2026-10-19.10",
+    53
+  ],
+  "python": "3.12.11",
+  "frozen_files": {
+    "app/run_storage.py": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718",
+    "app/runs11_definitions.py": "4e39bd7fb03c1ffb0f476c7d8b0251e430bb1d865528edba8cd67f03de570176",
+    "app/runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+    "app/runs11_schema_release.py": "9730fae5af1e1a2b6735e2dafe1c84901ae632eabba41cb70805077dbf5e1281",
+    "app/runs11_current_schema.py": "9ed26805186e659c14e7761eea6858221e9845f212c47d6bb4fcb692707ac7d1",
+    "app/native_standalone.py": "949cd583697806fd53b286fea125955677ab14c9ff230bcf5677e36381dd48b7",
+    "app/agent_runtime_contracts.py": "5647a468732f9d4f7e7f503a6db3c130969cf4cd61aed6b8b21431bad86999ba",
+    "app/task_lifecycle_definitions.py": "c01fcfd25260dd19d608f22eb93cccc9b17b4033f58a577ba0e590a9b0e5e32b",
+    "app/task_lifecycle_storage.py": "c47362748125407d4b44071fd25c03dcab980d1e5b67457b8b34a5b412a4845c",
+    "app/task_lifecycle_schema.py": "e11ebda1a234eeb820c000a4015dc2164884f1fbb795b48a2fbc3be2b4f776aa",
+    "app/task_lifecycle_current_schema.py": "0dc11e5827db806ba71f21bcb412ef4bb23a2769a4f8233999bd0d96fa4b51e3",
+    "app/task_lifecycle_schema_release.py": "ef3945e4344d782b6a37df700bcf8cef9b4dee9b76b53e0ce4f14874216180ef",
+    "app/prepared_action_schema.py": "71c908b11f6dedb059df837f3f7bc3e4f767744e47a9228db6c155fd2ec61c44",
+    "app/prepared_action_definitions.py": "777c6c082e76c40f9f6f9fef0f2909dba38dd333a55a3d6b3c08598d29d23d10",
+    "app/prepared_action_schema_release.py": "f062b115ff8fd20ffc79b03eee19272ae1403ed829daaf472aeacdf7ec09f22d",
+    "app/shared_action_lifecycle.py": "11c69b49047ef78cf838087420080658adcedb9a28f4f0ae2db3cf838d674e78"
+  },
+  "factory_output_hashes": {
+    "RunsOriginal": "d8e70e59bb03dcf9765e91f5acde5ed98862607a67bc1b8b07173d59117f6ed7",
+    "RunsTask": "af951904da641a3a6b040608aeca321964260a8b1e2ca2a740f02898ca5d5efc",
+    "RunsTaskWorkbench": "f3e6b43e2a4421b94b75a379ce1c30e31b2e3e3323bdcec00e12fbffcf7fb264",
+    "Runs11": "568d343317b3b006df0a162d1894f96c02cf1e187b0016fceb15fbdf2b358ebe",
+    "ActionsDefault": "2554bafa7a8bd63299a29c9de746937bff6ae2a7f7cf3250abc1b18676bb9a54",
+    "ActionsPreparedFresh": "ad4d929ebeb00abe30fbcc0c023489e77c95b03e37fe3e22c3bb4b988971ade6",
+    "ActionsPreparedActual": "0ce5c28e9e54b691b2ce0e54a5efc603f05b2872d7d91418668373c37612c5b0"
+  },
+  "actual_source_matches_target": true,
+  "source_baseline_failures": [
+    {
+      "source_file": "tests/test_history.py",
+      "source_sha256": "e0fa493a1e12896e726cab86081d6558405e3970493c5a186f91a9d5e77463de",
+      "log": "/tmp/ceo-c2-run-owner.i77CCm/source-history-baseline.log",
+      "log_sha256": "1af59a90a9cb18b4f59a45b0fe26afce3d5d8f94e094df2d65ea9a7979acde8f",
+      "exit_code": 1,
+      "nodes": {
+        "test_history_uses_current_run_while_failed_attempt_is_recovering": "d838bac65dd8ba0102ef748b6c99d9e7fbc6ff9fd99bacc9c7612e61b0f0a1e4",
+        "test_history_includes_task_updates_and_follow_ups": "67355abcd93f110fcc7baf950571a0390bb24e7c1c00e644d4ef9353641a9d47"
+      }
+    },
+    {
+      "source_file": "tests/test_meeting_storage_readers.py",
+      "source_sha256": "e5f4b908679d3784e7ba7c1a47e3604bfdeba2e49d6a309ee5e2851f97016dea",
+      "log": "/tmp/ceo-c2-run-owner.i77CCm/source-orphan-baseline.log",
+      "log_sha256": "e9aabb09d0ddc406ecf3abb0b4dfc871b74d23ba7a568040cea28d601dd9492a",
+      "exit_code": 1,
+      "nodes": {
+        "test_historical_orphan_preserves_public_job_id_without_a_ghost_parent": "e6f05f4ed77c2ad8ba8d22bbc60dd6201e2e1a7046464405a32fb4c012cbe807"
+      }
+    }
+  ]
+}

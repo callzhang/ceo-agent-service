@@ -8,7 +8,7 @@ from threading import Barrier
 import pytest
 
 import app.store as store_module
-from app.run_storage import TASK_AGENT_RUN_SQL
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
 from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL, task_id_expression
 from app.task_models import WorkItem
@@ -643,19 +643,13 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
     assert [draft.id for draft in drafts] == [due_id]
     assert future_id not in [draft.id for draft in drafts]
 
-    run_id = store.record_task_agent_run(
-        summary_input_id=123,
-        codex_session_id="sid",
-        decision_json='{"action":"update_project"}',
-        audit_summary="ok",
-        memory_recall_used=True,
-    )
+    parent = store.enqueue_work_summary_input("local_file", "follow-up", "{}")
+    run_id = store.create_logical_run("task_agent_runs", parent, codex_session_id="sid")
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        row = db.execute(
-            f"select memory_recall_used from ({TASK_AGENT_RUN_SQL}) where id=?",
-            (run_id,),
-        ).fetchone()
-    assert row == (0,)
+        columns = {column[0] for column in db.execute(
+            f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,),
+        ).description}
+    assert "memory_recall_used" not in columns
 
 
 def test_create_follow_up_draft_dedupes_skipped_terminal_draft(tmp_path: Path):
@@ -1747,14 +1741,7 @@ def test_operation_logs_project_recovered_meeting_failures(tmp_path: Path):
         eligible_at="2026-09-01T00:10:00Z",
         status="pending",
     )
-    failed_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-failed",
-        decision_json="{}",
-        audit_summary="temporary failure",
-        status="failed",
-        error="provider unavailable",
-    )
+    failed_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-failed", status="failed", error="provider unavailable")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     recovered = store.list_operation_logs(

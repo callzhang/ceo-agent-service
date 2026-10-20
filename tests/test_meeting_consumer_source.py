@@ -76,8 +76,8 @@ def meeting_store(consumer_source, tmp_path):
         participants_json="[]", ended_at="2026-10-18T00:00:00Z",
         eligible_at="2026-10-18T00:00:00Z", status="processing",
     )
-    run_id = store.begin_meeting_alignment_run(job_id)
-    store.finish_meeting_alignment_run(run_id, status="ready_to_send")
+    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
+    store.finish_logical_run('meeting_alignment_runs', run_id, status="ready_to_send")
     with store._connect() as db:
         db.execute("begin immediate")
         insert_run(db, "agent_runtime_attempts", {

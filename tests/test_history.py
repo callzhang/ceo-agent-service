@@ -57,14 +57,7 @@ def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
         target_title="项目群",
         final_message="各方对上线范围仍有分歧。@Avery 请确认风险预算。",
     )
-    return store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-1",
-        decision_json='{"action":"send"}',
-        audit_summary="会后对齐：上线范围仍未一致。",
-        status=status,
-        error="",
-    )
+    return store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-1", status=status, error="")
 
 
 def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
@@ -84,7 +77,7 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
     with sqlite3.connect(store.path) as db:
         update_action(db, "reply_attempts", reply_id, {"created_at": "2026-07-14 10:00:00"})
         db.execute(
-            "update runs set created_at='2026-07-14 10:01:00' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
+            "update runs set created_at='2026-07-14 10:01:00' where record_type='agent_runs' and source_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
             (meeting_run_id,),
         )
 
@@ -249,22 +242,8 @@ def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
     )
-    retry_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-retry",
-        decision_json="{}",
-        audit_summary="首次调用失败",
-        status="retry",
-        error="temporary",
-    )
-    sent_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-sent",
-        decision_json='{"action":"send"}',
-        audit_summary="第二次调用成功",
-        status="ready_to_send",
-        error="",
-    )
+    retry_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-retry", status="retry", error="temporary")
+    sent_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     items = store.list_history_items(limit=20)
@@ -288,22 +267,8 @@ def test_history_keeps_earlier_ready_run_sent_after_later_send_succeeds(tmp_path
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
     )
-    first_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-first-ready",
-        decision_json='{"action":"send"}',
-        audit_summary="首次分析完成但发送失败",
-        status="ready_to_send",
-        error="",
-    )
-    second_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-second-ready",
-        decision_json='{"action":"send"}',
-        audit_summary="重新分析并发送成功",
-        status="ready_to_send",
-        error="",
-    )
+    first_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-first-ready", status="ready_to_send", error="")
+    second_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-second-ready", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     statuses = {
@@ -360,7 +325,7 @@ def test_history_tie_order_is_stable_across_kinds(tmp_path):
     with sqlite3.connect(store.path) as db:
         for (attempt_id,) in db.execute(f"select id from ({REPLY_ATTEMPT_COMMON_SQL})"):
             update_action(db, "reply_attempts", attempt_id, {"created_at": "2026-07-14 10:00:00"})
-        db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='meeting_alignment_runs'")
+        db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='agent_runs' and source_type='meeting_alignment_runs'")
 
     first_page = store.list_history_items(limit=1, offset=0)
     second_page = store.list_history_items(limit=1, offset=1)

@@ -606,6 +606,7 @@ class MeetingAlignmentJob(StrictModel):
 
 
 class MeetingAlignmentRun(StrictModel):
+    common_run_id: int | None = None
     id: int
     job_id: int
     codex_session_id: str

@@ -1084,14 +1084,7 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         status="sent",
         final_message="会后对齐：请确认需求。",
     )
-    meeting_run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="history-session",
-        decision_json='{"action":"send"}',
-        audit_summary="会后对齐：请确认需求。",
-        status="sent",
-        error="",
-    )
+    meeting_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="history-session", status="sent", error="")
 
     with _client(tmp_path) as client:
         task_response = client.get("/api/console/history?page=1&page_size=20&object_type=task")
@@ -1133,19 +1126,12 @@ def test_meeting_history_page_uses_adopted_message_without_reading_native_run(
             store.update_meeting_alignment_job(
                 job_id, status="sent", final_message=final_message,
             )
-        run_ids.append(store.record_meeting_alignment_run(
-            job_id=job_id,
-            codex_session_id=f"meeting-history-session-{index}",
-            decision_json='{"action":"send"}',
-            audit_summary=f"原生审计摘要 {index}",
-            status="sent",
-            error="",
-        ))
+        run_ids.append(store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id=f"meeting-history-session-{index}", status="sent", error=""))
 
     def reject_native_run(*_args, **_kwargs):
         raise AssertionError("History list must not hydrate a native meeting run")
 
-    monkeypatch.setattr(AutoReplyStore, "get_meeting_alignment_run", reject_native_run)
+    monkeypatch.setattr("app.native_standalone.latest_standalone_ref", reject_native_run)
     with _client(tmp_path) as client:
         first = client.get("/api/console/history?object_type=meeting&page=1&page_size=1")
         second = client.get("/api/console/history?object_type=meeting&page=2&page_size=1")
@@ -1182,29 +1168,7 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
         target_id="cid-meeting-console",
         final_message="会后对齐：请确认上线范围。",
     )
-    run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="internal-session-must-not-leak",
-        decision_json='{"action":"send","target":{"conversation_id":"cid-meeting-console","title":"项目评审会"}}',
-        audit_summary="上线范围需要确认。",
-        status="sent",
-        error="",
-        audit_tool_events_json=json.dumps([
-            {
-                "title": "读取会议记忆",
-                "tool": "memory_recall",
-                "call_id": "call-meeting-1",
-                "relevance": "确认历史判断",
-                "path": "memory.md",
-                "args": {"query": "上线范围"},
-            },
-            {
-                "tool": "tool_output",
-                "call_id": "call-meeting-1",
-                "output": '{"summary":"风险预算需要确认"}',
-            }
-        ], ensure_ascii=False),
-    )
+    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="internal-session-must-not-leak", status="sent", error="")
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/console/meeting-attempts/{run_id}")

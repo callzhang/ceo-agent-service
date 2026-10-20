@@ -10,7 +10,8 @@ from app.business_definitions import BUSINESS_PROJECTIONS
 from app.business_candidate_definitions import candidate_projection
 from app.business_storage import update_business
 from app.business_source_reader import PreparedSources
-from app.store import AutoReplyStore, TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL, insert_business_action
+from app.store import AutoReplyStore,WORK_SUMMARY_INPUT_SQL,insert_business_action
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.fxiaoke_customer_lookup import CrmCustomerCandidate, CrmCustomerLookup
 from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
 from app.task_agent import (
@@ -573,7 +574,7 @@ def test_independent_project_process_marks_project_only_input_done(tmp_path):
     assert store.get_work_summary_input(input_id).status.value == "done"
     with store._connect() as db:
         run = db.execute(
-            f"select * from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?", (input_id,)
+            f"select * from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?", (input_id,)
         ).fetchone()
     assert run["status"] == "completed"
     assert (
@@ -1646,7 +1647,7 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
             run_id = int(kwargs["workload_key"])
             with store._connect() as db:
                 row = db.execute(
-                    f"select status from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)
+                    f"select status from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)
                 ).fetchone()
             assert row["status"] == "running"
             return super().decide(**kwargs)
@@ -1656,12 +1657,12 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
 
     with store._connect() as db:
         runs = db.execute(
-            f"select * from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?", (input_id,)
+            f"select * from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?", (input_id,)
         ).fetchall()
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
-    assert runs[0]["decision_json"] == "{}"
-    assert store.get_task_agent_run(int(runs[0]["id"]))["native_available"] is False
+    assert "decision_json" not in runs[0].keys()
+    assert store.get_logical_run('task_agent_runs', int(runs[0]["id"]))["native_available"] is False
     assert store.get_work_summary_input(input_id).status.value == "skipped"
     assert codex.calls[0]["session_scope_id"] == "task-agent:work-tracking:v1"
 
@@ -1750,7 +1751,7 @@ def test_process_work_item_does_not_apply_decision_after_session_lease_loss(tmp_
     assert store.get_work_summary_input(input_id).status.value == "failed"
     with store._connect() as db:
         run = db.execute(
-            f"select status from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?",
+            f"select status from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?",
             (input_id,),
         ).fetchone()
     assert run["status"] == "failed"
@@ -1790,7 +1791,7 @@ def test_process_work_item_success_commits_task_and_terminal_run_and_input(
     assert store.get_work_summary_input(input_id).status.value == "done"
     with sqlite3.connect(tmp_path / "task-success-lifecycle.sqlite3") as db:
         run = db.execute(
-            f"select status, error from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?",
+            f"select status, error from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?",
             (input_id,),
         ).fetchone()
     assert run == ("completed", "")
@@ -1820,12 +1821,12 @@ def test_process_work_item_persists_applied_assessment_without_raw_judgment_copy
 
     with store._connect() as db:
         run = db.execute(
-            f"select decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) "
+            f"select projection_json from ({TASK_LOGICAL_RUN_SQL}) "
             "where summary_input_id=?",
             (input_id,),
         ).fetchone()
     stored_projection = json.loads(run["projection_json"])
-    assert run["decision_json"] == "{}"
+    assert "decision_json" not in run.keys()
     assert stored_projection["status"] == "no_proposal"
     assert stored_projection["project_assessments"][0]["status"] == "recorded"
     assert stored_projection["project_assessments"][0]["anchor_id"] == anchor_id
@@ -1949,7 +1950,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
             f"select status, error from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
-        run_count = db.execute(f"select count(*) from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
+        run_count = db.execute(f"select count(*) from ({TASK_LOGICAL_RUN_SQL})").fetchone()[0]
     assert input_row[0] == "skipped"
     assert run_count == 1
     assert "不可用：memory connector token is expired" in codex.prompts[0]
@@ -2532,7 +2533,7 @@ def test_process_work_item_does_not_require_memory_recall_receipt(
             (input_id,),
         ).fetchone()
         runs = db.execute(
-            f"select status, error from ({TASK_AGENT_RUN_SQL}) "
+            f"select status, error from ({TASK_LOGICAL_RUN_SQL}) "
             "where summary_input_id=? order by id",
             (input_id,),
         ).fetchall()
@@ -2585,7 +2586,7 @@ def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(
             f"select status from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (input_id,)
         ).fetchone()[0]
         run = db.execute(
-            f"select status, error from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?",
+            f"select status, error from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?",
             (input_id,),
         ).fetchone()
     assert input_status == "done"
@@ -2617,7 +2618,7 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
 
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         run_row = db.execute(
-            f"select summary_input_id, codex_session_id from ({TASK_AGENT_RUN_SQL})",
+            f"select summary_input_id, codex_session_id from ({TASK_LOGICAL_RUN_SQL})",
         ).fetchone()
     assert run_row == (input_id, "")
 
@@ -2657,7 +2658,7 @@ def test_process_work_item_reads_current_native_transcript_range(tmp_path):
 
     with sqlite3.connect(tmp_path / "task-transcript-range.sqlite3") as db:
         run_row = db.execute(
-            f"select summary_input_id, codex_session_id from ({TASK_AGENT_RUN_SQL})"
+            f"select summary_input_id, codex_session_id from ({TASK_LOGICAL_RUN_SQL})"
         ).fetchone()
     assert run_row == (input_id, "task-session-1")
     assert observed_ranges == [("task-session-1", 1, 10, 200)]
@@ -4905,7 +4906,7 @@ def test_process_work_item_commits_titleless_update_and_new_candidate_batch(tmp_
         )
         assert (
             db.execute(
-                f"select status from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?",
+                f"select status from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?",
                 (input_id,),
             ).fetchone()[0]
             == "completed"

@@ -7,7 +7,6 @@ import sqlite3
 
 import pytest
 
-from app.run_storage import insert_run
 from app.store import AutoReplyStore
 from app.action_storage import task_delivery_projection
 from app.task_storage import task_id_expression
@@ -88,9 +87,9 @@ def test_meeting_run_and_memory_event_project_public_parent(tmp_path):
     store = AutoReplyStore(tmp_path / "store.db")
     physical = _job(store, legacy_key=700)
     store.update_meeting_alignment_job(700, status="processing")
-    run_id = store.begin_meeting_alignment_run(700)
-    store.finish_meeting_alignment_run(run_id, status="ready_to_send", codex_session_id="session-1")
-    metadata = store.get_meeting_alignment_run_metadata(run_id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', 700)
+    store.finish_logical_run('meeting_alignment_runs', run_id, status="ready_to_send", codex_session_id="session-1")
+    metadata = store.get_logical_run('meeting_alignment_runs', run_id, load_native=False)
     assert metadata is not None and metadata.job_id == 700
     assert metadata.codex_session_id == "session-1"
     assert metadata.decision_json == "{}" and metadata.audit_tool_events_json == "[]"
@@ -98,10 +97,10 @@ def test_meeting_run_and_memory_event_project_public_parent(tmp_path):
     with store._connect() as db:
         plan = db.execute(
             "explain query plan select cast(legacy_key as integer) from runs "
-            "where record_type='meeting_alignment_runs' and task_id="
+            "where record_type='agent_runs' and source_type='meeting_alignment_runs' and task_id="
             + task_id_expression("meeting_alignment_jobs", "?"), (700,),
         ).fetchall()
-    assert any("idx_meeting_alignment_runs_job" in step[3] for step in plan)
+    assert any("idx_logical_runs_task" in step[3] for step in plan)
 
     store.update_meeting_alignment_job(700, status="sent", final_message="Decision")
     assert store.create_meeting_memory_write_event(700)
@@ -214,20 +213,21 @@ def test_meeting_run_public_id_can_differ_from_physical_and_wrong_type_is_exclud
     physical = _job(store, legacy_key=700)
     assert wrong_type != physical
     with store._connect() as db:
-        insert_run(db, "meeting_alignment_runs", {
+        db.execute("insert into runs(record_type,source_type,legacy_key,task_id,status,session_id,transcript_start,transcript_end,error,completed_at,updated_at) values('agent_runs','meeting_alignment_runs',:legacy_key,:task_id,:status,:session_id,:transcript_start,:transcript_end,'','',current_timestamp)", {
             "legacy_key": 900, "task_id": physical, "status": "sent",
             "session_id": "native-session", "transcript_start": 2, "transcript_end": 9,
         })
-        insert_run(db, "meeting_alignment_runs", {
+        db.execute("insert into runs(record_type,source_type,legacy_key,task_id,status,session_id,transcript_start,transcript_end,error,completed_at,updated_at) values('agent_runs','meeting_alignment_runs',:legacy_key,:task_id,:status,:session_id,:transcript_start,:transcript_end,'','',current_timestamp)", {
             "legacy_key": 901, "task_id": physical, "status": "retry",
             "session_id": "native-session", "transcript_start": 10, "transcript_end": 12,
         })
-        insert_run(db, "meeting_alignment_runs", {
+        db.execute("insert into runs(record_type,source_type,legacy_key,task_id,status,session_id,transcript_start,transcript_end,error,completed_at,updated_at) values('agent_runs','meeting_alignment_runs',:legacy_key,:task_id,:status,:session_id,:transcript_start,:transcript_end,'','',current_timestamp)", {
             "legacy_key": 902, "task_id": physical, "status": "running",
+            "session_id": "", "transcript_start": 0, "transcript_end": 0,
         })
         assert store._runtime_operation_parent_exists(db, "meeting", "900") is False
         assert store._runtime_operation_parent_exists(db, "meeting", "902") is True
-    run = store.get_meeting_alignment_run_metadata(900)
+    run = store.get_logical_run('meeting_alignment_runs', 900, load_native=False)
     assert run is not None and run.id == 900 and run.job_id == 700
     assert run.codex_transcript_start_line == 2 and run.codex_transcript_end_line == 9
     assert [item.id for item in store.list_meeting_alignment_runs_for_codex_session("native-session")] == [901, 900]
@@ -244,7 +244,7 @@ def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_pa
     advance_source17_to_current_store(path, published_source)
     store = AutoReplyStore(path)
 
-    orphan = store.get_meeting_alignment_run_metadata(2298)
+    orphan = store.get_logical_run('meeting_alignment_runs', 2298, load_native=False)
     assert orphan is not None and orphan.job_id == 4908
     assert [run.id for run in store.list_meeting_alignment_runs(4908)] == [2298]
     with store._connect() as db:
@@ -255,14 +255,11 @@ def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_pa
 
 def test_new_run_cannot_create_an_orphan_parent(tmp_path):
     store = AutoReplyStore(tmp_path / "store.db")
-    with pytest.raises(sqlite3.IntegrityError):
-        store.record_meeting_alignment_run(
-            job_id=4908, codex_session_id="session", decision_json="{}",
-            audit_summary="", status="failed", error="missing parent",
-        )
+    with pytest.raises(ValueError, match="parent does not exist"):
+        store.create_logical_run('meeting_alignment_runs', task_public_id=4908, codex_session_id="session", status="failed", error="missing parent")
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from runs where record_type='meeting_alignment_runs'"
+            "select count(*) from runs where record_type='agent_runs' and source_type='meeting_alignment_runs'"
         ).fetchone()[0] == 0
 
 
@@ -271,24 +268,21 @@ def test_meeting_run_entry_points_write_updated_at_on_insert(tmp_path):
     _job(store, legacy_key=700)
     store.update_meeting_alignment_job(700, status="processing")
 
-    begun_id = store.begin_meeting_alignment_run(700)
+    begun_id = store.claim_logical_run('meeting_alignment_runs', 700)
     with store._connect() as db:
         begun = db.execute(
-            "select updated_at, finished_at from runs "
-            "where record_type='meeting_alignment_runs' "
+            "select updated_at, completed_at as finished_at from runs "
+            "where record_type='agent_runs' and source_type='meeting_alignment_runs' "
             "and cast(legacy_key as integer)=?", (begun_id,),
         ).fetchone()
     assert begun["updated_at"]
     assert begun["finished_at"] == ""
-    store.finish_meeting_alignment_run(begun_id, status="retry")
-    direct_id = store.record_meeting_alignment_run(
-        job_id=700, codex_session_id="session-2", decision_json="{}",
-        audit_summary="", status="ready_to_send", error="",
-    )
+    store.finish_logical_run('meeting_alignment_runs', begun_id, status="retry")
+    direct_id = store.create_logical_run('meeting_alignment_runs', task_public_id=700, codex_session_id="session-2", status="ready_to_send", error="")
     with store._connect() as db:
         rows = db.execute(
-            "select cast(legacy_key as integer) as id, created_at, updated_at, finished_at "
-            "from runs where record_type='meeting_alignment_runs' "
+            "select cast(legacy_key as integer) as id, created_at, updated_at, completed_at as finished_at "
+            "from runs where record_type='agent_runs' and source_type='meeting_alignment_runs' "
             "and cast(legacy_key as integer) in (?, ?) order by id",
             (begun_id, direct_id),
         ).fetchall()

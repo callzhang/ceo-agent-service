@@ -26,7 +26,8 @@ from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL, ERROR_SQL
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,

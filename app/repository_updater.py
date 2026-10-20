@@ -67,7 +67,7 @@ class ExistingSchemaUpgradeStateStore:
         from app.email_metadata_schema_release import (
             SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
         )
-        from app.prepared_action_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+        from app.logical_run_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
         from app.state_definitions import state_projection
 
         if not self.database_path.exists():

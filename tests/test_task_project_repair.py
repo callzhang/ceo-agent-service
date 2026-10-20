@@ -20,12 +20,11 @@ def _set_project_times(db_path, project_id, *, created_at):
 
 
 def _record_agent_value(db_path, project_id, *, title, created_at):
+    store = AutoReplyStore(db_path)
+    parent = store.enqueue_work_summary_input("local_file", f"repair:{project_id}:{created_at}", "{}")
+    run_id = store.create_logical_run("task_agent_runs", parent)
     with sqlite3.connect(db_path) as db:
-        run_id = insert_run(db, "task_agent_runs", {
-            "summary_input_id": project_id,
-            "status": "completed",
-            "created_at": created_at,
-        }).lastrowid
+        db.execute("update runs set created_at=? where id=?", (created_at, run_id))
         insert_run(
             db, 'agent_runtime_attempts', {
                 'workload_kind': 'task',

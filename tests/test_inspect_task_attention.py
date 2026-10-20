@@ -6,8 +6,10 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 
+from app.logical_run_storage import create_logical_run
 from app.run_storage import insert_run
-from app.store import AutoReplyStore, TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL
+from app.store import AutoReplyStore,WORK_SUMMARY_INPUT_SQL
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.task20_definitions import task20_column
 from app.task8_storage import task8_set_parts
 
@@ -46,6 +48,7 @@ def _database(path, monkeypatch):
         "management_weekly_report", "report:fixture", "private payload",
     )
     assert input_id == 7
+    assert store.enqueue_work_summary_input("fixture", "unrelated-input", "{}") == 8
     with store._connect() as db:
         db.execute(
             "update tasks set id=107 where record_type='work_summary_inputs' "
@@ -66,11 +69,9 @@ def _database(path, monkeypatch):
                                      "applied_count": 0, "project_assessments": []}),
             (1008, 12, 8, "failed", {}),
         ):
-            insert_run(db, "task_agent_runs", {
-                "id": physical_id, "legacy_key": str(public_id),
-                "summary_input_id": input_id, "status": status,
-                "projection_json": json.dumps(projection),
-            })
+            created = create_logical_run(db, "task_agent_runs", input_id, status=status)
+            db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
+                       (physical_id, str(public_id), json.dumps(projection), created))
         insert_run(db, 'agent_runtime_attempts', {
             'id': 1, 'legacy_key': '1',
             'workload_kind': 'task', 'workload_key': '11',
@@ -87,7 +88,7 @@ def _database(path, monkeypatch):
             f"and {task20_column('work_summary_inputs', 'id')}=?", (7,),
         ).fetchone()[0] == 107
         assert [row[0] for row in db.execute(
-            f"select id from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? order by id",
+            f"select id from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id",
             (7,),
         ).fetchall()] == [10, 11]
 
@@ -230,11 +231,11 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
             prepared_sources=prepared_sources,
         )
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:inspect", '{"private": "input body"}')
-    old_id = store.record_task_agent_run(input_id, decision_json='{"private":"old"}')
+    old_id = store.create_logical_run('task_agent_runs', input_id)
     decision = {"project_decisions": [], "task_decisions": [], "project_assessments": [],
                 "update_summary": "No new Project judgment is proposed; inspect the saved receipt."}
     session_id = str(uuid4())
-    run_id = store.record_task_agent_run(input_id, codex_session_id=session_id)
+    run_id = store.create_logical_run('task_agent_runs', input_id, codex_session_id=session_id)
     records = [
         {"type": "session_meta", "payload": {"id": session_id}},
         {"type": "event_msg", "payload": {"type": "task_started"}},
@@ -284,14 +285,15 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
     ).model_dump(mode="json")
     store.record_task_agent_projection(run_id, json.dumps(projection))
     with sqlite3.connect(path) as db:
-        original = db.execute(f"select id, decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) order by id").fetchall()
-    assert [row[1] for row in original] == ["{}", "{}"]
+        original = db.execute(f"select id, projection_json from ({TASK_LOGICAL_RUN_SQL}) order by id").fetchall()
+    assert original[0][1] == "{}"
+    assert "decision_json" not in {column[0] for column in db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL})").description}
     inspected = _inspect(path, input_id)
     assert inspected.returncode == 0, inspected.stderr
     assert "private" not in inspected.stdout
     assert store.list_business_tasks() == ()
     with sqlite3.connect(path) as db:
-        assert db.execute(f"select id, decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) order by id").fetchall() == original
+        assert db.execute(f"select id, projection_json from ({TASK_LOGICAL_RUN_SQL}) order by id").fetchall() == original
     runs = json.loads(inspected.stdout)["runs"]
     assert runs[0]["run_id"] == old_id
     assert "project_decisions" not in runs[0]

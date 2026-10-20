@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.store import (
-    BUSINESS_ACTION_SQL, RUNTIME_ATTEMPT_SQL, TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL,
+    BUSINESS_ACTION_SQL, RUNTIME_ATTEMPT_SQL, TASK_LOGICAL_RUN_SQL, WORK_SUMMARY_INPUT_SQL,
 )
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.business_candidate_definitions import candidate_projection
@@ -482,7 +482,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
     after = read_domain(store)
     with store._connect() as db:
         run = db.execute(
-            f"select * from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
+            f"select * from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
             (input_id,),
         ).fetchone()
         native_ref = latest_task_ref(db, run["id"]) if run is not None else None

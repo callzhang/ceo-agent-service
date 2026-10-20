@@ -1,6 +1,6 @@
 """Exact 11.2 -> 11.3 paired task-schema publication and business-write inverse."""
 from app.state_publication_sources import publication_store_version
-from app.prepared_action_schema_release import (
+from app.logical_run_schema_release import (
     TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current, publication_tasks_are_current,
 )
 
@@ -100,6 +100,12 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
             and publication_tasks_are_current(db, version)
             and {"tasks", "runs"} <= tables
             and not (set(RETIRED_TASK_TABLES) | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
+        if version == TARGET_STORE_VERSION:
+            from app.logical_run_storage import logical_run_projection
+            from app.logical_run_current_schema import current_run11_schema_is_current
+            if not current_run11_schema_is_current(db):
+                raise ValueError("unknown logical Run publication declaration")
+            return task20_projection("meeting_alignment_jobs"), logical_run_projection("meeting_alignment_runs")
         return task20_projection("meeting_alignment_jobs"), MEETING_RUN_SQL
     raise ValueError("unknown or mixed meeting publication source schema")
 

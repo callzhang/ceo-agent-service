@@ -113,7 +113,7 @@ from app.configs_schema_transfer import (
     SOURCE_TABLES as CONFIG_SOURCE_TABLES, capture_config_declarations,
     _target_declarations as _config_target_declarations,
 )
-from app.runs11_current_schema import create_current_run11_schema, current_configs_schema_is_current, current_run11_objects, current_run11_schema_is_current
+from app.runs11_current_schema import current_configs_schema_is_current, current_run11_schema_is_current
 from app.runs11_schema_release import capture_run11_source, migrate_run11_schema, restore_run11_schema
 from app.state_storage import create_state_schema
 from app.state_schema_release import (
@@ -161,10 +161,12 @@ def _repair_names_available(db: sqlite3.Connection, missing) -> bool:
     return True
 
 
-@lru_cache(maxsize=1)
-def _canonical_run_object_types() -> dict[str, str]:
+@lru_cache(maxsize=2)
+def _canonical_run_object_types(logical_owner=False) -> dict[str, str]:
+    from app import logical_run_current_schema, runs11_current_schema
+    schema = logical_run_current_schema if logical_owner else runs11_current_schema
     with closing(sqlite3.connect(":memory:")) as reference:
-        create_current_run11_schema(reference)
+        schema.create_current_run11_schema(reference)
         return dict(reference.execute(
             "select name,type from sqlite_schema where tbl_name='runs' and sql is not null"
         ))
@@ -240,9 +242,11 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
                                                 inline_legacy_owner: bool = False,
                                                 physical_provenance: bool = False,
                                                 compact_payload: bool = False,
-                                                selection_references: bool = False, result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False, postfix_owner: bool = False) -> bool:
+                                                selection_references: bool = False, result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False, postfix_owner: bool = False, logical_owner: bool = False) -> bool:
     """Exact target, allowing only Store's known missing Skill guard repair."""
-    if current_configs_schema_is_current(
+    from app import logical_run_current_schema, runs11_current_schema
+    schema = logical_run_current_schema if logical_owner else runs11_current_schema
+    if schema.current_configs_schema_is_current(
         db,
         action_variant=action_variant,
         include_followup_sync=True,
@@ -270,9 +274,9 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
         triggers=CURRENT_CONFIG_REPAIRABLE_TRIGGERS,
     ):
         return False
-    expected_runs = current_run11_objects()
+    expected_runs = schema.current_run11_objects()
     actual_runs = _config_run_objects(db)
-    run_types = _canonical_run_object_types()
+    run_types = _canonical_run_object_types(logical_owner)
     return (action_schema_is_current(db, allow_missing_objects=True,
                                      include_reply=True, reply_variant=action_variant,
                                      include_email=True, include_skill_config_receipts=True,
@@ -283,10 +287,10 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
                                      include_email_history=include_email_history,
                                      canonical_email=canonical_email,
                                      inline_legacy_owner=inline_legacy_owner,
-                                     physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner)
+                                     physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
             and action_storage.email_action_auxiliary_objects_are_current(
-                db, reply_variant=action_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner)
-            and current_run11_schema_is_current(db, allow_missing_objects=True)
+                db, reply_variant=action_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
+            and schema.current_run11_schema_is_current(db, allow_missing_objects=True)
             and actual_runs.get("runs") == expected_runs["runs"]
             and set(actual_runs) <= set(expected_runs)
             and set(expected_runs) == set(run_types)
@@ -300,7 +304,7 @@ def configs_current_or_known_skill_guard_repair(db: sqlite3.Connection, *, actio
 
 def require_current_email_pair(path: Path, *, store_version: str, email_version: int,
                                selection_references: bool = False, result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False, postfix_owner: bool = False,
-                               metadata_owner: bool = False, task_lifecycle: bool = False) -> None:
+                               metadata_owner: bool = False, task_lifecycle: bool = False, logical_owner: bool = False) -> None:
     """Read-only source selection before constructor caches or journal changes."""
     path = Path(path).resolve()
     if not path.exists():
@@ -342,7 +346,7 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
                                                                include_business_actions=True,
                                                                include_email_history=True,
                                                                canonical_email=True,
-                                                               inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner)
+                                                               inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
                     for variant in ('actual_no_memory_fk', 'fresh_memory_fk')
                 )):
                     return
@@ -351,7 +355,7 @@ def require_current_email_pair(path: Path, *, store_version: str, email_version:
                 if state_current_or_known_dispatcher_index_repair(db) and any(configs_current_or_known_skill_guard_repair(db, action_variant=variant,
                                                                                   include_business_actions=True,
                                                                                   include_email_history=True, canonical_email=True,
-                                                                                  inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner)
+                                                                                  inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
                        for variant in ('actual_no_memory_fk', 'fresh_memory_fk')):
                     return  # Complete Store-first, before Email's fresh transaction.
                 raise sqlite3.IntegrityError("malformed current Store-first config declaration")

@@ -19,7 +19,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
     AGENT_EFFECT_INTENT_SQL,

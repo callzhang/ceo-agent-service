@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 from app.task20_definitions import task20_projection
-from app.run_storage import TASK_AGENT_RUN_SQL
+from app.logical_run_storage import logical_run_projection
+
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.business_storage import update_business
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
@@ -18,6 +19,7 @@ from typing import Any
 
 from app.work_summary_payload import decode_work_summary_payload
 
+TASK_LOGICAL_RUN_SQL = logical_run_projection("task_agent_runs")
 WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
@@ -303,7 +305,7 @@ def _latest_agent_refs(db: sqlite3.Connection) -> list[tuple[int, str, object]]:
     from app.native_standalone import latest_task_ref
 
     rows = db.execute(
-        f"select id, created_at from ({TASK_AGENT_RUN_SQL}) "
+        f"select id, created_at from ({TASK_LOGICAL_RUN_SQL}) "
         "where status='completed' order by id desc"
     ).fetchall()
     return [

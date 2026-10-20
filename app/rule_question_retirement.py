@@ -20,7 +20,7 @@ from app.agent_result import AgentError
 from app.config import worker_db_path
 from app.database_backup import backup_is_complete
 from app.store import AutoReplyStore
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,

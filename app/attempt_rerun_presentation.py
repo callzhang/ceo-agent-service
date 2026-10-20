@@ -4,7 +4,7 @@ from app.task20_definitions import task20_projection
 import json
 from dataclasses import dataclass
 from typing import Any, Iterable
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 
 REPLY_TASK_SQL = task20_projection('reply_tasks')
 

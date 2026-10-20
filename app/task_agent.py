@@ -2758,18 +2758,10 @@ def apply_task_agent_decision(
         with store.task_agent_domain_apply_transaction() as db:
             apply(db)
         if record_run:
-            recorded_run_id = store.record_task_agent_run(
-                summary_input_id=summary_input_id,
+            recorded_run_id = store.create_logical_run(
+                'task_agent_runs',
+                task_public_id=summary_input_id,
                 codex_session_id=codex_session_id,
-                decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary="; ".join(
-                    filter(
-                        None, (item.update_summary for item in decision.task_decisions)
-                    )
-                ),
-                memory_recall_used=any(
-                    item.memory_recall_used for item in decision.task_decisions
-                ),
             )
     result = TaskAgentApplyResult(
         task_ids=tuple(task_ids),
@@ -3511,7 +3503,10 @@ def process_work_item(
         context_prompt = render_task_semantic_context(
             semantic_context, work_item=work_item
         )
-        active_run_id = store.begin_task_agent_run(work_input.id)
+        active_run_id = store.claim_logical_run(
+            'task_agent_runs',
+            work_input.id,
+        )
         memory_issue = memory_connector_config_issue()
         repair_context = None
         prepared_sources = None
@@ -3594,23 +3589,11 @@ def process_work_item(
                     or "No source-grounded Project or Task decision.",
                     _db=db,
                 )
-            store.finish_task_agent_run(
+            store.finish_logical_run(
+                'task_agent_runs',
                 active_run_id,
                 status="completed",
                 codex_session_id=session_id,
-                decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary="; ".join(
-                    filter(
-                        None,
-                        (
-                            *(item.update_summary for item in decision.task_decisions),
-                            *apply_result.skipped_reasons,
-                        ),
-                    )
-                ),
-                memory_recall_used=any(
-                    item.memory_recall_used for item in decision.task_decisions
-                ),
                 _db=db,
             )
             receipt = apply_result.projection_receipt
@@ -3622,7 +3605,12 @@ def process_work_item(
         active_run_id = None
     except Exception as exc:
         if active_run_id is not None:
-            store.finish_task_agent_run(active_run_id, status="failed", error=str(exc))
+            store.finish_logical_run(
+                'task_agent_runs',
+                active_run_id,
+                status="failed",
+                error=str(exc),
+            )
         store.mark_work_summary_input_failed(work_input.id, str(exc))
         raise
     try:

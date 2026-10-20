@@ -38,18 +38,21 @@ def test_analysis_rerun_rejects_effects_or_active_ownership(tmp_path, blocker):
         store.update_meeting_alignment_job(job_id, locked_at="2026-10-01T10:00:00+00:00")
     elif blocker == "live_claim":
         with store._immediate_write_transaction() as db:
-            insert_state(db, "dispatcher_claim_leases", {"adapter_name": "meeting", "source_id": str(job_id), "owner": "worker", "lease_expires_at": db.execute("select datetime('now','+5 minutes')").fetchone()[0]})
+            from app.task_lifecycle_storage import acquire_claim
+            acquire_claim(db, adapter_name="meeting", source_id=str(job_id), owner="worker",
+                owner_pid=0, now=db.execute("select current_timestamp").fetchone()[0],
+                lease_expires_at=db.execute("select datetime('now','+5 minutes')").fetchone()[0])
     elif blocker == "delivery_claim":
         with store._immediate_write_transaction() as db:
             physical_id = db.execute("select " + task_id_expression("meeting_alignment_jobs", "?"), (job_id,)).fetchone()[0]
             columns, parameters = task_delivery_insert_parts(db, "meeting_alignment_delivery_claims", {"job_id": physical_id, "claim_token": "active"})
             db.execute("insert into actions(" + ",".join(columns) + ") values(?,?,?,?)", parameters)
     elif blocker == "running_run":
-        store.record_meeting_alignment_run(job_id=job_id, codex_session_id="session", decision_json="{}", audit_summary="", status="running", error="")
+        store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session", status="running", error="")
     else:
-        run_id = store.record_meeting_alignment_run(job_id=job_id, codex_session_id="session", decision_json="{}", audit_summary="", status="running", error="")
+        run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session", status="running", error="")
         store.claim_runtime_operation_attempt("meeting", str(run_id), "codex_oauth", "codex_cli", "local_oauth", "gpt-5.6-sol", owner="worker", lease_seconds=300)
-        store.finish_meeting_alignment_run(run_id, status="failed", error="interrupted")
+        store.finish_logical_run('meeting_alignment_runs', run_id, status="failed", error="interrupted")
     before = store.get_meeting_alignment_job(job_id)
     assert store.attach_asr_transcript_and_rerun_meeting_job(job_id, {
         "provider": "ai_services", "model": "qwen3-asr", "audio_sha256": "a" * 64,
@@ -63,7 +66,7 @@ def test_analysis_rerun_rejects_effects_or_active_ownership(tmp_path, blocker):
 def test_analysis_rerun_preserves_identity_history_and_ignores_expired_claim(tmp_path):
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     job_id = seed_failed_job(store)
-    run_id = store.record_meeting_alignment_run(job_id=job_id, codex_session_id="old-session", decision_json="{}", audit_summary="Read denied", status="failed", error="history read denied")
+    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="old-session", status="failed", error="history read denied")
     with store._immediate_write_transaction() as db:
         insert_state(db, "dispatcher_claim_leases", {"adapter_name": "meeting", "source_id": str(job_id), "owner": "old-worker", "lease_expires_at": db.execute("select datetime('now','-5 minutes')").fetchone()[0]})
     before = store.get_meeting_alignment_job(job_id)
@@ -72,7 +75,7 @@ def test_analysis_rerun_preserves_identity_history_and_ignores_expired_claim(tmp
     assert (after.id, after.meeting_id, after.source_json) == (before.id, before.meeting_id, before.source_json)
     assert after.status == "retry"
     assert json.loads(after.send_result_json) == {}
-    assert store.get_meeting_alignment_run(run_id).status == "failed"
+    assert store.get_logical_run('meeting_alignment_runs', run_id).status == "failed"
     assert store.rerun_meeting_alignment_jobs([job_id]) == []
 
 
@@ -86,14 +89,7 @@ def test_complete_asr_transcript_requeues_the_same_failed_unsent_meeting(tmp_pat
         trigger_sender="Other", trigger_text="Unrelated task",
     )
     job_id = seed_failed_job(store)
-    run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="old-session",
-        decision_json="{}",
-        audit_summary="Transcript source unavailable",
-        status="failed",
-        error="complete transcript is unavailable",
-    )
+    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="old-session", status="failed", error="complete transcript is unavailable")
     evidence = {
         "provider": "ai_services",
         "model": "qwen3-asr",
@@ -115,7 +111,7 @@ def test_complete_asr_transcript_requeues_the_same_failed_unsent_meeting(tmp_pat
     assert json.loads(job.source_json)["asr_transcript"] == evidence
     assert job.decision_json == "{}"
     assert job.send_result_json == "{}"
-    assert store.get_meeting_alignment_run(run_id).status == "failed"
+    assert store.get_logical_run('meeting_alignment_runs', run_id).status == "failed"
     assert store.attach_asr_transcript_and_rerun_meeting_job(job_id, evidence) is None
 
 

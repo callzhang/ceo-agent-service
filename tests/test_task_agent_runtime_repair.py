@@ -11,7 +11,7 @@ from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import RoutedCodexExecution, RoutedCodexExecutionError
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
-from app.run_storage import TASK_AGENT_RUN_SQL
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.task_agent import (
     TASK_DECISION_REPAIR_ROUNDS,
     TASK_RUNTIME_CAPABILITIES,
@@ -118,7 +118,7 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
     assert store.get_work_summary_input(input_id).status.value == "done"
     assert len(store.list_business_tasks()) == 1
     with store._connect() as db:
-        run_id = db.execute(f"select id from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
+        run_id = db.execute(f"select id from ({TASK_LOGICAL_RUN_SQL})").fetchone()[0]
         keys = [row[0] for row in db.execute(
             f'select workload_key from ({RUNTIME_ATTEMPT_SQL}) order by id'
         )]
@@ -219,7 +219,7 @@ def _active_task_run(store):
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     store.claim_work_summary_inputs(limit=1)
-    return input_id, store.begin_task_agent_run(input_id)
+    return input_id, store.claim_logical_run('task_agent_runs', input_id)
 
 
 def _claim_repair(store, run_id, **kwargs):
@@ -236,7 +236,7 @@ def test_repair_runtime_requires_its_active_task_run_not_a_project(tmp_path):
     assert attempt.workload_key == f"{run_id}:decision_repair.1"
     with pytest.raises(ValueError, match="parent does not exist"):
         _claim_repair(store, run_id + 1000)
-    store.finish_task_agent_run(run_id, status="failed", error="No valid candidate")
+    store.finish_logical_run('task_agent_runs', run_id, status="failed", error="No valid candidate")
     with pytest.raises(ValueError, match="parent does not exist"):
         _claim_repair(store, run_id)
 
@@ -258,7 +258,7 @@ def test_repair_runtime_is_recovered_with_original_parent_after_interruption(tmp
         store.mark_work_summary_input_failed(input_id, "Interrupted")
         assert store.recover_orphaned_task_agent_runs() == 1
     else:
-        store.finish_task_agent_run(run_id, status="failed", error="Interrupted")
+        store.finish_logical_run('task_agent_runs', run_id, status="failed", error="Interrupted")
         assert store.recover_expired_terminal_task_runtime_attempts(
             now=now + timedelta(seconds=61)
         ) == 1
@@ -279,7 +279,7 @@ def test_terminal_repair_recovery_preserves_nonrecoverable_attempts(tmp_path, bo
         with store._connect() as db:
             db.execute("update runs set workload_key=? where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
                        (f"{run_id}:memory_backfill", attempt.id))
-    store.finish_task_agent_run(run_id, status="failed", error="Interrupted")
+    store.finish_logical_run('task_agent_runs', run_id, status="failed", error="Interrupted")
 
     assert store.recover_expired_terminal_task_runtime_attempts(
         now=now + timedelta(seconds=30 if boundary == "unexpired" else 61)
@@ -295,7 +295,7 @@ def test_reset_reclaim_cannot_replay_previous_run_correction(tmp_path, config):
     old = _claim_repair(store, run_id)
     store.reset_processing_work_summary_inputs()
     store.claim_work_summary_inputs(limit=1)
-    new_run_id = store.begin_task_agent_run(input_id)
+    new_run_id = store.claim_logical_run('task_agent_runs', input_id)
     item = _work_item()
     corrected = _candidate_decision(item).model_dump(mode="json")
     runner, calls = _routed_runner(store, config, [corrected])

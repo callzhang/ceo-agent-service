@@ -100,12 +100,12 @@ from app.email_current_schema import (
 )
 from app.configs_definitions import CONFIG_FIELDS, config_projection
 from app.configs_storage import insert_config, update_config, delete_config
-from app.runs11_current_schema import current_configs_schema_is_current
+from app.logical_run_current_schema import current_configs_schema_is_current
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 from app.sqlite_schema_lock import schema_initialize_lock
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
     email_action_auxiliary_objects_are_current,
@@ -3066,7 +3066,7 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True)
         if self.path.exists():
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("begin")
@@ -3079,7 +3079,7 @@ class EmailStore:
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
-            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True)
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:

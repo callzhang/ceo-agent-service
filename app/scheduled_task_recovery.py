@@ -7,7 +7,7 @@ from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, REPLY
 from datetime import datetime, timezone
 
 from app.store import AutoReplyStore
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 from app.configs_definitions import config_projection
 from app.schedules_definitions import schedule_projection
 

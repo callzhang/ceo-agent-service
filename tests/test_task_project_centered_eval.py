@@ -22,6 +22,7 @@ from app.task_semantic_models import AttentionCategory, ProjectContext, TaskSugg
 from app.task_semantic_service import RecordTaskSuggestion, SourceSignal, TaskSemanticService
 from app.task_models import TaskAgentDecision, WorkItem
 from app.task_agent import TaskAgentRunner
+from tests.support.task_native import record_task_fixture_run
 from tests.support.task_native import task_native_records  # noqa: F401
 
 
@@ -382,7 +383,7 @@ def test_readback_rejects_one_judgment_for_two_relevant_projects(seeded_domain):
         "source_excerpt": "甲客户一期交付按计划推进",
         "source_time": "2026-10-02T09:00:00Z", "source_link": "",
     }
-    run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
+    run_id = record_task_fixture_run(store, input_id, decision_json=json.dumps({
         "project_decisions": [], "task_decisions": [],
         "project_assessments": [{
             "project_title": "甲客户一期交付", "outcome": "not_needed",
@@ -461,7 +462,7 @@ def test_readback_accepts_only_allowed_assessment_task_counts(seeded_domain):
             "source_ref": current.source.ref,
             "source_excerpt": "款项已到账",
         }
-        run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
+        run_id = record_task_fixture_run(store, input_id, decision_json=json.dumps({
             "project_decisions": [], "task_decisions": [],
             "project_assessments": [{
                 "project_title": "甲客户一期交付", "outcome": "not_needed",
@@ -546,9 +547,7 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
         }],
         "update_summary": "付款风险仍存在",
     })
-    run_id = store.record_task_agent_run(
-        input_id, decision_json=decision.model_dump_json()
-    )
+    run_id = record_task_fixture_run(store, input_id, decision_json=decision.model_dump_json())
     outcomes = ([{
         "assessment_index": 0, "anchor_id": card.anchor_id,
         "attention_id": card.id, "task_id": None, "status": "applied",

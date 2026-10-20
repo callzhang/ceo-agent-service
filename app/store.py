@@ -38,7 +38,7 @@ from app.email_metadata_schema_release import TARGET_EMAIL_VERSION
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
 )
-from app.runs11_current_schema import (
+from app.logical_run_current_schema import (
     create_current_run11_schema, current_run11_schema_is_current,
     current_configs_schema_is_current,
 )
@@ -66,9 +66,12 @@ from app.action_email_schema_release import (
 )
 from app.email_publication_sources import current_email_actions_available
 from app.run_storage import (
-    SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
+    SCHEDULED_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES,
     install_run_child_guards, insert_run,
 )
+from app.logical_run_store import LogicalRunStoreMixin
+from app.logical_run_storage import AGENT_RUN_SQL, logical_run_projection, recover_logical_runs
+
 from app.runs11_definitions import run11_projection
 from app.runs11_storage import insert_run11_fact
 
@@ -83,7 +86,6 @@ from app.task_lifecycle_definitions import (
 from app.task_lifecycle_current_schema import (
     create_current_task20_schema, install_current_task_child_guards,
     task20_schema_is_current, task20_feedback_child_is_current,
-    task20_workbench_schema_is_current,
 )
 from app import task_lifecycle_storage as task_claims
 from app.task8_storage import (
@@ -300,6 +302,10 @@ from app.action_error_definitions import error_projection
 
 from app.shared_action_definitions import email_projection as email_action_projection
 
+TASK_LOGICAL_RUN_SQL = logical_run_projection("task_agent_runs")
+MEETING_LOGICAL_RUN_SQL = logical_run_projection("meeting_alignment_runs")
+OKR_LOGICAL_RUN_SQL = logical_run_projection("okr_review_runs")
+
 MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
 TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
 WECHAT_DELIVERY_SQL = task_delivery_projection("wechat_deliveries")
@@ -450,7 +456,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.9"
+STORE_SCHEMA_VERSION = "2026-10-19.10"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -559,9 +565,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
     "idx_agent_runtime_attempts_run",
-    "idx_task_agent_runs_active_input",
+    "idx_logical_runs_active_task",
     "idx_agent_run_state_events_run",
-    "idx_meeting_alignment_runs_active_job",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_events_event_type",
     "idx_scheduled_task_runs_scheduled_instant",
@@ -814,7 +819,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "provenance": ("id", *SOURCE_FIELDS),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
-        "summary_input_id", "error", "projection_json", "job_id", "request_id",
+        "error", "projection_json", "job_id",
         "session_mode",
         "source_session_id",
         "attempt_purpose",
@@ -1117,9 +1122,6 @@ def _parse_optional_datetime(value: object) -> datetime | None:
         return None
 
 
-MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
-    {"failed", "retry", "no_action", "ready_to_send"}
-)
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 
 
@@ -1956,7 +1958,7 @@ def _meeting_memory_settlement_time(now: datetime | None) -> str:
     return value.isoformat()
 
 
-class AutoReplyStore(ReviewedCandidateStoreMixin):
+class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def __init__(
         self,
         path: Path,
@@ -1976,7 +1978,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1984,7 +1986,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2294,7 +2296,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and provenance_schema_is_current(db)
             and task20_schema_is_current(db)
             and task20_feedback_child_is_current(db, include_feedback=True)
-            and task20_workbench_schema_is_current(db, include_feedback=True)
             and business_schema_is_current(db, include_followup_sync=True, include_candidates=True,
                                            include_business_actions=True, inline_legacy_owner=True)
             and state_schema_is_current(db)
@@ -2308,7 +2309,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True,
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -6776,12 +6777,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     db, action_variant=variant, include_business_actions=True,
                     include_email_history=True,
                     canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True)
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
                 and task20_feedback_child_is_current(db, allow_missing_objects=True, include_feedback=True)
-                and task20_workbench_schema_is_current(db, allow_missing_objects=True, include_feedback=True)
                 and any(
                     action_schema_is_current(
                         db, allow_missing_objects=True, include_reply=True,
@@ -6790,9 +6790,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
                         include_business_actions=True,
                         include_email_history=True,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True,
                         canonical_email="emails" in tables,
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True)
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
@@ -8514,7 +8514,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             query = (f"""select 1 from tasks where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'""")
             args = (int(workload_key),)
         elif workload_kind == "meeting":
-            query = ("select 1 from runs where record_type='meeting_alignment_runs' "
+            query = ("select 1 from runs where record_type='agent_runs' and source_type='meeting_alignment_runs' "
                      "and cast(legacy_key as integer)=? and status='running'")
             args = (int(workload_key),)
         elif workload_kind == "task":
@@ -8533,7 +8533,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "and status in ('active', 'waiting', 'done', 'archived')"
                 )
             else:
-                query = f"select 1 from ({TASK_AGENT_RUN_SQL}) where id=? and status='running'"
+                query = f"select 1 from ({TASK_LOGICAL_RUN_SQL}) where id=? and status='running'"
             args = (int(row_id),)
         elif workload_kind == "email_classification":
             query = (
@@ -9139,7 +9139,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         structured_error_json='',
                         transcript_end=?, lease_owner='', lease_expires_at='',
                         completed_at=?, updated_at=?
-                    where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_owner=?
+                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=?
                       and lease_expires_at>?
                     """,
                     (
@@ -9260,7 +9260,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempt.lease_expires_at<=?
                   and exists (
                       select 1
-                      from ({TASK_AGENT_RUN_SQL}) as task_run
+                      from ({TASK_LOGICAL_RUN_SQL}) as task_run
                       where task_run.id=cast(attempt.workload_key as integer)
                         and task_run.status in ('completed', 'failed')
                   )
@@ -9300,7 +9300,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempt.workload_kind='meeting'
                   and exists (
                     select 1 from runs parent
-                    where parent.record_type='meeting_alignment_runs'
+                    where parent.record_type='agent_runs' and parent.source_type='meeting_alignment_runs'
                       and parent.legacy_key=attempt.workload_key
                       and parent.status<>'running'
                   )
@@ -9597,7 +9597,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     set status='failed',structured_error_json=?,
                         transcript_end=?,lease_owner='',lease_expires_at='',
                         completed_at=?,updated_at=?
-                    where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_owner=? and lease_expires_at>?""",
+                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=? and lease_expires_at>?""",
                     (error_json, agent_run_transcript_end, now_text, now_text,
                      row["agent_run_id"], owner, now_text))
                 if cursor.rowcount != 1:
@@ -9814,7 +9814,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 lease_owner='', lease_expires_at='',
                 completed_at=?,
                 updated_at=?
-            where agent_runs.record_type='agent_runs' and task_id=? and execution_generation=? and status='running'
+            where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and task_id=? and execution_generation=? and status='running'
             """,
             (error_json, now_text, now_text, task_id, current_generation),
         )
@@ -9989,7 +9989,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 reclaimed = db.execute(
                     """update runs as agent_runs set lease_owner=?, lease_expires_at=?, updated_at=?
-                    where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_expires_at<=?""",
+                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_expires_at<=?""",
                     (owner, lease_expires_at, now_text, row["id"], now_text),
                 )
                 claimed = reclaimed.rowcount == 1
@@ -10031,7 +10031,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 update runs as agent_runs
                 set lease_expires_at=?, updated_at=?
-                where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_owner=?
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                 """,
                 (
@@ -10106,7 +10106,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     end,
                     transcript_end=max(transcript_end, ?),
                     updated_at=?
-                where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_owner=?
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                   and (session_id='' or session_id=? or ?)
                 """,
@@ -10183,7 +10183,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 update runs as agent_runs
                 set transcript_end=transcript_end + 1,
                     updated_at=?
-                where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_owner=?
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                 """,
                 (now_text, run_id, owner, now_text),
@@ -10390,7 +10390,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 set status=?, structured_error_json=?,
                     transcript_end=?, lease_owner='', lease_expires_at='',
                     completed_at=?, updated_at=?
-                where agent_runs.record_type='agent_runs' and id=? and status='running' and lease_owner=?
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                 """,
                 (*values, owner, now_text),
@@ -10496,7 +10496,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "delete from runs as agent_run_state_events where agent_run_state_events.record_type='agent_run_state_events' and parent_id=?",
                 (run_id,),
             )
-            db.execute("delete from runs as agent_runs where agent_runs.record_type='agent_runs' and id=?", (run_id,))
+            db.execute("delete from runs as agent_runs where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=?", (run_id,))
             return True
 
     def fail_expired_agent_run(
@@ -10520,7 +10520,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     lease_expires_at='',
                     completed_at=?,
                     updated_at=?
-                where agent_runs.record_type='agent_runs' and id=? and status='running'
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running'
                   and execution_generation=?
                   and lease_expires_at<=?
                   and exists (
@@ -10928,7 +10928,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     set status='failed', structured_error_json=?,
                         lease_owner='', lease_expires_at='',
                         completed_at=current_timestamp, updated_at=current_timestamp
-                    where agent_runs.record_type='agent_runs' and task_id=? and execution_generation=?
+                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and task_id=? and execution_generation=?
                       and status='running'
                     """,
                     (error_json, task_id, generation),
@@ -11011,7 +11011,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 set status='failed', structured_error_json=?,
                     lease_owner='', lease_expires_at='',
                     completed_at=current_timestamp, updated_at=current_timestamp
-                where agent_runs.record_type='agent_runs' and status='running' and id in ({placeholders})
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and status='running' and id in ({placeholders})
                 """,
                 [error_json, *run_ids],
             )
@@ -11099,7 +11099,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     set status='failed', structured_error_json=?,
                         lease_owner='', lease_expires_at='',
                         completed_at=?, updated_at=?
-                    where agent_runs.record_type='agent_runs' and task_id=? and execution_generation=?
+                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and task_id=? and execution_generation=?
                       and status='running'
                     """,
                     (error_json, now_text, now_text, task_id, generation),
@@ -11763,7 +11763,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 set status='failed', structured_error_json=?,
                     lease_owner='', lease_expires_at='',
                     completed_at=?, updated_at=?
-                where agent_runs.record_type='agent_runs' and task_id=? and execution_generation=?
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and task_id=? and execution_generation=?
                   and status='running'
                   and (
                     (lease_expires_at<>'' and lease_expires_at<=?)
@@ -13972,7 +13972,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> MeetingAlignmentRun:
         from app.native_standalone import NativeStandaloneDecision, meeting_decision
 
-        values = dict(row)
+        values = {key: row[key] for key in row.keys() if key in MeetingAlignmentRun.model_fields}
         native = (meeting_decision(ref) if ref is not None else
                   NativeStandaloneDecision(
                       False, "native_reference_unavailable",
@@ -14986,7 +14986,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
                 f"from ({RUNTIME_ATTEMPT_SQL}) a join runs r "
                 "on a.workload_kind='meeting' and a.workload_key=r.legacy_key "
-                "where r.record_type='meeting_alignment_runs' and r.task_id="
+                "where r.record_type='agent_runs' and r.source_type='meeting_alignment_runs' and r.task_id="
                 + task_id_expression("meeting_alignment_jobs", "?")
                 + " and a.status not in ('starting','running') order by a.id desc",
                 (job_id,),
@@ -15204,7 +15204,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     history={"owner": "", "owner_pid": 0, "lease_expires_at": "", "updated_at": now_text},
                 )
                 run_rows = db.execute(
-                    f"select id from ({MEETING_RUN_SQL}) "
+                    f"select id from ({MEETING_LOGICAL_RUN_SQL}) "
                     f"where status='running' and job_id in ({placeholders})",
                     job_ids,
                 ).fetchall()
@@ -15218,16 +15218,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         },
                         ensure_ascii=False,
                     )
-                    db.execute(
-                        f"""
-                        update runs
-                        set status='retry', error=?,
-                            finished_at=?, updated_at=?
-                        where record_type='meeting_alignment_runs' and status='running'
-                          and cast(legacy_key as integer) in ({run_placeholders})
-                        """,
-                        [error, now_text, now_text, *run_ids],
-                    )
+                    recover_logical_runs(db, "meeting_alignment_runs", run_ids, status="retry", error=error, now=now_text)
                     db.execute(
                         f"""
                         update runs as agent_runtime_attempts
@@ -15283,14 +15274,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       )
                       and not exists (
                         select 1 from runs run
-                        where run.record_type='meeting_alignment_runs'
+                        where run.record_type='agent_runs' and run.source_type='meeting_alignment_runs'
                           and run.task_id=meeting_alignment_jobs.id and run.status='running'
                       )
                       and not exists (
                         select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
                         join runs run on runtime.workload_key=run.legacy_key
                         where runtime.workload_kind='meeting'
-                          and run.record_type='meeting_alignment_runs'
+                          and run.record_type='agent_runs' and run.source_type='meeting_alignment_runs'
                           and run.task_id=meeting_alignment_jobs.id
                           and runtime.status in ('starting','running')
                       )
@@ -15359,7 +15350,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone():
                 return None
             if db.execute(
-                f"""select 1 from ({MEETING_RUN_SQL})
+                f"""select 1 from ({MEETING_LOGICAL_RUN_SQL})
                    where job_id=?
                      and status='running' limit 1""",
                 (job_id,),
@@ -15367,7 +15358,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             if db.execute(
                 f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
-                    join ({MEETING_RUN_SQL}) run on runtime.workload_key=cast(run.id as text)
+                    join ({MEETING_LOGICAL_RUN_SQL}) run on runtime.workload_key=cast(run.id as text)
                     where runtime.workload_kind='meeting'
                       and run.job_id=? and runtime.status in ('starting','running')
                     limit 1""",
@@ -15506,123 +15497,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
 
-    def begin_meeting_alignment_run(self, job_id: int) -> int:
-        if job_id <= 0:
-            raise ValueError("meeting alignment job id must be positive")
-        with self._agent_run_write_transaction(None) as (db, _):
-            parent = db.execute(
-                f"""select 1 from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=? and {task20_column('meeting_alignment_jobs', 'status')}='processing'""",
-                (job_id,),
-            ).fetchone()
-            if parent is None:
-                raise ValueError("meeting alignment job is not processing")
-            active = db.execute(
-                "select cast(legacy_key as integer) as id from runs "
-                "where record_type='meeting_alignment_runs' "
-                "and task_id=" + task_id_expression("meeting_alignment_jobs", "?")
-                + " and status='running'",
-                (job_id,),
-            ).fetchone()
-            if active is not None:
-                return int(active["id"])
-            cursor = insert_run(db, "meeting_alignment_runs", {
-                "task_id": db.execute(
-                    "select " + task_id_expression("meeting_alignment_jobs", "?"),
-                    (job_id,),
-                ).fetchone()[0],
-                "status": "running", "finished_at": "",
-                "updated_at": db.execute("select current_timestamp").fetchone()[0],
-            })
-            row = db.execute("select cast(legacy_key as integer) from runs where id=?", (cursor.lastrowid,)).fetchone()
-            return int(row[0])
 
-    def finish_meeting_alignment_run(
-        self,
-        run_id: int,
-        *,
-        status: str,
-        codex_session_id: str = "",
-        codex_transcript_start_line: int = 0,
-        codex_transcript_end_line: int = 0,
-        decision_json: str = "{}",
-        audit_tool_events_json: str = "[]",
-        audit_summary: str = "",
-        error: str = "",
-    ) -> None:
-        if status not in MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES:
-            raise ValueError("meeting alignment run terminal status is invalid")
-        values = (
-            status,
-            codex_session_id,
-            codex_transcript_start_line,
-            codex_transcript_end_line,
-            "{}",
-            "[]",
-            "",
-            error,
-        )
-        with self._agent_run_write_transaction(None) as (db, _):
-            row = db.execute(
-                f"select * from ({MEETING_RUN_SQL}) where id=?", (run_id,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("meeting alignment run does not exist")
-            if row["status"] != "running":
-                actual = tuple(
-                    row[field]
-                    for field in (
-                        "status",
-                        "codex_session_id",
-                        "codex_transcript_start_line",
-                        "codex_transcript_end_line",
-                        "decision_json",
-                        "audit_tool_events_json",
-                        "audit_summary",
-                        "error",
-                    )
-                )
-                if actual == values:
-                    return
-                raise ValueError("conflicting meeting alignment run terminal rewrite")
-            db.execute(
-                "update runs set status=?, session_id=?, "
-                "transcript_start=?, transcript_end=?, error=?, "
-                "finished_at=current_timestamp, updated_at=current_timestamp "
-                "where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=? "
-                "and status='running'",
-                (status, codex_session_id, codex_transcript_start_line,
-                 codex_transcript_end_line, error, run_id),
-            )
 
-    def record_meeting_alignment_run(
-        self,
-        *,
-        job_id: int,
-        codex_session_id: str,
-        decision_json: str,
-        audit_summary: str,
-        status: str,
-        error: str,
-        codex_transcript_start_line: int = 0,
-        codex_transcript_end_line: int = 0,
-        audit_tool_events_json: str = "[]",
-    ) -> int:
-        with self._connect() as db:
-            parent = db.execute(
-                "select " + task_id_expression("meeting_alignment_jobs", "?"),
-                (job_id,),
-            ).fetchone()[0]
-            inserted_at = db.execute("select current_timestamp").fetchone()[0]
-            cursor = insert_run(db, "meeting_alignment_runs", {
-                "task_id": parent, "session_id": codex_session_id,
-                "transcript_start": codex_transcript_start_line,
-                "transcript_end": codex_transcript_end_line,
-                "status": status, "error": error,
-                "finished_at": "" if status == "running" else inserted_at,
-                "updated_at": inserted_at,
-            })
-            row = db.execute("select cast(legacy_key as integer) from runs where id=?", (cursor.lastrowid,)).fetchone()
-            return int(row[0])
 
     def list_meeting_alignment_runs(
         self,
@@ -15634,14 +15510,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select *
-                from ({MEETING_RUN_SQL})
+                from ({MEETING_LOGICAL_RUN_SQL})
                 where id in (
                     select cast(legacy_key as integer) from runs
-                    where record_type='meeting_alignment_runs'
+                    where record_type='agent_runs' and source_type='meeting_alignment_runs'
                       and task_id={task_id_expression('meeting_alignment_jobs', '?')}
                     union all
                     select cast(legacy_key as integer) from runs
-                    where record_type='meeting_alignment_runs' and job_id=?
+                    where record_type='agent_runs' and source_type='meeting_alignment_runs' and job_id=?
                 )
                 order by id desc
                 """,
@@ -15655,36 +15531,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
         return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
 
-    def get_meeting_alignment_run(
-        self,
-        run_id: int,
-    ) -> MeetingAlignmentRun | None:
-        from app.native_standalone import latest_standalone_ref
 
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({MEETING_RUN_SQL}) where id=?",
-                (run_id,),
-            ).fetchone()
-            ref = (latest_standalone_ref(
-                db, workload_kind="meeting", workload_key=str(run_id), legacy_row=row,
-            ) if row is not None else None)
-        return self._meeting_alignment_run_from_row(row, ref) if row is not None else None
-
-    def get_meeting_alignment_run_metadata(
-        self,
-        run_id: int,
-    ) -> MeetingAlignmentRun | None:
-        """Read status and job linkage without opening a native trajectory."""
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({MEETING_RUN_SQL}) where id=?", (run_id,)
-            ).fetchone()
-        if row is None:
-            return None
-        values = dict(row)
-        values.update(decision_json="{}", audit_summary="", audit_tool_events_json="[]")
-        return MeetingAlignmentRun.model_validate(values)
 
     def recovered_meeting_alignment_run_ids_since(
         self,
@@ -15695,14 +15542,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select earlier.id
-                from ({MEETING_RUN_SQL}) as earlier
+                from ({MEETING_LOGICAL_RUN_SQL}) as earlier
                 join ({MEETING_JOB_SQL}) as jobs on jobs.id=earlier.job_id
                 where earlier.created_at>=?
                   and earlier.status in ('retry', 'failed')
                   and jobs.status in ('sent', 'no_action')
                   and exists (
                       select 1
-                      from ({MEETING_RUN_SQL}) as later
+                      from ({MEETING_LOGICAL_RUN_SQL}) as later
                       where later.job_id=earlier.job_id
                         and later.id>earlier.id
                         and later.status in ('ready_to_send', 'sent', 'no_action')
@@ -15717,7 +15564,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select 1 from runs
-                where record_type='meeting_alignment_runs'
+                where record_type='agent_runs' and source_type='meeting_alignment_runs'
                   and task_id={task_id_expression('meeting_alignment_jobs', '?')}
                   and cast(legacy_key as integer)>?
                 limit 1
@@ -15726,7 +15573,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if row is None:
                 row = db.execute(
-                    "select 1 from runs where record_type='meeting_alignment_runs' "
+                    "select 1 from runs where record_type='agent_runs' and source_type='meeting_alignment_runs' "
                     "and job_id=? and cast(legacy_key as integer)>? limit 1",
                     (job_id, run_id),
                 ).fetchone()
@@ -15741,7 +15588,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select * from ({MEETING_RUN_SQL})
+                select * from ({MEETING_LOGICAL_RUN_SQL})
                 where codex_session_id=?
                 order by id desc
                 """,
@@ -15931,61 +15778,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (error, request_id),
             )
 
-    def record_okr_review_run(
-        self,
-        *,
-        request_id: int,
-        codex_session_id: str,
-        codex_transcript_start_line: int,
-        codex_transcript_end_line: int,
-        envelope_json: str,
-        audit_tool_events_json: str,
-        audit_summary: str,
-    ) -> int:
-        with self._connect() as db:
-            cursor = insert_run(db, "okr_review_runs", {
-                "request_id": request_id,
-                "session_id": codex_session_id,
-                "transcript_start": codex_transcript_start_line,
-                "transcript_end": codex_transcript_end_line,
-            })
-            return int(cursor.lastrowid)
 
-    def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
-        from app.native_standalone import (
-            _meeting_tool_events, exact_standalone_ref,
-            okr_envelope,
-        )
-
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({OKR_RUN_SQL}) where id=?", (run_id,)
-            ).fetchone()
-            ref = (exact_standalone_ref(
-                db, workload_kind="structured", workload_key=str(row["request_id"]),
-                row=row,
-            ) if row is not None else None)
-        if row is None:
-            return None
-        envelope_json, reason = okr_envelope(ref)
-        tool_events_json, tool_events_available, tool_events_reason = (
-            _meeting_tool_events(ref)
-            if not reason and ref is not None
-            else ("[]", False, reason or "native_reference_unavailable")
-        )
-        values = dict(row)
-        values.update(
-            envelope_json=envelope_json,
-            audit_tool_events_json=tool_events_json,
-            audit_summary=(
-                json.loads(envelope_json)["audit"]["summary"] if not reason else ""
-            ),
-            native_available=not reason,
-            native_reason=reason,
-            tool_events_available=tool_events_available,
-            tool_events_reason=tool_events_reason,
-        )
-        return values
 
     def record_okr_review_item(
         self,
@@ -16805,7 +16598,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 update runs as agent_runs
                 set session_id=''
-                where agent_runs.record_type='agent_runs' and task_id=? and execution_generation=? and role=?
+                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and task_id=? and execution_generation=? and role=?
                   and proposal_revision=? and turn_attempt=?
                 """,
                 (
@@ -21087,7 +20880,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     join tasks on tasks.id=batch_candidates.task_id
                       and tasks.record_type='reply_tasks'
                     join runs on runs.id=batch_candidates.run_id
-                      and runs.record_type='agent_runs'
+                      and runs.record_type='agent_runs' and runs.source_type is null
                     where tasks.{task20_column('reply_tasks', 'status')}='done'
                       and tasks.{task20_column('reply_tasks', 'execution_generation')}=batch_candidates.execution_generation
                       and runs.task_id=tasks.id
@@ -21096,7 +20889,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and runs.id=(
                           select latest.id
                           from runs as latest
-                          where latest.record_type='agent_runs'
+                          where latest.record_type='agent_runs' and latest.source_type is null
                             and latest.task_id=tasks.id
                             and latest.execution_generation=tasks.{task20_column('reply_tasks', 'execution_generation')}
                           order by latest.id desc
@@ -22952,7 +22745,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (
-                            select 1 from ({MEETING_RUN_SQL}) as later_runs
+                            select 1 from ({MEETING_LOGICAL_RUN_SQL}) as later_runs
                             where later_runs.job_id=runs.job_id and later_runs.id>runs.id
                         ) then 'skipped'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
@@ -22970,10 +22763,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     jobs.target_kind || ' ' || jobs.target_id || ' ' || jobs.target_title || ' ' ||
                     jobs.mentions_json || ' ' || jobs.final_message || ' ' || jobs.send_result_json || ' ' ||
                     jobs.calendar_summary_status || ' ' || jobs.calendar_summary_result_json || ' ' ||
-                    runs.decision_json || ' ' || runs.audit_summary || ' ' || runs.error || ' ' ||
+                    runs.error || ' ' ||
                     runs.codex_session_id || ' ' || runs.status
                     , '') as search_text
-                from ({MEETING_RUN_SQL}) as runs
+                from ({MEETING_LOGICAL_RUN_SQL}) as runs
                 join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
                 union all
                 select
@@ -23679,7 +23472,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 runs = {str(run["id"]): run for run in db.execute(
                     f"select run.id, run.codex_session_id, run.codex_transcript_start_line, "
                     "run.codex_transcript_end_line, job.meeting_id, job.title "
-                    f"from ({MEETING_RUN_SQL}) run "
+                    f"from ({MEETING_LOGICAL_RUN_SQL}) run "
                     f"join ({MEETING_JOB_SQL}) job on job.id=run.job_id "
                     f"where run.id in ({placeholders})", source_ids,
                 ).fetchall()}
@@ -24065,7 +23858,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in input_ids)
         run_rows = db.execute(
             f"""
-            select id from ({TASK_AGENT_RUN_SQL})
+            select id from ({TASK_LOGICAL_RUN_SQL})
             where status='running' and summary_input_id in ({placeholders})
             """,
             list(input_ids),
@@ -24074,15 +23867,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return 0
         run_ids = [int(row["id"]) for row in run_rows]
         run_placeholders = ",".join("?" for _ in run_ids)
-        db.execute(
-            f"""
-            update runs
-            set status='failed',
-                error='orphaned_task_agent_run_parent_not_processing',
-                finished_at=current_timestamp, updated_at=current_timestamp
-            where record_type='task_agent_runs' and status='running' and cast(legacy_key as integer) in ({run_placeholders})
-            """,
-            run_ids,
+        recover_logical_runs(
+            db, "task_agent_runs", run_ids, status="failed",
+            error="orphaned_task_agent_run_parent_not_processing", now=db.execute("select current_timestamp").fetchone()[0],
         )
         db.execute(
             f"""
@@ -25861,22 +25648,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "updated_at": timestamp,
             }) == 1
 
-    def record_task_agent_run(
-        self,
-        summary_input_id: int,
-        codex_session_id: str = "",
-        decision_json: str = "{}",
-        audit_summary: str = "",
-        memory_recall_used: bool = False,
-    ) -> int:
-        with self._connect() as db:
-            now_text = db.execute("select current_timestamp").fetchone()[0]
-            cursor = insert_run(db, "task_agent_runs", {
-                "summary_input_id": summary_input_id,
-                "session_id": codex_session_id,
-                "status": "completed", "finished_at": now_text, "updated_at": now_text,
-            })
-            return int(cursor.lastrowid)
 
     def begin_weekly_okr_analysis_job(
         self,
@@ -26158,77 +25929,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (status, error, job_id),
             )
 
-    def begin_task_agent_run(self, summary_input_id: int) -> int:
-        if summary_input_id <= 0:
-            raise ValueError("summary_input_id must be positive")
-        with self._agent_run_write_transaction(None) as (db, _):
-            parent = db.execute(
-                f"select 1 from ({WORK_SUMMARY_INPUT_SQL}) where id=? and status='processing'",
-                (summary_input_id,),
-            ).fetchone()
-            if parent is None:
-                raise ValueError("task agent run parent is not processing")
-            active = db.execute(
-                f"select id from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? and status='running'",
-                (summary_input_id,),
-            ).fetchone()
-            if active is not None:
-                return int(active["id"])
-            now_text = db.execute("select current_timestamp").fetchone()[0]
-            cursor = insert_run(db, "task_agent_runs", {
-                "summary_input_id": summary_input_id,
-                "status": "running", "finished_at": "", "updated_at": now_text,
-            })
-            return int(cursor.lastrowid)
 
-    def finish_task_agent_run(
-        self,
-        run_id: int,
-        *,
-        status: str,
-        codex_session_id: str = "",
-        decision_json: str = "{}",
-        audit_summary: str = "",
-        memory_recall_used: bool = False,
-        error: str = "",
-        _db: sqlite3.Connection | None = None,
-    ) -> None:
-        if status not in {"completed", "failed"}:
-            raise ValueError("task agent run terminal status is invalid")
-        expected = (
-            status,
-            codex_session_id,
-            "{}",
-            "",
-            0,
-            error,
-        )
-        if _db is not None:
-            self._finish_task_agent_run_in_connection(_db, run_id, expected)
-            return
-        with self._agent_run_write_transaction(None) as (db, _):
-            self._finish_task_agent_run_in_connection(db, run_id, expected)
 
-    def get_task_agent_run(self, run_id: int) -> dict[str, object] | None:
-        from app.native_standalone import latest_task_ref, task_decision
-
-        with self._connect() as db:
-            row = db.execute(
-                f'select * from ({TASK_AGENT_RUN_SQL}) where id=?', (run_id,)
-            ).fetchone()
-            if row is None:
-                return None
-            ref = latest_task_ref(db, run_id)
-        native = task_decision(ref)
-        values = dict(row)
-        values.update(
-            decision_json=native.decision_json,
-            audit_summary=native.audit_summary,
-            memory_recall_used=int(native.memory_recall_used),
-            native_available=native.available,
-            native_reason=native.reason,
-        )
-        return values
 
     def record_task_agent_projection(
         self, run_id: int, projection_json: str, *,
@@ -26238,7 +25940,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         def record(db: sqlite3.Connection) -> None:
             cursor = db.execute(
-                "update runs set projection_json=? where record_type='task_agent_runs' and cast(legacy_key as integer)=?",
+                "update runs set projection_json=? where record_type='agent_runs' and source_type='task_agent_runs' and cast(legacy_key as integer)=?",
                 (projection_json, run_id),
             )
             if cursor.rowcount != 1:
@@ -26256,7 +25958,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select run.id
-                from ({TASK_AGENT_RUN_SQL}) as run
+                from ({TASK_LOGICAL_RUN_SQL}) as run
                 join ({WORK_SUMMARY_INPUT_SQL}) as input
                   on input.id=run.summary_input_id
                 where run.status='running'
@@ -26267,14 +25969,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return 0
             run_ids = [int(row["id"]) for row in rows]
             placeholders = ",".join("?" for _ in run_ids)
-            db.execute(
-                f"""
-                update runs
-                set status='failed', error='orphaned_task_agent_run_parent_not_processing',
-                    finished_at=?, updated_at=?
-                where record_type='task_agent_runs' and status='running' and cast(legacy_key as integer) in ({placeholders})
-                """,
-                [now_text, now_text, *run_ids],
+            recover_logical_runs(
+                db, "task_agent_runs", run_ids, status="failed",
+                error="orphaned_task_agent_run_parent_not_processing", now=now_text,
             )
             db.execute(
                 f"""
@@ -26294,36 +25991,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             return len(run_ids)
 
-    @staticmethod
-    def _finish_task_agent_run_in_connection(
-        db: sqlite3.Connection,
-        run_id: int,
-        expected: tuple[str, str, str, str, int, str],
-    ) -> None:
-        row = db.execute(
-            f'select * from ({TASK_AGENT_RUN_SQL}) where id=?', (run_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError("task agent run does not exist")
-        if row["status"] != "running":
-            actual = tuple(
-                row[field]
-                for field in (
-                    "status",
-                    "codex_session_id",
-                    "decision_json",
-                    "audit_summary",
-                    "memory_recall_used",
-                    "error",
-                )
-            )
-            if actual == expected:
-                return
-            raise ValueError("conflicting task agent run terminal rewrite")
-        db.execute(
-            "update runs set status=?, session_id=?, error=?, finished_at=current_timestamp, updated_at=current_timestamp where record_type='task_agent_runs' and cast(legacy_key as integer)=? and status='running'",
-            (expected[0], expected[1], expected[5], run_id),
-        )
 
     @contextmanager
     def task_agent_domain_apply_transaction(self) -> Iterator[sqlite3.Connection]:
@@ -27632,7 +27299,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ),
             "meeting_alignment_runs": f"""
                 select runs.id as source_id, runs.created_at as occurred_at
-                from ({MEETING_RUN_SQL}) as runs
+                from ({MEETING_LOGICAL_RUN_SQL}) as runs
                 join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
                 where (
                     runs.status in ('retry', 'failed')
@@ -28223,7 +27890,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                                max(cast(attempts.legacy_key as integer)) as attempt_id
                         from actions as attempts
                         join runs on runs.id=attempts.attempt_agent_run_id
-                                 and runs.record_type='agent_runs'
+                                 and runs.record_type='agent_runs' and runs.source_type is null
                         where attempts.record_type='reply_attempts'
                         group by runs.task_id
                     )
@@ -28267,7 +27934,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({MEETING_RUN_SQL}) as runs
+                from ({MEETING_LOGICAL_RUN_SQL}) as runs
                 join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
                 union all
                 select

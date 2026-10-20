@@ -14,7 +14,8 @@ from app.codex_history import (
     _mcp_tool_result_from_event_msg, _content_text,
 )
 from app.codex_runner import _codex_home
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 
 # Stream payloads exist only for active invocations; terminal reads use native

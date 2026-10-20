@@ -5,7 +5,8 @@ import pytest
 from app.error_code_migration import migrate_legacy_meeting_projections
 from app.store import AutoReplyStore
 from app.task_storage import MEETING_JOB_SQL, insert_task
-from app.run_storage import MEETING_RUN_SQL, insert_run
+from app.run_storage import insert_run
+from app.store import MEETING_LOGICAL_RUN_SQL
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def test_migration_updates_projection_and_preserves_run_history(store):
             db.execute(f"select error from ({MEETING_JOB_SQL}) where id=?", (job_id,)).fetchone()[0]
         )
         history = db.execute(
-            f"select error from ({MEETING_RUN_SQL}) where job_id=?", (job_id,)
+            f"select error from ({MEETING_LOGICAL_RUN_SQL}) where job_id=?", (job_id,)
         ).fetchone()[0]
     assert projection["code"] == "runtime_execution_failed"
     assert projection["legacy_code"] == "meeting_agent"

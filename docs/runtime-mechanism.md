@@ -2,12 +2,12 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.9`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.10`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-A5a 的 Store19.9 候选尚未部署；本切片的准确来源是 C1 Store19.8／Email53。
+C2 的 Store19.10 候选尚未部署；本切片的准确来源是已冻结的 A5a Store19.9／Email53。
 B2b 观察提交、副本及原生 CLI 的独立证据见[专有动作验收](database-redesign-specialized-actions-validation.md)。
 C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validation.md)；本候选局部验证与剩余发布门槛见[Prepared Action 归属验收](database-redesign-prepared-actions-validation.md)。
 [此前阶段验收](database-redesign-final-acceptance.md)只记录 Store14.1 的历史范围；
@@ -51,6 +51,47 @@ current-data inverse 使用当前 Task 单一 owner 与未归档的被动 ledger
 局部实测区分 Task 的索引点选择与既有 generated-parent FK 检查：后者在旧／新
 payload UPDATE 上都随无关行数增长。C1 没有新增该扫描；本地旧／新对照、单语句
 原子性和已知 2 秒期限测试失败不构成生产启动／全量副本容量已通过的声明。
+
+Store `2026-10-19.10` 的 C2 将 Task Agent、Meeting、OKR 的真实历史运行合到
+`runs[agent_runs]`。`source_type` 保存原来源 namespace，`id` 是共同物理 Run ID，
+`legacy_key` 保留原公开键的 SQL 值与类型；公开唯一性仍按原整数 cast 语义、分
+namespace 检查。原 Consumer／Audit 的 `source_type` 为 NULL，所有角色、revision、
+adoption 入口只选这一分支；Run logical-parent 和四类 Actions Run 引用的原
+类型边界同样限定 `source_type IS NULL`，逆迁恢复原 trigger 文本。
+`codex_session_search_index.source_type` 含义不变。
+旧深链、API 与 workload key 用 `(source_type, legacy_key)` 读取真实共同 owner，
+不能直接把同号公开键当作物理 ID。新 Run 使用已有 runs AUTOINCREMENT、公开键
+触发器与 `runs:published` 水位，不增加分配器、编码或持久旧行副本。
+
+三个专业来源共同使用 `create_logical_run`／`claim_logical_run`／
+`finish_logical_run`／`get_logical_run` 与同一恢复写入器。旧三套 begin／record／
+finish／get writer、九个已无存储事实的结果参数及对应固定 SQL 输出退休；原生
+trajectory 的业务结果仍供详情和 UI 读取。Task 的唯一采用回执 `projection_json`
+及 Meeting Job 已采用的决定不删。专业 Run finish 不进入 Consumer／Audit 的
+`complete_agent_run`，也不制造 candidate、review 或 adoption。
+
+Task `summary_input_id`、OKR `request_id` 以各自真实 Task 类型的公开键定位
+`task_id`；不支持精确值与 SQLite 类型逆迁的来源在写入前拒绝。Meeting 保留原
+物理 `task_id`；已存在的 missing-parent 预留身份、`job_id` 与 FK finding 两向
+保留，不制造 Task。Task／Meeting 的原 `finished_at` 由 `completed_at` 唯一
+保存，所有原 status／session／error／时间和 JSON text 不归一化。OKR 从未存有的
+status／error／完成或更新时间，以及三个来源缺少的 role／generation／revision／
+turn／operation／lease／start，仍为 SQL NULL；Task 缺少的 transcript range 同样
+为 NULL。没有真实模型调用的历史 Run 仍是 Run，不补 attempt。
+
+`agent_runtime_attempts` 继续独立拥有实际调用、route、attempt number、retry 与
+lease；workload_kind／完整 workload_key／parent_id 原值不变。plain Task Run key
+与 `decision_repair.N` 仍指向该 typed Run；`deadline_backfill[.N]` 和
+`memory_backfill` 分别保留旧 Todo／Project 父归属。operation attempt 的 parent_id
+保持 NULL，其 owner/expiry fence 不变。native 读取保留原 latest_task_ref、
+latest_standalone_ref 和 exact_standalone_ref 选择；来源不可用继续明确返回不可用。
+
+C2 的配对发布只接受准确 Store19.9／Email53，目标 Store19.10／Email53。
+逆迁从当前共同 owner 重建旧来源事实，包括正迁后的新 Run；只用 TEMP 暂存，
+保留物理 ID、SQL 值／类型、原 marker 时钟、全部真实 sequence 行／ROWID／水位
+及原 FK multiset。历史 Runs8／Runs11 Factory 输出冻结；当前 constructor、native、
+History、search、UI 和实际业务 handler 选择共同 owner。字段映射、拒绝边界、
+实际旧 DAO 对照及未完成发布门槛见 [C2 Run 归属验收](business-model-run-owner-validation.md)。
 
 Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 类型只存 `_kind`，业务值使用声明的 JSONB 槽位及 prepared Action 的三个源限定列；公开字段按其唯一 owner 读取。
@@ -2231,7 +2272,7 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 命名、受心跳监控的基础设施循环，不是隐藏循环。
 
 部署静默检查对 `meeting_alignment_jobs.status='processing'` 和 `reply_tasks.status='processing'`
-核验 owner：会议任务须有有效的 meeting dispatcher 租约或 `meeting_alignment_runs` 的 `running`
+核验 owner：会议任务须有有效的 meeting dispatcher 租约或共同 `agent_runs` 中来源为 `meeting_alignment_runs` 的 `running`
 记录；回复任务须有有效的 reply dispatcher 租约或 `agent_runs` 的 `starting`/`running` 记录。
 失去 owner 证据的 processing 行由服务启动时既有恢复逻辑重新排队，不会无限卡住部署；
 `ready_to_send` 且仍锁定的会议投递仍计为在途工作。每次静默计数结束都会关闭只读 SQLite
@@ -3457,7 +3498,7 @@ Meeting、OKR与weekly结构由下面的同版本内部子单元处理；schedul
 
 ## Unified Meeting storage (Store 2026-10-11.3)
 
-4B会议子单元将原meeting_alignment_jobs的23项源字段保存为tasks[meeting_alignment_jobs]的准确scalar；会议运行使用runs[meeting_alignment_runs]，只退休三项已为空的过程缓存。已采用的决定、最终消息、发送结果与日历结果仍是业务状态；原生trajectory继续提供过程正文，缺失时明确不可用。源run.updated_at默认空字符串，正常begin/record入口仍显式写SQLite当前时间。
+历史4B会议子单元将原meeting_alignment_jobs的23项源字段保存为tasks[meeting_alignment_jobs]的准确scalar；当时会议运行使用runs[meeting_alignment_runs]（当前C2使用共同agent_runs owner，见本页顶部），只退休三项已为空的过程缓存。已采用的决定、最终消息、发送结果与日历结果仍是业务状态；原生trajectory继续提供过程正文，缺失时明确不可用。源run.updated_at默认空字符串，正常begin/record入口仍显式写SQLite当前时间。
 
 DAO、Dispatcher、runtime父定位与恢复、History、搜索、Console及静默检查保留原公共job/run ID和排序。投递key、Dispatcher source_id、generation、owner/expiry和claim token的原谓词不变；Memory event、delivery claim和run的父FK指向物理tasks ID，DTO回投原公共ID。ready_to_send仍不代表sent；已有发送结果与后续calendar状态保持原业务语义。
 

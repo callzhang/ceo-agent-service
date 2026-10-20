@@ -13,7 +13,7 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, update_action,
 )
 from app.agent_contracts import SystemExecutionResult
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 from app.task20_definitions import task20_column, task20_projection
 from app.task8_storage import task8_set_parts
 

@@ -969,34 +969,7 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
         final_message="会后对齐：@Avery 请确认风险预算。",
         send_result_json='{"status":"sent"}',
     )
-    return store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-history-1",
-        decision_json='{"action":"send","target":{"title":"项目群"}}',
-        audit_summary="会后对齐：上线范围仍未一致。",
-        status="sent",
-        error="",
-        audit_tool_events_json=json.dumps(
-            [
-                {
-                    "event_type": "response_item",
-                    "tool": "exec_command",
-                    "call_id": "meeting-call-1",
-                    "title": "Read meeting memory",
-                    "relevance": "确认会议相关历史判断",
-                    "input": '{"cmd":"rg 上线范围 /Users/principal/Documents/memory"}',
-                    "command": "rg 上线范围 /Users/principal/Documents/memory",
-                },
-                {
-                    "event_type": "response_item",
-                    "tool": "tool_output",
-                    "call_id": "meeting-call-1",
-                    "output": "memory.md:1:上线范围需要先确认风险预算",
-                },
-            ],
-            ensure_ascii=False,
-        ),
-    )
+    return store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-history-1", status="sent", error="")
 
 
 def _seed_native_meeting_search(
@@ -2153,22 +2126,8 @@ def test_meeting_attempt_detail_keeps_ready_run_sent_after_later_run(tmp_path: P
         eligible_at="2026-07-22T10:22:44+00:00",
         status="pending",
     )
-    first_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-first",
-        decision_json='{"action":"send","target":{"title":"HR"}}',
-        audit_summary="首次生成完成",
-        status="ready_to_send",
-        error="",
-    )
-    store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-second",
-        decision_json='{"action":"send","target":{"title":"HR"}}',
-        audit_summary="再次生成完成",
-        status="ready_to_send",
-        error="",
-    )
+    first_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-first", status="ready_to_send", error="")
+    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-second", status="ready_to_send", error="")
     store.update_meeting_alignment_job(
         job_id,
         status="sent",
@@ -2857,22 +2816,8 @@ def test_history_chart_marks_recovered_meeting_retries_without_failed_red_series
         eligible_at="2026-08-08T01:10:00+00:00",
         status="pending",
     )
-    store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-chart-retry",
-        decision_json="{}",
-        audit_summary="Temporary provider failure.",
-        status="retry",
-        error="codex_provider_unavailable",
-    )
-    store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-chart-sent",
-        decision_json='{"action":"send"}',
-        audit_summary="Recovery completed.",
-        status="ready_to_send",
-        error="",
-    )
+    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-chart-retry", status="retry", error="codex_provider_unavailable")
+    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-chart-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     payload = audit_web_module._history_chart_payload(store)
@@ -7836,14 +7781,7 @@ def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
         "Meeting provider unavailable",
         available_at=retry_at,
     )
-    run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-retry-session",
-        decision_json="{}",
-        audit_summary="Meeting provider unavailable",
-        status="retry",
-        error="Meeting provider unavailable",
-    )
+    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-retry-session", status="retry", error="Meeting provider unavailable")
 
     html = render_attempt_list(store, include_chart=False)
 
@@ -7873,14 +7811,7 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
         status="failed",
         error="Meeting delivery failed",
     )
-    meeting_run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-failed-session",
-        decision_json="{}",
-        audit_summary="Meeting delivery failed",
-        status="failed",
-        error="Meeting delivery failed",
-    )
+    meeting_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-failed-session", status="failed", error="Meeting delivery failed")
     project_id = store.create_work_project(
         title="Hiring",
         category="people",

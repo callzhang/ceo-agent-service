@@ -1173,7 +1173,10 @@ def _analyze_meeting_job(
     except ValueError as exc:
         _fail_job(store, job.id, "meeting_source", exc)
         return
-    run_id = store.begin_meeting_alignment_run(job.id)
+    run_id = store.claim_logical_run(
+        'meeting_alignment_runs',
+        job.id,
+    )
     try:
         decision = agent.decide(
             source,
@@ -1210,8 +1213,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=exc.decision,
                 status="ready_to_send",
                 error=error,
             )
@@ -1235,8 +1236,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status="failed",
             error=error,
         )
@@ -1250,8 +1249,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=exc.decision,
             status="failed",
             error=error,
         )
@@ -1283,8 +1280,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status="failed",
             error=error,
         )
@@ -1304,8 +1299,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="retry",
                 error=error,
             )
@@ -1332,8 +1325,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="retry",
                 error=error,
             )
@@ -1366,8 +1357,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="failed",
                 error=error,
             )
@@ -1395,8 +1384,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="retry",
                 error=error,
             )
@@ -1419,8 +1406,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status=(
                 "retry"
                 if (
@@ -1448,8 +1433,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status="failed",
             error=error,
         )
@@ -1472,8 +1455,6 @@ def _analyze_meeting_job(
         store,
         runner,
         run_id,
-        job_id=job.id,
-        decision=decision,
         status="ready_to_send",
         error="",
     )
@@ -1848,12 +1829,11 @@ def _record_agent_run(
     runner: Any,
     run_id: int,
     *,
-    job_id: int,
-    decision: MeetingAlignmentDecision | None,
     status: str,
     error: str,
 ) -> int:
-    store.finish_meeting_alignment_run(
+    store.finish_logical_run(
+        'meeting_alignment_runs',
         run_id,
         codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
         codex_transcript_start_line=int(
@@ -1862,12 +1842,6 @@ def _record_agent_run(
         codex_transcript_end_line=int(
             getattr(runner, "last_transcript_end_line", 0) or 0
         ),
-        decision_json=decision.model_dump_json() if decision is not None else "{}",
-        audit_tool_events_json=json.dumps(
-            getattr(runner, "last_audit_tool_events", []) or [],
-            ensure_ascii=False,
-        ),
-        audit_summary=decision.audit_summary if decision is not None else str(error),
         status=status,
         error=error,
     )

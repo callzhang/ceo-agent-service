@@ -41,7 +41,7 @@ def publication_dispatcher_source(db: sqlite3.Connection, *, current_version: st
                                   previous_versions: tuple[str, ...] = ()) -> str:
     """Select the existing dispatcher facts for the same publication role."""
     version = publication_store_version(db, current_version=current_version, previous_versions=previous_versions)
-    if version in ("2026-10-19.8", "2026-10-19.9"):
+    if version in ("2026-10-19.8", "2026-10-19.9", "2026-10-19.10"):
         from app.task_lifecycle_current_schema import task20_schema_is_current
         from app.task_lifecycle_storage import claim_projection
         from app.task_lifecycle_definitions import DISPATCH_KINDS

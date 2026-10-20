@@ -15,7 +15,8 @@ import time
 from app.database_backup import create_database_backup
 from app.reply_task_deferral import _legacy_event_may_have_effect
 from app.repository_updater import UpgradePreconditionError
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 from app.task_schema_release import publication_meeting_sources, publication_task_sources
 from app.action_schema_release import publication_candidate_source
 from app.action_receipt_schema_release import publication_receipt_sources

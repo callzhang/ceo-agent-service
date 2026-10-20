@@ -12,7 +12,7 @@ from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, stopped_because
 from app.history_actions import can_reopen_skipped_oa_review
 from app.web_api.common import json_safe, normalize_display_value
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 from app.agent_contracts import parse_persisted_consumer_result
 
 from app.action_storage import (

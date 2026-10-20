@@ -1475,7 +1475,7 @@ def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
         status="pending",
     )
     [job] = store.claim_meeting_alignment_jobs(limit=1, now=NOW.isoformat())
-    run_id = store.begin_meeting_alignment_run(job.id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', job.id)
     snapshots = {
         route.name: RuntimeCapabilitySnapshot(
             route_name=route.name,

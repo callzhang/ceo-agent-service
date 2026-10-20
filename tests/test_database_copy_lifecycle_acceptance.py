@@ -25,7 +25,7 @@ from app.agent_result import AgentError
 from app.consumer_agent import _prepare_reviewable_candidate
 from app.dingtalk_models import DingTalkMessage
 from app.service_message_sender import agent_message_delivery_key
-from app.run_storage import TASK_AGENT_RUN_SQL
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.store import AutoReplyStore
 from app.system_action_handlers import native_dingtalk_message_handlers
 from app.system_executor import SystemExecutor
@@ -342,7 +342,7 @@ def test_work_summary_input_applies_business_result_and_keeps_provenance(copied_
             (source_ref,),
         ).fetchall()
         row = db.execute("select payload_json,body_compacted,body_sha256,body_bytes,source_ref from tasks where record_type='work_summary_inputs' and id=?", (input_id,)).fetchone()
-        run = db.execute(f"select status from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?", (input_id,)).fetchone()
+        run = db.execute(f"select status from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?", (input_id,)).fetchone()
     assert len(business) == 1 and run[0] == "completed"
     assert row[0] == "{}" and row[1] == 1 and row[2] and row[3] > 0 and row[4] == source_ref
     assert store.enqueue_work_summary_input(item.source.type.value, source_ref, item.model_dump_json()) == input_id

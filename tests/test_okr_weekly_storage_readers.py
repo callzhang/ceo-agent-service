@@ -57,41 +57,29 @@ def test_request_failed_only_upsert_public_id_and_run_reference(tmp_path):
     )
     assert [item.id for item in store.claim_okr_review_requests(1)] == [501]
     store.mark_okr_review_request_done(501, codex_session_id="native-session")
-    run_id = store.record_okr_review_run(
-        request_id=501, codex_session_id="native-session",
-        codex_transcript_start_line=3, codex_transcript_end_line=9,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
+    run_id = store.create_logical_run('okr_review_runs', task_public_id=501, codex_session_id="native-session", codex_transcript_start_line=3, codex_transcript_end_line=9)
     with store._connect() as db:
         db.execute("update runs set legacy_key='900' "
-                   "where record_type='okr_review_runs' and id=?", (run_id,))
-    run = store.get_okr_review_run(900)
+                   "where record_type='agent_runs' and source_type='okr_review_runs' and id=?", (run_id,))
+    run = store.get_logical_run('okr_review_runs', 900)
     assert run is not None
     assert (run["id"], run["request_id"], run["codex_session_id"],
             run["codex_transcript_start_line"], run["codex_transcript_end_line"]) == (
         900, 501, "native-session", 3, 9
     )
-    assert store.get_okr_review_run(run_id) is None
+    assert store.get_logical_run('okr_review_runs', run_id) is None
     assert not run["native_available"]
-    second_run_id = store.record_okr_review_run(
-        request_id=501, codex_session_id="second-native-session",
-        codex_transcript_start_line=10, codex_transcript_end_line=19,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
-    missing_parent_run_id = store.record_okr_review_run(
-        request_id=999999, codex_session_id="orphan-native-session",
-        codex_transcript_start_line=1, codex_transcript_end_line=2,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
-    assert store.get_okr_review_run(second_run_id)["request_id"] == 501
-    assert store.get_okr_review_run(missing_parent_run_id)["request_id"] == 999999
+    second_run_id = store.create_logical_run('okr_review_runs', task_public_id=501, codex_session_id="second-native-session", codex_transcript_start_line=10, codex_transcript_end_line=19)
+    with pytest.raises(ValueError, match="parent does not exist"):
+        store.create_logical_run('okr_review_runs', 999999, codex_session_id="orphan-native-session")
+    assert store.get_logical_run('okr_review_runs', second_run_id)["request_id"] == 501
     item_id = store.record_okr_review_item(
         request_id=501, objective_title="Objective", objective_weight=1,
         kr_title="KR", kr_weight=1, item_json='{"adopted": true}',
     )
     with store._connect() as db:
-        assert db.execute("select request_id from runs where record_type='okr_review_runs' "
-                          "and cast(legacy_key as integer)=?", (900,)).fetchone()[0] == 501
+        assert db.execute("select cast(p.legacy_key as integer) from runs r join tasks p on p.id=r.task_id "
+                          "where r.record_type='agent_runs' and r.source_type='okr_review_runs' and cast(r.legacy_key as integer)=?", (900,)).fetchone()[0] == 501
         assert db.execute(f"select status from ({task20_projection('work_summary_inputs')}) "
                           "where id=501").fetchone()[0] == "pending"
         assert db.execute(f"select request_id from ({task12_projection('okr_review_items')}) where id=?", (item_id,)).fetchone()[0] == 501

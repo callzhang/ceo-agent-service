@@ -17,7 +17,7 @@ from app.task_schema_release import publication_meeting_sources
 from app.task_storage import MEETING_JOB_SQL
 from app.task20_definitions import task20_projection
 from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.run_storage import MEETING_RUN_SQL
+from app.store import MEETING_LOGICAL_RUN_SQL
 from tests.test_meeting_task_storage import forward, meeting_source
 
 
@@ -90,9 +90,9 @@ def test_meeting_publication_sources_accept_exact_old_and_current(tmp_path):
             "select * from meeting_alignment_jobs", "select * from meeting_alignment_runs")
         db.row_factory = None
         forward(db)
-        assert publication_meeting_sources(db) == (MEETING_JOB_SQL, MEETING_RUN_SQL)
+        assert publication_meeting_sources(db) == (MEETING_JOB_SQL, MEETING_LOGICAL_RUN_SQL)
         db.row_factory = sqlite3.Row
-        assert publication_meeting_sources(db) == (MEETING_JOB_SQL, MEETING_RUN_SQL)
+        assert publication_meeting_sources(db) == (MEETING_JOB_SQL, MEETING_LOGICAL_RUN_SQL)
         db.execute("update service_state set value='unknown' where key='store_schema_version'")
         with pytest.raises(ValueError, match="unknown"):
             publication_meeting_sources(db)

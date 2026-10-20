@@ -35,7 +35,7 @@ from app.meeting_alignment import (
 from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
 from app.task8_storage import task8_set_parts
 from app.action_task_delivery_definitions import task_delivery_projection
-from app.run_storage import MEETING_RUN_SQL
+from app.store import MEETING_LOGICAL_RUN_SQL
 from app.runs11_definitions import run11_projection
 from app.store import AutoReplyStore, MEETING_JOB_SQL
 from app.skill_features import FeatureRegistry
@@ -1446,10 +1446,10 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     assert run.audit_tool_events_json == "[]"
     assert run.native_available is False
     with store._connect() as db:
-        row = db.execute(
-            f"select decision_json, audit_summary, audit_tool_events_json from ({MEETING_RUN_SQL}) where id=?", (run.id,)
-        ).fetchone()
-    assert tuple(row) == ("{}", "", "[]")
+        columns = {column[0] for column in db.execute(
+            f"select * from ({MEETING_LOGICAL_RUN_SQL}) where id=?", (run.id,)
+        ).description}
+    assert not {"decision_json", "audit_summary", "audit_tool_events_json"} & columns
     assert store.get_meeting_alignment_job(job_id).decision_json != "{}"
 
 
@@ -1795,14 +1795,7 @@ def test_meeting_outage_backoff_counts_only_trailing_outage_turns(tmp_path):
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
     for _ in range(45):
-        store.record_meeting_alignment_run(
-            job_id=job_id,
-            codex_session_id="",
-            decision_json="{}",
-            audit_summary="",
-            status="retry",
-            error=json.dumps({"kind": "meeting_agent", "message": "result_invalid"}),
-        )
+        store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="", status="retry", error=json.dumps({"kind": "meeting_agent", "message": "result_invalid"}))
 
     class NoRouteRunner:
         last_session_id = ""

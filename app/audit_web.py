@@ -189,7 +189,7 @@ from app.task_retrieval import (
     retrieve_project_task_details,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
@@ -6870,7 +6870,11 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
 def _meeting_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "processing"
     detail_url = f"/meeting-attempts/{item.source_id}"
-    run = store.get_meeting_alignment_run_metadata(item.source_id)
+    run = store.get_logical_run(
+        'meeting_alignment_runs',
+        item.source_id,
+        load_native=False,
+    )
     attention = None
     if run is not None:
         job = store.get_meeting_alignment_job(run.job_id)
@@ -8683,7 +8687,10 @@ def render_meeting_attempt_detail(
     store: AutoReplyStore,
     run_id: int,
 ) -> tuple[int, str]:
-    run = store.get_meeting_alignment_run(run_id)
+    run = store.get_logical_run(
+        'meeting_alignment_runs',
+        run_id,
+    )
     if run is None:
         return 404, render_page(
             "Meeting attempt not found",

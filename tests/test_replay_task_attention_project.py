@@ -11,7 +11,7 @@ from app.action_business_storage import delete_business_action
 from app.business_source_reader import (
     AvailableSource, SourceUnavailableReason, UnavailableSource,
 )
-from app.run_storage import insert_run
+from app.logical_run_storage import create_logical_run
 from app.task8_storage import task8_set_parts
 from app.task20_definitions import task20_column
 from app.project_context_service import ProjectContextService
@@ -229,10 +229,7 @@ def test_domain_snapshot_includes_project_evidence_relations(tmp_path):
 def test_readback_counts_project_owned_proposal_and_rejects_no_proposal_receipt(tmp_path, save_receipt):
     store = AutoReplyStore(tmp_path / "proposal.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:proposal", "{}")
-    run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
-        "project_decisions": [], "task_decisions": [],
-        "project_assessments": [_assessment(proposal=True)],
-    }))
+    run_id = store.create_logical_run('task_agent_runs', input_id)
     if save_receipt:
         store.record_task_agent_projection(run_id, json.dumps({
             "status": "no_proposal", "outcomes": [], "recompute_error": "",
@@ -259,9 +256,7 @@ def test_readback_not_needed_receipt_uses_project_proof_without_task_or_card(tmp
                                    ("signal_id", "source_ref", "source_excerpt")})
     TaskAgentDecision.model_validate({"project_decisions": [], "task_decisions": [],
                                      "project_assessments": [assessment]})
-    run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
-        "project_decisions": [], "task_decisions": [], "project_assessments": [assessment],
-    }))
+    run_id = store.create_logical_run('task_agent_runs', input_id)
     receipt = {
         "assessment_index": 0, "status": "recorded", "task_ids": [],
         "anchor_id": anchor_id, "attention_id": None, "evidence": [citation],
@@ -292,9 +287,7 @@ def test_readback_not_needed_receipt_uses_project_proof_without_task_or_card(tmp
 def test_completed_receipt_does_not_prove_a_missing_attention_result(tmp_path, outcomes):
     store = AutoReplyStore(tmp_path / "missing-card.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:missing-card", "{}")
-    run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
-        "project_decisions": [], "task_decisions": [], "project_assessments": [_assessment(proposal=True)],
-    }))
+    run_id = store.create_logical_run('task_agent_runs', input_id)
     store.record_task_agent_projection(run_id, json.dumps({
         "status": "completed", "proposal_count": 1, "applied_count": len(outcomes),
         "outcomes": outcomes, "recompute_error": "", "project_assessments": [],
@@ -308,9 +301,7 @@ def test_completed_receipt_does_not_prove_a_missing_attention_result(tmp_path, o
 def test_current_negative_assessment_requires_a_saved_receipt_without_oracle_labels(tmp_path):
     store = AutoReplyStore(tmp_path / "missing-assessment.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:no-receipt", "{}")
-    store.record_task_agent_run(input_id, decision_json=json.dumps({
-        "project_decisions": [], "task_decisions": [], "project_assessments": [_assessment()],
-    }))
+    store.create_logical_run('task_agent_runs', input_id)
     tool = _tool()
     result = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
     assert "project_assessment_receipt_mismatch" in result["failures"]
@@ -486,18 +477,16 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
     store = AutoReplyStore(path)
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:missing-provenance", "{}")
     with store._connect() as db:
-        insert_run(db, "task_agent_runs", {
-            "id": 1001, "legacy_key": "1", "summary_input_id": input_id,
-            "status": "completed", "projection_json": json.dumps({
-                "status": "no_proposal", "outcomes": [], "recompute_error": "",
-            }),
-        })
-        insert_run(db, "task_agent_runs", {
-            "id": 1000, "legacy_key": "2", "summary_input_id": input_id,
-            "status": "completed", "projection_json": json.dumps({
-                "status": "no_proposal", "outcomes": [], "recompute_error": "",
-            }),
-        })
+        created = create_logical_run(db, "task_agent_runs", input_id, status="completed")
+        db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
+                   (1001, "1", json.dumps({
+                       "status": "no_proposal", "outcomes": [], "recompute_error": "",
+                   }), created))
+        created = create_logical_run(db, "task_agent_runs", input_id, status="completed")
+        db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
+                   (1000, "2", json.dumps({
+                       "status": "no_proposal", "outcomes": [], "recompute_error": "",
+                   }), created))
     tool = _tool()
     before_domain = tool.read_domain(store)
     with store._connect() as db:

@@ -317,7 +317,7 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
         limit=1, now="2026-07-14 02:11:00"
     )
     assert claimed.id == job_id
-    run_id = store.begin_meeting_alignment_run(job_id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
     attempt = store.claim_runtime_operation_attempt(
         "meeting",
         str(run_id),
@@ -573,25 +573,8 @@ def test_ready_reconciliation_retry_is_atomic_and_not_claimable_before_due(tmp_p
 def test_meeting_agent_runs_are_immutable(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)
-    first_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-1",
-        decision_json="{}",
-        audit_summary="首次发送结果不明确",
-        status="retry",
-        error="send status pending",
-    )
-    second_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-2",
-        codex_transcript_start_line=10,
-        codex_transcript_end_line=25,
-        decision_json='{"action":"send"}',
-        audit_tool_events_json='[{"tool":"dws"}]',
-        audit_summary="发送已确认",
-        status="sent",
-        error="",
-    )
+    first_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-1", status="retry", error="send status pending")
+    second_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-2", codex_transcript_start_line=10, codex_transcript_end_line=25, status="sent", error="")
 
     runs = store.list_meeting_alignment_runs(job_id)
     assert [run.id for run in runs] == [second_id, first_id]
