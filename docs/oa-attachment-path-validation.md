@@ -10,4 +10,4 @@ Acceptance is limited to the successful-download boundary: an exact OA instance/
 
 The new Consumer/Audit role-level `.xlsx` regression failed on the old code with the same `KeyError: 'path'`. The materialization wrapper now sets `path` to the temporary file it just wrote, independently of extractor-specific result fields. The fixed case confirms exact cell content, source IDs, original-byte digest and file bytes for both roles. `tests/test_oa_process_attachment_reader.py` and `tests/test_agent_cli.py`: **52 passed**. Ruff and `git diff --check` passed. The historical provider-denied PDF call was not replayed.
 
-Independent review and production readback are pending.
+Independent review approved the scoped diff with no Critical or Important findings and independently reran the 52 focused tests. Production readback is pending.
