@@ -92,3 +92,19 @@ done and skipped as its latest three rows. No OA write or historical retry
 was started for this verification. These observations establish publication
 and runtime loading; the maximum count/deadline behavior is covered by the
 controlled-clock regression tests above, not a real three-day wait.
+
+## Receipt-prefix repair production readback — 2026-10-20
+
+The canonical `receipt:<external_action_key>` matching repair was published in
+`ba3a26639b52cc8b9456767e9856fc4dbbe9793c` and deployed with
+`python -m app.deploy`. The production checkout read back the same commit, the
+replacement service PID was `3957`, and `/healthz` returned
+`{"ok":true,"status":"ok"}`. Status readback showed 13 queues, zero current
+quality-gate violations, two Attention rows and no processing History rows.
+
+Historical Attempt 15681 remains failed with its original receipt-validation
+error; its System Execution already records the OA comment as verified. Attempt
+15707 also remains failed with the same pre-fix validation error. Neither
+historical task was replayed after deployment, so no new OA comment or other
+external action was generated as release verification. The repair is covered
+by the scoped 38-test group above; the 10-retry / 72-hour budget is unchanged.
