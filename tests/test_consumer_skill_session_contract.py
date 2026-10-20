@@ -6,6 +6,7 @@ from app.business_skills import BusinessSkillCatalogEntry
 from app.consumer_agent import (
     consumer_selected_skill_source_fingerprints,
     consumer_selected_skill_session_contract_hash,
+    consumer_task_session_contract_hash,
 )
 from app.store import AgentRole
 
@@ -29,6 +30,16 @@ def test_selected_skill_body_changes_consumer_contract(monkeypatch, tmp_path):
 
     assert first != second
     assert first_contract != second_contract
+
+
+def test_oa_ocr_handoff_refreshes_only_oa_consumer_sessions():
+    selected = "selected-skills:unchanged"
+    assert consumer_task_session_contract_hash(selected, purpose_name="general") == selected
+    assert consumer_task_session_contract_hash("", purpose_name="general") == ""
+    oa_contract = consumer_task_session_contract_hash(selected, purpose_name="oa")
+    assert oa_contract.startswith("oa-ocr-handoff:")
+    assert oa_contract != selected
+    assert oa_contract == consumer_task_session_contract_hash(selected, purpose_name="oa")
 
 
 def test_frozen_skill_fingerprint_uses_round_snapshot_not_live_file(monkeypatch, tmp_path):

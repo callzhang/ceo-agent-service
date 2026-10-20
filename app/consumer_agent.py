@@ -339,7 +339,7 @@ authoritative original plus concise conclusions or evidence. Do not copy
 per-run artifacts or intermediate files into memory merely because they may
 look useful later.
 """.strip()
-AGENT_CAPABILITY_INSTRUCTIONS = """
+_CAPABILITY_COMMON_HEAD = """
 Use consumer_artifact_write for ordinary local drafts and files, with
 read_task_artifact/list_task_artifacts for this task generation's artifacts.
 consumer_document_write writes a scheduled task artifact to its explicit document target.
@@ -354,6 +354,8 @@ Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
+""".strip()
+_DIRECT_SOURCE_READ_INSTRUCTIONS = """
 For DingTalk reads in service Consumer/Audit turns, call the declared
 `mcp__agent_cli` read tools directly. Never run local `dws` commands through
 shell; command examples in product Skills describe interactive sessions and
@@ -366,6 +368,21 @@ is absent from a nested `ALL_TOOLS` catalog, shell inventory or another Agent's
 tool list; those do not describe this native Consumer/Audit session. If the
 direct call itself fails, preserve its concrete tool/provider error as the
 technical read failure.
+""".strip()
+_OA_OCR_HANDOFF_INSTRUCTIONS = """
+In Codex OA turns, use `functions.exec` to call the declared `mcp__agent_cli`
+tools. When a read returns `ocr_input_base64`, pass that value to
+`mcp__ai_services__ocr_document` as `data_base64` in the same JS cell, with a
+filename and its MIME type. For a rendered single-page image, do not pass its
+original PDF page number as OCR `page_numbers`; keep that number for the result.
+Print only OCR text, page mapping, confidence, warnings and the source SHA-256
+(`ocr_source_sha256` or `sha256`), never the image bytes.
+Do not print or recopy base64 through a later prompt. Never run local `dws`
+commands through shell; Skill CLI examples are for interactive sessions.
+In other runtimes, use their declared read tools. If the read or OCR call fails,
+preserve its concrete tool/provider error.
+""".strip()
+_CAPABILITY_COMMON_TAIL = """
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
@@ -388,7 +405,15 @@ bound plans or an explicit stop reason. They never edit Skills or reusable
 policies.
 Wire results use error_code, error_retryable, error_authorization_required;
 do not return a nested error object. Match the supplied wire schema exactly.
-""".strip() + "\n\n" + TASK_STORAGE_INSTRUCTIONS
+""".strip()
+AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
+    _CAPABILITY_COMMON_HEAD, _DIRECT_SOURCE_READ_INSTRUCTIONS,
+    _CAPABILITY_COMMON_TAIL,
+)) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
+OA_AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
+    _CAPABILITY_COMMON_HEAD, _OA_OCR_HANDOFF_INSTRUCTIONS,
+    _CAPABILITY_COMMON_TAIL,
+)) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
 
 
 def system_action_contracts_text() -> str:
@@ -469,6 +494,13 @@ def consumer_selected_skill_session_contract_hash(
         return ""
     encoded = json.dumps(fingerprints, sort_keys=True, separators=(",", ":"))
     return "selected-skills:" + sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def consumer_task_session_contract_hash(selected_skills_hash: str, *, purpose_name: str) -> str:
+    if purpose_name != "oa":
+        return selected_skills_hash
+    payload = selected_skills_hash + "\n" + OA_AGENT_CAPABILITY_INSTRUCTIONS
+    return "oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = """
 You are Consumer Agent A. Complete the business preparation using the task's
@@ -724,12 +756,13 @@ class ConsumerAgentRunner:
             ),
             prompt_configuration=configuration,
         )
-        skill_session_contract_hash = (
+        purpose_name = purpose_for_context(context, task)
+        skill_session_contract_hash = consumer_task_session_contract_hash(
             consumer_selected_skill_session_contract_hash(
                 selected_skill_source_fingerprints
-            )
+            ),
+            purpose_name=purpose_name,
         )
-        purpose_name = purpose_for_context(context, task)
         expected_wire_schema = json.loads(_schema_json(consumer_wire_model(purpose_name)))
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, skill_session_contract_hash
@@ -825,7 +858,7 @@ class ConsumerAgentRunner:
                 self.store.path, task.id, task.execution_generation, create=True,
             )
             make_consumer_agent_command(
-                command, task_workspace=str(task_workspace),
+                command, task_workspace=str(task_workspace), purpose_name=purpose_name,
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli", "--role", "consumer", "--task-id",
@@ -1224,7 +1257,8 @@ def consumer_developer_sections(
     )
     sections = _role_developer_sections(
         core,
-        capability_instructions=AGENT_CAPABILITY_INSTRUCTIONS,
+        capability_instructions=(OA_AGENT_CAPABILITY_INSTRUCTIONS
+                                 if purpose_name == "oa" else AGENT_CAPABILITY_INSTRUCTIONS),
         role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
     return sections + (
