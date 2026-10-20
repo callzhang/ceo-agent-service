@@ -6,7 +6,14 @@ from pathlib import Path
 FINANCE_RULE_CARD_PATHS = [
     Path("ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"),
 ]
+RUNTIME_RULE_CARD = Path("/Users/derek/.agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md")
+if RUNTIME_RULE_CARD.is_file():
+    FINANCE_RULE_CARD_PATHS.append(RUNTIME_RULE_CARD)
 FINANCE_SKILL = Path("ci/shared-skills/stardust-oa-finance-review/SKILL.md")
+FINANCE_SKILL_PATHS = [FINANCE_SKILL]
+RUNTIME_SKILL = Path("/Users/derek/.agents/skills/stardust-oa-finance-review/SKILL.md")
+if RUNTIME_SKILL.is_file():
+    FINANCE_SKILL_PATHS.append(RUNTIME_SKILL)
 OA_SKILL_PATHS = [Path("ci/shared-skills/dingtalk-oa-approval/SKILL.md")]
 RUNTIME_OA_SKILL = Path("/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md")
 
@@ -26,6 +33,26 @@ def test_supplier_payment_output_is_limited_to_sourced_material_conditions() -> 
     assert "Do not include or indirectly label material outside that scope" in skill_text
     text = FINANCE_RULE_CARD_PATHS[0].read_text(encoding="utf-8")
     assert "only include facts that verify a sourced payment condition" in text
+
+
+def test_supplier_payment_does_not_evaluate_or_report_signature_observations() -> None:
+    for path in FINANCE_SKILL_PATHS:
+        text = path.read_text(encoding="utf-8")
+        lowered = text.lower()
+        assert "do not assess" in lowered
+        assert "signatures" in lowered and "seals" in lowered and "stamps" in lowered
+        assert "signature blocks" in lowered
+        assert (
+            "must not appear in internal or applicant-facing review results" in lowered
+            or "from every user-facing and internal result field" in lowered
+        )
+    for path in FINANCE_RULE_CARD_PATHS:
+        text = path.read_text(encoding="utf-8")
+        supplier_section = text.split("## supplier_payment", 1)[1].split("\n## ", 1)[0]
+        lowered = supplier_section.lower()
+        assert "do not assess" in lowered
+        assert "signatures" in lowered and "seals" in lowered and "stamps" in lowered
+        assert "signature blocks" in lowered
 
 
 def test_supplier_payment_decision_output_omits_stamp_and_signature_observations() -> None:
