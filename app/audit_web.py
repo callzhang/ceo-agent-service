@@ -12620,11 +12620,11 @@ def _history_attention_html(
 ) -> str:
     if attention is None:
         return ""
-    heading = (
-        "需要你处理"
-        if attention.kind == "needs_manager"
-        else "系统失败，正在自动恢复"
-    )
+    heading = {
+        "needs_manager": "需要你处理",
+        "automatic_recovery": "系统失败，正在自动恢复",
+        "failed": "处理失败，尚未完成",
+    }.get(attention.kind, "处理状态待确认")
     retry_html = ""
     if attention.retry_at:
         retry_html = (
@@ -12635,11 +12635,11 @@ def _history_attention_html(
         )
     next_step_html = ""
     if actions_html:
-        next_step = (
-            "请选择一种处理方式。"
-            if attention.kind == "needs_manager"
-            else "系统会按计划自动重试，你当前无需操作。"
-        )
+        next_step = {
+            "needs_manager": "请选择一种处理方式。",
+            "automatic_recovery": "系统会按计划自动重试，你当前无需操作。",
+            "failed": "这是执行或技术失败，不需要你判断业务规则；可查看技术详情，必要时重新处理。",
+        }.get(attention.kind, "请查看当前状态和技术详情。")
         next_step_html = (
             '<div class="history-attention-next"><strong>你需要做什么：</strong>'
             f"{escape(next_step)}</div>"
