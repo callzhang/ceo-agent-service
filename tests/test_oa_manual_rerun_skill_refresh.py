@@ -243,7 +243,7 @@ def test_reviewer_feedback_can_reopen_skipped_oa_review_only_while_same_task_is_
         conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender="Derek OA",
         trigger_text="", channel="dingtalk", action="agent_run", agent_run_id=None,
-        resolved_at="2026-10-20 04:00:00", resolution="no_action",
+        resolved_at="", resolution="no_action",
         send_status="skipped",
         send_error="", codex_reason="", reviewer_feedback="Re-review using the supplied business evidence.",
         oa_process_instance_id="proc-1", oa_task_id="task-1", oa_action="review",
@@ -276,6 +276,10 @@ def test_reviewer_feedback_can_reopen_skipped_oa_review_only_while_same_task_is_
         ),
     )
 
+    from app.history_actions import can_reopen_skipped_oa_review
+
+    assert can_reopen_skipped_oa_review(attempt, task)
+
     status, _, _ = handle_rerun_attempt_post(
         store, attempt.id, skill_options_factory=Options,
     )
@@ -290,7 +294,7 @@ def test_skipped_oa_review_without_feedback_cannot_be_reopened():
         id=15716, conversation_id="oa_pending_scan:proc-1",
         trigger_message_id="oa-pending:proc-1:revision-1:2026-10-19",
         channel="dingtalk", action="agent_run", agent_run_id=None,
-        resolved_at="2026-10-20 04:00:00", send_status="skipped",
+        resolved_at="", send_status="skipped",
         reviewer_feedback="", oa_process_instance_id="proc-1",
         oa_task_id="task-1", oa_action="review", oa_action_result_json="",
     )

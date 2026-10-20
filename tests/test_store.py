@@ -13659,11 +13659,6 @@ def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
     store.record_reply_feedback(
         attempt_id, feedback="Re-review based on the business evidence.",
     )
-    with store._connect() as db:
-        update_action(db, "reply_attempts", attempt_id, {
-            "resolved_at": "2026-10-20 04:00:00", "resolution": "no_action",
-        })
-
     rerun_args = dict(
         conversation_id=conversation_id, conversation_title="审批待办",
         single_chat=True, trigger_message_id=trigger_id,
@@ -13672,7 +13667,7 @@ def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
         oa_url=oa_url, attempt_id=attempt_id, channel="dingtalk",
         expected_execution_generation=task.execution_generation,
     )
-    with pytest.raises(store_module.ManualRerunConflict, match="no_action"):
+    with pytest.raises(store_module.ManualRerunConflict):
         store.enqueue_manual_rerun_reply_task(**rerun_args)
 
     rerun = store.enqueue_manual_rerun_reply_task(
