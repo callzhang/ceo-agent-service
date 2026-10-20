@@ -228,6 +228,8 @@ def make_role_agent_command(
         raise ValueError("Consumer task workspace is required")
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    configured_names = set(configured_transport_server_names(command))
+    oa_audit_ocr = role == "audit" and purpose_name == "oa"
     _remove_config_options(
         command,
         prefixes=(
@@ -248,16 +250,22 @@ def make_role_agent_command(
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
           )
           for option in ("-c", f"features.{feature}=false")),
-        # Ordinary tasks expose role MCPs directly. OA Consumer composes reads
-        # and OCR inside CodeMode; role tool selection and sandbox stay intact.
+        # Only OA Consumer/Audit compose source bytes and OCR inside CodeMode.
+        # Other role tools and the sandbox retain their existing boundaries.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
         "-c", "features.code_mode.enabled=true",
         "-c", "features.code_mode.excluded_tool_namespaces="
-        + json.dumps([] if role == "consumer" else ["functions"]),
+        + json.dumps(
+            ["functions", "image_gen", "multi_agent_v1", "web"]
+            if oa_audit_ocr else [] if role == "consumer" else ["functions"]
+        ),
         "-c", "features.code_mode.direct_only_tool_namespaces="
-        + ("[]" if role == "consumer" and purpose_name == "oa"
-           else '["mcp__agent_cli", "mcp__ai_services"]'),
+        + json.dumps(
+            [f"mcp__{name}" for name in sorted(configured_names - {"agent_cli", "ai_services"})]
+            if oa_audit_ocr else [] if role == "consumer" and purpose_name == "oa"
+            else ["mcp__agent_cli", "mcp__ai_services"]
+        ),
         "-c",
         'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',
         "-c",
@@ -294,7 +302,6 @@ def make_role_agent_command(
             while flag in command:
                 index = command.index(flag)
                 del command[index:index + 2]
-    configured_names = set(configured_transport_server_names(command))
     for name in sorted(configured_names):
         if name != "agent_cli":
             options.extend([
@@ -349,11 +356,13 @@ def make_consumer_agent_command(
 def make_audit_agent_command(
     command: list[str],
     *,
+    purpose_name: str = "general",
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     make_role_agent_command(
         command,
         role="audit",
+        purpose_name=purpose_name,
         controlled_cli=controlled_cli,
     )
 

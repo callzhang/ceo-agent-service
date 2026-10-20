@@ -576,6 +576,34 @@ def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypa
     assert "只读审核" in snapshot["runtime_context"]
 
 
+def test_oa_audit_runner_selects_read_only_ocr_handoff_from_task_skill(setup):
+    _store, task, parent, context, _config, _router = setup
+    context = replace(context, task=replace(
+        context.task, skill_names=("dingtalk-oa-approval",),
+    ))
+    executor = CapturingExecutor(_wire())
+
+    _runner(setup, executor).run(
+        task, context, turn_attempt=0, parent_agent_run_id=parent.id,
+    )
+
+    command = executor.commands[0]
+    assert 'sandbox_mode="read-only"' in command
+    assert 'features.code_mode.excluded_tool_namespaces=["functions", "image_gen", "multi_agent_v1", "web"]' in command
+    direct_only = next(option for option in command if option.startswith(
+        "features.code_mode.direct_only_tool_namespaces="
+    ))
+    assert "mcp__agent_cli" not in direct_only
+    assert "mcp__ai_services" not in direct_only
+    developer = json.loads(next(option for option in command if option.startswith(
+        "developer_instructions="
+    )).split("=", 1)[1])
+    assert "same JS cell" in developer
+    assert "mcp__ai_services__ocr_document" in developer
+    [snapshot] = [event for event in executor.active_events if event.get("type") == "runtime.prompt"]
+    assert snapshot["invocation_facts"]["audit_purpose"] == "oa"
+
+
 @pytest.mark.parametrize(
     ("protocol_source", "protocol_present", "fact_source"),
     (

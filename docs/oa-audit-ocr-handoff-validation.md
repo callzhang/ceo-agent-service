@@ -2,12 +2,12 @@
 
 ## Selected failure and evidence boundary
 
-The current production checkout is `296b6d82f`. Its OA Consumer path already
+At diagnosis, the production checkout was `296b6d82f`. Its OA Consumer path already
 supports same-cell CodeMode transfer of attachment image bytes to OCR; Audit
 still exposes the read tools directly and excludes `functions` from CodeMode.
 The latest remote `main` inspected for this baseline also retains that Audit
-boundary. This document records the baseline only; it does not authorize or
-implement an Audit tool-boundary change.
+boundary. The separately scoped OA Audit read-only CodeMode/OCR change was
+subsequently approved; the baseline alone did not implement it.
 
 Audit run 386851 for OA task 405641 had two Codex OAuth attempts, 386852 and
 386876. In both complete native session trajectories,
@@ -52,10 +52,33 @@ Audit reading.
    Audit case with OCR is needed before claiming production business behavior;
    installation and health alone prove only the deployed mechanism.
 
+## Approved implementation and local verification
+
+Derek approved a separate change limited to OA Audit: compose its declared
+`agent_cli` reads and `ai_services.ocr_document` in CodeMode, exclude built-in
+namespaces there, and leave Audit judgment rules, action permissions and other
+task types unchanged. The service selects this path from its existing typed OA
+task context and records that choice in the saved invocation facts; Settings
+current preview uses the same OA Audit instruction assembly. Other configured
+MCP namespaces stay direct-only for OA Audit. The existing read-only sandbox
+and tool allowlists remain in force.
+
+The command/prompt regressions failed before implementation because the OA
+Audit parameter did not exist; after implementation, 65 focused role-boundary,
+Audit runner and Settings preview tests passed. Ruff passed for the changed
+Python files. An anonymous native Codex OAuth case used local fake source and
+OCR MCP servers, a 197,107-byte PNG, and an extra fake memory MCP namespace.
+The OCR server wrote a receipt for the exact image byte count and SHA-256. The
+final Agent message contained the OCR marker, original PDF page number `3`,
+and synthetic source SHA; it did not contain the image base64. Only source and
+OCR tools were called. Native JSONL still records base64 in MCP result and
+tool-argument events; that is distinct from printing it in the Agent message.
+The temporary fixture, image, credential symlink and receipts were removed
+after the run. This proves native cross-MCP transport under the generated OA
+Audit role command, not a production OA judgment.
+
 The repository's `AGENTS.md` requires Audit/review/safety-policy changes to be
-proposed and confirmed as a separate, explicitly scoped change. That
-confirmation remains pending. The concurrently claimed direct OCR namespace
-visibility work is independent and currently has only local verification in
-its claim row; reconcile its final published code before editing shared role
-command files. No production records or external actions were replayed for
-this baseline.
+proposed and confirmed as a separate, explicitly scoped change; that
+confirmation is recorded above. The concurrently claimed direct OCR namespace
+visibility work remains independent. No production records or external OA
+actions were replayed for this fixed case.
