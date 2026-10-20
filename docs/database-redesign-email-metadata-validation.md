@@ -202,3 +202,10 @@ upstream PR166/167 validation applies to their separate changes. Fresh current
 Store19.2/Email52 backup passed full integrity and original FK-multiset checks;
 only then atomically replaced the previous verified daily backup. B1 deployment
 remains pending final integration reviews.
+
+A subsequent concurrent main advance was preserved at `d423b045a`: only
+Consumer release digest configuration, its one test expectation and claims
+changed. No app/scripts file changed from the reviewed B1 source. The focused
+release-manifest test passed1/0.28s. Its1,196-file app/tests/scripts aggregate
+is`eddfb6b9d58dce8fdee8f68dc95ec13cd3be120289cf7f6e074c9243bc38207d`, recorded separately in the publication freeze; the prior1195
+and1196 source evidence labels remain unchanged.
