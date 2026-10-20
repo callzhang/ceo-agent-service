@@ -27,8 +27,8 @@
 - [x] Update docs/architecture.md and docs/runtime-mechanism.md with the Dashboard contract in the same feature commit.
 - [x] Review the complete diff, check git diff --check and run focused backend/frontend coverage.
 - [x] Verify desktop/mobile rendering and tab/detail behavior against the approved mockup.
-- [ ] Commit only this worktree's feature, reconcile remote increments without rewriting others, push and use `python -m app.deploy`.
-- [ ] Read back deployed commit/PID/healthz/queue/Attention/History before reporting deployed.
+- [x] Commit only this worktree's feature, reconcile remote increments without rewriting others, push and use `python -m app.deploy`.
+- [x] Read back deployed commit/PID/healthz/queue/Attention/History before reporting deployed.
 
 ## Execution ledger
 
@@ -63,3 +63,21 @@ Bound Consumer/Audit native attempts use their current Task lease rather than a
 standalone router lease. A fixture with an empty native lease reproduced missing
 Agent/model metadata; the read now accepts that exact current parent only while
 its Task lease is valid. An expired-Task assertion rejects the same running row.
+
+
+Release readback (2026-10-20 22:35 UTC): the initial waiting CLI was interrupted
+before stop/backup/checkout (its stack remained wait_until_quiet); a separate
+release operation then published the latest pushed version. Persisted receipt
+`deploy-419785bf-6b76-4d95-be84-1d8a81935acf` is succeeded, original b6f87c14,
+target and installed 763caecd3, empty error. A fresh standard `python -m app.deploy`
+returned already current at 763caecd. Main service PID 75708 and web listener
+75712 replaced the old PIDs. healthz, Dashboard queue API, Attention and History
+returned 200; the queue snapshot had active4/queued18, Attention2 and History36567
+(they are changing operational snapshots, not acceptance constants). Existing
+system health remained degraded due reply recovery-lease violations; that is not
+represented as overall healthy. The live /history UI was separately opened in
+CUA, selected Failed first, switched Active, expanded a scheduled row and retained
+both selection and detail after refresh. Desktop, 390px and 320px QA confirmed no
+horizontal overflow, no framework overlay and no browser app errors. Temporary
+QA server/scripts/dependency symlink were removed; delivered screenshots remain
+under the task visualization folder. No maintenance approval is needed anymore.
