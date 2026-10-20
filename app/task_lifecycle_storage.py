@@ -29,7 +29,7 @@ def _quote(name):
     return '"' + name.replace('"', '""') + '"'
 
 
-def source_assignments(kind, values, expressions, *, payload_source="tasks.payload_json"):
+def source_assignments(kind, values, expressions, *, payload_source="tasks.payload_json", source_alias=""):
     """SQL and parameters for all former payload fields, at their sole owner."""
     if (set(values) | set(expressions)) - set(source.TASK20_PAYLOAD_FIELDS[kind]):
         raise ValueError("unknown Task source field")
@@ -41,7 +41,7 @@ def source_assignments(kind, values, expressions, *, payload_source="tasks.paylo
         return TaskSet("", ())
     owners = SOURCE_FIELDS.get(kind, {})
     slots = {f: "_task_value_" + str(i) for i, (_, f) in enumerate(inputs)}
-    original = restore_sql(kind, payload_source) if owners else payload_source
+    original = restore_sql(kind, payload_source, alias=source_alias) if owners else payload_source
     updated = source.TASK20_LAYOUTS[kind].assignments_sql(original, slots)
     columns = ["payload_json", *owners.values()]
     outputs = (["ceo_task_domain(" + repr(kind) + ",_task_source)"] + [

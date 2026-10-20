@@ -17520,7 +17520,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 set {task8_set_parts('reply_tasks', {}, update_sql={'status': f"""case
                         when receipts.outcome in ({done_placeholders}) then 'done'
                         else 'skipped'
-                    end""", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
+                    end""", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json', source_alias='tasks').sql}  from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
                 where tasks.record_type='reply_tasks' and tasks.id in (
                     select current_tasks.id
                     from ({REPLY_TASK_SQL}) as current_tasks

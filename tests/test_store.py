@@ -108,6 +108,49 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_pat
         )
 
 
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    (("done", "done"), ("skipped_no_reliable_entry", "skipped")),
+)
+def test_startup_reconciles_failed_unsubscribe_task_from_terminal_receipt(
+    tmp_path, outcome, expected_status,
+):
+    from app.email_store import EmailStore
+    from tests.test_email_action_storage import _cases
+
+    path = tmp_path / "unsubscribe-startup.sqlite3"
+    store = AutoReplyStore(path)
+    EmailStore(path)
+    identity = "email-action:" + "c" * 64
+    with store._connect() as db:
+        # This fixture exercises the startup projection from a persisted receipt;
+        # provider-plan ancestry is outside the recovery query under test.
+        db.execute("pragma foreign_keys=off")
+        task_id = _insert_current_task8(db, "reply_tasks", {
+            "channel": "email", "conversation_id": "email-thread",
+            "conversation_title": "Email", "single_chat": 0,
+            "trigger_message_id": identity, "trigger_create_time": "",
+            "trigger_sender": "", "status": "failed",
+            "error": "worker_interrupted",
+        }).lastrowid
+        insert_email_action(
+            db, "email_unsubscribe_receipts",
+            _cases()["email_unsubscribe_receipts"] | {
+                "action_identity": identity,
+                "outcome": outcome,
+            },
+        )
+
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 1
+    with store._connect() as db:
+        task = db.execute(
+            f"select status, error from ({store_module.REPLY_TASK_SQL}) where id=?",
+            (task_id,),
+        ).fetchone()
+    assert tuple(task) == (expected_status, "")
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 0
+
+
 def test_agent_authored_message_requires_verified_provider_readback(tmp_path):
     store = AutoReplyStore(tmp_path / "agent-message-origin.sqlite3")
     with store._connect() as db:
