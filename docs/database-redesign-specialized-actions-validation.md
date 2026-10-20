@@ -304,3 +304,50 @@ under the existing backup-directory lock. Latest backup is479956992bytes/SHA
 a0c888db30ef341dd5904bb230576f29a80b6f0b2cc0bf900d3c39bee7b9f170.
 Only after verification did it replace this workflow's prior19.5 daily backup;
 no unrelated backup or temporary artifact was removed. B2b live remainspending.
+
+
+## B2b production publication and bounded upstream integration
+
+Standard deployment completed `cbf95112 -> 89a4a130`. A concurrent standard
+OKR Skill publication subsequently moved production to65560d34, whose app
+files are byte-identical to89a4a130. Readback at that observed commit confirms
+Store2026-10-19.7/Email53, exact declaration, codes63–69 with zero wrong-code
+rows, twelve direct-step fields without the six retired mirrors, quick_check ok
+and only original FK finding runs190042->tasks. PID93354 is the new supervisor.
+Healthz/status/Attention/History all returned200; queue failed counts did not
+increase. Attention total3/History36441 are observations, not business outcomes.
+The physical file remains479956992bytes; no physical shrink is claimed.
+
+The first post-release readback correctly failed its one-known-violation
+assertion: scheduler_tick_stale added a second issue during the concurrent
+standard restart. That failed evidence is retained. The process was observed
+parsing SQLite schema during startup; this is not a proven attribution of its
+entire startup duration. The scheduler resumed with tick05:01:11UTC, and the
+final snapshot returned to the one unresolved feedback created04:08:53UTC,
+before B2a cutover. No health gate, feedback record or recovery policy changed.
+
+The independent upstream application delta adds artifact-range metadata and OA
+feedback-rerun handling.67focused cases passed417.33s on89a4a130 after restart.
+The later4255OA correction passed31focused integration cases in358.03s,
+covering consumer release, the new OKR precondition assertion and changed
+OA helper/UI/Store rerun controls. All1223source hashes and4runtime pins
+remained exact before/after that batch. The separate live-source manifest freezes
+4255b292d:1223app/test/script files, SHA256
+6d3d7e308647f57ec5f6c585bb311e7fecf20141c5db497b713b61740ee90e83,
+plus current runtime CI/Skill pins.26of27B2b core paths remain byte-identical
+to211eabb87; the sole differing file is Store, where AST comparison isolates
+the difference to enqueue_manual_rerun_reply_task. This does not relabel the
+accepted773copy/native/current-fact inverse as having run on the new source.
+4255was being independently deployed when the65560live snapshot was captured;
+this evidence does not claim that later commit was live.
+
+See validation/2026-10-19-specialized-actions-live.json. C1/C2, A5 and D remain
+incomplete; the retained first exact-body native failure remains an open A5
+contract issue. All task-triggered test sends used substitutes.
+
+Fresh independent SPEC then QUALITY both APPROVE the live/source evidence.
+Review corrected stale current deployment statements and the attribution of
+current unfinished work: the earlier final-acceptance document is historical;
+the current plan/report own C1/C2/A5/D status. Reviewers inspected source and
+retained evidence only; test summaries remain attributed to root terminal
+observations, and no additional provider/native/live activity was performed.

@@ -7,8 +7,10 @@
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-本候选尚未部署；副本、真实 CLI、容量及发布的证据范围统一见
-[最终验收清单](database-redesign-final-acceptance.md)，不由历史分期记录推断生产生效。
+本结构已在生产回读确认：Store `2026-10-19.7`／Email53；本轮观察提交、
+副本及原生 CLI 的独立证据范围见[专有动作验收](database-redesign-specialized-actions-validation.md)。
+[此前阶段验收](database-redesign-final-acceptance.md)记录较早发布的范围；本轮 C1／C2、A5 及 D
+未完成项见上述专有动作验收及[当前业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，不能据此前阶段结案推断本轮全部完成。
 
 Tasks 合并二十种已有任务。七个结构列可写；`payload_json` 是按
 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 排列的严格 JSONB 值数组。
@@ -183,7 +185,7 @@ SQLite 类型、物理／公开身份、独立分配水位及原 FK finding 多�
 当前 typed claims／results 和独立证据，包括发布后新建的 claim、receipt、effect
 版本、continuation、cancellation 及 retry 状态；仅保留声明／marker 元数据，
 不保留源业务行副本。Email53 账本、Configs 声明和原 source marker 时钟不变。
-本切片未完成 A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元；也未部署。
+本切片已部署并回读确认 Store19.7／Email53；A5 的 Postfix／OKR／Attempt 归属及 C／D 业务单元仍未完成。
 局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
 [专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
@@ -2575,9 +2577,9 @@ Store19 的 Attempt 创建时间及状态索引以 `record_type` 开头，使时
 Memory 的公共父 ID 精确读取先定位父记录、再走 Memory 父索引。该唯一性已由
 既有全局公共 ID 唯一索引和整数规范文本约束保证；Memory 的 LEFT JOIN、
 字段及旧六／九／十二／十四类型声明不变。
-本段是隔离分支候选行为，未发布、未部署；实际副本、原始代码冷启动和原生
-角色路径的离线验收见 `docs/database-redesign-phase5e-validation.md`，完整 CI
-及上线读回仍属于后续发布门。
+本段保留 Phase5e 当时的结构与离线验收说明，见
+`docs/database-redesign-phase5e-validation.md`；当时的候选状态不代表当前发布状态。
+当前结构与生产读回以本文开头及专有动作验收记录为准，不据此声称完整 CI 已通过。
 
 
 ### Full document native output delivery
