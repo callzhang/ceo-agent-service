@@ -29,4 +29,3 @@ def test_consumer_and_audit_can_directly_call_only_the_enabled_ocr_tool() -> Non
             '["mcp__agent_cli", "mcp__ai_services"]'
         ) in command
         assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in command
-
