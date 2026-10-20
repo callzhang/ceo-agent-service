@@ -34,3 +34,15 @@ independent format-permitted success does not fix its existing Postfix conflict.
 A5 contract/mechanism remains open. Source is accepted B2a working copy, not raw
 production19.6; production preflight/live publication remain pending. C1 active;
 C2 and full D remain incomplete. No real provider sends.
+
+
+B2a standard deploymentcompleted actualcbf95112 (shared core unchanged from7e),
+Store19.6/Email53, newPID75178. Exact current declaration/five typed codes, retired
+six direct-step mirrors, HTTP200/queue-failure comparison/quickcheck/originalFK
+passed. Global health is explicitlydegraded by one unresolved feedback created
+04:08:53UTC before cutover, retained untouched; no zero-violation claim.
+B2b is normallymerged withcbf at4fe745ec5; original27corefiles byte-exact, separate
+publicationfreezeaf007868. B2b copy/native/current-facts inverse acceptance has
+SPEC/QUALITY approval; fresh productionpreflight/backup/publicationpending.
+C1nine-kind raw-byte/old-code inverse checks have passed during implementation;
+source not frozen/reviewed/live. A5/C2/fullDremainopen.

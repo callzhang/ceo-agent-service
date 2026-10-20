@@ -282,3 +282,17 @@ Live preflight/publication/readback remain pending; C/A5/D are incomplete.
 Independent final acceptance SPEC then QUALITY both APPROVE after checking the
 underlying disposable procedures, artifacts and final evidence JSON. Neither
 review reran tests or providers; source remains the approved773468fe0 freeze.
+
+
+## Publication-source refresh after B2a live
+
+Normal merge4fe745ec5 preserves actual B2a publicationcbf95112, including its
+independent OA compacted-rerun repair. Only audit_web and its existing test file
+changed within app/tests/scripts relative to the accepted773source; all27B2b
+core paths are byte-identical to211eabb87. The separate publication freeze is
+1222files/af007868dd0100d449d383d26c85bfacf0137ebf939f574b24b3f14da37c0912.
+Both prior freeze files and CI runtime pins remain intact. Exact upstream OA
+controls4passed at B2a after restart; they are not counted again as specialized
+verification. Parent copy/native/current-fact inverse evidence remains bound to
+773468fe0; it does not silently claim a re-execution on this merged source.
+B2b production19.6preflight/verified-backup and publication remain separate.
