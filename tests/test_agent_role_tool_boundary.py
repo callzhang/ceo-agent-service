@@ -10,7 +10,11 @@ from app.agent_runtime_contracts import (
     runtime_route_surface_capabilities,
 )
 from app.dws_client import DwsClient
-from app.consumer_agent import AGENT_CAPABILITY_INSTRUCTIONS, audit_developer_sections
+from app.consumer_agent import (
+    AGENT_CAPABILITY_INSTRUCTIONS,
+    audit_developer_sections,
+    consumer_developer_sections,
+)
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
 from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command
@@ -118,8 +122,37 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     assert "unsubscribe_email" not in consumer_tools + audit_tools
 
 
+def test_oa_consumer_can_handoff_ocr_bytes_inside_code_mode(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    consumer = _codex_command()
+    audit = _codex_command()
+
+    make_consumer_agent_command(
+        consumer, task_workspace=str(tmp_path / "task-workspace"), purpose_name="oa",
+    )
+    make_audit_agent_command(audit)
+
+    # The same role-scoped MCP tools can now be composed in one V8 cell, so
+    # the model never needs to receive and recopy a large base64 image.
+    assert "features.code_mode.direct_only_tool_namespaces=[]" in consumer
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in consumer
+    assert "mcp_servers.ai_services.enabled=false" not in consumer
+    assert 'features.code_mode.excluded_tool_namespaces=[]' in consumer
+    assert (
+        'features.code_mode.direct_only_tool_namespaces='
+        '["mcp__agent_cli", "mcp__ai_services"]'
+    ) in audit
+    assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in audit
+
+
 def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     audit = "\n".join(section.text for section in audit_developer_sections("rules"))
+    oa_consumer = "\n".join(
+        section.text for section in consumer_developer_sections(purpose_name="oa")
+    )
 
     for instructions in (AGENT_CAPABILITY_INSTRUCTIONS, audit):
         normalized = " ".join(instructions.replace("`", "").split()).lower()
@@ -131,6 +164,16 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
         assert "call the native" in normalized
         assert "do not infer" in normalized
         assert "all_tools" in normalized
+
+    oa_normalized = " ".join(oa_consumer.replace("`", "").split()).lower()
+    assert "functions.exec" in oa_normalized
+    assert "mcp__agent_cli" in oa_normalized
+    assert "mcp__ai_services__ocr_document" in oa_normalized
+    assert "same js cell" in oa_normalized
+    assert "do not print" in oa_normalized
+    assert "do not pass its original pdf page number as ocr page_numbers" in oa_normalized
+    assert "confidence, warnings" in oa_normalized
+    assert "call the native ai_services.ocr_document mcp directly" not in oa_normalized
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:

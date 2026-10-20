@@ -424,7 +424,7 @@ or parsing. Return values retain that written metadata snapshot and the existing
 native event/result projection. File I/O never extends these writer leases.
 
 Consumer 和只读 Audit 可通过精确节点读取 DingTalk Drive 附件。PDF 下载上限为 64 MiB，其他附件为 20 MiB；扫描 PDF 超过 700 KiB 的内联 MCP 输入上限时，工具返回原始一基页码，之后按页渲染为受限 JPEG，由 `ai_services.ocr_document` 读取。源文件仅在当前 MCP 进程临时目录中保留，技术读取或 OCR 失败继续保持真实技术故障。
-Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。Native CodeMode 还必须把 `mcp__ai_services` 与 `mcp__agent_cli` 一起列入 direct-only MCP 命名空间，否则虽有服务器和工具清单，模型仍不能直接调用 OCR。工具审批配置本身不决定可见性，角色清单和 direct-only 命名空间都必须包含该工具。
+Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。普通 Consumer 和 Audit 仍把 `mcp__agent_cli`、`mcp__ai_services` 列为 direct-only 命名空间。OA Consumer 将两者交给同一个 CodeMode JS 调用：附件读取结果中的 base64 在工具内存中直接传给 OCR，模型只接收 OCR 文本与来源信息。只声明 direct-only 工具并不能避免原生运行时截断超长附件输出；工具审批与业务动作边界不因此改变。
 
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
@@ -1689,7 +1689,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 ### Audit Agent B
 
-Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`，直接向模型声明具名任务工具。已验证的成功 MCP 读取使用原生直接调用；Agent 仍可能先尝试 CodeMode，再从错误中恢复，不能把声明方式等同于模型必定采用的调用过程。其他工具保留原生 CodeMode 路径；已有角色工具列表、functions 排除、沙箱、会话和路线保持不变。直接调用不能保证超长工具结果不被原生运行时截断，完整事实仍需按实际 trajectory 验证。
+Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。普通 Consumer 与 Audit 的任务工具仍为 direct-only；OA Consumer 的只读附件工具和 OCR 工具在 CodeMode 中组合，避免模型接收再复制可能被截断的 base64。OA 的一次性会话合同变化会建立新 session，此后继续复用同一对话对象的兼容 session；其他任务的会话合同不变。Audit 的 functions 排除、角色工具列表、沙箱、路线和外部动作规则不变。工具配置不能替代实际调用验证。
 
 Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录执行普通本地代码。该 task-bound 目录与 durable workspace 分离，原生 workspace-write 沙箱只为当前任务打开它及原生临时目录，命令网络关闭；MCP 进程仍从服务源码目录启动。任务终态清理所有代次的本地工件，pending/processing 期间保留以支持恢复和 Audit 读回。受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
 
@@ -1724,7 +1724,7 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 
 ### MCP 服务器可见范围
 
-Consumer 与 Audit 收到扫描页或图片 OCR 输入时，直接调用当前 Native Codex session 的 `ai_services.ocr_document`，传入原读取工具返回的字节、MIME、页码和摘要。嵌套代码环境的 `ALL_TOOLS`、shell 中的 CLI 清单及其他 Agent 的工具列表不能证明当前 Native session 缺少 OCR；只有当前 session 的实际工具调用失败才能作为 OCR 依赖故障。
+OA Consumer 收到扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里传递读取工具返回的字节、MIME、页码和摘要给 `ai_services.ocr_document`，仅展示 OCR 文本与来源信息；其他角色保持原直接工具路径。嵌套目录、shell 清单或其他 Agent 的工具列表都不能单独证明本轮 OCR 可用；以本轮实际调用结果判断依赖故障。
 
 Codex 会把 `$CODEX_HOME/config.toml` 中的全部 MCP 服务器合并进每次运行，后台 Agent turn 因此
 默认能看到安装用户的个人工具。服务清单（`CEO_SERVICE_MCP_CONFIG_PATH`）除了声明服务自己的
@@ -3489,7 +3489,7 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 Consumer 的业务核心输出统一为 `action/reason/target/payload/evidence_refs`，评分、阶段绑定和长期记忆保留为元数据。服务在推理前选择 purpose，生成动作集合及严格的 target/payload 分支；普通 purpose 支持 typed plan、reply/react 等动作，OA purpose 支持 approve/reject/return/comment。`return` 明确映射到真实 OA `revert_task`。自然语言 reason 不用于分流。多动作 plan 保留既有完整提案结构。新输出先规范化为现有 ConsumerAgentResult，再绑定来源、计算摘要并交 Audit；历史候选保持原样。Consumer 的 purpose 输出另存于候选中，以保留动作来源和回执关联。
 
-`request_access` 是经过审核的权限请求；OA 通过流程评论，普通会话通过原消息回复向可核验责任人提出。成功执行后，服务绑定该请求的已核验回执并安排第一次延后重读。后续 Consumer 可以选择普通 purpose `retry` 并引用原回执；匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，再与存储的原始 key 精确比较。未经核验的请求、其他普通评论、其他任务的回执不满足条件。Audit 审核 retry；只在审核通过后排队。预算按业务对象和 purpose 在既有 service_state 中以短事务持久化，不因 session、revision、attempt 退款或进程重启重置，也不能换回执清零。
+`request_access` 是经过审核的权限请求；OA 通过流程评论，普通会话通过原消息回复向可核验责任人提出。成功执行后，服务绑定该请求的已核验回执并安排第一次延后重读。后续 Consumer 可以选择普通 purpose `retry` 并引用原回执；匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，再与存储的原始 key 精确比较。迁移前没有 `purpose_output` 的旧 OA 候选，仅当它本身唯一的评论提案和已核验回执具有相同的 `material-read-access-block` action identity 时兼容为权限请求；普通评论、未经核验的请求、其他任务的回执仍不满足条件。Audit 审核 retry；只在审核通过后排队。预算按业务对象和 purpose 在既有 service_state 中以短事务持久化，不因 session、revision、attempt 退款或进程重启重置，也不能换回执清零。
 
 从原请求发出时刻起最多 72 小时、最多启动 10 次后续 Consumer 调用，先达到任一限制即停止。请求发出时间只从已验证动作记录取值，不信任模型时间；以 dispatch 记录时间作保守边界。退避从 5 分钟指数增长、单次封顶 12 小时，预约不晚于期限。每次重读前事务预留次数；重复检查同一预约不递增。崩溃时已预留的次数保留，不会突破上限。到期检查在刷新来源和调用 Consumer 之前完成。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
 
