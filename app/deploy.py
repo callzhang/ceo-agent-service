@@ -26,6 +26,7 @@ from pathlib import Path
 import plistlib
 import re
 import stat
+import time
 from uuid import uuid4
 
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
@@ -41,7 +42,9 @@ from app.repository_updater import (
     _default_start,
     _default_restart,
     _default_stop,
+    QUIET_WAIT_SECONDS,
     build_frontend,
+    in_flight_work,
     verify_imports,
     wait_for_health,
     wait_until_quiet,
@@ -199,6 +202,15 @@ def deploy(
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
     remote_head = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
+    if target_commit is not None:
+        try:
+            object_type = repository._run(
+                ["cat-file", "-t", target_commit], category="deploy_target_type"
+            ).stdout.decode().strip()
+        except GitCommandError:
+            object_type = ""
+        if object_type != "commit":
+            raise SystemExit("--target-commit must name a commit object in origin/main; nothing was deployed")
 
     def target_is_in_main(main_head: str) -> bool:
         if target_commit is None:
@@ -267,6 +279,24 @@ def deploy(
                     "target commit is not in origin/main"
                 )
 
+        def wait_and_recheck() -> None:
+            if target_commit is None:
+                wait_until_quiet(database_path)
+                return
+            deadline = time.monotonic() + QUIET_WAIT_SECONDS
+            while True:
+                wait_until_quiet(
+                    database_path,
+                    timeout_seconds=max(0.0, deadline - time.monotonic()),
+                )
+                recheck_pinned_target()
+                # A new turn may have started during the network fetch. Use
+                # the same in-flight count as the normal quiet wait before stop.
+                if in_flight_work(database_path) == 0:
+                    return
+                if time.monotonic() >= deadline:
+                    raise UpgradePreconditionError("service did not become idle; nothing was changed")
+
         if skip_quiet_wait:
             recheck_pinned_target()
             return
@@ -275,14 +305,12 @@ def deploy(
             processes = stop_for_maintenance(processes, stop_once)
             try:
                 prepare_maintenance(database_path, maintenance_tasks, operation.operation_id, processes)
-                wait_until_quiet(database_path)
-                recheck_pinned_target()
+                wait_and_recheck()
             except Exception:
                 start()
                 raise
         else:
-            wait_until_quiet(database_path)
-            recheck_pinned_target()
+            wait_and_recheck()
 
     publication = None
     if publish_contracts:

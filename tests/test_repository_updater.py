@@ -721,6 +721,68 @@ def test_deploy_target_commit_rejects_invalid_sha_before_repository_work(tmp_pat
         deploy_module.deploy(tmp_path / "missing", tmp_path / "db.sqlite3", target_commit="abc")
 
 
+def test_deploy_target_commit_rejects_annotated_tag_object_before_lifecycle_work(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    git(local, "fetch", "origin")
+    git(local, "tag", "-a", "candidate", target, "-m", "candidate")
+    tag_object = git(local, "rev-parse", "refs/tags/candidate")
+    assert git(local, "cat-file", "-t", tag_object) == "tag"
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: pytest.fail("quiet wait reached"))
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: pytest.fail("service stop reached"))
+
+    with pytest.raises(SystemExit, match="commit object"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=tag_object)
+
+
+def test_pinned_deploy_rechecks_quiet_after_target_fetch(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_upgrade import GitRepository
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    active = {"count": 0}
+    fetches = 0
+    stops: list[int] = []
+    original_fetch = GitRepository.fetch
+
+    def fetch_with_new_work(repository, remote):
+        nonlocal fetches
+        original_fetch(repository, remote)
+        fetches += 1
+        if fetches == 2:
+            active["count"] = 1
+
+    def wait_for_quiet(_db, **_kwargs):
+        if active["count"]:
+            raise deploy_module.UpgradePreconditionError("service did not become idle")
+
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.wait_for_quiet = kwargs["wait_for_quiet"]
+            self.stop = kwargs["stop"]
+
+        def execute_locked(self, op):
+            self.wait_for_quiet()
+            self.stop()
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(GitRepository, "fetch", fetch_with_new_work)
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", wait_for_quiet)
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: stops.append(active["count"]))
+    monkeypatch.setattr(deploy_module, "in_flight_work", lambda _db: active["count"], raising=False)
+
+    with pytest.raises(SystemExit, match="service did not become idle"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert fetches == 2
+    assert stops == []
+
+
 def test_deploy_target_commit_accepts_main_advance_during_quiet_wait(tmp_path: Path, monkeypatch):
     import app.deploy as deploy_module
     from app.repository_updater import UpgradeResult
@@ -730,7 +792,7 @@ def test_deploy_target_commit_accepts_main_advance_during_quiet_wait(tmp_path: P
     original = git(local, "rev-parse", "HEAD")
     selected: list[tuple[str, bool]] = []
 
-    def advance_during_wait(_db: Path) -> None:
+    def advance_during_wait(_db: Path, **_kwargs) -> None:
         updater_clone = tmp_path / "updater"
         (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
         git(updater_clone, "add", "version.txt")
@@ -738,6 +800,7 @@ def test_deploy_target_commit_accepts_main_advance_during_quiet_wait(tmp_path: P
         git(updater_clone, "push", "origin", "main")
 
     monkeypatch.setattr(deploy_module, "wait_until_quiet", advance_during_wait)
+    monkeypatch.setattr(deploy_module, "in_flight_work", lambda _db: 0)
     class CapturingUpdater:
         def __init__(self, *args, **kwargs):
             self.wait_for_quiet = kwargs["wait_for_quiet"]
@@ -765,7 +828,7 @@ def test_deploy_target_commit_rejects_main_rewrite_during_quiet_wait(tmp_path: P
     original = git(local, "rev-parse", "HEAD")
     stopped: list[str] = []
 
-    def rewrite_during_wait(_db: Path) -> None:
+    def rewrite_during_wait(_db: Path, **_kwargs) -> None:
         git(tmp_path / "updater", "push", "--force", "origin", f"{original}:main")
 
     monkeypatch.setattr(deploy_module, "wait_until_quiet", rewrite_during_wait)
