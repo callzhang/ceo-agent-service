@@ -11714,6 +11714,63 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
     )
 
 
+def test_quoted_media_id_uses_quoted_message_as_resource_owner(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 看下这张图",
+        message_id="reply-with-quote",
+        quoted_content="[图片消息](mediaId=@quoted-image-token)",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws_local_path = tmp_path / "quoted-image.png"
+    dws_local_path.write_bytes(TINY_PNG)
+    dws.resource_download_urls[
+        ("cid-1", "quoted-1", "@quoted-image-token", "mediaId")
+    ] = {"localPath": str(dws_local_path)}
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+
+    script_no_action(worker)
+    worker.run_once()
+
+    assert dws.resource_download_url_calls == [
+        ("cid-1", "quoted-1", "@quoted-image-token", "mediaId")
+    ]
+    assert worker.store.list_errors() == []
+
+
+def test_quoted_media_download_error_keeps_trigger_identity_and_names_owner(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 看下这张图",
+        message_id="reply-with-quote",
+        quoted_content="[图片消息](mediaId=@quoted-image-token)",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.resource_download_urls[
+        ("cid-1", "quoted-1", "@quoted-image-token", "mediaId")
+    ] = DwsError("resource download unavailable")
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+
+    script_no_action(worker)
+    worker.run_once()
+
+    error = worker.store.list_errors()[0]
+    assert error.message_id == "reply-with-quote"
+    assert error.detail.startswith("quoted-1: resource @quoted-image-token error")
+
+
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "app.notification.request.urlopen",

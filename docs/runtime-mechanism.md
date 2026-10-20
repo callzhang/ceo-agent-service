@@ -684,6 +684,13 @@ remains unchanged under the existing source security validation.
 signed URLs elsewhere, including authored results, retain the existing rejection.
 This changes source representation, not action permissions or historic replay.
 
+Worker image downloads bind media IDs in `content` to the current message and
+media IDs in `quoted_content` to `quoted_message_id`. Download requests and
+task-local cache keys use that source message identity. Failure details name the
+resource owner while the error row remains bound to the trigger message for task
+recovery. A quoted image without a source message ID remains a technical read
+failure instead of being fetched against the reply message.
+
 Runtime result security validation budgets authored fields, captured-source
 metadata and each captured-source value separately. Candidate/list/binding
 wrappers are not charged again against a source's JSON-decoding depth budget.

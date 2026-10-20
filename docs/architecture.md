@@ -1940,6 +1940,11 @@ approve 是审核结论，decision_selected 是选择事实；两者均不能投
 | `app.store.AutoReplyStore` | 保存队列、run 关系、租约、revision 和最小恢复状态。 |
 | `app.audit_web` | History、Agent session、Audit Rules、配置和恢复入口。 |
 
+Worker 下载消息图片时，`content` 中的媒体资源归当前消息所有，`quoted_content` 中的媒体资源归
+`quoted_message_id` 指向的原消息所有。资源下载和任务内缓存使用资源来源消息 ID；失败诊断明确记录
+该来源 ID，而错误行仍绑定触发消息 ID 以便与原任务恢复。引用内容缺少来源 ID 时保留技术错误，不把
+回复消息 ID 冒充资源所属消息。
+
 ## 运维入口
 
 ```bash
