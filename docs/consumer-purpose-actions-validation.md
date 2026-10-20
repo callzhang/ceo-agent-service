@@ -161,5 +161,7 @@ the ten-read/72-hour backoff budget.
 
 Focused regressions in
 `tests/test_consumer_access_request_continuation.py` check that a false flag
-stays false and that a verified request still starts the wait. Focused test and
-production deployment evidence must be added here after those steps complete.
+stays false and that a verified request still starts the wait. The merged-main
+focused run passed 125 tests across request continuation, purpose orchestration,
+permission retry budgets and wire contracts. Ruff passed on the changed Python
+files. Production deployment and live readback remain pending.
