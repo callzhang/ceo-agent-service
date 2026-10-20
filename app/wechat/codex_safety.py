@@ -217,6 +217,7 @@ def make_role_agent_command(
     command: list[str],
     *,
     role: str,
+    purpose_name: str = "general",
     task_workspace: str | None = None,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
@@ -247,14 +248,16 @@ def make_role_agent_command(
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
           )
           for option in ("-c", f"features.{feature}=false")),
-        # Expose the task-bound MCP namespace directly; keep native CodeMode
-        # for the remaining tools. Role tool selection and sandbox stay intact.
+        # Ordinary tasks expose role MCPs directly. OA Consumer composes reads
+        # and OCR inside CodeMode; role tool selection and sandbox stay intact.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
         "-c", "features.code_mode.enabled=true",
         "-c", "features.code_mode.excluded_tool_namespaces="
         + json.dumps([] if role == "consumer" else ["functions"]),
-        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]',
+        "-c", "features.code_mode.direct_only_tool_namespaces="
+        + ("[]" if role == "consumer" and purpose_name == "oa"
+           else '["mcp__agent_cli", "mcp__ai_services"]'),
         "-c",
         'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',
         "-c",
@@ -335,9 +338,11 @@ def make_consumer_agent_command(
     command: list[str],
     *,
     task_workspace: str,
+    purpose_name: str = "general",
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
-    make_role_agent_command(command, role="consumer", task_workspace=task_workspace,
+    make_role_agent_command(command, role="consumer", purpose_name=purpose_name,
+                            task_workspace=task_workspace,
                             controlled_cli=controlled_cli)
 
 
