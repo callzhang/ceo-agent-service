@@ -16,9 +16,9 @@ EXECUTION_REFERENCES = {
 }
 
 
-def execution_schema_parts():
+def execution_schema_parts(*, record_types=ACTION_RECORD_TYPES):
     """A deferred reciprocal FK permits two writes but requires both at commit."""
-    plan, alias = (ACTION_RECORD_TYPES.code(kind) for kind in (PLAN, ALIAS))
+    plan, alias = (record_types.code(kind) for kind in (PLAN, ALIAS))
     generated = (
         f'execution_binding_candidate_id integer generated always as (case when _kind={plan} and execution_public_id is not null then id when _kind={alias} then candidate_id end) virtual',
         f'execution_binding_public_id integer generated always as (case when _kind={plan} then execution_public_id when _kind={alias} then cast(legacy_key as integer) end) virtual',

@@ -1,3 +1,4 @@
+from app import shared_action_lifecycle
 import errno
 import hashlib
 import json
@@ -271,7 +272,6 @@ from app.action_storage import (
     delete_action,
     insert_sync_action,
     reply_action_projection,
-    email_action_projection,
     _reply_variant_for,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
@@ -296,6 +296,8 @@ from app.action_storage import (
 )
 from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS, TASK_DELIVERY_DEFAULTS_FRESH, TASK_DELIVERY_KINDS
 from app.action_error_definitions import error_projection
+
+from app.shared_action_definitions import email_projection as email_action_projection
 
 MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
 TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
@@ -447,7 +449,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.5"
+STORE_SCHEMA_VERSION = "2026-10-19.6"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -1973,7 +1975,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1981,7 +1983,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, metadata_owner=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2305,7 +2307,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -6772,7 +6774,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     db, action_variant=variant, include_business_actions=True,
                     include_email_history=True,
                     canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True)
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
@@ -6786,9 +6788,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
                         include_business_actions=True,
                         include_email_history=True,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
                         canonical_email="emails" in tables,
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True)
+                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
@@ -6809,7 +6811,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.5 schema"
+                    "or the current 2026-10-19.6 schema"
                 )
             return True
         finally:
@@ -22026,7 +22028,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 insert_action(db, "candidate_supplements", {
                     "candidate_id": review_candidate_id, "instruction": supplement_instruction,
                 })
-                update_action(db, "review_candidates", review_candidate_id, {
+                shared_action_lifecycle.update_plan(db, "reviewed", review_candidate_id, {
                     "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
                     "invalidation_reason": "supplement",
                 })

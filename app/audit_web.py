@@ -142,7 +142,6 @@ from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.email_canonical_storage import email_classification_projection
 from app.email_publication_sources import current_email_actions_available
-from app.action_storage import email_action_projection
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -200,6 +199,8 @@ from app.action_storage import (
     task_delivery_projection,
     _reply_variant_for,
 )
+
+from app.shared_action_definitions import email_projection as email_action_projection
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')

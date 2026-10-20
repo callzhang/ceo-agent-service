@@ -67,7 +67,7 @@ class ExistingSchemaUpgradeStateStore:
         from app.email_metadata_schema_release import (
             SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
         )
-        from app.sent_result_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+        from app.shared_action_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
         from app.state_definitions import state_projection
 
         if not self.database_path.exists():
@@ -422,7 +422,7 @@ def in_flight_work(database_path: Path) -> int:
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
-            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.5', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4'))}) as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.6', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5'))}) as claim "
             "        where claim.adapter_name='reply' "
             "          and claim.source_id=cast(task.id as text) "
             "          and coalesce(claim.terminal_at,'')='' "
@@ -432,14 +432,14 @@ def in_flight_work(database_path: Path) -> int:
             "    where (jobs.status='processing' and ("
             f"      exists (select 1 from ({meeting_runs}) as runs "
             "        where runs.job_id=jobs.id and runs.status='running') "
-            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.5', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4'))}) as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-19.6', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5'))}) as claim "
             "        where claim.adapter_name='meeting' "
             "          and claim.source_id=cast(jobs.id as text) "
             "          and coalesce(claim.terminal_at,'')='' "
             "          and julianday(claim.lease_expires_at)>julianday('now')))) "
             "    or (jobs.status='ready_to_send' "
             "      and coalesce(jobs.locked_at,'')<>''))"
-            f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-19.5', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4'))})"
+            f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-19.6', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5'))})"
             "    where coalesce(terminal_at,'')=''"
             "    and julianday(lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"

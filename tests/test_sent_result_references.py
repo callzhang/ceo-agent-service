@@ -240,6 +240,7 @@ def test_empty_json_scalar_and_non_json_results_keep_exact_value_and_type(tmp_pa
 
 
 def test_candidate_correction_keeps_untouched_sent_and_shared_attempt_meanings(tmp_path):
+    from app import shared_action_lifecycle
     from tests.test_reviewed_candidate_store import _reviewed
     store = AutoReplyStore(tmp_path / 'shared-correction.sqlite3')
     _, candidate, review, _ = _reviewed(store, options=False)
@@ -251,9 +252,9 @@ def test_candidate_correction_keeps_untouched_sent_and_shared_attempt_meanings(t
         _sent(connection, 'receipt', receipt['provider_result_json'])
         _owner(connection, 'independent', 'independent raw')
         _sent(connection, 'independent', 'independent raw', public=42)
-        extra = actions.insert_action(connection, 'candidate_action_attempts', dict(
+        extra = shared_action_lifecycle._insert(connection, 'candidate_action_attempts', dict(
             execution_id=execution['id'], action_index=1, external_action_key='receipt',
-            status='verified', result_json=None), execution_owner=True)
+            status='verified', result_json=None))
     changed = store.record_candidate_external_action(execution['id'], 'worker', 0, 'receipt', 'send', {'user_id': 'x'},
         {'provider_result': {'message': 'same'}, 'verification': {'state': 'sent'}})
     attempts = store.list_candidate_action_attempts(execution['id'])

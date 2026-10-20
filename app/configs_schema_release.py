@@ -62,7 +62,7 @@ def _actions(
     physical_provenance: bool = False,
     compact_payload: bool = False,
     selection_references: bool = False,
-    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False,
+    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False,
 ) -> list[dict]:
     return action_storage._current_objects(
         include_reply=True, reply_variant=variant, include_email=True,
@@ -76,7 +76,7 @@ def _actions(
         include_email_history=include_email_history,
         inline_legacy_owner=inline_legacy_owner,
         physical_provenance=physical_provenance, compact_payload=compact_payload,
-        selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references,
+        selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle,
     )
 
 
@@ -257,7 +257,7 @@ def configs_content_schema_is_current(
     physical_provenance: bool = False,
     compact_payload: bool = False,
     selection_references: bool = False,
-    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False,
+    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False,
 ) -> bool:
     """Read-only config/action predicate, independent of the Runs source profile."""
     if action_variant not in _ACTION_VARIANTS:
@@ -273,7 +273,7 @@ def configs_content_schema_is_current(
         include_email_history=include_email_history,
         inline_legacy_owner=inline_legacy_owner,
         physical_provenance=physical_provenance, compact_payload=compact_payload,
-        selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references,
+        selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle,
     )
     if canonical_email:
         expected_actions = [({**obj, 'sql': obj['sql'].replace(
@@ -295,7 +295,7 @@ def configs_content_schema_is_current(
                 canonical_email=canonical_email,
                 inline_legacy_owner=inline_legacy_owner,
                 physical_provenance=physical_provenance, compact_payload=compact_payload,
-                selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references)
+                selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle)
             and all(_source_declaration(db, kind)['sql'] is None
                     for kind in (*SOURCE_TABLES, _OBSERVATIONS)))
 

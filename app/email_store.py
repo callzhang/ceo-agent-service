@@ -108,7 +108,7 @@ from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, REPLY_VARIANTS,
-    email_action_projection, email_action_auxiliary_objects_are_current,
+    email_action_auxiliary_objects_are_current,
     insert_action, insert_email_action, update_email_action, update_action,
     delete_action, delete_email_action,
 )
@@ -116,6 +116,9 @@ from app.action_storage import (
 
 from app.task12_storage import task12_insert_parts, task12_projection, task12_set_parts
 from app.task20_definitions import TASK20_FIELDS, task20_column
+
+from app import shared_action_lifecycle
+from app.shared_action_definitions import email_projection as email_action_projection
 
 REPLY_TASK_SQL = task20_projection('reply_tasks')
 
@@ -129,6 +132,8 @@ _EMAIL_HISTORICAL_COLUMNS = {
 
 
 # Finite Email29 source-shaped reads used by the current DAO and validators.
+EMAIL_ACTION_PROJECTIONS = {kind: email_action_projection(kind) for kind in EMAIL_ACTION_PROJECTIONS}
+
 EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
 EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
 EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
@@ -3061,12 +3066,12 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, metadata_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
         if self.path.exists():
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("begin")
                 if db.execute("select 1 from sqlite_schema where name='actions'").fetchone() and not any(
-                    email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True)
+                    email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
                     for variant in REPLY_VARIANTS
                 ):
                     raise EmailPersistenceCorruption("required Email29 action schema is missing or malformed")
@@ -3074,7 +3079,7 @@ class EmailStore:
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)
         with schema_initialize_lock(self.path):
-            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, metadata_owner=True)
+            require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=EMAIL_SCHEMA_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, metadata_owner=True)
             durable_rows_validated = self._initialize(validate_rows=False)
         if validate_rows and not durable_rows_validated:
             with self._connect() as db:
@@ -7035,7 +7040,7 @@ class EmailStore:
                     include_business_actions=True,
                     include_email_history=True,
                     canonical_email=True,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True,
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True,
                 )
                 for variant in REPLY_VARIANTS
             ):
@@ -8575,10 +8580,6 @@ class EmailStore:
         *,
         now: str,
     ) -> None:
-        existing_by_id = db.execute(
-            f"select * from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
-            (plan.action_plan_id,),
-        ).fetchone()
         encoded_actions = _json_dump([action.value for action in plan.actions])
         encoded_parameters = _json_dump(
             {
@@ -8596,66 +8597,9 @@ class EmailStore:
                 ]
             )
         )
-        expected = (
-            plan.action_plan_version,
-            plan.classification_id,
-            plan.account_id,
-            plan.category,
-            plan.classification_source,
-            plan.confidence,
-            plan.model_id,
-            plan.config_version,
-            encoded_actions,
-            encoded_parameters,
-            encoded_authorizations,
-            plan.created_at.isoformat(),
-        )
-        if existing_by_id is not None:
-            actual = (
-                existing_by_id["action_plan_version"],
-                existing_by_id["classification_id"],
-                existing_by_id["account_id"],
-                existing_by_id["category"],
-                existing_by_id["classification_source"],
-                existing_by_id["confidence"],
-                existing_by_id["model_id"],
-                existing_by_id["config_version"],
-                existing_by_id["actions_json"],
-                existing_by_id["action_parameters_json"],
-                existing_by_id["authorization_snapshot_json"],
-                existing_by_id["created_at"],
-            )
-            if actual != expected:
-                raise EmailActionPlanConflict(
-                    f"ActionPlan ID {plan.action_plan_id} has different immutable fields"
-                )
-            self._ensure_direct_action_rows(db, plan, now=now)
-            return
-        version_row = db.execute(
-            f"""
-            select action_plan_id from ({EMAIL_PLAN_SQL})
-            where classification_id=? and action_plan_version=?
-            """,
-            (plan.classification_id, plan.action_plan_version),
-        ).fetchone()
-        if version_row is not None:
-            raise EmailActionPlanConflict(
-                f"ActionPlan version {plan.action_plan_version} already exists for "
-                f"classification {plan.classification_id}"
-            )
-        latest = db.execute(
-            f"select max(action_plan_version) from ({EMAIL_PLAN_SQL}) where classification_id=?",
-            (plan.classification_id,),
-        ).fetchone()[0]
-        expected_version = 1 if latest is None else int(latest) + 1
-        if plan.action_plan_version != expected_version:
-            raise EmailActionPlanConflict(
-                f"ActionPlan version must be {expected_version} for classification "
-                f"{plan.classification_id}"
-            )
-        insert_email_action(
+        shared_action_lifecycle.persist_plan(
             db,
-            "email_action_plans",
+            "email",
             {
                 "action_plan_id": plan.action_plan_id,
                 "action_plan_version": plan.action_plan_version,
@@ -8684,9 +8628,9 @@ class EmailStore:
     ) -> None:
         for action in plan.direct_actions:
             parameters = dict(plan.action_parameters.get(action, {}))
-            insert_email_action(
+            shared_action_lifecycle.ensure_effect_step(
                 db,
-                "email_actions",
+                "email",
                 {
                     "action_id": _direct_action_id(plan.action_plan_id, action),
                     "action_plan_id": plan.action_plan_id,
@@ -8699,7 +8643,6 @@ class EmailStore:
                     "created_at": now,
                     "updated_at": now,
                 },
-                ignore_plan_action_conflict=True,
             )
 
     @staticmethod
@@ -16178,27 +16121,6 @@ class EmailStore:
         ):
             raise EmailReplyDispatchConflict("email_reply_dispatch_in_flight")
 
-    @staticmethod
-    def _update_direct_action(
-        db: sqlite3.Connection, action_id: str, values: dict, *,
-        expected_status: str | None = None,
-        expected_started_at: str | None = None,
-        expected_attempt_count: int | None = None,
-    ):
-        # Every caller owns its original writer transaction. Recheck the exact
-        # source predicates before resolving its structural ROWID; the accepted
-        # writer updates that source identity rather than the physical action ID.
-        locator = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=? "
-            "and (? is null or status=?) and (? is null or started_at=?) "
-            "and (? is null or attempt_count=?)",
-            (action_id, expected_status, expected_status,
-             expected_started_at, expected_started_at,
-             expected_attempt_count, expected_attempt_count),
-        ).fetchone()
-        if locator is None:
-            return ActionWriteResult(None, 0)
-        return update_email_action(db, "email_actions", locator[0], values)
 
     def append_action_attempt(
         self,
@@ -16218,66 +16140,12 @@ class EmailStore:
             raise ValueError("attempt status must be done, skipped or failed")
         with self._connect() as db:
             db.execute("begin immediate")
-            action = db.execute(
-                f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?", (action_id,)
-            ).fetchone()
-            if action is None:
-                raise EmailActionAttemptConflict(
-                    f"unknown direct email action {action_id}"
-                )
-            if action["action_type"] not in _DIRECT_ACTION_VALUES:
-                raise EmailActionAttemptConflict(f"action {action_id} is not direct")
-            if action["status"] not in _CURRENT_ACTION_STATUSES:
-                raise EmailPersistenceCorruption(
-                    f"invalid current action status for {action_id}"
-                )
-            latest = db.execute(
-                f"select max(attempt_number) from ({EMAIL_ATTEMPT_SQL}) where action_id=?",
-                (action_id,),
-            ).fetchone()[0]
-            expected_attempt = 1 if latest is None else int(latest) + 1
-            if attempt_number != expected_attempt:
-                if latest is not None and attempt_number <= latest:
-                    raise EmailActionAttemptConflict(
-                        f"attempt {attempt_number} already exists for {action_id}"
-                    )
-                raise EmailActionAttemptConflict(
-                    f"attempt number must be {expected_attempt} for {action_id}"
-                )
-            cursor = insert_action(
-                db,
-                "email_action_attempts",
-                {
-                    "action_id": action_id,
-                    "attempt_number": attempt_number,
-                    "status": status,
-                    "provider_operation": provider_operation,
-                    "provider_target": provider_target,
-                    "provider_result_id": provider_result_id,
-                    "error": error,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                },
-            )
-            self._update_direct_action(
-                db,
-                action_id,
-                {
-                    "status": status,
-                    "attempt_count": attempt_number,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "provider_operation": provider_operation,
-                    "provider_target": provider_target,
-                    "provider_result_id": provider_result_id,
-                    "error": error,
-                    "updated_at": self._now(),
-                },
-            )
-            row = db.execute(
-                f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
-                (cursor.lastrowid,),
-            ).fetchone()
+            cursor = shared_action_lifecycle.transition(db, 'email', 'outcome', identity=action_id,
+                values=dict(attempt_number=attempt_number, status=status,
+                    provider_operation=provider_operation, provider_target=provider_target,
+                    provider_result_id=provider_result_id, error=error, started_at=started_at,
+                    finished_at=finished_at, updated_at=self._now()))
+            row = db.execute(f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?", (cursor.lastrowid,)).fetchone()
         assert row is not None
         return dict(row)
 
@@ -16333,23 +16201,7 @@ class EmailStore:
                 phase_started_at = monotonic()
                 try:
                     attempt_number = int(row["attempt_count"]) + 1
-                    updated = self._update_direct_action(
-                        db,
-                        row["action_id"],
-                        {
-                            "status": "processing",
-                            "started_at": claimed_at,
-                            "finished_at": "",
-                            "next_attempt_at": "",
-                            "provider_operation": "",
-                            "provider_target": "",
-                            "provider_result_id": "",
-                            "error": "",
-                            "updated_at": claimed_at,
-                        },
-                        expected_status=row["status"],
-                        expected_attempt_count=row["attempt_count"],
-                    ).rowcount
+                    updated = shared_action_lifecycle.transition(db, 'email', 'claim', identity=row["action_id"], values={'started_at': claimed_at, 'updated_at': claimed_at}, expected={'status': row["status"], 'attempt_count': row["attempt_count"]}).rowcount
                     if updated != 1:
                         raise EmailActionAttemptConflict(
                             f"direct action claim changed for {row['action_id']}"
@@ -16910,23 +16762,7 @@ class EmailStore:
             ):
                 return None
             attempt_number = int(row["attempt_count"]) + 1
-            updated = self._update_direct_action(
-                db,
-                row["action_id"],
-                {
-                    "status": "processing",
-                    "started_at": claimed_at,
-                    "finished_at": "",
-                    "next_attempt_at": "",
-                    "provider_operation": "",
-                    "provider_target": "",
-                    "provider_result_id": "",
-                    "error": "",
-                    "updated_at": claimed_at,
-                },
-                expected_status=row["status"],
-                expected_attempt_count=row["attempt_count"],
-            ).rowcount
+            updated = shared_action_lifecycle.transition(db, 'email', 'claim', identity=row["action_id"], values={'started_at': claimed_at, 'updated_at': claimed_at}, expected={'status': row["status"], 'attempt_count': row["attempt_count"]}).rowcount
             if updated != 1:
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {row['action_id']}"
@@ -17061,15 +16897,14 @@ class EmailStore:
                         "requested_at": requested_at,
                     },
                 )
-                self._update_direct_action(
-                    db,
-                    expected.action_id,
+                shared_action_lifecycle.transition(
+                    db, "email", "schedule",
+                    identity=expected.action_id, values=
                     {
                         "next_attempt_at": requested_at,
                         "updated_at": requested_at,
                     },
-                    expected_status="failed",
-                    expected_attempt_count=expected.attempt_number - 1,
+                    expected={"status": "failed", "attempt_count": expected.attempt_number - 1},
                 )
             return True
 
@@ -17120,23 +16955,7 @@ class EmailStore:
             ).fetchone()
             if busy is not None:
                 return None
-            self._update_direct_action(
-                db,
-                action_id,
-                {
-                    "status": "processing",
-                    "started_at": claimed_at,
-                    "finished_at": "",
-                    "next_attempt_at": "",
-                    "provider_operation": "",
-                    "provider_target": "",
-                    "provider_result_id": "",
-                    "error": "",
-                    "updated_at": claimed_at,
-                },
-                expected_status="failed",
-                expected_attempt_count=expected_attempt_count,
-            )
+            shared_action_lifecycle.transition(db, 'email', 'claim', identity=action_id, values={'started_at': claimed_at, 'updated_at': claimed_at}, expected={'status': "failed", 'attempt_count': expected_attempt_count})
             return self._claimed_direct_action(
                 row,
                 attempt_number=expected_attempt_count + 1,
@@ -17409,43 +17228,16 @@ class EmailStore:
                     raise EmailActionAttemptConflict(
                         f"provider locator changed for {action.action_id}"
                     )
-            cursor = insert_action(
-                db,
-                "email_action_attempts",
-                {
-                    "action_id": action.action_id,
-                    "attempt_number": action.attempt_number,
-                    "status": status,
-                    "provider_operation": provider_operation,
-                    "provider_target": provider_target,
-                    "provider_result_id": provider_result_id,
-                    "error": error,
-                    "started_at": action.claim_started_at,
-                    "finished_at": finished_at,
-                },
-            )
-            updated = self._update_direct_action(
-                db,
-                action.action_id,
-                {
-                    "status": status,
-                    "attempt_count": action.attempt_number,
-                    "finished_at": finished_at,
-                    "next_attempt_at": next_attempt_at,
-                    "provider_operation": provider_operation,
-                    "provider_target": provider_target,
-                    "provider_result_id": provider_result_id,
-                    "error": error,
-                    "updated_at": finished_at,
-                },
-                expected_status="processing",
-                expected_started_at=action.claim_started_at,
-                expected_attempt_count=action.attempt_number - 1,
-            ).rowcount
-            if updated != 1:
-                raise EmailActionAttemptConflict(
-                    f"direct action claim changed for {action.action_id}"
-                )
+            cursor = shared_action_lifecycle.transition(db, 'email', 'outcome', identity=action.action_id,
+                values=dict(attempt_number=action.attempt_number, status=status,
+                    provider_operation=provider_operation, provider_target=provider_target,
+                    provider_result_id=provider_result_id, error=error,
+                    started_at=action.claim_started_at, finished_at=finished_at,
+                    next_attempt_at=next_attempt_at, updated_at=finished_at),
+                expected={'status': 'processing', 'started_at': action.claim_started_at,
+                          'attempt_count': action.attempt_number - 1})
+            if cursor.rowcount != 1:
+                raise EmailActionAttemptConflict(f"direct action claim changed for {action.action_id}")
             attempt = db.execute(
                 f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
                 (cursor.lastrowid,),
@@ -17487,47 +17279,17 @@ class EmailStore:
                     f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                     (row["action_id"], attempt_number),
                 ).fetchone() is not None
-                insert_action(
-                    db,
-                    "email_action_attempts",
-                    {
-                        "action_id": row["action_id"],
-                        "attempt_number": attempt_number,
-                        "status": "failed",
-                        "provider_operation": "startup_recovery",
-                        "provider_target": row["stable_message_identity"],
-                        "provider_result_id": "",
-                        "error": "stale_processing_recovered",
-                        "started_at": row["started_at"],
-                        "finished_at": recovered_at,
-                    },
-                )
-                updated = self._update_direct_action(
-                    db,
-                    row["action_id"],
-                    {
-                        "status": "failed",
-                        "attempt_count": attempt_number,
-                        "finished_at": recovered_at,
-                        "next_attempt_at": _next_attempt_at(
-                            recovered_at,
-                            attempt_number=attempt_number,
-                            retryable=not explicit_retry,
-                        ),
-                        "provider_operation": "startup_recovery",
-                        "provider_target": row["stable_message_identity"],
-                        "provider_result_id": "",
-                        "error": "stale_processing_recovered",
-                        "updated_at": recovered_at,
-                    },
-                    expected_status="processing",
-                    expected_started_at=row["started_at"],
-                    expected_attempt_count=row["attempt_count"],
-                ).rowcount
-                if updated != 1:
-                    raise EmailActionAttemptConflict(
-                        f"direct action claim changed for {row['action_id']}"
-                    )
+                outcome = shared_action_lifecycle.transition(db, 'email', 'outcome', identity=row['action_id'],
+                    values=dict(attempt_number=attempt_number, status='failed',
+                        provider_operation='startup_recovery', provider_target=row['stable_message_identity'],
+                        provider_result_id='', error='stale_processing_recovered', started_at=row['started_at'],
+                        finished_at=recovered_at, updated_at=recovered_at,
+                        next_attempt_at=_next_attempt_at(recovered_at, attempt_number=attempt_number,
+                                                       retryable=not explicit_retry)),
+                    expected={'status': 'processing', 'started_at': row['started_at'],
+                              'attempt_count': row['attempt_count']})
+                if outcome.rowcount != 1:
+                    raise EmailActionAttemptConflict(f"direct action claim changed for {row['action_id']}")
             return len(rows)
 
     def list_flagged_important_between(
