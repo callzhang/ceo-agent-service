@@ -117,9 +117,28 @@ def verified_access_request(store, task, evidence_refs):
         if row['external_action_key'] not in referenced_keys:
             continue
         candidate = store.get_review_candidate(row['candidate_id'])
-        output = json.loads(candidate['candidate_json']).get('purpose_output') or {}
-        if output.get('action') != 'request_access':
-            continue
+        candidate_json = json.loads(candidate['candidate_json'])
+        if 'purpose_output' in candidate_json:
+            output = candidate_json.get('purpose_output') or {}
+            if output.get('action') != 'request_access':
+                continue
+        else:
+            # Before purpose_output was introduced, OA read-access requests
+            # were reviewed comment proposals. Accept only the stable,
+            # dedicated identity for that request and the exact matching
+            # verified comment receipt; ordinary legacy comments do not count.
+            proposal_actions = (candidate_json.get('proposal') or {}).get('actions') or []
+            action_identity = row.get('action_identity', '')
+            if (
+                row.get('operation') != 'comment'
+                or not action_identity.startswith('oa-comment:')
+                or not action_identity.endswith(':material-read-access-block')
+                or len(proposal_actions) != 1
+                or proposal_actions[0].get('operation') != 'comment'
+                or proposal_actions[0].get('action_identity') != action_identity
+                or not str((proposal_actions[0].get('payload') or {}).get('content') or '').strip()
+            ):
+                continue
         eligible.append((row['external_action_key'], utc_time(row['created_at'])))
     unique = dict(eligible)
     if len(unique) != 1:

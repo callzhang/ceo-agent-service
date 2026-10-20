@@ -7720,6 +7720,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         channel: str = "dingtalk",
         force_rotation: bool = False,
         expected_execution_generation: str | None = None,
+        allow_skipped_oa_review: bool = False,
     ) -> ReplyTask:
         with self._immediate_write_transaction() as db:
             if expected_execution_generation is not None:
@@ -7728,22 +7729,56 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
 
                 current = db.execute(
-                    f"select id,execution_generation,error from ({REPLY_TASK_SQL}) as reply_tasks "
+                    f"select id,execution_generation,error,status,business_object_key,conversation_id "
+                    f"from ({REPLY_TASK_SQL}) as reply_tasks "
                     "where channel=? and conversation_id=? and trigger_message_id=?",
                     (channel, conversation_id, trigger_message_id),
                 ).fetchone()
                 if current is None or current["execution_generation"] != expected_execution_generation:
                     raise ManualRerunConflict("reply task generation changed during source read")
                 attempt = db.execute(
-                    "select agent_run_id,send_status,send_error,resolved_at,resolution "
+                    "select agent_run_id,action,send_status,send_error,resolved_at,resolution,"
+                    "reviewer_feedback,oa_process_instance_id,oa_task_id,oa_action,"
+                    "oa_action_result_json "
                     f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=? and channel=? "
                     "and conversation_id=? and trigger_message_id=?",
                     (attempt_id, channel, conversation_id, trigger_message_id),
                 ).fetchone()
                 if attempt is None:
                     raise ManualRerunConflict("manual rerun attempt identity changed")
-                if attempt["resolved_at"] and attempt["send_status"] in {"needs_human", "skipped"}:
-                    raise ManualRerunConflict(attempt["resolution"] or "historical attempt was retired")
+                if attempt["send_status"] == "skipped" or (
+                    attempt["resolved_at"] and attempt["send_status"] == "needs_human"
+                ):
+                    process_id = str(attempt["oa_process_instance_id"] or "").strip()
+                    oa_task_id = str(attempt["oa_task_id"] or "").strip()
+                    no_effect_result = str(attempt["oa_action_result_json"] or "").strip() in {
+                        "", "{}", "null",
+                    }
+                    effect_receipt = db.execute(
+                        "select 1 from actions where task_id=? and record_type in "
+                        "('candidate_execution_alias','external_action_results') limit 1",
+                        (current["id"],),
+                    ).fetchone()
+                    reopenable = bool(
+                        allow_skipped_oa_review
+                        and attempt["send_status"] == "skipped"
+                        and str(attempt["action"] or "").strip() == "agent_run"
+                        and str(attempt["oa_action"] or "").strip() == "review"
+                        and no_effect_result
+                        and str(attempt["reviewer_feedback"] or "").strip()
+                        and process_id and oa_task_id
+                        and channel == "dingtalk"
+                        and str(current["conversation_id"] or "").strip()
+                        == f"oa_pending_scan:{process_id}"
+                        and str(current["business_object_key"] or "").strip()
+                        == f"oa:{process_id}:{oa_task_id}"
+                        and str(current["status"] or "").strip().lower() in {"done", "skipped"}
+                        and effect_receipt is None
+                    )
+                    if not reopenable:
+                        raise ManualRerunConflict(
+                            attempt["resolution"] or "historical attempt was retired"
+                        )
                 terminal = db.execute(
                     f'select structured_error_json from ({AGENT_RUN_SQL}) as agent_runs where id=?',
                     (attempt["agent_run_id"],),

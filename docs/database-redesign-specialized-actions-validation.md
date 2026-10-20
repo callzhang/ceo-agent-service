@@ -215,3 +215,139 @@ review reran the adequate focused batches. Root verified the frozen per-file has
 before staging. Parent real-copy/native acceptance, integration and live release
 remain pending. A5's Postfix/OKR/Attempt ownership and business units C/D
 remain outside this implementation.
+
+## Parent normal integration before real-copy acceptance
+
+Root committed the independently SPEC/QUALITY-approved source at211eabb87, then
+normally merged reviewed B2a publication7e033bd65 atf82a63dc0. The append-only
+claim conflict retained both complete sides. Every one of the27 specialized
+source/test files remains byte-identical to the original approved freeze. The
+merged tree retains B2a native/current-data inverse evidence and the separately
+authored OA runtime/Skill changes; B2b does not author their policy or replay an
+OA action. The separate merged freeze also pins both CI runtime inputs. The
+exact upstream controls already passed14+1 at B2a; no specialized source is used
+by those mocked controls, so they are not counted again as B2b verification.
+Parent real-copy/native/substitute provider/current-data inverse/actual published
+19.6 old-code cold/reforward and live publication remain pending.
+
+
+## Parent copy, native chain and current-fact inverse acceptance
+
+Frozen source773468fe0 has independent merged SPEC then QUALITY approval. Parent
+used the accepted B2a current-data19.6/53 working copy (including earlier synthetic
+native/direct outcomes), not a raw production19.6 snapshot. Its immutable SHA is
+f715ca67fc6a44d3c3843d00e2ceeb65e0107ac2d7b44322cc9cfa743c930e16.
+The pristine19.7/53 forward passed complete public tuples/types, stored
+payloads/IDs, unrelated facts, allocator waters and original FK-multiset checks.
+It migrated1109unsubscribe claims and0Reply claims. Same-population Actions+
+indexes and payload deltas are both0bytes; no storage reduction is claimed.
+
+The first real native fixture failed after four Consumer/Audit cycles, before
+any provider call. Each raw Consumer execute option imposed exact body text;
+existing Consumer preparation appended(via agent), conflicting with that option
+instruction. Actual native session/line provenance and candidate/body hashes are
+recorded in the copy JSON; preparation source is byte-identical to predecessor7e.
+This failure and all its candidate/review history remain preserved. No Audit rule
+was relaxed. An independent new fixture explicitly permitting existing formatting
+then passed actual Consumer/Audit, real copy-console choice, one InMemoryProvider
+send, one readback and one verified receipt. Task5131569106897310/Attempt15719,
+Candidate1046/Review1036, execution333 reached done. Its Sent and attempt results
+remain references with exact public bodies. Only those observed pages are
+counted; screenshots and test databases remain disposable working artifacts.
+The second success does not fix the first exact-body/Postfix contract issue;
+A5 remains open.
+
+Real domain code with substitute providers additionally preserved successful
+Reply replay (one SMTP call/acceptance), uncertain accepted Reply (no terminal
+receipt, no second dispatch), retryable definitely-not-dispatched failure,
+verified unsubscribe/replay (one browser call), and unfinished awaiting_audit
+continuation without receipt. No synthetic AgentRun/global verified receipt was
+created. Automatic SMTP Reply enqueue remains disabled in the source, so these
+SMTP outcomes cover its existing legacy/recovery domain, not a reactivated task
+producer. Disposable fixture enum/string and duplicate-address assembly mistakes
+were corrected in the harness only; incomplete fixture accounts remain facts in
+the copy rather than being hidden by restoring a baseline.
+
+Current-data inverse restored exact source declaration and original FK findings.
+Actual predecessor7e033bd65120a623c6a1eaaeaece3afc359d25d8 Store and strict
+EmailStore cold-opened the new native selection/execution/receipt/Sent and all
+specialized current outcomes, including unfinished control and prior failure,
+without replay or provider calls. Re-forward/finalize preserved all current
+physical facts and SQLite classes except the one expected Store marker clock;
+full integrity is ok and immutable input SHA is unchanged. Test console closed
+cleanly with0provider calls. See validation/2026-10-19-specialized-actions-copy.json
+for exact source pins, task/run/session/range identities and evidence boundaries.
+Live preflight/publication/readback remain pending; C/A5/D are incomplete.
+
+Independent final acceptance SPEC then QUALITY both APPROVE after checking the
+underlying disposable procedures, artifacts and final evidence JSON. Neither
+review reran tests or providers; source remains the approved773468fe0 freeze.
+
+
+## Publication-source refresh after B2a live
+
+Normal merge4fe745ec5 preserves actual B2a publicationcbf95112, including its
+independent OA compacted-rerun repair. Only audit_web and its existing test file
+changed within app/tests/scripts relative to the accepted773source; all27B2b
+core paths are byte-identical to211eabb87. The separate publication freeze is
+1222files/af007868dd0100d449d383d26c85bfacf0137ebf939f574b24b3f14da37c0912.
+Both prior freeze files and CI runtime pins remain intact. Exact upstream OA
+controls4passed at B2a after restart; they are not counted again as specialized
+verification. Parent copy/native/current-fact inverse evidence remains bound to
+773468fe0; it does not silently claim a re-execution on this merged source.
+B2b production19.6preflight/verified-backup and publication remain separate.
+
+Final publication-refresh SPEC then QUALITY both APPROVE. Fresh current
+production19.6/53 SQLite backup passed full integrity, originalFK, complete
+application marker, and exact19.7migration eligibility before atomic promotion
+under the existing backup-directory lock. Latest backup is479956992bytes/SHA
+a0c888db30ef341dd5904bb230576f29a80b6f0b2cc0bf900d3c39bee7b9f170.
+Only after verification did it replace this workflow's prior19.5 daily backup;
+no unrelated backup or temporary artifact was removed. B2b live remainspending.
+
+
+## B2b production publication and bounded upstream integration
+
+Standard deployment completed `cbf95112 -> 89a4a130`. A concurrent standard
+OKR Skill publication subsequently moved production to65560d34, whose app
+files are byte-identical to89a4a130. Readback at that observed commit confirms
+Store2026-10-19.7/Email53, exact declaration, codes63–69 with zero wrong-code
+rows, twelve direct-step fields without the six retired mirrors, quick_check ok
+and only original FK finding runs190042->tasks. PID93354 is the new supervisor.
+Healthz/status/Attention/History all returned200; queue failed counts did not
+increase. Attention total3/History36441 are observations, not business outcomes.
+The physical file remains479956992bytes; no physical shrink is claimed.
+
+The first post-release readback correctly failed its one-known-violation
+assertion: scheduler_tick_stale added a second issue during the concurrent
+standard restart. That failed evidence is retained. The process was observed
+parsing SQLite schema during startup; this is not a proven attribution of its
+entire startup duration. The scheduler resumed with tick05:01:11UTC, and the
+final snapshot returned to the one unresolved feedback created04:08:53UTC,
+before B2a cutover. No health gate, feedback record or recovery policy changed.
+
+The independent upstream application delta adds artifact-range metadata and OA
+feedback-rerun handling.67focused cases passed417.33s on89a4a130 after restart.
+The later4255OA correction passed31focused integration cases in358.03s,
+covering consumer release, the new OKR precondition assertion and changed
+OA helper/UI/Store rerun controls. All1223source hashes and4runtime pins
+remained exact before/after that batch. The separate live-source manifest freezes
+4255b292d:1223app/test/script files, SHA256
+6d3d7e308647f57ec5f6c585bb311e7fecf20141c5db497b713b61740ee90e83,
+plus current runtime CI/Skill pins.26of27B2b core paths remain byte-identical
+to211eabb87; the sole differing file is Store, where AST comparison isolates
+the difference to enqueue_manual_rerun_reply_task. This does not relabel the
+accepted773copy/native/current-fact inverse as having run on the new source.
+4255was being independently deployed when the65560live snapshot was captured;
+this evidence does not claim that later commit was live.
+
+See validation/2026-10-19-specialized-actions-live.json. C1/C2, A5 and D remain
+incomplete; the retained first exact-body native failure remains an open A5
+contract issue. All task-triggered test sends used substitutes.
+
+Fresh independent SPEC then QUALITY both APPROVE the live/source evidence.
+Review corrected stale current deployment statements and the attribution of
+current unfinished work: the earlier final-acceptance document is historical;
+the current plan/report own C1/C2/A5/D status. Reviewers inspected source and
+retained evidence only; test summaries remain attributed to root terminal
+observations, and no additional provider/native/live activity was performed.

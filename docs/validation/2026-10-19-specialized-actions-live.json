@@ -1,0 +1,163 @@
+{
+  "release": "B2b",
+  "actual_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+  "live_proof": {
+    "store_version": "2026-10-19.7",
+    "email_version": 53,
+    "exact_declaration": true,
+    "shared_families": {
+      "review_candidates": {
+        "count": 1058,
+        "code": 63,
+        "wrong_code": 0
+      },
+      "email_action_plans": {
+        "count": 10607,
+        "code": 64,
+        "wrong_code": 0
+      },
+      "email_actions": {
+        "count": 11032,
+        "code": 65,
+        "wrong_code": 0
+      },
+      "candidate_action_attempts": {
+        "count": 328,
+        "code": 66,
+        "wrong_code": 0
+      },
+      "email_action_attempts": {
+        "count": 13096,
+        "code": 67,
+        "wrong_code": 0
+      },
+      "email_reply_dispatch_claims": {
+        "count": 0,
+        "code": 68,
+        "wrong_code": 0
+      },
+      "email_unsubscribe_claims": {
+        "count": 1111,
+        "code": 69,
+        "wrong_code": 0
+      }
+    },
+    "direct_step_field_count": 12,
+    "retired_six_mirrors_absent_from_step": true,
+    "quick_check": "ok",
+    "original_fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "physical_file_bytes": 479956992,
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "state": "running",
+      "pid": "93354",
+      "detail": "running"
+    },
+    "system_health": {
+      "state": "degraded",
+      "violations": 1
+    },
+    "global_health_limitation": {
+      "unresolved_feedback_count": 1,
+      "created_at": "2026-10-20 04:08:53",
+      "before_refresh_old_commit": "296b6d82f0b9b374f1caa64e9ec223d8e6c7207b",
+      "old_commit_observed_at": "2026-10-20T04:10:58.588771Z",
+      "not_resolved_or_suppressed": true
+    },
+    "actual_commit": "65560d34d8de63471d1d05d144cbc344ceab5815"
+  },
+  "queues": {
+    "failed_changes": {},
+    "after_http": {
+      "health": 200,
+      "status": 200,
+      "attention": 200,
+      "history": 200
+    },
+    "actual_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+    "attention_total": 3,
+    "history_total": 36441
+  },
+  "standard_deploy_result": "deployed cbf95112 -> 89a4a130",
+  "concurrent_followup_release": {
+    "observed_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+    "application_byte_exact_to_first89_cutover": true,
+    "latest4255_oa_release": "in progress when evidence frozen; not claimed live"
+  },
+  "transient_failed_readback": {
+    "retained": true,
+    "issues": {
+      "checked_at": "2026-10-20T04:56:59.591969+00:00",
+      "violations": [
+        {
+          "source": "feedback_events",
+          "code": "unresolved",
+          "count": 1,
+          "detail": "user feedback has not reached a recorded resolution"
+        },
+        {
+          "source": "service_state",
+          "code": "scheduler_tick_stale",
+          "count": 1,
+          "detail": "the Agent Cron scheduler health observation stopped updating"
+        }
+      ],
+      "attention": [
+        {
+          "source": "meeting_alignment_jobs",
+          "code": "active",
+          "count": 1,
+          "detail": "meeting alignment work is pending"
+        },
+        {
+          "source": "work_todo_dingtalk_links",
+          "code": "active",
+          "count": 540,
+          "detail": "external delivery work is active"
+        }
+      ]
+    },
+    "independent_standard_release_process": 93170,
+    "scheduler_tick_recovered_at": "2026-10-20T05:01:11+00:00",
+    "global_health_not_modified": true
+  },
+  "source_core_delta": {
+    "compared_core_paths": 27,
+    "different_paths": [
+      "app/store.py"
+    ],
+    "different_store_functions": [
+      "enqueue_manual_rerun_reply_task"
+    ],
+    "actual_deployed_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+    "application_files_byte_exact_89_to_65560": true
+  },
+  "upstream_targeted_tests": {
+    "source_commit": "89a4a130de52273318f45e0a24f595f4800aedcf",
+    "passed": 67,
+    "seconds": 417.33,
+    "scope": "OA manual rerun, scheduled OKR eval unit tests with substituted native calls, consumer release and one Store rerun; no real provider sends",
+    "4255_delta_tests": {
+      "source_commit": "4255b292dbb04f87f4c683065c9b4963c2764c46",
+      "passed": 31,
+      "seconds": 358.03,
+      "scope": "consumer release file; new OKR release-precondition assertion; two OA helper/UI controls and actual Store missing-resolved timestamp rerun test",
+      "source_freeze_unchanged_after_tests": true,
+      "native_provider_calls": 0
+    }
+  },
+  "copy_native_not_rerun_on_upstream_refresh": true,
+  "whole_plan_complete": false,
+  "independent_review": {
+    "spec": "APPROVE: source/evidence consistency and corrected current deployment statements",
+    "quality": "APPROVE after historical-acceptance attribution fix",
+    "reviewers_reran_tests_or_live": false
+  }
+}
