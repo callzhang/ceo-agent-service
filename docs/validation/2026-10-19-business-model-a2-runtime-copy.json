@@ -1,0 +1,151 @@
+{
+  "case": "business-model-result-native.v1",
+  "source": {
+    "production_head": "b33f331d6492f8172c0c64570c13839add13e069",
+    "source": "/private/tmp/ceo-model-simplification-0zjph5co/a2-source.sqlite3",
+    "bytes": 474185728,
+    "source_sha256": "67e841cea83f123233c7a05e0014af8dae8f25806d9f1100ff1b7d5b844d6d37",
+    "fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ]
+  },
+  "code": {
+    "head": "be45cc53e638ec3918f2c2aab4907e79884a2f3a",
+    "file_count": 417,
+    "manifest_sha256": "2124c8c9385553723dc78b8ff13002f17110b6c71c36701479c3b23aee6512a7"
+  },
+  "task_id": 4536372937125173,
+  "generation": "initial",
+  "prepared": {
+    "task_status": "needs_human",
+    "provider_calls": 0,
+    "candidate_id": 1030,
+    "attempt_id": 15707
+  },
+  "transition": {
+    "original_tables_preserved_except_planned_result_slots_and_marker": true,
+    "original_receipts_exact": true,
+    "public_result_projection_exact": true,
+    "verified_byte_equal_references": 274,
+    "local_results_retained": 43,
+    "original_fk_multiset_preserved": true
+  },
+  "native_attempt_evidence": {
+    "native_attempt_ranges_readable": true,
+    "uses_actual_attempt_bounds_not_run_context_bounds": true,
+    "runs": [
+      {
+        "run_id": 386174,
+        "role": "consumer",
+        "status": "failed",
+        "attempts": [
+          {
+            "attempt_id": 386175,
+            "session_id": "01a15696-9ab7-7563-ad72-fdbf477f73a7",
+            "start": 0,
+            "end": 36,
+            "event_count": 5,
+            "tools": [
+              "read_task_artifact",
+              "read_system_action_contract"
+            ],
+            "commands": [
+              [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' /Users/derek/.agents/AGENTS.md"
+              ]
+            ],
+            "status": "failed"
+          }
+        ]
+      },
+      {
+        "run_id": 386176,
+        "role": "consumer",
+        "status": "completed",
+        "attempts": [
+          {
+            "attempt_id": 386177,
+            "session_id": "01a15696-9ab7-7563-ad72-fdbf477f73a7",
+            "start": 36,
+            "end": 50,
+            "event_count": 1,
+            "tools": [],
+            "commands": [],
+            "status": "completed"
+          }
+        ]
+      },
+      {
+        "run_id": 386178,
+        "role": "audit",
+        "status": "completed",
+        "attempts": [
+          {
+            "attempt_id": 386179,
+            "session_id": "01a15697-61f7-7a73-b21d-1e1b6a61d78a",
+            "start": 0,
+            "end": 35,
+            "event_count": 4,
+            "tools": [
+              "read_task_artifact",
+              "read_system_action_contract"
+            ],
+            "commands": [],
+            "status": "completed"
+          }
+        ]
+      }
+    ]
+  },
+  "completed": {
+    "task_status": "done",
+    "execution_id": 328,
+    "provider_calls": 1,
+    "provider_verifications": 1,
+    "verified_attempts": 1,
+    "external_receipts": 1,
+    "no_additional_native_turn": true,
+    "original_tables_unchanged": 11
+  },
+  "inverse": {
+    "source_schema_exact": true,
+    "old_store_cold_open": true,
+    "new_native_task_done": true,
+    "new_selection_readable": true,
+    "new_fake_receipt_readable": true,
+    "attempt_body_reconstructed_exact": true
+  },
+  "reforward": {
+    "current_facts_preserved": true,
+    "integrity_check": "ok",
+    "original_fk_multiset_preserved": true,
+    "console_provider_calls": 0,
+    "immutable_source_unchanged": true
+  },
+  "capacity": {
+    "source": {
+      "file_bytes": 474185728,
+      "page_count": 115768,
+      "free_pages": 291,
+      "actions_and_indexes_bytes": 169304064,
+      "actions_payload_bytes": 116254389
+    },
+    "target": {
+      "file_bytes": 474185728,
+      "page_count": 115768,
+      "free_pages": 461,
+      "actions_and_indexes_bytes": 168607744,
+      "actions_payload_bytes": 115824828
+    }
+  },
+  "static_merge_reviews": "SPEC and QUALITY approved after 9081240f1 claim correction",
+  "focused_merged_query_test": "1 passed in 10.99s; flagged-important query",
+  "historical_fixture_diagnostic": "Earlier Store19/Email51 direct-to-current fixture refused before behavior; interrupted broad run is not a passing result."
+}
