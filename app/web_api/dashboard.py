@@ -96,22 +96,12 @@ def _runtime_metadata(db: sqlite3.Connection, now: str) -> dict[int, dict]:
                 kind,
                 "task_id" if kind == "email_agent_classification_tasks" else "id",
             )
-            owner = (
-                "and lifecycle_lease_owner=? "
-                if kind == "email_agent_classification_tasks"
-                else "and lifecycle_lease_owner<>'' "
-            )
-            parameters = (
-                (kind, row["workload_key"], row["lease_owner"], now)
-                if kind == "email_agent_classification_tasks"
-                else (kind, row["workload_key"], now)
-            )
+            # The task worker and native router own independent leases.
             task = db.execute(
                 f"select id from tasks where record_type=? and {identity}=? "
-                "and lifecycle_status='processing' "
-                + owner
-                + "and datetime(lifecycle_lease_expires_at)>datetime(?)",
-                parameters,
+                "and lifecycle_status='processing' and lifecycle_lease_owner<>'' "
+                "and datetime(lifecycle_lease_expires_at)>datetime(?)",
+                (kind, row["workload_key"], now),
             ).fetchone()
             task_id = task["id"] if task else None
         if task_id is None and row["workload_kind"] in (

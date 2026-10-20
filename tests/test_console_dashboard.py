@@ -236,7 +236,7 @@ def test_email_classifier_uses_subject_and_its_live_model(tmp_path):
                 credential_mode="oauth",
                 model="real-classifier-model",
                 status="running",
-                lease_owner="classifier",
+                lease_owner="routed-classifier",
                 lease_expires_at="2026-10-20 17:10:00",
                 started_at="2026-10-20 16:58:00",
             ),

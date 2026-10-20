@@ -52,3 +52,9 @@ mode; existing Console GETs came from the running service. No provider action.
 Queued IDs were moved into details; absent eligibility no longer shows creation
 as execution time. Mobile health remains available under system details to keep
 the Service row on one line. This is an intentional compact layout difference.
+
+Release follow-up: source inspection confirmed email classifier task owners and
+native router owners are independent (email-classifier PID versus routed UUID).
+The earlier same-owner fixture hid missing model/start metadata. Reproduced with
+different valid owners, then changed the read association to workload identity
+plus both valid leases, the same contract used for Workbench. No worker change.
