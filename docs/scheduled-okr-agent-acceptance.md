@@ -199,6 +199,24 @@ finance 预置摘要错误地与已更新的安装文件比较，改为固定原
 三个自然运行尚未到期。到期后须绑定不可变配置/Skill revision、实际 Consumer/Audit
 轨迹、文档读回与所需发送回执核查；只读旧文档、健康检查或提前手动运行均不能替代。
 
+### 10月18日旧 OKR 运行失败：根因与恢复状态
+
+- 自然运行375134触发于2026-10-18 18:00 Asia/Shanghai，快照是 task version5、
+  `weekly-okr-report` 服务命令及空 prompt/Skill refs；它早于10月19日新版配置上线，
+  不属于新版 Agent 自然验收。
+- 该次确实失败，不是评测误报：原始 `live_okr.json` 中18/18成员都在 fetch 阶段
+  收到共享认证错误，诊断为 `okr_authentication_readiness_failed`，底层为
+  `okr_headless_session_expired: dedicated Dingteam session requires login`。没有生成
+  评分或报告发布，历史失败保留。
+- 2026-10-20 08:11 UTC 使用现有 Dingteam login 流程完成 SSO 会话刷新；随后用生产
+  headless source wrapper 做一次只读探测，认证和完整个人周期列表读取成功。被探测的
+  第一位成员尚未建立2026 Q4周期，返回权威 `goals_not_established` 回执；这不是认证
+  错误，也没有读取全员或生成报告。
+- 这只证明当前会话可用及来源通路已恢复，不证明刷新后的会话能持续到下次调度，也不
+  证明新版 Agent、完整全员取数、审核、文档发布或通知通过。下次自然 OKR 运行仍是
+  2026-10-25 18:00 Asia/Shanghai；须验证自动会话刷新、全员身份/来源覆盖和完整发布回执。
+  不复跑375134，也不以单成员只读探测替代完整验收。
+
 ## 最终集成核查（2026-10-20 UTC）
 
 最新主线普通合并后，相关快速回归 **141 passed in 11.47s**，覆盖 OKR
