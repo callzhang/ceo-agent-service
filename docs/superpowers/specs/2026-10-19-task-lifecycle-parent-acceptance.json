@@ -1,0 +1,345 @@
+{
+  "schema": "ceo-task-lifecycle-parent-acceptance-v1",
+  "source_commit": "c4a9e794d0fe7b8954a8746b01fec118337dc188",
+  "source_aggregate": "eb3d16cf25ce2bae26bff3a7dfaf295049e79bfa8cadb04f67d504a358770d06",
+  "status": "full-copy/native/current-data inverse/old-cold/reforward passed; independent parent SPEC then QUALITY APPROVE on c4a9/eb3d16; not deployed",
+  "merged_integration_tests": {
+    "source_commit": "c4a9e794d0fe7b8954a8746b01fec118337dc188",
+    "passed": 8,
+    "seconds": 158.41,
+    "scope": "OA rerun module, real Store missing-resolved rerun, actual all-nine DAO current-fact inverse/cold/reforward",
+    "native_agent_cli_calls": 0,
+    "test_provider_sends": 0,
+    "evidence_type": "primary-agent original terminal tool observation; raw terminal output not retained in a separate log",
+    "exec_session_id": 40479,
+    "observed_exit_code": 0
+  },
+  "pristine_forward": {
+    "source": {
+      "source": "fresh read-only SQLite production backup; no Store initialization or provider calls",
+      "pair": [
+        "2026-10-19.7",
+        53
+      ],
+      "integrity_check": "ok",
+      "original_fk": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "task_counts": {
+        "business_object_tasks": 7521,
+        "email_agent_classification_tasks": 1386,
+        "email_historical_candidates": 924,
+        "feedback_processing_batches": 3,
+        "feedback_processing_items": 51,
+        "feedback_processing_rounds": 3,
+        "meeting_alignment_jobs": 780,
+        "oa_notification_events": 37,
+        "okr_review_items": 413,
+        "okr_review_requests": 20,
+        "reply_task_inputs": 8484,
+        "reply_tasks": 7693,
+        "weekly_okr_analysis_jobs": 183,
+        "work_summary_inputs": 9120,
+        "workbench_tasks": 20,
+        "workbench_turns": 37
+      },
+      "sqlite_version": "3.53.4",
+      "observed_prod_commit": "63504af9f1b7c456010cc5a808722054dfffe780",
+      "snapshot_at_utc": "2026-10-20 05:21:29",
+      "bytes": 479956992,
+      "sha256": "493741fc8ec0a3ba57158973c3355e40acf77e2b1fb5662847364fa3ca57e2ee"
+    },
+    "target_pair": [
+      "2026-10-19.8",
+      53
+    ],
+    "forward_seconds": 158.245,
+    "all_twenty_public_values_types_exact": true,
+    "all_current_source_shape_stored_cells_types_rowids_exact": true,
+    "original_fk_multiset_preserved": true,
+    "all_unrelated_tables_and_sequence_rowids_exact": true,
+    "claim_owner_comparison": {
+      "source_qualified_task_rows": 17613,
+      "matching_history_rows": 153,
+      "all_five_values_and_sqlite_classes_exact": true
+    },
+    "capacity_before": {
+      "task_populations": {
+        "business_object_tasks": 7521,
+        "email_agent_classification_tasks": 1386,
+        "email_historical_candidates": 924,
+        "feedback_processing_batches": 3,
+        "feedback_processing_items": 51,
+        "feedback_processing_rounds": 3,
+        "meeting_alignment_jobs": 780,
+        "oa_notification_events": 37,
+        "okr_review_items": 413,
+        "okr_review_requests": 20,
+        "reply_task_inputs": 8484,
+        "reply_tasks": 7693,
+        "weekly_okr_analysis_jobs": 183,
+        "work_summary_inputs": 9120,
+        "workbench_tasks": 20,
+        "workbench_turns": 37
+      },
+      "task_and_index_bytes": 52846592,
+      "task_and_index_payload_bytes": 47095684,
+      "file_bytes": 479956992
+    },
+    "capacity_after": {
+      "task_populations": {
+        "business_object_tasks": 7521,
+        "email_agent_classification_tasks": 1386,
+        "email_historical_candidates": 924,
+        "feedback_processing_batches": 3,
+        "feedback_processing_items": 51,
+        "feedback_processing_rounds": 3,
+        "meeting_alignment_jobs": 780,
+        "oa_notification_events": 37,
+        "okr_review_items": 413,
+        "okr_review_requests": 20,
+        "reply_task_inputs": 8484,
+        "reply_tasks": 7693,
+        "weekly_okr_analysis_jobs": 183,
+        "work_summary_inputs": 9120,
+        "workbench_tasks": 20,
+        "workbench_turns": 37
+      },
+      "task_and_index_bytes": 55345152,
+      "task_and_index_payload_bytes": 49173397,
+      "file_bytes": 479956992
+    },
+    "same_population_task_index_bytes_delta": 2498560,
+    "same_population_task_index_payload_delta": 2077713,
+    "vacuum_performed": false,
+    "source_immutable_unchanged": true,
+    "native_provider_calls": 0,
+    "production_modified": false
+  },
+  "native": {
+    "task_id": 416143,
+    "generation": "initial",
+    "candidate_id": 1062,
+    "attempt_id": 15732,
+    "prepared": {
+      "task_status": "needs_human",
+      "provider_calls": 0,
+      "candidate_id": 1062,
+      "attempt_id": 15732
+    },
+    "native_evidence": {
+      "runs": [
+        {
+          "id": 387138,
+          "role": "consumer",
+          "status": "completed",
+          "attempts": [
+            {
+              "attempt_id": 387139,
+              "session_id": "01a157e4-8e87-7ac1-a044-9ba68bbed9f7",
+              "start": 0,
+              "end": 40,
+              "status": "completed",
+              "tools": [
+                "read_task_artifact",
+                "read_system_action_contract"
+              ],
+              "commands_for_parent_review": [
+                [
+                  "/bin/zsh",
+                  "-lc",
+                  "sed -n '1,240p' /Users/derek/.agents/AGENTS.md"
+                ]
+              ],
+              "event_count": 6
+            }
+          ]
+        },
+        {
+          "id": 387140,
+          "role": "audit",
+          "status": "completed",
+          "attempts": [
+            {
+              "attempt_id": 387141,
+              "session_id": "01a157e5-18a6-7ee0-a857-d098b8a9b421",
+              "start": 0,
+              "end": 29,
+              "status": "completed",
+              "tools": [
+                "read_system_action_contract",
+                "read_task_artifact"
+              ],
+              "commands_for_parent_review": [],
+              "event_count": 4
+            }
+          ]
+        }
+      ],
+      "candidate_id": 1062,
+      "review_id": 1052,
+      "attempt_id": 15732,
+      "original_tables_unchanged": 11
+    },
+    "completed": {
+      "task_status": "done",
+      "execution_id": 342,
+      "provider_calls": 1,
+      "provider_verifications": 1,
+      "verified_attempts": 1,
+      "external_receipts": 1,
+      "sent_result_is_reference": true,
+      "sent_public_result_exact": true,
+      "no_additional_native_turn": true,
+      "original_tables_unchanged": 11
+    },
+    "inverse": {
+      "source_schema_exact": true,
+      "predecessor": {
+        "commit": "63504af9f1b7c456010cc5a808722054dfffe780",
+        "archive_scope": "app only for actual predecessor cold-open; no production .env/data copied",
+        "files": 432,
+        "archive_sha256": "f824afd57e1bed4b6a3878804d606746a4d2606d083b2448e96ca077360bcec2"
+      },
+      "all_current_source_shaped_facts_preserved": true,
+      "old_store_cold_open": true,
+      "old_email_store_cold_open": true,
+      "old_workbench_store_cold_open": true,
+      "new_native_task_done": true,
+      "new_selection_execution_receipt_readable": true,
+      "no_replay_or_provider_calls": true,
+      "old_api_run_record_count_preserved": true,
+      "no_replay_or_provider_calls_scope": "old constructors and read APIs only; no old worker execution"
+    },
+    "reforward": {
+      "current_facts_preserved": true,
+      "integrity_check": "ok",
+      "original_fk_multiset_preserved": true,
+      "immutable_source_unchanged": true,
+      "console_scope": "background disabled; provider substitute raises on calls; final in-process counter not exported because authorized SIGINT was rejected by platform"
+    },
+    "scope": "Direct real Store Task claim and actual Consumer/Audit/SystemExecutor; automatic common queue adapters have separate source/current DAO coverage. Existing formatting is permitted; this does not fix the earlier exact-body/Postfix contract issue.",
+    "native_ranges": "actual current Consumer/Audit session/range reads in native_evidence, not an old-code range-read assertion",
+    "browser": "actual CUA execute option click, pending readback, done/1of1/expanded fake receipt readback",
+    "screenshot": "docs/validation/2026-10-19-task-lifecycle-native-receipt.png"
+  },
+  "production_test_identity_check": {
+    "production_test_identity_count": 0,
+    "conversation_id": "native-copy-selection:b724007dd5da418d9fcb35acb53378aa",
+    "production_opened_read_only": true,
+    "source_database_modified": false,
+    "check": "exact unique test conversation absent from production reply_tasks"
+  },
+  "raw_evidence_scope_corrections": {
+    "native_inverse.native_run_provenance_readable": "old snippet checks run count only; true range reads are separate current native_evidence",
+    "native_reforward.console_provider_calls": "raw hardcoded zero is not an independently exported console counter; omit from accepted derived facts"
+  },
+  "limits": [
+    "One direct-claim native Reply lifecycle with in-memory outbound; common queue adapter/nine-kind semantics have separate focused DAO tests.",
+    "Existing exact-body/Postfix contract failure remains open; this case explicitly permits the existing postfix.",
+    "No production schema publication and no real external sends.",
+    "Retained unchanged two-second Action outbox deadline failure reproduces on actual source/current; not counted passing.",
+    "Task/index allocation increased by 2498560 bytes; file size unchanged; no VACUUM or shrink claim."
+  ],
+  "artifacts": {
+    "c1_pristine_forward.py": {
+      "sha256": "00b989156a92e1a94fc29a5a1772bbb67197f597bcc88f89cdc3531448224da4",
+      "bytes": 5637
+    },
+    "c1_fact_hashes.py": {
+      "sha256": "9f23d65f732fb4af73cd61b249da0bc950b5a5b5e20d290b559a8e79dcbe1d77",
+      "bytes": 3382
+    },
+    "c1-pristine-forward.json": {
+      "sha256": "1eb6480e4fc270127edaeef8ece0bca179b7608c0c39756252103a39ebd973c5",
+      "bytes": 3351
+    },
+    "c1-pristine-forward.log": {
+      "sha256": "b3a8551382007dc3ed75991f004ba71fe9ef2779802c1c6a9dc774a68cc0c248",
+      "bytes": 2878
+    },
+    "c1_native_selection.py": {
+      "sha256": "1db652b8e71c716cdd23bd9d8135b4346addb0acecf0109022316b3f90ca2cb6",
+      "bytes": 15477
+    },
+    "c1-native-selection-result.json": {
+      "sha256": "7dcc4e6d1c2de116e2517b9acabd8a23b2a30b7e78e7bc4af253a093e58acd70",
+      "bytes": 5158
+    },
+    "c1-native-selection-prepare.log": {
+      "sha256": "571d19c4ad2d3da08b769aea312d6ae16e2989f5094ace653b3638e1a7987e4c",
+      "bytes": 3998
+    },
+    "c1-native-selection-finish.log": {
+      "sha256": "352b50601a042177dd7519922836941770ccfb837cb847f93fab664617fb9c51",
+      "bytes": 7359
+    },
+    "c1_native_inverse.py": {
+      "sha256": "f4841ae685f6892875e9eda0d69eedd69a105bdbec036d4fceb2d930ab2d218b",
+      "bytes": 3916
+    },
+    "c1-native-inverse.log": {
+      "sha256": "c6e5ad46fa8e591a1134583223b23fa5910d75fa944ab7873f4f9c0fa32b34b7",
+      "bytes": 802
+    },
+    "c1-no-production-fixture.json": {
+      "sha256": "90e2879f23296c0cdd060bae8bef513f9ceed0dc949d5b17ec34f82b1c61e49b",
+      "bytes": 277
+    },
+    "c1-oldcode-meta.json": {
+      "sha256": "b9e4152b496a854c62cbf6a60b9d1d6ffa038e741979cd2bd2a1ffd8ede550f1",
+      "bytes": 259
+    }
+  },
+  "same_snapshot_page_capacity": {
+    "source": {
+      "page_size": 4096,
+      "page_count": 117177,
+      "freelist_count": 976,
+      "main_bytes": 479956992,
+      "wal_bytes": null,
+      "shm_bytes": null
+    },
+    "pristine_target": {
+      "page_size": 4096,
+      "page_count": 117177,
+      "freelist_count": 373,
+      "main_bytes": 479956992,
+      "wal_bytes": 0,
+      "shm_bytes": 32768
+    }
+  },
+  "claim_owner_population_scope": {
+    "checked_source_kind_rows": 17613,
+    "adapter_eligible_rows": 16497,
+    "ineligible_email_reply_rows": 1116,
+    "matching_eligible_ledger_rows": 153,
+    "ineligible_five_task_claim_fields": "all NULL, as checked by the same owner mismatch query",
+    "reply_channels": {
+      "dingtalk": 6179,
+      "email": 1116,
+      "scheduled": 78,
+      "wechat": 320
+    }
+  },
+  "independent_reviews": {
+    "spec": {
+      "agent": "c1_parent_spec_review",
+      "result": "APPROVE",
+      "source_commit": "c4a9e794d0fe7b8954a8746b01fec118337dc188",
+      "source_aggregate": "eb3d16cf25ce2bae26bff3a7dfaf295049e79bfa8cadb04f67d504a358770d06"
+    },
+    "quality": {
+      "agent": "c1_parent_quality_review",
+      "result": "APPROVE",
+      "source_commit": "c4a9e794d0fe7b8954a8746b01fec118337dc188",
+      "source_aggregate": "eb3d16cf25ce2bae26bff3a7dfaf295049e79bfa8cadb04f67d504a358770d06",
+      "integration_8_scope": "primary terminal observation, not reviewer independent raw log verification"
+    }
+  }
+}
