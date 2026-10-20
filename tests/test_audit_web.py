@@ -11614,11 +11614,34 @@ def test_render_workers_page_shows_service_and_queue_status(
         priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    seed_legacy_todo_link(store,
+    legacy_link_id = seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="",
         status="failed",
         last_error="code=TOKEN_VERIFIED_FAILED",
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-retryable",
+        conversation_title="Needs reply retry",
+        single_chat=False,
+        trigger_message_id="msg-retryable",
+        trigger_create_time="2026-07-01 16:00:00",
+        trigger_sender="Avery",
+        trigger_text="Please retry this reply.",
+    )
+    retryable_attempt_id = store.record_reply_attempt(
+        conversation_id="cid-retryable",
+        conversation_title="Needs reply retry",
+        trigger_message_id="msg-retryable",
+        trigger_sender="Avery",
+        trigger_text="Please retry this reply.",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    store.update_reply_attempt(
+        retryable_attempt_id,
+        send_status="failed",
+        send_error="retryable reply failure",
     )
     with store._connect() as db:
         db.execute("begin immediate")
@@ -11639,6 +11662,9 @@ def test_render_workers_page_shows_service_and_queue_status(
     assert payload["summary"]["pending"] >= 2
     assert payload["summary"]["failed"] >= 1
     assert payload["summary"]["retryable"] >= 1
+    assert next(queue for queue in payload["queues"] if queue["name"] == "Reply attempts")["retryable"] == 1
+    assert all(queue["name"] != "DingTalk Todos" for queue in payload["queues"])
+    assert store.get_work_todo_dingtalk_link(legacy_link_id).status == "failed"
     assert any(queue["name"] == "Work items" for queue in payload["queues"])
     classifier_queue = next(
         queue
