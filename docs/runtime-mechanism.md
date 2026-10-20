@@ -4561,3 +4561,27 @@ processing. Expired/superseded execution records do not become live Agents.
 Retry ordinals exclude first execution and remain unknown where the source has
 no execution counter; Audit content revisions are not retries. Source state,
 retry/recovery policy, authorization and execution mechanisms do not change.
+
+
+## Deployment admission and drain (2026-10-20)
+
+`python -m app.deploy` and `--restart` close the database-adjacent admission
+flock first, then acquire the drain flock exclusively after already admitted
+claim transactions commit. New dispatcher, direct email reply/classifier/provider,
+Workbench and meeting delivery/Memory claims take admission nonblocking, acquire
+the shared drain flock, and release admission before starting SQLite work; the
+shared drain flock spans commit. The short admission turnstile prevents later
+claims from starving an exclusive waiter. A closed turnstile yields an empty
+claim without changing the source. Existing tasks keep renewing and finishing.
+Incoming work is still saved and pending/retry rows stay queued, so deployment
+waits for executing work rather than all future work.
+
+The exclusive scope lasts through the existing stopped-service backup, checkout,
+build, verification, restart, health and rollback sequence. Success or every
+exception/timeout/cancel path closes the descriptor and permits claims again;
+process exit also releases flock automatically. No pause bit, new task status or
+retry-policy change is introduced. Independent direct email reply/classifier, Workbench and weekly-OKR claims,
+processing provider operations and meeting Memory leases count as in-flight even
+before a native Agent starts. Existing quiet timeout, backup and recovery rules
+remain in force. Initial installation uses the prior normal quiet path because
+already running old code has not loaded the new claim hooks.

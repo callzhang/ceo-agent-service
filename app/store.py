@@ -1,3 +1,4 @@
+from app.deployment_drain import claim_connection
 from app import shared_action_lifecycle
 import errno
 import hashlib
@@ -10671,7 +10672,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def claim_reply_task(
         self, task_id: int, now: str | None = None
     ) -> ReplyTask | None:
-        with self._immediate_write_transaction() as db:
+        with claim_connection(self, immediate=True) as db:
+            if db is None:
+                return None
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [task_id]
             if now is not None:
@@ -10702,7 +10705,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         # acquiring the write transaction; a preview never reserves a task.
         if not self.peek_reply_tasks(1, now=now, channel=channel):
             return []
-        with self._immediate_write_transaction() as db:
+        with claim_connection(self, immediate=True) as db:
+            if db is None:
+                return []
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [channel]
             if now is not None:
@@ -14662,7 +14667,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if claimed_at.tzinfo is None or claimed_at.utcoffset() is None:
             raise ValueError("meeting Memory claim time must include a timezone")
         lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
-        with self._immediate_write_transaction() as db:
+        with claim_connection(self, immediate=True) as db:
+            if db is None:
+                return []
             assignments, set_args = task_delivery_set_parts(
                 "meeting_memory_write_events",
                 {"status": "processing", "lease_owner": owner,
@@ -15092,7 +15099,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if candidate is None:
                 return []
-        with self._immediate_write_transaction() as db:
+        with claim_connection(self, immediate=True) as db:
+            if db is None:
+                return []
             rows = db.execute(
                 f"""
                 with candidates as (
@@ -15134,7 +15143,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> MeetingAlignmentJob | None:
         if job_id <= 0:
             raise ValueError("meeting alignment job id must be positive")
-        with self._immediate_write_transaction() as db:
+        with claim_connection(self, immediate=True) as db:
+            if db is None:
+                return None
             row = db.execute(
                 f"""update tasks
                    set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'locked_at': 'current_timestamp', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs'

@@ -3620,3 +3620,32 @@ eligibility/recovery/Attention rules and all provider actions are unchanged.
 Execution trends and searchable, paginated History remain below the queue.
 Dashboard polls while visible; per-request cancellation prevents stale tab/page
 responses from replacing newer reads. Service/queue errors remain explicit.
+
+
+## Deployment execution drain (2026-10-20)
+
+Ordinary deployment and restart first stop admitting new execution claims, then
+wait for already admitted work to finish before the existing stop/backup/update/
+build/verification/restart/health sequence. Queued work, delayed retries and new
+messages remain persisted; the entire pending queue need not become empty.
+
+Two stable database-adjacent POSIX flock files provide admission and drain.
+Claims take `.deployment-admission.lock` nonblocking, acquire a shared
+`.deployment-drain.lock`, then release admission before their existing SQLite
+transaction. The shared drain lock spans commit. Deployment closes admission
+first, waits for already admitted transactions with the exclusive drain lock,
+and keeps both through health and rollback. Later claims return an empty poll,
+so continuous new claim traffic cannot prolong that wait. This covers dispatcher,
+direct email reply/classification/provider actions, Workbench and meeting
+delivery/Memory initial claims. Renewal, results, source intake and ordinary
+recovery continue. Descriptor closure releases admission on success, timeout,
+failure, cancellation or deploy-process exit; there is no persistent pause flag
+or task-state rewrite. The existing timeout still aborts a deployment that cannot
+drain. This does not force hung work to finish.
+
+In-flight checks include claimed email classifiers, Workbench turns and weekly
+OKR jobs before native runtime creation, direct email reply claims and provider operations in processing,
+and claimed meeting Memory writes, in addition to the existing runtime and
+dispatcher ownership facts. Retry policy, external-action rules and task
+lifecycle are unchanged. The first release installs the claim hooks through
+the existing quiet deployment path; older processes cannot honor the new lock.

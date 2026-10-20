@@ -1,3 +1,4 @@
+from app.deployment_drain import claim_connection
 import fcntl
 import hashlib
 import json
@@ -586,7 +587,9 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()
         if ready is None:
             return None
-        with self._connect() as db:
+        with claim_connection(self) as db:
+            if db is None:
+                return None
             db.execute("begin immediate")
             self._recover_expired_turns_in_transaction(db, now_text=now_text)
             row = db.execute(

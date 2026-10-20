@@ -7,17 +7,19 @@ verify/restart/health sequence. Incoming messages and queued/deferred items stay
 persisted and resume after release. Do not require Queued to become zero, change
 retry timing, cancel active turns, or repair stale task state as part of this.
 
-Use a stable database-adjacent POSIX file lock. Execution claims acquire a shared
-lock only for their existing atomic SQLite transaction. The deployment acquires
-an exclusive lock before waiting and retains it through health verification.
-This orders claim commit before the drain boundary and prevents new claims after
-that boundary. Existing execution, renewal, result writes, intake and recovery do
-not take this claim lock. File descriptor close releases admission on success,
-timeout, exception, cancellation or process exit; no persistent pause bit/TTL or
-schema migration is needed. Claims use nonblocking shared acquisition and return
-an empty poll while draining. Restart-only uses the same exclusion.
+Use two stable database-adjacent POSIX flock files. A short admission turnstile
+orders entry: each execution claim takes it nonblocking, acquires the shared
+drain lock, then releases the turnstile before its existing SQLite transaction.
+The shared drain lock lasts through commit. Deployment closes the admission
+turnstile first, then waits exclusively for already admitted transactions. This
+prevents continuous claim traffic from starving the deployment boundary.
+Deployment retains both locks through health verification. Existing execution,
+renewal, result writes, intake and recovery do not take these locks. Descriptor
+closure releases admission on success, timeout, exception, cancellation or
+process exit; no persistent pause bit/TTL or schema migration is needed. Claims
+return an empty poll while draining. Restart-only uses the same exclusion.
 
-Cover the dispatcher adapters, email classification/provider action claims,
+Cover the dispatcher adapters, email direct reply/classification/provider action claims,
 Workbench and meeting delivery/memory claims. Extend in-flight reads for independently
 claimed email/Workbench/delivery work before native model calls appear. Preserve
 existing backup, upgrade serialization, rollback, health and quiet timeout rules.

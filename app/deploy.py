@@ -25,6 +25,7 @@ import plistlib
 import stat
 from uuid import uuid4
 
+from app.deployment_drain import deployment_drain
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
 from app.consumer_system_release import prepare_consumer_system_contracts
 from app.prompt_template_release import prepare_prompt_templates
@@ -330,7 +331,7 @@ def restart_only(
     as a deploy: wait until no work is in flight, restart through launchd,
     wait for health.
     """
-    with GitRepository(service_root()).mutex():
+    with GitRepository(service_root()).mutex(), deployment_drain(database_path):
         if not skip_quiet_wait:
             wait_until_quiet(database_path)
         restart()

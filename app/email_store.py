@@ -5,6 +5,8 @@ provider and never creates Agent, Audit, reply-task, or run records.
 """
 
 from __future__ import annotations
+
+from app.deployment_drain import claim_connection
 from app.task20_definitions import task20_projection
 
 from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore, STORE_SCHEMA_VERSION
@@ -16120,7 +16122,10 @@ class EmailStore:
                 if candidate is None:
                     outcome = "no_action"
                     return None
-            with self._connect() as db:
+            with claim_connection(self) as db:
+                if db is None:
+                    outcome = "no_action"
+                    return None
                 phase_started_at = monotonic()
                 try:
                     db.execute("begin immediate")
@@ -16658,7 +16663,9 @@ class EmailStore:
         claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
         if not isinstance(action_id, str) or not action_id.strip():
             raise ValueError("action_id must be nonblank")
-        with self._connect() as db:
+        with claim_connection(self) as db:
+            if db is None:
+                return None
             db.execute("begin immediate")
             row = db.execute(
                 f"""

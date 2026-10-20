@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+from app.deployment_drain import deployment_drain
+from app.task20_definitions import task20_projection
 from app.state_publication_sources import publication_dispatcher_source
 from app.scheduled_config_storage import publication_scheduled_source
 
@@ -418,7 +421,7 @@ def in_flight_work(database_path: Path) -> int:
             f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
             "        where status not in ('completed','failed','superseded'))"
             f" + (select count(*) from ({reply_source}) as task "
-            "    where task.status='processing' and ("
+            "    where task.status='processing' and (task.channel='email' or "
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
@@ -442,6 +445,20 @@ def in_flight_work(database_path: Path) -> int:
             f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-19.8', previous_versions=('2026-10-14.1', '2026-10-19.1', '2026-10-19.2', '2026-10-19.3', '2026-10-19.4', '2026-10-19.5', '2026-10-19.6', '2026-10-19.7'))})"
             "    where claim_active"
             "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('email_agent_classification_tasks')}) "
+            "    where status='running' and owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('workbench_turns')}) "
+            "    where status='running' and lease_owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('weekly_okr_analysis_jobs')}) "
+            "    where status='running' and lease_owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            " + (select count(*) from actions where record_type='email_actions' "
+            "    and email_status='processing')"
+            " + (select count(*) from actions where record_type='meeting_memory_write_events' "
+            "    and td_status='processing' and td_lease_owner<>'' "
+            "    and julianday(td_lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
@@ -566,7 +583,8 @@ class RepositoryUpdater:
         self, operation: UpgradeOperation, *, already_locked: bool = False
     ) -> UpgradeResult:
         lock = nullcontext() if already_locked else self.repository.mutex()
-        with lock:
+        drain = deployment_drain(self.database_path) if self.database_path is not None else nullcontext()
+        with lock, drain:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
             self.wait_for_quiet()
