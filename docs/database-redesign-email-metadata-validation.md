@@ -146,3 +146,43 @@ validates the selected declarations. GREEN: after the harness and regression
 assertion changed, both tests in
 `tests/test_native_copy_final_schema.py` passed; Ruff and `git diff --check`
 passed. No application runtime code changed.
+
+## Parent actual-copy and visible UI acceptance
+
+Parent acceptance passed on frozen merged source `eadf628c8` (same app/tests/scripts
+as `cb156951b`, 1,195-file aggregate9d410990...). The fresh live source was
+Store19.1 while A2 waited for work to drain. Actual A2 code `25920bb11` first
+published that consistent copy to19.2; B1 then published to19.3/Email53.
+The source contained9,528 Emails. Every planned Email value/type mapping,
+all unrelated table hashes, original FK multiset and allocator values passed.
+The sole original Runs190042 FK finding remains; it is not reported as zero.
+
+New current facts passed class→message and message→class metadata update,
+paired-locator CAS with separate clocks, independent message/class IDs,
+a message-only row, and the1,000-Unicode-character preview. Default local
+search made zero original reads; explicit detail used the complete synthetic
+original through a substitute. Actual browser interaction at copy port18767
+searched the new subject, opened its detail and displayed the suffix beyond
+the preview. No worker ran in this console and no outbound provider was called.
+
+The inverse restored the exact complete source schema and all new facts.
+Actual archived A2 `25920bb11` Store and EmailStore cold-opened the current
+database and read the new metadata/message-only row. Re-publication preserved
+every business-table hash and all source Email-ledger rows; only Store marker
+time and newly recreated Email53 publication time changed. Full integrity_check
+is ok, source SHA is unchanged and provider calls are0. Detailed body-free
+evidence is `validation/2026-10-19-email-metadata-parent-copy.json`.
+
+Two harness corrections are explicit: the new synthetic ID first used a
+storage-valid negative value, which the positive-ID API correctly rejected;
+UI acceptance then used a verified-unused positive JavaScript-safe ID. The
+first re-publication comparison also incorrectly pinned the recreated Email53
+applied_at timestamp. The corrected full inverse/reforward cycle was rerun;
+no B1 application code changed for either harness issue.
+
+The four duplicate header values sum to1,188,144 bytes. Preview content moves
+to one owner and remains retained. Recorded page figures include two new
+synthetic target rows, so they are not an identical-population savings claim;
+the474,185,728-byte file was not VACUUMed. B1 is accepted locally but not yet
+deployed. A2 separately reached production5a0cb051c, Store19.2/Email52, PID63376
+with clean health, queues, Attention and History readback.

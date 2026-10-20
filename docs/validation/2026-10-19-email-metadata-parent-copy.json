@@ -1,0 +1,181 @@
+{
+  "raw_production_sha256": "4539c4cb97d68fc28a87246f9ad778a40364c305a812fba40b56e16f377f702e",
+  "source_pair_19_2_prepared_by_actual_A2_code": "25920bb11",
+  "source_sha256": "fe5e593d7bf362ecabcfa2058714ac8aae8dfe426c8ac5626b9d78624ae0b828",
+  "source_bytes": 474185728,
+  "source_head": "21317f0fc306da2e26c611d532fe71ebd9c8892d",
+  "candidate_head": "eadf628c8ab8b190d213afd6e103aca3c6497f47",
+  "forward_exact": true,
+  "emails": {
+    "rows": 9528,
+    "sha256": "1378cc85e8255ffa36e843a1eb2d3419806eb79155b07ca8da13cdbeb0cfef6e"
+  },
+  "fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "new_writes": {
+    "message_id": 9533,
+    "classification_id": 90261019,
+    "message_only_id": 9534,
+    "preview_length": 1000,
+    "two_way_metadata_updates": true,
+    "locator_cas": true,
+    "local_search_zero_original_reads": true,
+    "detail_reads_exact_original_substitute": true
+  },
+  "provider_calls": 0,
+  "harness_fixture_correction": "Synthetic storage-only negative classification ID was replaced by a verified-unused positive JavaScript-safe test ID before UI acceptance; no app change, source copies untouched.",
+  "ui": {
+    "preview_search": true,
+    "selected_classification_id": 90261019,
+    "actual_detail_body_includes_preview_suffix": true,
+    "source_reader": "synthetic-only substitute",
+    "provider_calls": 0,
+    "screenshot": "b1-email-detail.png",
+    "initial_harness_id_error_corrected_before_acceptance": true
+  },
+  "initial_reforward_harness_issue": "First repeat-publication comparison incorrectly required Email53 applied_at to be byte-identical after rollback deletes and republication recreates that ledger row. Root corrected assertion to preserve every source ledger row and allow only new53 timestamp; rerunning full inverse/reforward with persisted body-free table hashes.",
+  "current_fact_inverse": true,
+  "exact_source_schema": true,
+  "old_code_cold_open": "old-code cold open and new-fact readback PASS",
+  "new_ids_and_allocator_preserved": true,
+  "email_ledger_source_prefix_exact": true,
+  "reforward_email53_new_publication_timestamp": "2026-10-20T00:51:15.008864+00:00",
+  "reforward_current_facts_exact": true,
+  "integrity_check": "ok",
+  "source_unchanged": true,
+  "case": "business-model-email-metadata-parent-copy.v1",
+  "source_lineage": "Fresh production19.1 snapshot -> actual A2 publication25920bb11 -> immutable19.2 source -> B1. No native fixtures or original bodies were written to production.",
+  "original_table_hashes": {
+    "actions": {
+      "rows": 100725,
+      "sha256": "3046fb3742b94ff73554ab3df5cfb5b1f57ed66c4dce400b0da01843b7f3a2c0"
+    },
+    "business": {
+      "rows": 5171,
+      "sha256": "cffcabe3ea01f3e611b58ef24f66e0aae075b89039e89c918e44501a6d033256"
+    },
+    "configs": {
+      "rows": 6143,
+      "sha256": "9540c2864b4ab2e26210807dccbba73e71ffb70e38e111fc814dd189123476f7"
+    },
+    "email_schema_migrations": {
+      "rows": 39,
+      "sha256": "2ce6320209cba7fb1551929fb0fc9549fa4c3644cfff4dfc1d79830cc115b6db"
+    },
+    "emails": {
+      "rows": 9528,
+      "sha256": "53006b4d1870bfdc8f8b71ab1cd8966fce22c118074011a6313d6a0a42b67527"
+    },
+    "provenance": {
+      "rows": 148,
+      "sha256": "248f4eaffe5e0de6465852071c0ec1968b396f5a62b94a6032a62380a82cb6f3"
+    },
+    "provider_state": {
+      "rows": 72363,
+      "sha256": "c4c6f2404a460e5362e09d53418889efd6f3f14093ea6e6d1700ae17a2c7f74d"
+    },
+    "runs": {
+      "rows": 255330,
+      "sha256": "9a19efcb1aa552efa0977548db44196c2484760c831f8f37abb3533ee2f37bc3"
+    },
+    "schedules": {
+      "rows": 15,
+      "sha256": "8fd7d28cad160d5bbcd04d7fbff611e27b4b3cdf9bc0ce2eeb23c2cada96870e"
+    },
+    "sqlite_sequence": {
+      "rows": 51,
+      "sha256": "d706af29d74c53a063a09a39316969f14f62db5c1587c63429f7994ab8a85466"
+    },
+    "state": {
+      "rows": 23673,
+      "sha256": "5c9e0c1b1555ffb3513e46f76c42b834f828aab1ac12595b37702be11f3142dd"
+    },
+    "tasks": {
+      "rows": 36590,
+      "sha256": "d9f456e745f9a9292a2e394b71d3198464b24550909edb5530e0aae373ad5f31"
+    }
+  },
+  "current_before_inverse_table_hashes": {
+    "actions": {
+      "rows": 100725,
+      "sha256": "3046fb3742b94ff73554ab3df5cfb5b1f57ed66c4dce400b0da01843b7f3a2c0"
+    },
+    "business": {
+      "rows": 5171,
+      "sha256": "cffcabe3ea01f3e611b58ef24f66e0aae075b89039e89c918e44501a6d033256"
+    },
+    "configs": {
+      "rows": 6143,
+      "sha256": "9540c2864b4ab2e26210807dccbba73e71ffb70e38e111fc814dd189123476f7"
+    },
+    "email_schema_migrations": {
+      "rows": 40,
+      "sha256": "d32976fee0df6c790a3414e92f9323c04b1c155ca803f58a8c3e3af6e3a5561d"
+    },
+    "emails": {
+      "rows": 9530,
+      "sha256": "c502754473549d6a8308a5e54eadcdd1df31039db389db659f742f38a8541dc6"
+    },
+    "provenance": {
+      "rows": 148,
+      "sha256": "248f4eaffe5e0de6465852071c0ec1968b396f5a62b94a6032a62380a82cb6f3"
+    },
+    "provider_state": {
+      "rows": 72363,
+      "sha256": "c4c6f2404a460e5362e09d53418889efd6f3f14093ea6e6d1700ae17a2c7f74d"
+    },
+    "runs": {
+      "rows": 255330,
+      "sha256": "9a19efcb1aa552efa0977548db44196c2484760c831f8f37abb3533ee2f37bc3"
+    },
+    "schedules": {
+      "rows": 15,
+      "sha256": "8fd7d28cad160d5bbcd04d7fbff611e27b4b3cdf9bc0ce2eeb23c2cada96870e"
+    },
+    "sqlite_sequence": {
+      "rows": 51,
+      "sha256": "cdc0b71f3ea723d8f54892cecc5486f4a19d2c389fb8e5d5b1541becfce746b4"
+    },
+    "state": {
+      "rows": 23673,
+      "sha256": "f9fc0bbd2b304ee888d0cc3f8a4edd8acfcc73a465400a240df7e98b07daa013"
+    },
+    "tasks": {
+      "rows": 36590,
+      "sha256": "d9f456e745f9a9292a2e394b71d3198464b24550909edb5530e0aae373ad5f31"
+    }
+  },
+  "merged_source_freeze": "../superpowers/specs/2026-10-19-email-metadata-merged-freeze.json",
+  "raw_source_capacity": {
+    "raw_production_file_bytes": 474185728,
+    "email_rows": 9528,
+    "classified_rows": 9528,
+    "four_duplicate_header_value_bytes": 1188144,
+    "max_classified_preview_characters": 1000,
+    "emails_and_indexes_pages_bytes": {
+      "emails": 52428800,
+      "idx_emails_class_account_locator": 864256,
+      "idx_emails_class_account_status": 692224,
+      "idx_emails_class_status": 573440,
+      "idx_emails_message_account_locator": 499712
+    }
+  },
+  "postfixture_target_capacity": {
+    "bytes": 474185728,
+    "emails_and_indexes_pages_bytes": {
+      "emails": 51802112,
+      "idx_emails_class_account_locator": 843776,
+      "idx_emails_class_account_status": 688128,
+      "idx_emails_class_status": 569344,
+      "idx_emails_message_account_locator": 495616
+    }
+  },
+  "capacity_comparison_boundary": "Target includes two added synthetic Email rows; page difference is not represented as an identical-population measurement. File was not VACUUMed.",
+  "deployment_status": "B1 not deployed; A2 actualproduction5a0cb051c Store19.2/52 verified separately."
+}
