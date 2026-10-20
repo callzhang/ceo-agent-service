@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "created_at": "2026-10-20T02:00:06.387801+00:00",
+  "cases_sha256": "b85fb6cc46628683f3bc18d8dc8def3760fd128543240b6ce9a1b76ade05d92a",
+  "grader_sha256": "94f68f3f709a4d27b7a20cd97ba0550b05807eb73bdba0644c111689926d46ca",
+  "cli_version": "codex-cli 0.154.0",
+  "candidate_git_ref": "6f53171c991946a56973bfe596774723b439fdcd",
+  "settings": {
+    "configured_default_model": "gpt-6.1-sol",
+    "configured_reasoning_effort": "high",
+    "model_override": "gpt-5.6-luna",
+    "disabled_mcp_server_names": [
+      "ai_services",
+      "brightdata",
+      "computer-use",
+      "crm_connector",
+      "fundflow",
+      "memory_connector",
+      "node_repl",
+      "xiaoqing_interview"
+    ],
+    "features_disabled": [
+      "shell_tool",
+      "apps",
+      "plugins",
+      "hooks",
+      "multi_agent"
+    ],
+    "sandbox": "read-only",
+    "ephemeral": true,
+    "web_search": "disabled",
+    "project_doc_max_bytes": 0,
+    "model_source": "production-config"
+  },
+  "synthetic_only": true,
+  "external_executor_available": false,
+  "source_sha256": {
+    "ci/shared-skills/ceo-weekly-okr-report/SKILL.md": "d5460d933a8825be24d3abc43ba8b5df7327f9c16421189ac0baa199cc33bac8",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py": "7004673ba71f732202a68592436d88d3d39d136957436dd728d073f6d88491a3",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/destination.py": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a",
+    "operation/dingtang-okr-review/SKILL.md": "a92b9a068f5b76f98f1cfa61475043a394df93b5d760d3124b2f308b2b644ed2"
+  },
+  "cases": [
+    {
+      "case_id": "composite-coverage",
+      "consumer": {
+        "output": {
+          "action": "failed",
+          "reason": "本轮无法完成 CEO-2 OKR 定时报告：按要求调用 read_task_skill 读取 ceo-weekly-okr-report 与 dingtang-okr-review 时，两个工具均返回“ M C P tool call requires approval, but approval policy is never”；读取合成触发上下文、OKR roster/member 原始事实、执行真实 prepare/render 脚本、写入可恢复工件及文档 readback 的相关接口也受到同一限制。因此没有事实报告、原始证据包、可恢复产物或文档状态可供确认；没有生成或提交群消息，未声称已发送。另因同一工具限制，无法读取必需的 /Users/derek/.agents/AGENTS.md。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "mcp__okr_acceptance__read_task_skill:ceo-weekly-okr-report:approval_blocked",
+            "mcp__okr_acceptance__read_task_skill:dingtang-okr-review:approval_blocked",
+            "mcp__okr_acceptance__read_scheduled_context:approval_blocked",
+            "mcp__okr_acceptance__consumer_run_skill_script:unattempted_due_to_approval_block"
+          ]
+        },
+        "prompt_sha256": "2839d4159153a3a82f888a2a20acc1095895abe1968f8bbcec092cc9e92e6f1c",
+        "tool_calls": 12,
+        "unexpected_runtime_items": [],
+        "all_tools_fixture_only": false,
+        "exit_code": 0
+      },
+      "first_grade": {
+        "passed": false,
+        "checks": {
+          "complete_artifacts": false
+        },
+        "missing_artifacts": [
+          "source.json",
+          "plan.json",
+          "manifest.json",
+          "full.md",
+          "main.md",
+          "summary.md",
+          "documents.json"
+        ]
+      },
+      "audit": {
+        "output": {
+          "verdict": "approve",
+          "feedback": [
+            "独立复核未发现 Consumer 结论错误：对 ceo-weekly-okr-report 与 dingtang-okr-review 的 Skill 读取、当前触发上下文读取及产物读取均实际返回同一共享运行时错误“ＭＣＰ tool call requires approval, but approval policy is never”。这属于认证/运行时级阻断，不能归因于任何单个成员，也不能据此生成成员缺口、证据评分或成功 OKR 报告。",
+            "本轮没有可核验的来源身份、OKR roster/同名成员、名单覆盖、成员证据评分、缺口、公式或以触发时间为准的报告日期；这些均应标记为未核实，而不是填充推断值。",
+            "没有可读取的真实生成产物、可恢复工件、mock provider 文档/版本读回或发送回执，因此不能声称已创建、发布、通知或完成文档 readback。Consumer 明确没有生成或提交群消息，边界判断正确。",
+            "本次审计本身也无法读取必需的 /Users/derek/.agents/AGENTS.md，原因是当前工具面未提供可用的本地文件读取接口；该限制已记录，不应被转化为 OKR 成员级缺口。此 verdict 仅批准“共享运行时阻断导致本轮失败且未声称成功”的处理，不代表 OKR 报告内容已通过业务核验。"
+          ]
+        },
+        "prompt_sha256": "d0c74ee9b6ee6db5ca9551125e1e202b11cac9b51b4d676817e2349b2e4c605a",
+        "tool_calls": 16,
+        "unexpected_runtime_items": [],
+        "all_tools_fixture_only": false,
+        "exit_code": 0
+      },
+      "correction": null,
+      "final_audit": {
+        "output": {
+          "verdict": "approve",
+          "feedback": [
+            "独立复核未发现 Consumer 结论错误：对 ceo-weekly-okr-report 与 dingtang-okr-review 的 Skill 读取、当前触发上下文读取及产物读取均实际返回同一共享运行时错误“ＭＣＰ tool call requires approval, but approval policy is never”。这属于认证/运行时级阻断，不能归因于任何单个成员，也不能据此生成成员缺口、证据评分或成功 OKR 报告。",
+            "本轮没有可核验的来源身份、OKR roster/同名成员、名单覆盖、成员证据评分、缺口、公式或以触发时间为准的报告日期；这些均应标记为未核实，而不是填充推断值。",
+            "没有可读取的真实生成产物、可恢复工件、mock provider 文档/版本读回或发送回执，因此不能声称已创建、发布、通知或完成文档 readback。Consumer 明确没有生成或提交群消息，边界判断正确。",
+            "本次审计本身也无法读取必需的 /Users/derek/.agents/AGENTS.md，原因是当前工具面未提供可用的本地文件读取接口；该限制已记录，不应被转化为 OKR 成员级缺口。此 verdict 仅批准“共享运行时阻断导致本轮失败且未声称成功”的处理，不代表 OKR 报告内容已通过业务核验。"
+          ]
+        },
+        "prompt_sha256": "d0c74ee9b6ee6db5ca9551125e1e202b11cac9b51b4d676817e2349b2e4c605a",
+        "tool_calls": 16,
+        "unexpected_runtime_items": [],
+        "all_tools_fixture_only": false,
+        "exit_code": 0
+      },
+      "final_grade": {
+        "passed": false,
+        "checks": {
+          "complete_artifacts": false
+        },
+        "missing_artifacts": [
+          "source.json",
+          "plan.json",
+          "manifest.json",
+          "full.md",
+          "main.md",
+          "summary.md",
+          "documents.json"
+        ]
+      },
+      "passed": false,
+      "trace": [],
+      "raw_tool_trace": []
+    }
+  ],
+  "temporary_artifacts_cleaned": true,
+  "status": "failed"
+}
