@@ -497,7 +497,9 @@ inline MCP payload limit returns the original one-based OCR page list, and a
 page-specific read renders only that page to a bounded JPEG for
 `ai_services.ocr_document`. The exact downloaded PDF stays in the MCP process's
 temporary directory and is reused for page reads; it is removed when the process
-exits. Member parsing
+exits. Codex Consumer and Audit enable only `ai_services.ocr_document` in their
+role tool list; approval configuration alone does not expose a disabled tool.
+Member parsing
 also uses bounded reads against one aggregate budget, with actual compressed
 stream termination checked instead of trusting the ZIP directory's size alone;
 only stored and deflated OOXML members are accepted. This termination check is
