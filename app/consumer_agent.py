@@ -52,6 +52,7 @@ from app.business_skills import (
 from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
+from app.native_prompt_input import codex_session_wire_schema as read_codex_session_wire_schema
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
@@ -528,6 +529,7 @@ class ConsumerAgentRunner:
         owner: str | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
+        codex_session_wire_schema: Callable[[str], dict[str, object] | None] | None = None,
         runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
         forced_runtime_route=None,
         reasoning_effort: str = "",
@@ -551,6 +553,11 @@ class ConsumerAgentRunner:
         self.codex_session_exists = codex_session_exists or (
             lambda session_id: find_codex_session_path(session_id) is not None
         )
+        self.codex_session_wire_schema = (
+            codex_session_wire_schema
+            if codex_session_wire_schema is not None
+            else read_codex_session_wire_schema if codex_session_exists is None else None
+        )
         self.runtime_skill_snapshot = runtime_skill_snapshot
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
@@ -564,7 +571,10 @@ class ConsumerAgentRunner:
         )
         return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
 
-    def _route_session_exists(self, route_name: str, session_id: str) -> bool:
+    def _route_session_exists(
+        self, route_name: str, session_id: str,
+        *, expected_wire_schema: dict[str, object] | None = None,
+    ) -> bool:
         config = self.runtime_config or (
             self.codex_adapter.config if self.codex_adapter is not None else None
         )
@@ -586,7 +596,15 @@ class ConsumerAgentRunner:
             # Claude owns its remote conversation ledger. The adapter validates
             # the persisted ID before --resume and handles incompatibility safely.
             return True
-        return self.codex_session_exists(session_id)
+        if not self.codex_session_exists(session_id):
+            return False
+        if (
+            route_kind is RuntimeKind.CODEX_CLI
+            and expected_wire_schema is not None
+            and self.codex_session_wire_schema is not None
+        ):
+            return self.codex_session_wire_schema(session_id) == expected_wire_schema
+        return True
 
     def _consumer_route_sessions(
         self, conversation_id: str, session_contract_hash: str = ""
@@ -704,6 +722,8 @@ class ConsumerAgentRunner:
                 selected_skill_source_fingerprints
             )
         )
+        purpose_name = purpose_for_context(context, task)
+        expected_wire_schema = json.loads(_schema_json(consumer_wire_model(purpose_name)))
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, skill_session_contract_hash
         )
@@ -714,7 +734,9 @@ class ConsumerAgentRunner:
         # id here only supplies a fast-path hint and never clears other routes.
         conversation_session_id = next(iter(route_sessions.values()), None)
         for route_name, route_session_id in tuple(route_sessions.items()):
-            if not self._route_session_exists(route_name, route_session_id):
+            if not self._route_session_exists(
+                route_name, route_session_id, expected_wire_schema=expected_wire_schema
+            ):
                 self._clear_route_session(
                     task.conversation_id, route_name, route_session_id
                 )
@@ -806,7 +828,6 @@ class ConsumerAgentRunner:
                 ),
             )
 
-        purpose_name = purpose_for_context(context, task)
         developer_sections = consumer_developer_sections(
             runtime_context="",
             prompt_configuration=configuration,
