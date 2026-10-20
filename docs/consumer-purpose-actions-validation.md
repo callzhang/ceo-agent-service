@@ -82,6 +82,30 @@ done and skipped as its latest three rows. No OA write or historical retry
 was started for this verification. These observations establish publication
 and runtime loading; the maximum count/deadline behavior is covered by the
 
+The controlled-clock tests cover the maximum count/deadline behavior.
+
+## Attempt 15760: request-stage continuation flag repair
+
+Root cause: the Consumer wire adapter changed
+`continue_after_execution=false` to `true` whenever `action=request_access`.
+Audit had correctly approved the permission request as a stop point, but the
+adapter overrode that decision. The orchestrator also tied permission waiting
+to the continuation flag, so removing the coercion alone would have skipped
+the approved wait.
+
+The fix preserves the Consumer/Audit value exactly. After the audited
+`request_access` action is verified executed, the orchestrator starts the
+existing bounded permission wait independently of immediate continuation. It
+does the same when recovering a completed request execution after restart and
+advances the candidate stage lineage for the next Consumer attempt. It does
+not treat request delivery as permission restoration, relax Audit, or change
+the ten-read/72-hour backoff budget.
+
+Focused regressions in
+`tests/test_consumer_access_request_continuation.py` check that a false flag
+stays false and that a verified request still starts the wait. Focused test and
+production deployment evidence must be added here after those steps complete.
+
 ## Historical incident: OA Attempt 15681
 
 The production History detail for Attempt `15681` records 235 role runs: 233

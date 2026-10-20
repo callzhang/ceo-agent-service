@@ -159,7 +159,7 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
             "decision_basis": payload.decision_basis,
             "stage_index": payload.stage_index,
             "predecessor_review_id": payload.predecessor_review_id,
-            "continue_after_execution": payload.continue_after_execution or payload.action == "request_access",
+            "continue_after_execution": payload.continue_after_execution,
             "risk": payload.risk,
             "confidence": payload.confidence,
             "rule_coverage": payload.rule_coverage,

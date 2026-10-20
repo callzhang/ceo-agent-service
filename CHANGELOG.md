@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-20 — 权限申请阶段停止语义修复
+
+- 保留 Consumer 对 `request_access` 明确给出的 `continue_after_execution=false`，不再由 wire adapter 强行改为 true。
+- 经 Audit 批准且执行回执验证成功后，编排器独立启动原有的有界权限等待；重启恢复路径一致处理，并保持后续候选阶段关系正确。
+- 保留最多 10 次后续读取、从原始申请起最长 72 小时的退避预算；不把申请送达当成权限恢复。
+- 增加回归测试；部署与线上读回结果记录在 [验证记录](docs/consumer-purpose-actions-validation.md)。
+
 ## 2026-10-19 — 定时任务 Agent 验收协议修复
 
 - 统一离线评测 Consumer、Audit 和修订的字段及结果标签，区分最终内容与排除说明的来源追踪。
