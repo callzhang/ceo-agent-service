@@ -40,7 +40,6 @@ from app.action_storage import (
     _reply_variant_for,
     action_schema_is_current,
 )
-from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.current_database_schema import FINAL_ACTION_OPTIONS
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
@@ -58,7 +57,6 @@ REQUIRED_SOURCES = (
     "follow_up_drafts",
     "meeting_alignment_jobs",
     "okr_review_requests",
-    "work_todo_dingtalk_links",
     "wechat_deliveries",
     "memory_write_events",
     "feedback_events",
@@ -69,7 +67,6 @@ REQUIRED_SOURCES = (
 OPTIONAL_QUEUE_SOURCES = (
     "email_agent_classification_tasks",
     "email_classifier_runtime_samples",
-    "task_todo_sync_outbox",
 )
 
 REPLY_PROCESSING_STALE_SECONDS = 30 * 60
@@ -149,7 +146,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs", "follow_up_drafts": "actions", "work_todo_dingtalk_links": "actions", "task_todo_sync_outbox": "actions", "wechat_deliveries": "actions", "errors": "actions", "feedback_events": "actions"}
+        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs", "follow_up_drafts": "actions", "wechat_deliveries": "actions", "errors": "actions", "feedback_events": "actions"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -854,7 +851,6 @@ def _check_external_delivery_queues(
     attention: list[QualityIssue],
 ) -> None:
     for source, status_column, failed_statuses, active_statuses, resolved_filter in (
-        ("work_todo_dingtalk_links", "status", ("failed",), ("creating", "active"), ""),
         # A rejected delivery is a deliberate user decision. Store already maps
         # its reply attempt to skipped, so the external queue must do the same.
         ("wechat_deliveries", "status", ("failed", "send_unknown"),
@@ -868,49 +864,21 @@ def _check_external_delivery_queues(
             ("pending",),
             "",
         ),
-        # A failed row below the retry cap is still being retried; only an
-        # exhausted failure or an unreconciled effect needs recovery.
-        (
-            "task_todo_sync_outbox",
-            "status",
-            ("failed", "unknown"),
-            ("queued", "running"),
-            "and not (lower(status)='failed' and attempt_count < 3)",
-        ),
     ):
         if source == "memory_write_events":
             variant = _reply_variant_for(db)
             if not action_schema_is_current(db, reply_variant=variant, **FINAL_ACTION_OPTIONS):
                 raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
             source_sql = f"({reply_action_projection('memory_write_events', variant)})"
-        elif source in SYNC_ACTION_PROJECTIONS:
-            source_sql = f"({SYNC_ACTION_PROJECTIONS[source]})"
-        elif source in ("wechat_deliveries", "meeting_memory_write_events"):
+        else:
             source_sql = f"({task_delivery_projection(source)})"
-        else:
-            source_sql = source
-        if source == "work_todo_dingtalk_links":
-            failed = _count(
-                db,
-                f"""select count(*)
-                   from {source_sql} failed_link
-                   where lower(failed_link.status)='failed'
-                     and not exists (
-                        select 1
-                        from {source_sql} recovered_link
-                        where recovered_link.work_todo_id=failed_link.work_todo_id
-                          and recovered_link.id > failed_link.id
-                          and lower(recovered_link.status) in ('creating','active','done')
-                     )""",
-            )
-        else:
-            failed = _count(
-                db,
-                f"""select count(*) from {source_sql}
-                    where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
-                    {resolved_filter}""",
-                failed_statuses,
-            )
+        failed = _count(
+            db,
+            f"""select count(*) from {source_sql}
+                where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
+                {resolved_filter}""",
+            failed_statuses,
+        )
         _add(violations, source=source, code="failed", count=failed,
              severity="error", detail="external delivery queue has an unrecovered failure")
         active = _count(

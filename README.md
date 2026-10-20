@@ -517,7 +517,7 @@ Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，�
 可见性：
 
 - `/tasks/item/{task_id}` 展示当前 Task；旧 Todo 深链接使用 `/tasks/legacy-project/{legacyProjectId}`，保留原来的外部 ID、状态、pull/push 时间和错误。
-- `/logs` 的 `DingTalk Todo` 历史记录继续可查询；Status 的 dispatcher adapter 队列已移除旧 Todo outbox，保留 `business_task_todo_sync_outbox`。旧 `DingTalk Todos` Status 聚合及其 retryable 分支仍存在，与旧来源的小时质量检查一起留待独立 D1c 退休。
+- `/logs` 的 `DingTalk Todo` 历史记录继续可查询；Status 的 dispatcher adapter 队列已移除旧 Todo outbox，保留 `business_task_todo_sync_outbox`。独立 D1c 已从 Status 聚合和小时质量检查移除旧 link/outbox 的运营计数；旧事实、回执与 History 读取仍按原身份保留。
 - 定时任务「补查遗漏的钉钉消息和日历更新」执行当前 Task 的完成扫描，输出中的 `dingtalk_todos_closed` 是本次关闭的当前 Task 数量。需要补跑时在 Console 手动运行该定时任务。
 
 手动补跑命令：

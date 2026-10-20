@@ -1175,7 +1175,7 @@ def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path)
     assert not [item for item in report.violations if item.source == "wechat_deliveries"]
 
 
-def test_quality_gate_deduplicates_failed_todo_link_after_later_active_link(tmp_path):
+def test_quality_gate_preserves_historical_todo_links_without_monitoring_them(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     project_id = store.create_work_project(title="project", status="active")
     todo_id = store.create_work_todo(
@@ -1191,7 +1191,11 @@ def test_quality_gate_deduplicates_failed_todo_link_after_later_active_link(tmp_
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert not [item for item in report.violations if item.source == "work_todo_dingtalk_links"]
+    assert "work_todo_dingtalk_links" not in report.checked_sources
+    assert "work_todo_dingtalk_links" not in report.missing_sources
+    assert not [item for item in (*report.violations, *report.attention)
+                if item.source == "work_todo_dingtalk_links"]
+    assert [row.status.value for row in store.list_work_todo_dingtalk_links(work_todo_id=todo_id)] == ["failed", "active"]
 
 
 def test_quality_gate_writes_coverage_state(tmp_path):
@@ -1265,31 +1269,29 @@ def _outbox_row(store: AutoReplyStore, *, key: str, status: str, attempts: int) 
         )
 
 
-def test_quality_gate_covers_the_task_todo_sync_outbox(tmp_path):
+def test_quality_gate_keeps_historical_todo_outbox_out_of_coverage(tmp_path):
     store = AutoReplyStore(tmp_path / "outbox.sqlite3")
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert "task_todo_sync_outbox" in report.checked_sources
+    assert "task_todo_sync_outbox" not in report.checked_sources
+    assert "task_todo_sync_outbox" not in report.missing_sources
 
 
-def test_quality_gate_flags_an_exhausted_or_unreconciled_outbox_row(tmp_path):
+def test_quality_gate_keeps_failed_historical_outbox_as_facts_only(tmp_path):
     store = AutoReplyStore(tmp_path / "outbox-failed.sqlite3")
     _outbox_row(store, key="exhausted", status="failed", attempts=3)
     _outbox_row(store, key="unreconciled", status="unknown", attempts=1)
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    outbox = [
-        issue for issue in report.violations
-        if issue.source == "task_todo_sync_outbox" and issue.code == "failed"
-    ]
-    assert len(outbox) == 1
-    assert outbox[0].count == 2
-    assert report.ok is False
+    assert "task_todo_sync_outbox" not in report.checked_sources
+    assert not [issue for issue in (*report.violations, *report.attention)
+                if issue.source == "task_todo_sync_outbox"]
+    assert {row["status"] for row in store.list_task_todo_sync_outbox()} == {"failed", "unknown"}
 
 
-def test_quality_gate_does_not_flag_an_outbox_row_still_being_retried(tmp_path):
+def test_quality_gate_preserves_historical_retry_status_without_attention(tmp_path):
     store = AutoReplyStore(tmp_path / "outbox-retrying.sqlite3")
     _outbox_row(store, key="retrying", status="failed", attempts=1)
     _outbox_row(store, key="done", status="completed", attempts=1)
@@ -1297,9 +1299,11 @@ def test_quality_gate_does_not_flag_an_outbox_row_still_being_retried(tmp_path):
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert not any(
-        issue.source == "task_todo_sync_outbox" for issue in report.violations
-    )
+    assert not any(issue.source == "task_todo_sync_outbox"
+                   for issue in (*report.violations, *report.attention))
+    assert {row["status"] for row in store.list_task_todo_sync_outbox()} == {
+        "failed", "completed", "skipped"
+    }
 
 
 def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path, monkeypatch):

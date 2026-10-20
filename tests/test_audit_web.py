@@ -12105,6 +12105,25 @@ def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
     assert "task_memory_write" in names
 
 
+def test_status_keeps_historical_todo_link_out_of_queue_summary(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_legacy_todo_link(store, work_todo_id=1, status="failed", last_error="historical failure")
+
+    payload = audit_web_module.build_worker_status_payload(store, include_system_health=False)
+
+    assert all(row["name"] != "DingTalk Todos" for row in payload["queues"])
+    assert all(row["table"] != "work_todo_dingtalk_links" for row in payload["queues"])
+    assert payload["summary"]["queue_count"] == len(payload["queues"])
+    assert payload["summary"]["failed"] == sum(
+        row["failed"] for row in payload["queues"]
+        if not row.get("_summary_projection", False)
+    )
+    assert "business_task_todo_sync_outbox" in {
+        row["name"] for row in payload["dispatcher_queues"]
+    }
+    assert store.list_work_todo_dingtalk_links(work_todo_id=1)[0].last_error == "historical failure"
+
+
 def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):
     # Preserve deployed upstream 53c72dc2e: failed unsubscribe operations remain
     # in History and their own recovery surface, outside manager Attention.

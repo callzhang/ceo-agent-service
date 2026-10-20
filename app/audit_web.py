@@ -2613,14 +2613,13 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
             "updated_at",
             "error",
         ),
-        ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
     ]
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
             physical_table = ("tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
-                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "work_todo_dingtalk_links", "meeting_memory_write_events", "wechat_deliveries") else table)
+                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "meeting_memory_write_events", "wechat_deliveries") else table)
             if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
@@ -2645,7 +2644,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                 snapshots.append(_read_status_queue(_wechat_delivery_queue_snapshot, db))
                 continue
             counts = _queue_status_counts(db, table, status_column)
-            retryable = _queue_retryable_count(db, table, status_column, error_column)
+            retryable = 0
             raw_failed = _queue_count_for(counts, {"failed", "error"})
             snapshots.append(
                 {
@@ -4036,32 +4035,6 @@ def _queue_status_counts(
 
 def _queue_count_for(counts: Mapping[str, int], statuses: set[str]) -> int:
     return sum(int(counts.get(status, 0)) for status in statuses)
-
-
-def _queue_retryable_count(
-    db: sqlite3.Connection,
-    table: str,
-    status_column: str,
-    error_column: str,
-) -> int:
-    if table == "work_todo_dingtalk_links":
-        retryable_codes = tuple(DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES)
-        if not retryable_codes:
-            return 0
-        code_predicate = " or ".join(
-            f"{error_column} like ?" for _ in retryable_codes
-        )
-        row = db.execute(
-            f"""
-            select count(*) as count
-            from {_queue_relation(table)}
-            where lower({status_column})='failed'
-              and ({code_predicate})
-            """,
-            [f"%{code}%" for code in retryable_codes],
-        ).fetchone()
-        return int(row["count"] or 0)
-    return 0
 
 
 def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:

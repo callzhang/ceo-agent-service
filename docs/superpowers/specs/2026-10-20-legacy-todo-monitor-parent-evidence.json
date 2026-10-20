@@ -1,0 +1,39 @@
+{
+  "source_base": "f6df7cf340366583856d506f684cdba84afbf7ae",
+  "D1c_source_patch_sha256": "8cf54a9aefb2d9b2ebbd56b361489e8beb1b6ca032d05307a966bc3b563c9b72",
+  "read_only": true,
+  "constructors_workers_models_providers_run": false,
+  "queue_summary_removed_only": "work_todo_dingtalk_links",
+  "removed_queue_counts": {
+    "active": 540,
+    "cancelled": 5,
+    "done": 330
+  },
+  "removed_queue_pending": 0,
+  "removed_queue_processing": 0,
+  "removed_attention_active_count": 540,
+  "nonlegacy_status_quality_and_all_dispatcher_metrics_exact": true,
+  "current_business_outbox_still_present": true,
+  "all_12_tables_raw_typed_facts_rowids_sequences_schema_markers_FK_unchanged": true,
+  "raw_stored_old_active_statuses_unchanged": true,
+  "new_synthetic_tasks_and_all_3_receipts_unchanged": true,
+  "evidence": {
+    "d1c_read_only_probe.py": "4ddf3e9b742acaeab663423e5ca8bae4080d7418139b7a569a39793d16bf8c51",
+    "d1c_read_only_compare.py": "4842a3a6a028fc2bcb1212838d4361a9ffd5e3fc97d728ec71647370a92d6a6c",
+    "d1c-before-read-only.json": "6f10f94fbc1a474059d409ab6dddf94c3774b1633d7b411c6a865147761d0cd1",
+    "d1c-after-read-only.json": "c4383f53b2af48589896997a41cd3c73911b878c142c0c09be21ea226290c225",
+    "d1c-before-read-only.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "d1c-after-read-only.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "baseline-email-fixture.log": "c3af303437bc198e3c888337e38918dc3aaae28215e79f6d23bdef48b2083429"
+  },
+  "source_manifest_sha256": "c0e6e23d3b4bc55096647b035727216565ea0fe5f66e6f45dfd3fb73dcbf4f8b",
+  "production_modified": false,
+  "real_external_sends": 0,
+  "D1c_new_DDL": false,
+  "release_ready": false,
+  "independent_source_SPEC": "PASS",
+  "independent_source_QUALITY": "PASS",
+  "independent_supplemental_copy_QUALITY": "PASS",
+  "D1b_two_stage_schema_recovery_evidence": "See sibling D1b parent report; no new D1c DDL",
+  "A5_native_failures_retained": 2
+}

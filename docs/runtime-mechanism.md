@@ -2540,9 +2540,9 @@ reconcile 写入及 `reclassify_unmirrored_todo_outbox.py` 维护命令已退休
 provider 回执保持原样，读取仍供 History、已发送 Todo 和 legacy-project 详情使用。
 Derek 2026-10-20 选择：旧记录无法核验 current Task 身份时仅保留历史，不按公共整数
 ID 关联或晋升、不取消或完成外部 Todo、不重发。完成扫描和未知创建回执核对仍只读取
-当前 BusinessTask 的链接；旧 `active` 不再触发任何 provider 操作。旧 `DingTalk Todos`
-Status 聚合及其 retryable 分支仍存在，与旧来源的小时质量检查规则一起留待独立 D1c
-退休；本批未改变这些聚合和规则、语义导入、物理 schema 或历史数据。
+当前 BusinessTask 的链接；旧 `active` 不再触发任何 provider 操作。独立 D1c 已从 Status 聚合移除旧 `DingTalk Todos` 及其专属 retryable 分支，
+从小时质量检查的 required/optional 来源与外部队列检查中移除旧 link/outbox。
+语义导入、物理 schema、历史数据和读取未改变；这仍非完整 D 或 live 验收。
 
 **催办由 Derek 点按钮发送**（Derek 2026-09-25：「催办应该变成 UI 上的一个按钮，让用户决定是否要发送催办（点击一键发送），如果后面有新的信息更新了 task，应该取消可催办状态」）：Task 详情页「催办」区列出该 Task 的全部 follow-up；待发送（`draft`/`approved`）和发送失败（`failed`）的每条带一个发送按钮，点击调用 `POST /api/console/tasks/items/{task_id}/follow-ups/{follow_up_id}/send`（带当前 `revision`），由 `send_business_task_follow_up` 当场发送：不看工作时间、不经 Agent 审核，点击就是决定。失败或结果未知的发送保持 `failed` 并把结果留在该行上，不排 Agent 修复；再点一次作为新 revision 发送，原 attempt 不改。Task Agent 把新信息应用到已有 Task 时，在同一事务里用 `cancel_pending_business_task_follow_ups` 撤回该 Task 其余未发出的 follow-up（`cancelled`，原因写明被哪条来源更新），同一来源信号新建的 follow-up 保留，正在发送的不动。
 

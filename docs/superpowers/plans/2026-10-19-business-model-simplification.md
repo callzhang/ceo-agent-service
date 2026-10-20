@@ -178,9 +178,9 @@ candidate_action_attempts:
 2026-10-20 用户确认的旧 provider Todo 处置：540 条 recorded-active 旧链接没有可核验的
 current Task 身份，仅按原身份保留来源、业务事实和执行回执；不自动晋升、取消、完成或
 重发真实外部 Todo。D1b 退休旧 provider 执行代码及 dispatcher adapter 队列，保留物理事实和历史 reader；
-旧 `DingTalk Todos` Status 聚合、retryable 分支和旧来源小时质量检查仍保留，另由 D1c 退出，
-后续 DDL 独立处理。当前 BusinessTask 路径保持现有语义。
-D1b 的本地回归与源码冻结不表示完整 D、正式迁移、回退或上线验收完成。
+独立 D1c 已退出旧 `DingTalk Todos` Status 聚合、专属 retryable 分支和旧 link/outbox
+小时质量检查来源；后续 DDL 独立处理。当前 BusinessTask 路径保持现有语义。
+D1b/D1c 的本地回归与源码冻结不表示完整 D、root 副本回退验证、正式迁移或上线验收完成。
 
 **修改：** `app/task_semantic_import.py`、`app/task_semantic_service.py`、`app/business_definitions.py`、`app/task_agent.py`、`app/task_retrieval.py`、`app/todo_completion.py`、`app/todo_sync.py`、`app/action_followup_sync_definitions.py`、`app/store.py`、`app/web_api/tasks.py`、`frontend/src/pages/TasksPage.tsx`、`frontend/src/pages/TaskParts.tsx`、`frontend/src/app/router.tsx`。
 

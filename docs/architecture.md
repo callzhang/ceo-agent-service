@@ -321,8 +321,10 @@ dispatcher adapter，Status 中该 adapter 的队列展示也已移除；不再�
 Derek 2026-10-20 确认：无法核验 current Task 身份的旧 Todo 仅保留原身份的来源、
 业务事实和执行回执；不按共享整数 ID 晋升或关联 Task，不取消、完成或重发真实外部 Todo。
 旧 `active` 是已保存的历史状态，不代表仍在运营；历史 link/outbox 读取、History 和
-legacy-project 深链接保留。本批不改变物理声明或旧记录；旧 `DingTalk Todos` Status
-聚合及其 retryable 分支仍存在，与小时质量检查的旧来源一起留待独立 D1c 退休。
+legacy-project 深链接保留。D1b 不改变物理声明或旧记录。独立 D1c 已从 Status 聚合移除旧 `DingTalk Todos`
+及其专属 retryable 计算，并从小时质量检查的 required/optional 来源和外部队列检查中
+移除旧 link/outbox；历史 link/outbox 事实、回执及读取保持原样。D1b/D1c 的源码结果
+不代表完整 D、正式发布或 live 验收。
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 
