@@ -8,7 +8,7 @@ from app.action_email_schema_release import (
     SOURCE_STORE_VERSION,
 )
 from app.action_storage import email_action_projection
-from app.execution_owner_schema_release import (
+from app.sent_result_schema_release import (
     TARGET_STORE_VERSION, TARGET_EMAIL_VERSION, PREVIOUS_STORE_VERSIONS, PREVIOUS_EMAIL_PAIRS,
 )
 
