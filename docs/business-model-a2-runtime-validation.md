@@ -2,7 +2,7 @@
 
 Status: A2 runtime acceptance passed on an owned database copy. Production publication and readback are separate and not claimed here.
 
-The immutable source is the actual deployed b33f331d6492f8172c0c64570c13839add13e069 Store19.1/Email52 online backup, 474185728 bytes. Its SHA-256 is `67e841cea83f123233c7a05e0014af8dae8f25806d9f1100ff1b7d5b844d6d37`. The final merged app tree contains 417 tracked files; its body-free manifest SHA-256 is `2124c8c9385553723dc78b8ff13002f17110b6c71c36701479c3b23aee6512a7` and every file matched before/after acceptance. No source database, business-row archive or trajectory body is committed.
+The immutable source is the actual deployed b33f331d6492f8172c0c64570c13839add13e069 Store19.1/Email52 online backup, 474185728 bytes. Its SHA-256 is `67e841cea83f123233c7a05e0014af8dae8f25806d9f1100ff1b7d5b844d6d37`. The frozen pre-prompt-trim `be45cc53e` A2 acceptance app tree contains 417 tracked files; its body-free manifest SHA-256 is `2124c8c9385553723dc78b8ff13002f17110b6c71c36701479c3b23aee6512a7` and every file matched before/after acceptance. No source database, business-row archive or trajectory body is committed.
 
 ## Latest source transition
 
@@ -22,7 +22,7 @@ After those new facts, the real ResultSchemaRelease inverse restored the complet
 
 ## Tests and review boundary
 
-Implementation frozen focused tests:34passed201.14s. Original five A1 integration cases ran in the exact archived c291 runtime:5passed134.44s; current A2 equivalents are mapped in `business-model-result-reference-validation.md`. Initial component/full-copy evidence and 420-file pre-merge manifest are recorded there. Fresh merged SPEC then QUALITY approved the integration; the current merged flagged-important query test passed1/10.99s and Ruff/diff checks pass.
+Pre-prompt-merge A2 implementation frozen focused tests:34passed201.14s. Original five A1 integration cases ran in the exact archived c291 runtime:5passed134.44s; current A2 equivalents are mapped in `business-model-result-reference-validation.md`. Initial component/full-copy evidence and 420-file pre-merge manifest are recorded there. Fresh merged SPEC then QUALITY approved the integration; the current merged flagged-important query test passed1/10.99s and Ruff/diff checks pass.
 
 An expanded historical Email DAO check was stopped after repeated fixture errors. A single-case diagnostic proves its archived Store19/Email51 source tries to jump directly to current19.2; the existing explicit source guard refuses before DAO behavior. The interrupted run (which also hit pytest interruption teardown) is not a green module result. No compatibility bypass or weakened behavior assertion was added; the actual merged query and the supported19.1→19.2 protocol are the checks used here.
 
@@ -31,3 +31,7 @@ An expanded historical Email DAO check was stopped after repeated fixture errors
 On the identical pre-fixture source/target, Actions and indexes occupy169304064→168607744bytes (696320bytes less); Action payload116254389→115824828bytes. File size remains474185728bytes; free pages291→461. No production VACUUM or large total-database reduction is claimed. The purpose is one result owner; A3/B1/B2/C/D remain separate obligations.
 
 Full body-free results: [runtime copy evidence](validation/2026-10-19-business-model-a2-runtime-copy.json).
+
+## Subsequent upstream prompt merge
+
+After the acceptance above, upstream21317f0fc was merged in837e83c36. Its only runtime change is Consumer capability wording; every A2 storage, reader, writer, factory and release file remains unchanged. The native proof above is not a native run of that later prompt. Upstream PR161 separately records ten paired native Consumer cases. The merged prompt-section and session-resume regressions passed2tests in9.39s. Static merge SPEC approved; QUALITY requested the acceptance-tree label correction recorded here.
