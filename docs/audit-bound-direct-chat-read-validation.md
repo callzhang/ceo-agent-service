@@ -32,6 +32,15 @@ group reads, Audit decisions and external action permissions must not change.
   contained the original trigger, and a five-message recent read whose every
   message matched the bound conversation. No business action was executed.
 
-This establishes the source-reader behavior, not that any historical Audit
-decision would now approve the candidate. Production deployment and a natural
-post-release Audit readback remain separate release checks.
+The fix merged as PR #210 at `36ef34ac50fd94ea7b86933aefdc9e619b042770`.
+The standard deploy reached that exact production commit, started PID 89665,
+and returned HTTP 200 from `/healthz`. Active and queued task views, Attention,
+and History returned HTTP 200. The production `app/agent_cli.py` hash matched
+the tested source. A post-deploy read-only call against saved task 416573
+returned a complete nine-message direct-chat window containing the trigger;
+all five recent messages belonged to the same conversation.
+
+This establishes the deployed source-reader behavior, not that any historical
+Audit decision would now approve the candidate. No natural post-release Audit
+turn had appeared at the time of this readback, so the business outcome remains
+unverified.
