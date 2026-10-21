@@ -87,8 +87,23 @@ model-input lifecycle and similarity tests passed. Ruff and diff checks passed.
 
 ## Publication and selected task recovery
 
-Runtime publication, verified selected-task backup, one-task recovery readback,
-remaining-task recovery and final outcomes are pending. Recovery will use the
-existing EmailClassificationTaskAdapter.retry_failed_tasks entry point for the
-exact selected identities. No direct provider mutation or manual classification
-result will be used to impersonate a successful Agent run.
+Runtime fixes are pushed to main in 901a752c0 and 28666636f (the intervening
+20537b83d merge preserves concurrent main work). At 2026-10-21 05:25 UTC,
+production remained a79d8e279 with healthz HTTP 200. Normal deployment was
+waiting for Work Summary input 416319: processing since 04:58:41 UTC, attempts 1,
+with a live continuously renewed dispatcher claim and no active Agent/runtime
+run. No task was interrupted and no quiet-wait bypass was used. An explicit
+request for permission to use the established skip-quiet-wait deployment option
+was sent; permission is pending. The input's body remains persisted and startup
+calls reset_processing_work_summary_inputs; no manual state mutation was made.
+
+The exact eight selected classification records were backed up and the backup
+read back: 8 rows, mode 0600, SHA-256
+`a0ea8109d02427b8eeb1e6d3bb4192b307d842fb5237fdde403d23bed92f228d`.
+All eight still have their original failed state and attempt counts. Recovery
+will use the existing EmailClassificationTaskAdapter.retry_failed_tasks entry
+point after the runtime repair is actually deployed, first for one exact
+identity and then the remaining seven after actual Agent result verification.
+One-task recovery, remaining-task recovery and final classification outcomes
+are pending. No direct provider mutation or manual classification result will
+be used to impersonate a successful Agent run.
