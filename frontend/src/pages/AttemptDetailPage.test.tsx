@@ -182,6 +182,29 @@ describe("AttemptDetailPage", () => {
     expect(screen.queryByText("旧候选：选择谁可以决定继续推进")).not.toBeInTheDocument();
   });
 
+  it("keeps a selected historical decision visible after the Attempt leaves needs_human", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "running", requires_decision: false },
+        human_decision: {
+          candidate_id: 1077, candidate_digest: "selected-candidate", review_id: 1067,
+          reason: "已选择的历史方案", requested_input: "",
+          basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+          authorization_plan: null, selection: { option_key: "continue", status: "selected" },
+        },
+      },
+      meta: { snapshot_at: "2026-10-20T23:50:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "这次要你决定什么" })).toBeInTheDocument();
+    expect(screen.getByText("已选择的历史方案")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "已选择方案" })).toBeInTheDocument();
+    expect(screen.getByText(/continue · selected/)).toBeInTheDocument();
+  });
+
   it("groups runtime retries into collapsed processing batches", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {
