@@ -574,7 +574,7 @@ export function AttemptDetailPage() {
           <ProcessingPanel detail={detail} />
         </div>
         <aside className="attempt-review-side" aria-label="反馈与人工处理">
-          {detail.human_decision && <HumanDecisionBasis detail={detail} />}
+          {(detail.status.requires_decision || detail.human_decision?.selection) && detail.human_decision && <HumanDecisionBasis detail={detail} />}
           {detail.human_decision?.selection && <section className="console-card attempt-decision-card"><h2>已选择方案</h2><p>{detail.human_decision.selection.option_key} · {detail.human_decision.selection.status}；执行结果以回执为准。</p></section>}
           {detail.status.requires_decision && detail.human_decision && <section className="console-card attempt-decision-card">
             <h2>本次处理方式</h2>

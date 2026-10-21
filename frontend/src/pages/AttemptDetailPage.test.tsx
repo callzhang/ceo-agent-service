@@ -145,6 +145,7 @@ describe("AttemptDetailPage", () => {
     getAttemptDetail.mockResolvedValueOnce({
       item: {
         ...detail,
+        status: { ...detail.status, raw: "needs_human", requires_decision: true },
         human_decision: {
           candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41,
           reason: "现有规则没说清这类项目资料未齐时谁能决定继续推进。请选一条今后适用的授权规则；这不代表让你批准本项目。",
@@ -158,6 +159,27 @@ describe("AttemptDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "这次要你决定什么" })).toBeInTheDocument();
+  });
+
+  it("hides an unresolved historical decision candidate when the current Attempt no longer needs a decision", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "running", requires_decision: false },
+        human_decision: {
+          candidate_id: 1077, candidate_digest: "old-candidate", review_id: 1067,
+          reason: "旧候选：选择谁可以决定继续推进", requested_input: "",
+          basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+          authorization_plan: null, selection: null,
+        },
+      },
+      meta: { snapshot_at: "2026-10-20T23:50:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "这次要你决定什么" })).not.toBeInTheDocument();
+    expect(screen.queryByText("旧候选：选择谁可以决定继续推进")).not.toBeInTheDocument();
   });
 
   it("groups runtime retries into collapsed processing batches", async () => {
