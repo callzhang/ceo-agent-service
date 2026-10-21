@@ -1302,8 +1302,8 @@ def read_skill_tool(
 ) -> dict[str, object]:
     """Read an installed Agent skill or its referenced Markdown safely.
 
-    With no argument, return the complete body-free metadata catalog. `query`
-    returns entries whose name/description contains every query term. `path` identifies
+    With no argument, return all names and paths without descriptions. `query`
+    returns full metadata for entries whose name/description contains every query term. `path` identifies
     Markdown inside an installed Skill; `name` reads one exact SKILL.md.
     """
     if sum(value is not None for value in (path, name, query)) > 1:
@@ -1330,7 +1330,9 @@ def read_skill_tool(
                 )
             )
         return {
-            "catalog": render_skill_catalog_metadata(catalog)
+            "catalog": render_skill_catalog_metadata(
+                catalog, include_descriptions=query is not None
+            )
         }
     if name is not None:
         path = str(
