@@ -70,8 +70,8 @@ export function AttentionPanel({ onCountChange, refreshKey, compact=false }: { o
               <div className="attention-root-cause"><span>根因</span><strong>{displayValue(row.root_cause) || "未分类"}</strong></div>
               <SummaryText value={displayValue(row.summary)} lines={2} label="展开摘要" />
             </div>
-            <div className="attention-card-foot"><span>最近更新 · {displayValue(row.updated_at)}</span><button type="button" className="details-toggle" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : row.id)}>{expanded ? "收起详情" : "查看详情"}</button></div>
-            <div className="attention-details" hidden={!expanded}><p><strong>{detailLabel}：</strong>{detailValue === "未提供" ? "当前没有可展示的详情。" : detailValue}</p><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}</div></div>
+            <div className="attention-card-foot"><span>最近更新 · {displayValue(row.updated_at)}</span><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}<button type="button" className="details-toggle" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : row.id)}>{expanded ? "收起详情" : "查看详情"}</button></div></div>
+            <div className="attention-details" hidden={!expanded}><p><strong>{detailLabel}：</strong>{detailValue === "未提供" ? "当前没有可展示的详情。" : detailValue}</p>{!row.links.length && <p className="muted">此问题尚无关联的 Attempt 详情。</p>}</div>
           </article>;
         })}
       </div>}

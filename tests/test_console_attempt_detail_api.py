@@ -16,6 +16,7 @@ from app.task20_definitions import task20_column
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
+    _oa_permission_wait_projection,
     _runtime_payload,
     build_attempt_detail,
 )
@@ -211,6 +212,113 @@ def test_attempt_detail_does_not_promote_current_uncertain_execution_to_done(tmp
     assert payload["status"]["raw"] == "uncertain"
     assert payload["system_execution"]["status"] == "uncertain"
     assert next(item["value"] for item in payload["metadata"] if item["label"] == "send status") == "uncertain"
+
+
+def test_oa_access_wait_projects_verified_request_and_current_retry_state():
+    from app.consumer_purpose_retry import PurposeRetryBudget, RETRY_REQUESTED
+
+    business_key = "oa:test-process:task-104"
+    task = SimpleNamespace(
+        id=104, business_object_key=business_key, status="pending",
+        error=RETRY_REQUESTED,
+    )
+    budget = PurposeRetryBudget
+    key = budget(None, business_key, "oa").key
+    state = {
+        "receipt": "verified-request-key",
+        "requested_at": "2026-10-20T21:21:24+00:00",
+        "deadline": "2026-10-23T21:21:24+00:00",
+        "next_at": "2026-10-20T21:26:24+00:00",
+        "count": 1,
+        "reservations": ["104:g:1:1"],
+        "review": "1117",
+    }
+    store = SimpleNamespace(get_service_state=lambda requested: json.dumps(state) if requested == key else "")
+    reviewed = {
+        "candidate_json": json.dumps({
+            "purpose_output": {"purpose": "oa", "action": "request_access"}
+        })
+    }
+    execution = {
+        "actions": [{
+            "operation": "comment", "status": "verified",
+            "receipt": {
+                "external_action_key": "verified-request-key",
+                "provider_result": {"operation_record": {"date": 1792531284020}},
+            },
+        }]
+    }
+
+    projected = _oa_permission_wait_projection(
+        store, task, reviewed, execution,
+        historical_error="external_action_uncertain",
+        audit_note="Action request_access was not verified",
+    )
+
+    assert projected is not None
+    assert projected["current_status"] == "pending"
+    assert projected["current_error"] == RETRY_REQUESTED
+    assert projected["historical_error"] == "external_action_uncertain"
+    assert projected["operation_time"] == "2026-10-20T21:21:24Z"
+    assert "等待权限开通" in projected["status_message"]
+    assert "尚不表示权限已开通" in projected["status_message"]
+    assert "系统执行回执随后确认评论已送达" in projected["audit_explanation"]
+
+
+@pytest.mark.parametrize(
+    ("task_status", "task_error", "budget_receipt", "budget_closed"),
+    [
+        ("done", "", "verified-request-key", False),
+        ("pending", "external_action_uncertain", "verified-request-key", False),
+        ("pending", "consumer_purpose_retry_requested", "different-request-key", False),
+        ("pending", "consumer_purpose_retry_requested", "verified-request-key", True),
+    ],
+)
+def test_oa_access_wait_does_not_project_without_current_bound_retry_receipt(
+    task_status: str, task_error: str, budget_receipt: str, budget_closed: bool,
+):
+    from app.consumer_purpose_retry import PurposeRetryBudget
+
+    business_key = "oa:test-process:task-104"
+    task = SimpleNamespace(
+        id=104, business_object_key=business_key, status=task_status, error=task_error,
+    )
+    key = PurposeRetryBudget(None, business_key, "oa").key
+    state = {
+        "receipt": budget_receipt,
+        "requested_at": "2026-10-20T21:21:24+00:00",
+        "deadline": "2026-10-23T21:21:24+00:00",
+        "next_at": "2026-10-20T21:26:24+00:00",
+        "count": 1,
+        "reservations": ["104:g:1:1"],
+        "review": "1117",
+        "closed": budget_closed,
+    }
+    store = SimpleNamespace(
+        get_service_state=lambda requested: json.dumps(state) if requested == key else ""
+    )
+    reviewed = {
+        "candidate_json": json.dumps({
+            "purpose_output": {"purpose": "oa", "action": "request_access"}
+        })
+    }
+    execution = {
+        "actions": [{
+            "operation": "comment", "status": "verified",
+            "receipt": {
+                "external_action_key": "verified-request-key",
+                "provider_result": {"operation_record": {"date": 1792531284020}},
+            },
+        }]
+    }
+
+    projected = _oa_permission_wait_projection(
+        store, task, reviewed, execution,
+        historical_error="external_action_uncertain",
+        audit_note="Action request_access was not verified",
+    )
+
+    assert projected is None
 
 
 def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():

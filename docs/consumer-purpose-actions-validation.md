@@ -165,3 +165,29 @@ stays false and that a verified request still starts the wait. The merged-main
 focused run passed 125 tests across request continuation, purpose orchestration,
 permission retry budgets and wire contracts. Ruff passed on the changed Python
 files. Production deployment and live readback remain pending.
+
+## Attempt 15779: verified access request shown as uncertain (read-only diagnosis)
+
+The OA comment receipt for the read-access request is verified in DingTalk and
+System Execution, while the same task is intentionally `pending` with
+`consumer_purpose_retry_requested`. The durable purpose budget binds that
+pending reread to the exact verified comment receipt. Attempt History was
+showing the old `external_action_uncertain` error and the pre-execution Audit
+note as if they described the current state. They did not: the old Attempt
+error is immutable history, and Audit's note predates the executor receipt.
+
+The detail projection now requires the current OA purpose wait, a matching
+open retry budget, and exactly one verified comment receipt before explaining
+the state as “comment delivered; waiting for permission”. It displays the
+operation timestamp from that receipt, keeps the old error under a historical
+label, and explicitly says the request is not proof of granted permission or
+completed approval. A mismatched or absent receipt does not qualify. This is a
+read-only projection change; it sends no comment and does not change the
+10-retry / 72-hour policy.
+
+Production evidence on 2026-10-20: Attempt 15779's original task is pending
+with error `consumer_purpose_retry_requested`; the OA operation record and
+System Execution both confirm the comment at `2026-10-20T21:21:24Z`; History
+still displays old `send_error=external_action_uncertain`. No new comment or
+approval action was issued during diagnosis. Focused regression and live
+readback after the next deployment are pending.

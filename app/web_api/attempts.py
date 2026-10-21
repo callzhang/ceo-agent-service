@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
@@ -727,6 +728,73 @@ def _system_execution_payload(
     }
 
 
+def _oa_permission_wait_projection(
+    store: Any,
+    task: Any,
+    reviewed: dict[str, Any] | None,
+    execution: dict[str, Any] | None,
+    *,
+    historical_error: str,
+    audit_note: str,
+) -> dict[str, str] | None:
+    """Separate a verified OA access-request receipt from the current wait state."""
+    from app.consumer_purpose_retry import RETRY_REQUESTED, PurposeRetryBudget
+
+    if (
+        task is None
+        or str(getattr(task, "status", "") or "") not in {"pending", "processing"}
+        or str(getattr(task, "error", "") or "") != RETRY_REQUESTED
+        or reviewed is None
+        or execution is None
+    ):
+        return None
+    candidate = _stored_json(str(reviewed.get("candidate_json") or ""), {})
+    purpose_output = candidate.get("purpose_output") or {}
+    if purpose_output.get("purpose") != "oa" or purpose_output.get("action") != "request_access":
+        return None
+    business_key = str(getattr(task, "business_object_key", "") or "").strip()
+    retry_key = business_key or f"reply-task:{int(getattr(task, 'id', 0) or 0)}"
+    retry_state = PurposeRetryBudget(store, retry_key, "oa").state()
+    if not retry_state or retry_state.get("closed"):
+        return None
+    verified = [
+        action for action in execution.get("actions", [])
+        if action.get("operation") == "comment"
+        and action.get("status") == "verified"
+        and action.get("receipt")
+        and action["receipt"].get("external_action_key") == retry_state.get("receipt")
+    ]
+    if len(verified) != 1:
+        return None
+    provider_result = verified[0]["receipt"].get("provider_result") or {}
+    operation_record = provider_result.get("operation_record") or {}
+    raw_timestamp = operation_record.get("date")
+    operation_time = "未由回执提供"
+    if isinstance(raw_timestamp, (int, float)) and raw_timestamp > 0:
+        operation_time = datetime.fromtimestamp(
+            raw_timestamp / 1000, tz=timezone.utc
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+    note = str(audit_note or "").strip()
+    audit_text = (
+        f"此前 Audit 说明（针对执行前候选）：{note}"
+        if note else "此前 Audit 说明针对执行前候选。"
+    )
+    return {
+        "current_status": str(getattr(task, "status", "") or ""),
+        "current_error": RETRY_REQUESTED,
+        "historical_error": str(historical_error or "").strip(),
+        "operation_time": operation_time,
+        "status_message": (
+            f"权限申请评论已由系统回执核验送达（原操作时间：{operation_time}）；"
+            "当前等待权限开通后重新读取材料，尚不表示权限已开通或审批已完成。"
+        ),
+        "audit_explanation": (
+            f"{audit_text} 系统执行回执随后确认评论已送达，"
+            f"原操作时间为 {operation_time}。当前处理状态为等待权限开通后重读。"
+        ),
+    }
+
+
 def build_attempt_detail(
     store: Any, attempt_id: int, *, email_store_factory: Callable[[], Any] | None = None
 ) -> tuple[int, dict[str, Any] | None]:
@@ -968,6 +1036,25 @@ def build_attempt_detail(
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
         audit_explanation = attempt.codex_reason or attempt.send_error
+    oa_permission_wait = _oa_permission_wait_projection(
+        store,
+        reply_task,
+        history_reviewed,
+        system_execution,
+        historical_error=attempt.send_error,
+        audit_note=audit_explanation,
+    )
+    if oa_permission_wait is not None:
+        status_message = oa_permission_wait["status_message"]
+        audit_explanation = oa_permission_wait["audit_explanation"]
+        # The immutable Attempt row may still say "running" or carry the
+        # executor's earlier uncertainty. Project the current task wait state
+        # for this detail response, while retaining the original error below.
+        attempt = attempt.model_copy(update={
+            "send_status": oa_permission_wait["current_status"],
+            "send_error": oa_permission_wait["current_error"],
+            "audit_summary": oa_permission_wait["audit_explanation"],
+        })
     stop_reason = stopped_because(current_agent_runs)
     if reply_task is not None and reply_task.status in {"done", "skipped"}:
         stop_reason = {"kind": "none", "code": "", "sentence": ""}
@@ -999,12 +1086,27 @@ def build_attempt_detail(
         {"label": "sensitivity", "value": normalize_display_value(attempt.sensitivity_kind)},
         {"label": "permission", "value": normalize_display_value(_permission_display(attempt))},
         {"label": "send status", "value": normalize_display_value(attempt.send_status)},
-        {"label": "send error", "value": normalize_display_value(attempt.send_error)},
+        {
+            "label": "send error",
+            "value": normalize_display_value(
+                oa_permission_wait["current_error"]
+                if oa_permission_wait is not None else attempt.send_error
+            ),
+        },
         {"label": "retry count", "value": str(attempt.retry_count)},
         {"label": "created", "value": normalize_display_value(attempt.created_at)},
         {"label": "updated", "value": normalize_display_value(attempt.updated_at)},
         {"label": "reviewed", "value": normalize_display_value(attempt.reviewed_at)},
     ]
+    if (
+        oa_permission_wait is not None
+        and oa_permission_wait["historical_error"]
+        and oa_permission_wait["historical_error"] != oa_permission_wait["current_error"]
+    ):
+        metadata.append({
+            "label": "原始 Attempt 错误（历史）",
+            "value": normalize_display_value(oa_permission_wait["historical_error"]),
+        })
     if (
         reply_task is not None
         and int(getattr(reply_task, "manual_rerun_attempt_id", 0) or 0) > 0

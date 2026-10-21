@@ -144,6 +144,7 @@ from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.email_canonical_storage import email_classification_projection
 from app.email_publication_sources import current_email_actions_available
+from app.repository_updater import ExistingSchemaUpgradeStateStore
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -3947,6 +3948,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     rows = [row for row in rows
             if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
     rows.extend(pending_oa_rows)
+    from app.web_api.attention import attention_record_detail_url
+
+    with store._connect() as db:
+        for row in rows:
+            if not row.get("detail_url"):
+                row["detail_url"] = attention_record_detail_url(db, row["category"], str(row["id"]))
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows if limit is None else rows[:limit]
 
@@ -10840,7 +10847,7 @@ def create_audit_app(
         app,
         service_factory=lambda: RepositoryUpgradeService(
             repository=GitRepository(_repo_root()),
-            store=AutoReplyStore(db_path),
+            store=ExistingSchemaUpgradeStateStore(db_path),
             remote=os.getenv("CEO_REPOSITORY_UPGRADE_REMOTE", "origin") or "origin",
             branch=os.getenv("CEO_REPOSITORY_UPGRADE_BRANCH", "main") or "main",
         ),

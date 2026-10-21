@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { NavLink, useInRouterContext } from "react-router-dom";
+import { ServiceUpdate } from "./ServiceUpdate";
 
 const destinations = [
   ["Agent", "/"],
@@ -30,7 +31,7 @@ export function GlobalNav({ activePath = window.location.pathname || "/" }: Glob
     }
   }, [activePath]);
   return (
-    <nav className="global-nav" aria-label="主导航">
+    <nav className="global-nav has-service-update" aria-label="主导航">
       <a className="global-brand" href="/history">
         <span className="global-brand-mark" aria-hidden="true" />
         <span><strong>{pageLabel}</strong><small>Local audit console</small></span>
@@ -43,6 +44,7 @@ export function GlobalNav({ activePath = window.location.pathname || "/" }: Glob
           return <a ref={active ? activeLink : undefined} className={className} href={href} aria-current={active ? "page" : undefined} key={href}>{label}</a>;
         })}
       </div>
+      <ServiceUpdate />
     </nav>
   );
 }

@@ -360,6 +360,9 @@ TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检�
 
 AI Minutes locator 显式选择 sentence_v1 或历史 paragraph_v1 excerpt 格式，保持原有
 前六／后四窗口；没有 excerpts 的 locator 不带该字段。格式／hash 不匹配不换解码器。
+同一个来源读取请求内，多条 AI Minutes Signal 复用已验证的列表分页；每条 Signal
+仍遍历完整列表以检查精确 UUID、重复项和分页状态，再分别读取行动项等组件并核对
+原始正文版本。分页只在该请求对象存活期间保留，不写入持久缓存。
 Worker、语义服务和 Web 在域写事务之外使用同一准确来源读取机制；Console 的已有
 业务来源可从链接事件事实取得，不建立原文缓存。
 
@@ -3781,3 +3784,20 @@ already-admitted claim transaction therefore cannot hold admission indefinitely
 before the ordinary in-flight quiet timer starts. Timeout closes both descriptors
 and leaves the Service and pending work untouched; the existing in-flight wait
 retains its own30-minute timeout after the claim boundary is acquired.
+
+### 导航栏服务更新（2026-10-20）
+
+默认每5分钟检查 Git 上游（可用现有环境配置覆盖）；导航栏在发现未部署提交时显示“更新服务 · N”。打开后重新检查仓库，以当前版本和上游版本的完整 SHA 固定待更新范围。单个提交显示原始说明；多个提交将范围内所有提交的标题、正文交给服务配置的原生 Codex Agent，总结为不超过500字的中文说明，并保留可展开的完整提交列表。成功摘要按两个 SHA 缓存；生成失败展示真实错误和原提交，允许重试。
+
+确认后沿用现有仓库预约，启动独立更新进程，调用正式 `app.deploy` 安装弹窗确认的精确提交，网页与部署使用同一个 operation ID。正常部署暂停领取新执行任务，等待在途任务排空；新消息、Queued 和延迟 retry 保留，恢复后继续处理。原有备份、生产目录保护、构建、重启、健康检查和回滚仍由正式部署负责。重复提交相同预约不会再次启动进程。
+
+更新状态读取原子仓库状态及现有部署记录，不等待发布期间持有的仓库互斥锁。页面空闲每60秒读取状态、更新中每3秒读取；重启断连显示重连，只有成功回执、目标 SHA、已安装 SHA 和实际 HEAD 一致时自动刷新。失败、回滚及需人工处理展示实际原因，结束后释放本次预约。
+
+首次安装排空锁的边界（2026-10-20）：只更新部署CLI不能暂停尚未实现领取锁的旧Worker。旧版本没有暂停入口时，首次受控切换需使用已显式授权的原有`--skip-quiet-wait`入口，经正式停止、备份和发布，再由新Worker执行既有重启恢复；这会中断旧turn，不等同于旧turn自然排空。安装完成后，后续普通部署使用admission/drain锁。生产源码差异必须先保全提交并按正式流程协调，不能绕过dirty检查。验证记录见`docs/first-deployment-bootstrap-validation.md`。
+
+Failed / Attention cards expose persisted Attempt links before the error disclosure.
+Reply failures use their original Attempt ID; failed Reply tasks and pending OA
+resolve the latest Attempt through the task's current execution generation and
+AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
+never substituted for an Attempt ID; a record without a persisted Attempt says
+so in its expanded details. Membership, terminal states and retry policy do not change.
