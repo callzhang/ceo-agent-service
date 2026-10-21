@@ -349,6 +349,8 @@ class ScheduledTaskDefault:
     previous_operation: tuple[str, ...] = ()
     previous_refs_match_current: bool = False
     previous_agent_prompts: tuple[str, ...] = ()
+    previous_cron_expression: str = ""
+    previous_timezone_name: str = ""
 
 
 SCHEDULED_TASK_DEFAULTS = (
@@ -428,7 +430,8 @@ SCHEDULED_TASK_DEFAULTS = (
     ),
     ScheduledTaskDefault(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
-        cron_expression="0 0 18 * * 0",
+        cron_expression="0 0 3 * * 0",
+        timezone_name="America/Los_Angeles",
         prompt="使用 $ceo-weekly-okr-report 与 $dingtang-okr-review 生成并发送每周 OKR 管理周报；按 Skill 使用原生 DWS 读取、发布和核验。",
         managed=("ceo-weekly-okr-report",),
         operation=(
@@ -438,6 +441,8 @@ SCHEDULED_TASK_DEFAULTS = (
             "dingtalk-doc",
         ),
         previous_command=WEEKLY_OKR_SERVICE_COMMAND,
+        previous_cron_expression="0 0 18 * * 0",
+        previous_timezone_name="Asia/Shanghai",
     ),
     ScheduledTaskDefault(
         migration_key=WEEKLY_REPORT_MIGRATION_KEY,
@@ -455,7 +460,8 @@ SCHEDULED_TASK_DEFAULTS = (
     ),
     ScheduledTaskDefault(
         migration_key=DAILY_REPORT_MIGRATION_KEY,
-        cron_expression="0 0 21 * * *",
+        cron_expression="0 0 6 * * *",
+        timezone_name="America/Los_Angeles",
         prompt=daily_report_prompt(),
         managed=("ceo-daily-report",),
         operation=(
@@ -468,6 +474,8 @@ SCHEDULED_TASK_DEFAULTS = (
             _legacy_daily_report_prompt(),
             _legacy_daily_report_prompt_20261019(),
         ),
+        previous_cron_expression="0 0 21 * * *",
+        previous_timezone_name="Asia/Shanghai",
     ),
     ScheduledTaskDefault(
         migration_key=CHROME_COOKIES_MIGRATION_KEY,
@@ -607,13 +615,44 @@ def seed_scheduled_tasks(
     tasks = tuple(
         _upgrade_default_copy(
             store,
-            _seed_task(default, store=store, options=options, now=now),
+            _upgrade_default_schedule(
+                store,
+                _seed_task(default, store=store, options=options, now=now),
+                default,
+                now=now,
+            ),
             now=now,
         )
         for default in SCHEDULED_TASK_DEFAULTS
     )
     _retire_follow_up_delivery_task(store=store, now=now)
     return tasks
+
+
+def _upgrade_default_schedule(
+    store: AutoReplyStore,
+    task: ScheduledTask,
+    default: ScheduledTaskDefault,
+    *,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Move only exact repository-default schedules to the current timezone."""
+    if (
+        task.deleted_at is not None
+        or
+        not default.previous_cron_expression
+        or not default.previous_timezone_name
+        or task.cron_expression != default.previous_cron_expression
+        or task.timezone_name != default.previous_timezone_name
+    ):
+        return task
+    return store.update_scheduled_task(
+        task.id,
+        expected_version=task.version,
+        cron_expression=default.cron_expression,
+        timezone_name=default.timezone_name,
+        now=now,
+    )
 
 
 def _retire_follow_up_delivery_task(

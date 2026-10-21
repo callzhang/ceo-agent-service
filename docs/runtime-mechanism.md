@@ -2413,6 +2413,9 @@ Agent Cron 保存任务定义及其结构化 Skill refs、首选 Runtime route/m
 任务创建时间之前的触发不补造，已有触发仍由唯一约束去重。之后恢复到下一个未来触发点。
 手动运行只追加一次 manual trigger，不改变 `next_run_at`。正常到期时若上一轮关联 execution 尚未
 终态，本轮以 `skipped` 和稳定原因结束；补跑则保留最近错过时间点，等上一轮终态后再提交。
+CEO 日报默认使用 `America/Los_Angeles` 每天 06:00，OKR 管理周报默认使用该时区每周日 03:00，
+使夏令时切换前后保持相同的洛杉矶本地时间。seed 只迁移精确匹配旧仓库默认周期和时区的现有任务；
+用户改过周期或时区时保留原值。配置变更生成新版本，不改写历史运行快照。
 
 `scheduled_task_runs.snapshot_id` 必须引用 `scheduled_task_config_versions` 中的非空 `snapshot_json`。
 完全相同的冻结配置只存一份；修改任务会产生新的配置版本，已排队的运行仍引用原版本。测试夹具使用
