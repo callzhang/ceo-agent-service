@@ -35,6 +35,8 @@ def _probe_case(manifest: dict, case_id: str) -> dict:
         case["messages"][0]["content"] = case["trigger"]
     if "skill_names" in specification:
         case["skill_names"] = tuple(specification["skill_names"])
+    if "skill_source" in specification:
+        case["skill_source"] = specification["skill_source"]
     if "oa_instance_patch" in specification:
         case["oa_instance"] = {
             **case["oa_instance"], **specification["oa_instance_patch"],
@@ -79,6 +81,10 @@ def _run(case: dict, *, native: bool, manifest: dict, developer: str,
         case_manifest = work / "case.json"
         trace = work / "tool-trace.jsonl"
         skill_content = dict(manifest["skill_content"])
+        if case.get("skill_source"):
+            skill_content["ceo-message-triage"] = (
+                ROOT / case["skill_source"]
+            ).read_text(encoding="utf-8")
         if purpose == "oa":
             skill_content.update({
                 "dingtalk-oa-approval": (

@@ -20,6 +20,7 @@
     {
       "id": "source-no-match",
       "base_case": "source-no-match",
+      "skill_source": "ci/shared-skills/ceo-message-triage/SKILL.md",
       "expect": "Read the exact conversation and ask for the missing minutes instead of inventing acceptance status."
     },
     {
