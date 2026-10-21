@@ -1326,6 +1326,22 @@ def test_new_ordinary_report_uses_configured_skill_and_generic_tools(tmp_path, m
         "Path('ordinary.md').write_text('New ordinary report\\n')\n"
         "print('ordinary.md')\n"
     )
+    source_scripts = tmp_path / "reviewed-skills/managed-check/scripts"
+    source_scripts.mkdir(parents=True)
+    source_script = source_scripts / "render.py"
+    source_script.write_bytes((scripts / "render.py").read_bytes())
+    relative = b"scripts/render.py"
+    body = source_script.read_bytes()
+    tree_digest = hashlib.sha256(
+        len(relative).to_bytes(4, "big") + relative
+        + len(body).to_bytes(8, "big") + body
+    ).hexdigest()
+    (source_scripts.parent / "consumer-scripts.json").write_text(json.dumps({
+        "version": 1,
+        "entrypoints": ["scripts/render.py"],
+        "script_tree_sha256": tree_digest,
+    }))
+    monkeypatch.setattr("app.agent_cli.CONSUMER_SCRIPT_SOURCE_ROOT", tmp_path / "reviewed-skills")
     tool_manager = build_role_server(
         "consumer", task_id=task_id, db_path=store.path,
         execution_generation=task.execution_generation,

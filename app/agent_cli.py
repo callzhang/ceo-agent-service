@@ -88,6 +88,7 @@ SPREADSHEET_MATERIAL_ROOTS = (
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
 MAX_TASK_FILE_BYTES = 2 * 1024 * 1024
 _TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
+CONSUMER_SCRIPT_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "ci" / "shared-skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1451,6 +1452,68 @@ def _read_bound_task_skill(
     }
 
 
+def _approved_consumer_skill_script(name: str, script: str) -> Path:
+    """Resolve a reviewed script from the service-managed Skill package.
+
+    The task binding selects a Skill, not every executable shipped with it.
+    A package's explicit Consumer entrypoints and script-source digest
+    keep sender/approval helpers outside the Consumer tool surface.
+    """
+    source = CONSUMER_SCRIPT_SOURCE_ROOT / name
+    installed = Path.home() / ".agents" / "skills" / name
+    manifest_path = source / "consumer-scripts.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("Consumer Skill script is not reviewed") from exc
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("version") != 1
+        or not isinstance(manifest.get("entrypoints"), list)
+        or script not in manifest["entrypoints"]
+        or not isinstance(manifest.get("script_tree_sha256"), str)
+    ):
+        raise ValueError("Consumer Skill script is not reviewed")
+
+    def script_tree_digest(root: Path) -> str:
+        scripts_root = root / "scripts"
+        if not scripts_root.is_dir() or scripts_root.is_symlink():
+            raise ValueError("Consumer Skill scripts are unavailable")
+        digest = hashlib.sha256()
+        paths = sorted({
+            path for path in (
+                *scripts_root.rglob("*"),
+                *(path for path in root.rglob("*.py")
+                  if path.relative_to(root).parts[0] != "tests"),
+            )
+            if "__pycache__" not in path.relative_to(root).parts
+            and (path.is_file() or path.is_symlink())
+        })
+        if not paths:
+            raise ValueError("Consumer Skill scripts are unavailable")
+        for path in paths:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Consumer Skill scripts are unavailable")
+            relative = path.relative_to(root).as_posix().encode("utf-8")
+            content = path.read_bytes()
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            digest.update(len(content).to_bytes(8, "big"))
+            digest.update(content)
+        return digest.hexdigest()
+
+    selected = (installed / script).resolve()
+    if (
+        not selected.is_relative_to((installed / "scripts").resolve())
+        or selected.suffix != ".py"
+        or not selected.is_file()
+        or script_tree_digest(source) != manifest["script_tree_sha256"]
+        or script_tree_digest(installed) != manifest["script_tree_sha256"]
+    ):
+        raise ValueError("Consumer Skill script is not reviewed")
+    return selected
+
+
 def _task_file_root(
     db_path: Path | None, task_id: int | None, generation: str | None, *, create: bool,
 ) -> Path:
@@ -2480,14 +2543,8 @@ def build_role_server(
             and save large inputs/outputs as task artifacts.
             """
             _read_bound_task_skill(db_path, task_id, artifact_generation, name)
+            path = _approved_consumer_skill_script(name, script)
             skill_root = Path.home() / ".agents" / "skills" / name
-            path = (skill_root / script).resolve()
-            if (
-                not path.is_relative_to(skill_root.resolve())
-                or path.suffix != ".py"
-                or not path.is_file()
-            ):
-                raise ValueError("Skill Python script is unavailable")
             root = _task_file_root(db_path, task_id, artifact_generation, create=True)
             result = subprocess.run(
                 [sys.executable, str(path), *(arguments or [])],
