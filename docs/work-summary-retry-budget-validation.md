@@ -102,3 +102,12 @@ Runtime repair commit: 7a78c93804973036c4372c7e7cd93cc91ee9a863.
 The immediately preceding deployment readback confirmed input 416319 had reached
 47 attempts with the exact shared-session-busy error, directly corroborating the
 reproduced contention path. Production deployment/readback are pending.
+
+
+The first live deployment confirmed input 416319 still had a future retry time
+(2026-10-21 04:21:07 UTC). An additional RED regression moved the synthetic
+46-claim input to 2099: the old due-time predicate left it pending. Work Summary
+eligibility now admits over-budget records for closure regardless of their old
+retry time; the existing claim owner/generation checks still apply. All 12
+budget/shared-session checks pass with this case. This does not admit an
+additional Agent turn: the adapter closes the claim before handing it out.

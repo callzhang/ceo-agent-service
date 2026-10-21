@@ -34,6 +34,9 @@ def test_exhausted_pending_work_summary_does_not_enter_agent(tmp_path):
         store.schedule_work_summary_input_retry(
             input_id, "previous processing failure", available_at=""
         )
+    store.schedule_work_summary_input_retry(
+        input_id, "previous processing failure", available_at="2099-01-01 00:00:00"
+    )
     adapter = WorkSummaryQueueAdapter(store, owner_alive=lambda _pid: False)
     assert adapter.claim(datetime.now(UTC), owner="dispatcher", owner_pid=42,
                          lease=timedelta(minutes=5)) is None

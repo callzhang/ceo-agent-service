@@ -422,7 +422,11 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
         if self.kind == "meeting_alignment_jobs":
             due += " and datetime(" + alias + ".eligible_at)<=datetime(?)"
             params.append(now_text)
-        if self.kind != "okr_review_requests":
+        if self.kind == "work_summary_inputs":
+            from app.cli import WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
+            due += " and (" + alias + ".attempts>=? or " + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
+            params.extend((WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS, now_text))
+        elif self.kind != "okr_review_requests":
             due += " and (" + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
             params.append(now_text)
         return (self._channel_clause(alias) + " and " + alias + ".task_status in ('pending','processing') and ((" + self._pending(alias) + due

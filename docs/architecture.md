@@ -3700,7 +3700,7 @@ Reply dispatch; the third failure ends failed and retains its error.
 
 The Work Summary dispatcher closes an already exhausted pending or expired
 processing input as failed with work_summary_retry_exhausted before admitting
-another handler. The historical accumulated count is not cleared by this closure
+another handler, even if its old available_at is in the future. The historical accumulated count is not cleared by this closure
 (the closing claim itself is still counted); original runs and source content
 remain available. Explicit retry-after-root-cause-fix resets the input's current
 attempt budget, while preserving its existing Task Agent run history. Normal
