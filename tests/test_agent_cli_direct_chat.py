@@ -29,6 +29,13 @@ def test_direct_chat_reader_routes_trigger_sender_identity_without_name_search(m
     assert conversation.direct_open_dingtalk_id == "open-synthetic-sender"
     assert limit == 50
 
+    assert tool.fn(
+        "cid-synthetic-direct",
+        direct_open_dingtalk_id="open-synthetic-sender",
+    ) == {"messages": []}
+    conversation, _ = captured.pop()
+    assert conversation.single_chat is True
+
     assert tool.fn("cid-synthetic-group", limit=12) == {"messages": []}
     conversation, limit = captured.pop()
     assert conversation.open_conversation_id == "cid-synthetic-group"
@@ -49,7 +56,6 @@ def test_direct_chat_read_uses_stable_identity_in_dws_command(monkeypatch):
 
     assert tool(
         "cid-synthetic-direct",
-        single_chat=True,
         direct_open_dingtalk_id="open-synthetic-sender",
     ) == {"messages": []}
     assert len(commands) == 1

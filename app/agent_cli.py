@@ -2115,7 +2115,8 @@ def build_role_server(
         """Read recent messages of an identified DingTalk conversation.
 
         For a direct chat, pass the trigger sender's openDingTalkId as
-        direct_open_dingtalk_id. A conversation ID alone cannot identify the
+        direct_open_dingtalk_id; this selects the direct-chat read even when
+        single_chat is omitted. A conversation ID alone cannot identify the
         direct-message read target. Group chats need only conversation_id.
 
         For repeated raw strings, raw_payload_field_refs maps each null raw
@@ -2126,11 +2127,12 @@ def build_role_server(
         from app.dws_client import DwsClient
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("message read limit is invalid")
-        if single_chat and not direct_open_dingtalk_id.strip() and not title.strip():
+        is_direct_chat = single_chat or bool(direct_open_dingtalk_id.strip())
+        if is_direct_chat and not direct_open_dingtalk_id.strip() and not title.strip():
             raise ValueError("direct chat sender openDingTalkId or title is required")
         conversation = DingTalkConversation(
             open_conversation_id=conversation_id, title=title,
-            single_chat=single_chat, unread_point=0,
+            single_chat=is_direct_chat, unread_point=0,
             direct_open_dingtalk_id=direct_open_dingtalk_id,
         )
         messages = DwsClient().read_recent_messages(conversation, limit=limit)
