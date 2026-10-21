@@ -2585,11 +2585,13 @@ continuation；新 revision 或 Skill/契约版本表示业务规则/结果版�
 
 Agent 返回的错误只是它观察到的现象，含义由服务决定（`app/agent_reported_error.py`）。wire 结果里的
 `error_retryable` 与 `error_authorization_required` 不被读取；`error_code` 先统一为小写，服务认识的码
-（需要授权或确认、dry run、可自行恢复的依赖、浏览器工具回报的退订码，以及缺少已声明操作的 `operation_unavailable`）按服务政策决定是否重试、
+（需要授权或确认、dry run、可自行恢复的依赖、浏览器工具回报的退订码、缺少已声明操作的 `operation_unavailable`，以及缺少当前 OKR 期间数据的 `MissingOkrPeriod`）按服务政策决定是否重试、
 是否等人；其他任何失败码记为 `agent_reported_failure`，走有上限的普通重试（同一 role、generation、revision 连续失败 4 次 turn，即初始调用加三次 retry，
 终止为 `failed`，见上文），Agent 原文保存在 `source_code` 供排查。非失败结果（`needs_human`、`no_action` 等）上的码只作为原因标签，不驱动重试
 或授权。编排层依赖的服务码（`runtime_*`、`codex_provider_*`、租约与恢复类）只能由服务写入，
 Agent 写入时一律按 `agent_reported_failure` 处理。
+
+`MissingOkrPeriod` 表示来源已成功返回当前期间列表，但所需期间不存在；同一运行重试无法补出上游数据，因此服务保留该码并以 `retryable=false` 结束本次失败。上游补齐数据后由后续正常调度重新读取，不回退到旧期间。未知错误仍走有上限的普通重试。
 
 服务反馈回调的结果格式校验失败属于结果解析失败：保留原始 `feedback_callback_pair_invalid` 在 `detail`，通过 `ResultParseError` 进入现有 `codex_result_invalid` 纠错流程；每次处理最多两个回合，同一角色/代次/修订连续四次失败后终止为 `failed`（首次调用加三次 retry）。校验不能抛出普通 `ValueError` 绕过编排后由调度器无限重新领取。该异常转换不改变反馈链接配对规则、历史来源校验、审核职责或调度器所有权。
 

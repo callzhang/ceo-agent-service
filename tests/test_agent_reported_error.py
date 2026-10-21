@@ -93,6 +93,20 @@ def test_absent_declared_operation_is_terminal_but_failed_dependency_read_retrie
     assert failed_read["retryable"] is True
 
 
+def test_missing_current_okr_period_is_terminal_but_preserves_source_code():
+    payload = agent_error_payload("MissingOkrPeriod", failed=True)
+
+    assert payload == {
+        "code": "missingokrperiod",
+        "retryable": False,
+        "authorization_required": False,
+        "source": "agent",
+        "source_code": "MissingOkrPeriod",
+    }
+    assert agent_error_payload("new_unclassified_error", failed=True)["retryable"] is True
+    assert agent_error_payload("dependency_read_unavailable", failed=True)["retryable"] is True
+
+
 def test_a_runtime_risk_rejection_never_enters_automatic_retry():
     payload = agent_error_payload("PROVIDER_RISK_REJECTED", failed=True)
 
