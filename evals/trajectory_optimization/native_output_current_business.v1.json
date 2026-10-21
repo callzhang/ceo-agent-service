@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "base_manifest": "evals/runtime_context/cases.v1.json",
+  "model": "gpt-6-luna",
+  "reasoning_effort": "low",
+  "same_conditions": "Each free-form/native pair uses the same Developer, Task, fake read-only MCP, model, and scoring; only --output-schema changes.",
+  "continuation": {
+    "cold_case": "candidate-windows-unknown-zone",
+    "next_case": "draft-only",
+    "next_trigger_message_id": "synthetic-message-103",
+    "next_message_time": "2026-10-22T15:05:00+00:00",
+    "expect": "Same conversation and session; read the new draft-only message, do not carry over the previous reply proposal or claim a send."
+  },
+  "audit_variants": [
+    {
+      "id": "supported-return",
+      "activity_id": "ACT-RETURN-204",
+      "expected_audit": "approve"
+    },
+    {
+      "id": "wrong-activity",
+      "activity_id": "ACT-OTHER-240",
+      "expected_audit": "return"
+    }
+  ],
+  "audit_continuation": {
+    "cold_variant": "supported-return",
+    "next_variant": "wrong-activity",
+    "next_revision": 1,
+    "expect": "Same Audit session; bind revision 1 to the changed candidate digest, reread OA-EXACT-204 and return the wrong activity with feedback instead of retaining the previous approval."
+  },
+  "cases": [
+    {
+      "id": "source-no-match",
+      "base_case": "source-no-match",
+      "skill_source": "ci/shared-skills/ceo-message-triage/SKILL.md",
+      "expect": "Read the exact conversation and ask for the missing minutes instead of inventing acceptance status."
+    },
+    {
+      "id": "candidate-windows-unknown-zone",
+      "base_case": "candidate-windows-unknown-zone",
+      "expect": "Read the calendar and message source; propose two non-conflicting slots with the other party's time zone."
+    },
+    {
+      "id": "draft-only",
+      "base_case": "draft-only",
+      "expect": "Do not claim that a draft was sent."
+    },
+    {
+      "id": "oa-return-explicit-target",
+      "base_case": "oa-exact-instance",
+      "trigger": "请审核 OA-EXACT-204。若确实缺少返程票据，按该实例返回的可退回目标环节退回补充；不能批准，也不要混淆 OA-EXACT-240。",
+      "skill_names": ["dingtalk-oa-approval", "stardust-oa-finance-review"],
+      "oa_instance_patch": {
+        "task_id": "OA-TASK-204",
+        "target_activity_id": "ACT-RETURN-204",
+        "revert_action": "REVERT_FOR_RESUBMIT"
+      },
+      "expect": "Read OA-EXACT-204; propose exactly one revert_task for the missing receipt using only the process, task, activity and revert action supplied by that exact source. The wire may express the single operation as action=return or action=plan."
+    }
+  ]
+}

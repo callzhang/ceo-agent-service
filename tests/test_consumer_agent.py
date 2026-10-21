@@ -24,8 +24,10 @@ from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     claude_consumer_output_schema,
+    consumer_wire_model,
     parse_consumer_agent_wire_result,
 )
+from app.native_agent_output import native_output_schema_path
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -51,6 +53,7 @@ from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
+from tests.support.native_output_fixture import native_stream_for_command
 
 
 @pytest.fixture(autouse=True)
@@ -389,9 +392,10 @@ class CapturingExecutor:
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.prompts.append(str(kwargs["prompt"]))
         self.commands.append(command)
-        for line in self.stdout.splitlines():
+        stdout = native_stream_for_command(self.stdout, command)
+        for line in stdout.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, self.stdout, "")
+        return ProcessRunResult(0, stdout, "")
 
 
 def test_consumer_and_audit_receive_durable_memory_and_temporary_work_rules():
@@ -572,8 +576,8 @@ class FailingExecutor(CapturingExecutor):
         self.stderr = stderr
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
-        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-        return ProcessRunResult(1, self.stdout, self.stderr)
+        converted = super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return ProcessRunResult(1, converted.stdout, self.stderr)
 
 
 class SequencedRuntimeExecutor(CapturingExecutor):
@@ -586,8 +590,8 @@ class SequencedRuntimeExecutor(CapturingExecutor):
         result = self.results.pop(0)
         self.stdout = result.stdout
         self.environments.append(dict(kwargs["env"]))
-        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-        return result
+        converted = super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return replace(result, stdout=converted.stdout)
 
 
 @pytest.mark.parametrize("started_session", [None, "new-session-before-capacity"])
@@ -903,6 +907,56 @@ def _result_jsonl(*, session: str = "session-a") -> str:
             json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))}}),
         )
     )
+
+
+def test_consumer_codex_turn_uses_current_native_schema_and_parser(store, task, context):
+    wire = consumer_wire_model("general").model_validate(_wire_result({
+        "outcome": "no_action", "summary": "Already handled", "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })).model_dump(mode="json")
+    wire["decision"] = {name: wire.pop(name)
+                        for name in ("action", "target", "payload")}
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "native-consumer"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire),
+        }}),
+    ))
+    executor = CapturingExecutor(stream)
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    command = executor.commands[0]
+    assert command[command.index("--output-schema") + 1] == str(
+        native_output_schema_path("consumer", purpose="general")
+    )
+    assert result.result.outcome.value == "no_action"
+
+
+def test_oa_consumer_codex_turn_selects_oa_native_schema(store, task, context):
+    context = replace(context, required_proposal_action={"capability": "dingtalk-oa"})
+    wire = consumer_wire_model("oa").model_validate({
+        "action": "no_action", "reason": "Already handled", "target": {},
+        "payload": {}, "evidence_refs": ["source:1"],
+        "summary": "Already handled", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "durable_memories": [],
+    }).model_dump(mode="json")
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "native-oa-consumer"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire),
+        }}),
+    ))
+    executor = CapturingExecutor(stream)
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    command = executor.commands[0]
+    assert command[command.index("--output-schema") + 1] == str(
+        native_output_schema_path("consumer", purpose="oa")
+    )
+    assert result.result.outcome.value == "no_action"
 
 
 @pytest.mark.parametrize("summary", [
@@ -2834,14 +2888,14 @@ def test_consumer_rejects_malformed_nested_output_locally(
         )
     )
 
-    with pytest.raises(ResultParseError, match="failed schema validation"):
+    with pytest.raises(ResultParseError, match="native result failed current wire contract"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
             executor=executor,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 def test_consumer_accepts_valid_nested_output_locally(store, task, context):
@@ -2858,7 +2912,7 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
     assert result.result.proposal.actions[0].payload == {
         "text": "Verified notice."
     }
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 @pytest.mark.parametrize(

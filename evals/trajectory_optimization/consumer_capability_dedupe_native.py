@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+from calendar import monthrange
 from dataclasses import replace
 from datetime import datetime
 from hashlib import sha256
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -366,15 +366,10 @@ def _checks(run: dict) -> dict[str, bool]:
                 and not actions}
     if case == "candidate-windows-unknown-zone":
         busy = _case(json.loads(MANIFEST.read_text()), case)["events"]
-        calendar_slots = re.findall(
-            r"10月(\d{1,2})日[^\n]*?(\d{1,2}):(\d{2})[–-](\d{1,2}):(\d{2})",
-            "\n".join(payloads),
-        )
         zone = ZoneInfo("America/Los_Angeles")
+        calendar_slots = _calendar_slots("\n".join(payloads), zone)
         non_conflicting = len(calendar_slots) >= 2
-        for day, start_hour, start_minute, end_hour, end_minute in calendar_slots:
-            start = datetime(2026, 10, int(day), int(start_hour), int(start_minute), tzinfo=zone)
-            end = datetime(2026, 10, int(day), int(end_hour), int(end_minute), tzinfo=zone)
+        for start, end in calendar_slots:
             if start >= end or any(
                 start < datetime.fromisoformat(event["end_time"])
                 and end > datetime.fromisoformat(event["start_time"])
@@ -389,6 +384,67 @@ def _checks(run: dict) -> dict[str, bool]:
                     for action in actions),
                 "two_non_conflicting_slots": non_conflicting}
     return common
+
+
+def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, datetime]]:
+    """Read numeric calendar dates without depending on prose typography."""
+    normalized = (content.replace("月", "/").replace("日", " ")
+                  .replace("–", "-").replace("—", "-")
+                  .replace("：", " ")
+                  .replace("（", " ").replace("）", " ")
+                  .replace("(", " ").replace(")", " ")
+                  .replace("；", "\n").replace(";", "\n")
+                  .replace(" / ", "/").replace(" /", "/").replace("/ ", "/"))
+    year = datetime.fromisoformat(FIXED_TIME).year
+    slots = []
+    for line in normalized.splitlines():
+        dates = []
+        for raw_token in line.split():
+            token = raw_token.strip(".,，。:：()（）[]【】")
+            date_parts = token.split("/")
+            if (len(date_parts) == 2 and all(part.isdecimal() for part in date_parts)
+                    and 1 <= int(date_parts[0]) <= 12
+                    and 1 <= int(date_parts[1])
+                    <= monthrange(year, int(date_parts[0]))[1]):
+                dates.append((int(date_parts[0]), int(date_parts[1])))
+                continue
+            iso_parts = token.split("-")
+            if (len(iso_parts) == 3 and len(iso_parts[0]) == 4
+                    and all(part.isdecimal() for part in iso_parts)):
+                try:
+                    parsed_date = datetime.fromisoformat(token)
+                except ValueError:
+                    continue
+                if parsed_date.year == year:
+                    dates.append((parsed_date.month, parsed_date.day))
+                continue
+            time_window = next((
+                token[offset:offset + 11]
+                for offset in range(max(0, len(token) - 10))
+                if token[offset:offset + 2].isdecimal()
+                and token[offset + 2] == ":"
+                and token[offset + 3:offset + 5].isdecimal()
+                and token[offset + 5] == "-"
+                and token[offset + 6:offset + 8].isdecimal()
+                and token[offset + 8] == ":"
+                and token[offset + 9:offset + 11].isdecimal()
+            ), None)
+            if not dates or time_window is None:
+                continue
+            time_parts = [part.split(":") for part in time_window.split("-")]
+            (start_hour, start_minute), (end_hour, end_minute) = (
+                tuple(int(value) for value in part) for part in time_parts
+            )
+            if not (0 <= start_hour < 24 and 0 <= end_hour < 24
+                    and 0 <= start_minute < 60 and 0 <= end_minute < 60):
+                continue
+            for month, day in dates:
+                slots.append((
+                    datetime(year, month, day, start_hour, start_minute, tzinfo=zone),
+                    datetime(year, month, day, end_hour, end_minute, tzinfo=zone),
+                ))
+            dates = []
+    return slots
 
 
 def main() -> None:
