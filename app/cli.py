@@ -235,7 +235,7 @@ class WorkerSettings(BaseModel):
     ding_robot_code: str | None = None
     ding_robot_name: str | None = DEFAULT_DING_ROBOT_NAME
     ding_receiver_user_id: str | None = None
-    dws_transient_retry_attempts: PositiveInt = 3
+    dws_transient_retry_attempts: PositiveInt = MAX_AUTOMATIC_RETRIES
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 1200
     codex_idle_timeout_seconds: PositiveInt = 900
