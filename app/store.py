@@ -24017,7 +24017,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             cursor = db.execute(
                 f"""
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'error': '?', 'available_at': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')}='failed' and {task20_column('work_summary_inputs', 'body_compacted')}=0
+                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': '0', 'error': '?', 'available_at': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')}='failed' and {task20_column('work_summary_inputs', 'body_compacted')}=0
                 """,
                 (reason.strip(), input_id),
             )

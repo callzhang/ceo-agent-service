@@ -628,6 +628,66 @@ def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Pat
     assert adapter.get_task(third.task_id).status == "done"
 
 
+def test_classifier_retryable_failure_stops_after_three_attempts(tmp_path: Path):
+    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path), retry_base_seconds=0)
+    original = adapter.ensure_task(_classification_input(uid=245))
+    for attempt in range(1, 4):
+        claimed = adapter.claim_next(owner="worker")
+        assert claimed is not None
+        assert claimed.attempt_count == attempt
+        adapter.fail(claimed, error="LookupError:email source UID is unavailable", retryable=True)
+    exhausted = adapter.get_task(original.task_id)
+    assert exhausted.status == "failed"
+    assert exhausted.available_at == ""
+    assert exhausted.error == "LookupError:email source UID is unavailable"
+    assert exhausted.input_json == original.input_json
+    assert adapter.claim_next(owner="worker") is None
+    assert adapter.retry_failed_tasks((original.task_id,)) == 1
+    assert adapter.claim_next(owner="worker").attempt_count == 1
+
+
+def test_classifier_repeated_expired_claims_stop_after_three_attempts(tmp_path: Path):
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    adapter = EmailClassificationTaskAdapter(
+        _email_store(tmp_path), now=lambda: now[0], lease_seconds=1,
+    )
+    original = adapter.ensure_task(_classification_input(uid=246))
+    for attempt in range(1, 4):
+        claimed = adapter.claim_next(owner="crashed-worker")
+        assert claimed is not None
+        assert claimed.attempt_count == attempt
+        now[0] = now[0].replace(second=attempt * 2)
+        adapter.recover_running_tasks()
+    exhausted = adapter.get_task(original.task_id)
+    assert exhausted.status == "failed"
+    assert exhausted.attempt_count == 3
+    assert exhausted.error == "classification task lease expired"
+    assert adapter.claim_next(owner="replacement") is None
+
+
+def test_classifier_closes_legacy_exhausted_pending_before_claiming(tmp_path: Path):
+    store = _email_store(tmp_path)
+    adapter = EmailClassificationTaskAdapter(store)
+    original = adapter.ensure_task(_classification_input(uid=247))
+    with store._connect() as db:
+        parts = task12_set_parts("email_agent_classification_tasks", {
+            "attempt_count": 58, "available_at": "2099-01-01T00:00:00+00:00",
+            "error": "LookupError:email source UID is unavailable",
+        })
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks'",
+            parts.parameters,
+        )
+    assert adapter.claim_next(owner="worker") is None
+    exhausted = adapter.get_task(original.task_id)
+    assert exhausted.status == "failed"
+    assert exhausted.attempt_count == 58
+    assert exhausted.error == "LookupError:email source UID is unavailable"
+    assert exhausted.input_json == original.input_json
+    fresh = adapter.ensure_task(_classification_input(uid=248))
+    assert adapter.claim_next(owner="worker").task_id == fresh.task_id
+
+
 def test_explicit_classifier_repair_reopens_only_selected_failed_tasks(
     tmp_path: Path,
 ):

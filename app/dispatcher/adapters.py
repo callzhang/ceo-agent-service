@@ -421,7 +421,11 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
         if self.kind == "meeting_alignment_jobs":
             due += " and datetime(" + alias + ".eligible_at)<=datetime(?)"
             params.append(now_text)
-        if self.kind != "okr_review_requests":
+        if self.kind == "work_summary_inputs":
+            from app.cli import WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
+            due += " and (" + alias + ".attempts>=? or " + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
+            params.extend((WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS, now_text))
+        elif self.kind != "okr_review_requests":
             due += " and (" + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
             params.append(now_text)
         return (self._channel_clause(alias) + " and " + alias + ".task_status in ('pending','processing') and ((" + self._pending(alias) + due
@@ -548,6 +552,25 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
     def renew(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, lease: timedelta) -> None:
         _renew_lease(self.store, envelope=envelope, owner=owner, now=now, lease=lease)
 
+    def _handle_handler_error(self, envelope: DispatchEnvelope, *, owner: str,
+                              now: datetime, error: str, max_attempts: int) -> None:
+        from app.external_retry import retry_delay_seconds
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        terminal = envelope.attempt >= max_attempts
+        available_at = '' if terminal else _sqlite_time(
+            now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0))))
+        changes = {"status": "failed" if terminal else "pending",
+                   "available_at": available_at, "error": error[:2000], "updated_at": now_text}
+        if self.kind == "reply_tasks":
+            changes["locked_at"] = None
+        with self.store._immediate_write_transaction() as db:
+            task_claims.transition_claim(db, envelope=envelope, owner=owner,
+                values={"lease_owner": "", "lease_expires_at": ""},
+                history={"owner": "", "lease_expires_at": "", "updated_at": now_text},
+                domain_values=changes,
+                domain_where=task20_column(self.kind, "status") + "='processing'")
+
 
 class ReplyQueueAdapter(_TaskQueueAdapter):
     name = "reply"
@@ -561,20 +584,9 @@ class ReplyQueueAdapter(_TaskQueueAdapter):
             self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
 
     def handle_handler_error(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, error: str) -> None:
-        from app.external_retry import retry_delay_seconds
         from app.worker import MAX_REPLY_TASK_ATTEMPTS
-        _validate_release(self.name, envelope, owner, now)
-        now_text = _sqlite_time(now)
-        terminal = envelope.attempt >= MAX_REPLY_TASK_ATTEMPTS
-        available_at = '' if terminal else _sqlite_time(
-            now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0))))
-        with self.store._immediate_write_transaction() as db:
-            task_claims.transition_claim(db, envelope=envelope, owner=owner,
-                values={"lease_owner": "", "lease_expires_at": ""},
-                history={"owner": "", "lease_expires_at": "", "updated_at": now_text},
-                domain_values={"status": "failed" if terminal else "pending", "locked_at": None,
-                               "available_at": available_at, "error": error[:2000], "updated_at": now_text},
-                domain_where=task20_column(self.kind, "status") + "='processing'")
+        self._handle_handler_error(envelope, owner=owner, now=now, error=error,
+                                   max_attempts=MAX_REPLY_TASK_ATTEMPTS)
 
 
 class ScheduledExecutionQueueAdapter(ReplyQueueAdapter):
@@ -594,6 +606,22 @@ class OkrReviewQueueAdapter(_TaskQueueAdapter):
 
 class WorkSummaryQueueAdapter(_TaskQueueAdapter):
     name = "work_summary"
+
+    def claim(self, now: datetime, *, owner: str, owner_pid: int | None = None,
+              lease: timedelta) -> DispatchEnvelope | None:
+        from app.cli import WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
+        envelope = super().claim(now, owner=owner, owner_pid=owner_pid, lease=lease)
+        if envelope is not None and envelope.attempt > WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
+            self.handle_handler_error(envelope, owner=owner, now=now,
+                                      error="work_summary_retry_exhausted")
+            return None
+        return envelope
+
+    def handle_handler_error(self, envelope: DispatchEnvelope, *, owner: str,
+                             now: datetime, error: str) -> None:
+        from app.cli import WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
+        self._handle_handler_error(envelope, owner=owner, now=now, error=error,
+                                   max_attempts=WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS)
 
 
 class TaskMemoryWriteQueueAdapter(_LedgerClaimLifecycle):

@@ -4743,3 +4743,40 @@ resolve the latest Attempt through the task's current execution generation and
 AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
 never substituted for an Attempt ID; a record without a persisted Attempt says
 so in its expanded details. Membership, terminal states and retry policy do not change.
+
+
+### Work Summary retry budget
+
+Work Summary processing retains its existing three-attempt failure budget. A
+shared Task Agent session already owned by another worker is a scheduling wait:
+the input returns to pending with a delayed available_at and refunds only the
+current claim, just like the existing provider-capacity deferral. Actual failures
+continue to consume attempts. An exception escaping the dispatch handler before
+an Agent run is created now uses the same fenced, delayed failure transition as
+Reply dispatch; the third failure ends failed and retains its error.
+
+The Work Summary dispatcher closes an already exhausted pending or expired
+processing input as failed with work_summary_retry_exhausted before admitting
+another handler, even if its old available_at is in the future. The historical accumulated count is not cleared by this closure
+(the closing claim itself is still counted); original runs and source content
+remain available. Explicit retry-after-root-cause-fix resets the input's current
+attempt budget, while preserving its existing Task Agent run history. Normal
+provider-outage deferral, Audit behavior and external-action identity/recovery
+are unchanged. Regression and release evidence is in
+`docs/work-summary-retry-budget-validation.md`.
+
+
+### Email classification retry budget
+
+Dedicated Email classification tasks allow at most three processing attempts per
+explicit retry. A retryable read/network/model failure returns to pending with
+the existing capped backoff only before the third attempt; the third failure
+ends failed and retains the actual error. Expired running claims consume the
+same budget and become failed once it is exhausted. Startup recovery and queue
+claiming also close previously exhausted pending records, including ones with a
+future available_at, without incrementing their old count or calling the mail
+provider or Agent. Their source input, stable identity and original error remain
+available. Active unexpired claims and done tasks are not closed by this sweep.
+The existing explicit selected-task repair resets attempts and keeps task
+identity; discovery does not automatically reopen failed records. See
+`docs/email-classification-retry-budget-validation.md` for evidence.
