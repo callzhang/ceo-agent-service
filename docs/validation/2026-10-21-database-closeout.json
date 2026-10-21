@@ -219,6 +219,16 @@
         "daily waits through loaded verification and rollback",
         "owned crash stage removed before no-space failure; unrelated temp preserved"
       ]
+    },
+    "merged_dashboard": {
+      "backend": {
+        "passed": 15,
+        "seconds": 18.1
+      },
+      "frontend": {
+        "passed": 9,
+        "seconds": 1.37
+      }
     }
   },
   "prior_schema_inverse_and_native": {
@@ -227,7 +237,110 @@
     "reason": "no schema or migration/inverse module changed"
   },
   "deployment": {
-    "status": "ready_not_started"
+    "status": "succeeded",
+    "target_commit": "15939b46f6a43e0a0e23038dbced69c50e6988d3",
+    "readback": {
+      "at": "2026-10-21T07:47:05.591608+00:00",
+      "production_head": "15939b46f6a43e0a0e23038dbced69c50e6988d3",
+      "clean_checkout": true,
+      "endpoints": {
+        "health": {
+          "http": 200
+        },
+        "status": {
+          "http": 200,
+          "summary": {
+            "queue_count": 12,
+            "pending": 13,
+            "processing": 1,
+            "failed": 17,
+            "retryable": 3,
+            "attention": 5
+          }
+        },
+        "attention": {
+          "http": 200,
+          "count": 5
+        },
+        "history": {
+          "http": 200,
+          "count": 20
+        },
+        "dashboard": {
+          "http": 200,
+          "count": 3
+        },
+        "operation": {
+          "http": 200,
+          "progress": {
+            "operation_id": "deploy-57b5ce76-7cc2-4609-8126-c342db99a457",
+            "status": "succeeded",
+            "installed_commit": "15939b46f6a43e0a0e23038dbced69c50e6988d3",
+            "target_commit": "15939b46f6a43e0a0e23038dbced69c50e6988d3",
+            "backup_path": null,
+            "error": "",
+            "updated_at": "2026-10-21T07:44:49.571820+00:00"
+          }
+        },
+        "runtime": {
+          "http": 200,
+          "selected_model_fields": {
+            "CEO_CODEX_MODEL": "gpt-6-luna",
+            "CEO_CODEX_MODEL_REASONING_EFFORT": "high"
+          }
+        }
+      },
+      "schema": [
+        "2026-10-19.11",
+        53
+      ],
+      "integrity": "ok",
+      "fk_findings": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "ordinary_tables": [
+        "actions",
+        "business",
+        "configs",
+        "email_schema_migrations",
+        "emails",
+        "provenance",
+        "provider_state",
+        "runs",
+        "schedules",
+        "state",
+        "tasks"
+      ],
+      "latest_backup": {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-21.sqlite3",
+        "complete": true,
+        "integrity": "ok",
+        "schema": [
+          "2026-10-19.11",
+          53
+        ],
+        "bytes": 487153664,
+        "sha256": "0ff1b9c55c651898378842b6b4a769977258aae9d1f023eefc22cc96e9e8c99f"
+      },
+      "abandoned_backup_stages": 0,
+      "supervisor_pid": 88119,
+      "main_file_bytes": 487153664,
+      "operation_backup_receipt": {
+        "operation_id": "deploy-57b5ce76-7cc2-4609-8126-c342db99a457",
+        "status": "succeeded",
+        "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-57b5ce76-7cc2-4609-8126-c342db99a457.sqlite3",
+        "installed_commit": "15939b46f6a43e0a0e23038dbced69c50e6988d3",
+        "updated_at": "2026-10-21T07:44:49.571820+00:00"
+      },
+      "operation_backup_still_present": false
+    },
+    "skip_quiet_wait": false,
+    "real_test_sends": 0
   },
   "all_copy_email_previews": {
     "rows": 9669,
@@ -247,5 +360,32 @@
     "failed_replacement_previous_sha_unchanged": true,
     "only_latest_retained": true,
     "sha256": "b31b7045aad67176998df0253ff1b65b06cdf7f437ef37cc6a56b3aac99ba5d3"
+  },
+  "production_before": {
+    "at": "2026-10-21T07:20:30.574831+00:00",
+    "head": "0e448359ed7f11c839cab53168117ad65734a667",
+    "health": {
+      "http": 200
+    },
+    "status": {
+      "http": 200,
+      "summary": {
+        "queue_count": 12,
+        "pending": 21,
+        "processing": 1,
+        "failed": 17,
+        "retryable": 3,
+        "attention": 5
+      }
+    },
+    "attention": {
+      "http": 200,
+      "count": 5
+    },
+    "history": {
+      "http": 200,
+      "count": 20
+    },
+    "supervisor_pid": 68652
   }
 }

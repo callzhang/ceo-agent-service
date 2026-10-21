@@ -1990,10 +1990,12 @@
   ],
   "closeout": {
     "date": "2026-10-21",
-    "status": "copy_verified_release_pending",
+    "status": "completed",
     "report": "docs/database-migration-closeout-validation.md",
-    "production_release_before_closeout": "a79d8e279",
-    "interpretation": "Only migration_checks are closeout gates. The original general UI inventory is preserved without promoting unobserved browser states."
+    "production_release_before_closeout": "0e448359e",
+    "interpretation": "Only migration_checks are closeout gates. The original general UI inventory is preserved without promoting unobserved browser states.",
+    "original_migration_release": "a79d8e279",
+    "production_release": "15939b46f"
   },
   "migration_checks": [
     {
@@ -2101,13 +2103,14 @@
     },
     {
       "id": "deployment_current_source_snapshot",
-      "result": "pending",
+      "result": "passed",
       "layer": "updater_regression_and_live_deploy",
       "evidence": [
-        "tests/test_repository_updater.py"
+        "tests/test_repository_updater.py",
+        "docs/validation/2026-10-21-database-closeout.json"
       ],
       "copy_result": "passed",
-      "live_result": "pending"
+      "live_result": "passed"
     }
   ]
 }

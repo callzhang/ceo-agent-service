@@ -17,11 +17,11 @@ The approved A/B/C/D implementation and Store19.11 / Email53 production migratio
 
 The combined full-copy current-data inverse, actual old-code cold read and reforward passed. The real GPT-6 Luna Consumer → Audit → public selection → Worker/SystemExecutor → verified substitute receipt chain passed; real test sends were zero. The original FK finding and historical model failures remain recorded, rather than relabeled as successes. The nine approved retired controls are unrecoverable: inverse restores only neutral defaults.
 
-## Authorized closeout in progress — 2026-10-21
+## Authorized closeout completed — 2026-10-21
 
 The 36-route UI matrix was a generic inventory and only recorded six early browser observations. It did not imply 336 functional failures. Later browser evidence is now reconciled separately from frontend mock tests, fresh-copy API traversal and native/DB proof. Unobserved generic browser states remain `not_run`; their migration impact and the actual acceptance layer are explicit in [the matrix](business-model-ui-coverage.json).
 
-This closeout repairs backup replacement and fresh deployment snapshots, validates the real Store19.11 copy read paths and focused recovery/idempotency boundaries, then follows normal deployment. Current evidence and remaining steps are tracked in [closeout validation](database-migration-closeout-validation.md). No new Audit policy or fact-check tool is included; outbound tests use substitutes.
+The closeout repaired backup replacement and fresh deployment snapshots, validated real Store19.11 copy read paths and focused recovery/idempotency boundaries, and deployed through the normal lifecycle at `15939b46f` (2026-10-21 00:44 Pacific). All twelve migration gates passed. Production readback: PID88119, schema19.11/53, integrity ok, original FK finding retained, failed17 unchanged, seven API checks200, one verified latest backup with no staging leftovers. Exact evidence is tracked in [closeout validation](database-migration-closeout-validation.md). No new Audit policy or fact-check tool is included; outbound tests use substitutes.
 
 ## Historical execution checkpoints
 
