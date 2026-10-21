@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import time
 from typing import Any
 
 from app.agent_cron.models import ScheduledTaskSkillRef
@@ -58,6 +59,8 @@ EXPECTED_SOURCES = frozenset(
 )
 DEFAULT_MANIFEST = Path("ci/consumer-system-contract-release.json")
 SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z")
+LOAD_READBACK_TIMEOUT_SECONDS = 15 * 60
+LOAD_READBACK_POLL_SECONDS = 1
 
 
 def _sha256(data: bytes) -> str:
@@ -359,35 +362,64 @@ class ConsumerSystemPublication:
                     self.updated_task_versions[before.id] = current.version
                     self._save_receipt()
 
-    def verify_loaded(self) -> None:
+    def verify_loaded(
+        self, *, wait_timeout_seconds: float = LOAD_READBACK_TIMEOUT_SECONDS,
+    ) -> None:
         if self.new_config_id is None:
             raise ValueError("Consumer system release has no new runtime configuration")
-        active = self.store.get_active_runtime_skill_config()
-        current = active
-        while current is not None and current.id != self.new_config_id:
-            if current.parent_id is None:
-                current = None
-                break
-            current = self.store.get_runtime_skill_config(current.parent_id)
-        if active is None or current is None:
-            raise ValueError("Consumer system runtime configuration did not activate")
-        bindings = self.store.list_runtime_skill_bindings(active.id)
-        expected_loaded = {
-            str(binding.skill_id): self.store.get_managed_skill_revision(binding.revision_id).sha256
-            for binding in bindings if binding.enabled
-        }
-        for name in MANAGED_NAMES:
-            skill = self.store.get_managed_skill_by_name(name)
-            plan = next(item for item in self.plans if item.source == f"ci/shared-skills/{name}/SKILL.md")
-            if skill is None or expected_loaded.get(str(skill.id)) != plan.new_sha256:
-                raise ValueError(f"Consumer system active Skill revision mismatch: {name}")
-        receipts = self.store.list_runtime_skill_load_receipts(active.id)
-        if not any(
-            not receipt.error and _pid_alive(receipt.pid)
-            and json.loads(receipt.loaded_json) == expected_loaded
-            for receipt in receipts
-        ):
-            raise ValueError("Consumer system runtime Skill load receipt is missing")
+        deadline = time.monotonic() + wait_timeout_seconds
+        active = None
+        expected_loaded: dict[str, str] | None = None
+        while True:
+            active = self.store.get_active_runtime_skill_config()
+            current = active
+            while current is not None and current.id != self.new_config_id:
+                if current.parent_id is None:
+                    current = None
+                    break
+                current = self.store.get_runtime_skill_config(current.parent_id)
+            if active is not None and current is not None:
+                bindings = self.store.list_runtime_skill_bindings(active.id)
+                expected_loaded = {
+                    str(binding.skill_id): self.store.get_managed_skill_revision(binding.revision_id).sha256
+                    for binding in bindings if binding.enabled
+                }
+                for name in MANAGED_NAMES:
+                    skill = self.store.get_managed_skill_by_name(name)
+                    plan = next(
+                        item for item in self.plans
+                        if item.source == f"ci/shared-skills/{name}/SKILL.md"
+                    )
+                    if skill is None or expected_loaded.get(str(skill.id)) != plan.new_sha256:
+                        raise ValueError(f"Consumer system active Skill revision mismatch: {name}")
+                receipts = self.store.list_runtime_skill_load_receipts(active.id)
+                live_receipts = [receipt for receipt in receipts if _pid_alive(receipt.pid)]
+                if live_receipts:
+                    if any(
+                        not receipt.error
+                        and json.loads(receipt.loaded_json) == expected_loaded
+                        for receipt in live_receipts
+                    ):
+                        break
+                    if any(not receipt.error for receipt in live_receipts):
+                        raise ValueError(
+                            "Consumer system runtime Skill load receipt digest mismatch"
+                        )
+                    raise ValueError("Consumer system runtime Skill load failed")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if active is None or current is None:
+                    raise ValueError(
+                        "Consumer system runtime configuration did not activate within "
+                        f"{wait_timeout_seconds / 60:g} minutes"
+                    )
+                raise ValueError(
+                    "Consumer system runtime Skill load receipt did not appear within "
+                    f"{wait_timeout_seconds / 60:g} minutes"
+                )
+            time.sleep(min(LOAD_READBACK_POLL_SECONDS, remaining))
+
+        assert active is not None
         for plan in self.plans:
             if _sha256(plan.target.read_bytes()) != plan.new_sha256:
                 raise ValueError(f"Consumer system released file changed: {plan.source}")

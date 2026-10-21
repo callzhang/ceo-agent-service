@@ -172,6 +172,7 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
     assert call["prompt"] == "FULL FROZEN PROTOCOL"
     assert call["route_prompt_overrides"] == {RuntimeKind.CODEX_CLI: "MEETING RULE"}
     assert call["command_factory"].skill_names == ()
+    assert call["command_factory"].project_doc_max_bytes == 0
 
 
 def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
@@ -1504,7 +1505,12 @@ def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
             "",
         )
 
-    adapter = FakeAdapter()
+    class MeetingAdapter(FakeAdapter):
+        def build_command(self, **kwargs):
+            assert kwargs.pop("project_doc_max_bytes") == 0
+            return super().build_command(**kwargs)
+
+    adapter = MeetingAdapter()
     runner = MeetingAlignmentCodexRunner(
         routed_execution=RoutedCodexExecution(
             store=store,
