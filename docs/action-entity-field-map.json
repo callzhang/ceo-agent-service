@@ -25,7 +25,39 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": {
+              "function": "app/email_store.py:_direct_action_id",
+              "arguments": [
+                "Action.action_plan_id",
+                "Action.operation"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
+          ]
         },
         {
           "name": "action_plan_id",
@@ -40,7 +72,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "action_plan_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.action_plan_id",
+              "target_owner": "Action",
+              "target_field": "action_plan_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.action_plan_id",
+              "target_owner": "Action",
+              "target_field": "action_plan_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.action_plan_id",
+              "target_owner": "Action",
+              "target_field": "action_plan_id"
+            }
+          ]
         },
         {
           "name": "classification_id",
@@ -55,7 +113,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "classification_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.classification_id",
+              "target_owner": "Action",
+              "target_field": "classification_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.classification_id",
+              "target_owner": "Action",
+              "target_field": "classification_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.classification_id",
+              "target_owner": "Action",
+              "target_field": "classification_id"
+            }
+          ]
         },
         {
           "name": "account_id",
@@ -70,7 +154,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "account_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.account_id",
+              "target_owner": "Action",
+              "target_field": "account_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.account_id",
+              "target_owner": "Action",
+              "target_field": "account_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.account_id",
+              "target_owner": "Action",
+              "target_field": "account_id"
+            }
+          ]
         },
         {
           "name": "action_type",
@@ -85,7 +195,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "operation",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.action_type",
+              "target_owner": "Action",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.action_type",
+              "target_owner": "Action",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.action_type",
+              "target_owner": "Action",
+              "target_field": "operation"
+            }
+          ]
         },
         {
           "name": "parameters_json",
@@ -100,7 +236,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "parameters_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.parameters_json",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.parameters_json",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.parameters_json",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            }
+          ]
         },
         {
           "name": "config_version",
@@ -115,7 +277,38 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action Plan",
+            "owner_table": "actions",
+            "owner_record_type": "email_action_plans",
+            "owner_field": "config_version",
+            "via": {
+              "from": "Action.action_plan_id",
+              "to": "email_action_plans.action_plan_id",
+              "immutable": true
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.config_version",
+              "target_owner": "Action Plan",
+              "target_field": "config_version"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.config_version",
+              "target_owner": "Action Plan",
+              "target_field": "config_version"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.config_version",
+              "target_owner": "Action Plan",
+              "target_field": "config_version"
+            }
+          ]
         },
         {
           "name": "status",
@@ -130,7 +323,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.status",
+              "target_owner": "Action",
+              "target_field": "status"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.status",
+              "target_owner": "Action",
+              "target_field": "status"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.status",
+              "target_owner": "Action",
+              "target_field": "status"
+            }
+          ]
         },
         {
           "name": "attempt_count",
@@ -145,7 +364,36 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "derived_projection"
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "attempt_number",
+            "via": {
+              "aggregate": "count",
+              "by": "Action Receipt.attempt_number"
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.attempt_count",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.attempt_count",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.attempt_count",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            }
+          ]
         },
         {
           "name": "started_at",
@@ -160,7 +408,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "started_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.started_at",
+              "target_owner": "Action",
+              "target_field": "started_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.started_at",
+              "target_owner": "Action",
+              "target_field": "started_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.started_at",
+              "target_owner": "Action",
+              "target_field": "started_at"
+            }
+          ]
         },
         {
           "name": "finished_at",
@@ -175,7 +449,41 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "derived_projection"
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "finished_at",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            }
+          ]
         },
         {
           "name": "next_attempt_at",
@@ -190,7 +498,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "next_attempt_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.next_attempt_at",
+              "target_owner": "Action",
+              "target_field": "next_attempt_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.next_attempt_at",
+              "target_owner": "Action",
+              "target_field": "next_attempt_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.next_attempt_at",
+              "target_owner": "Action",
+              "target_field": "next_attempt_at"
+            }
+          ]
         },
         {
           "name": "provider_operation",
@@ -205,7 +539,41 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "derived_projection"
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "operation",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            }
+          ]
         },
         {
           "name": "provider_target",
@@ -220,7 +588,41 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "derived_projection"
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "target",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            }
+          ]
         },
         {
           "name": "provider_result_id",
@@ -235,7 +637,41 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "derived_projection"
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_id",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            }
+          ]
         },
         {
           "name": "error",
@@ -250,7 +686,41 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "derived_projection"
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "error_text",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            }
+          ]
         },
         {
           "name": "created_at",
@@ -265,7 +735,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "created_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.created_at",
+              "target_owner": "Action",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.created_at",
+              "target_owner": "Action",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.created_at",
+              "target_owner": "Action",
+              "target_field": "created_at"
+            }
+          ]
         },
         {
           "name": "updated_at",
@@ -280,7 +776,33 @@
             "app/email_store.py:EmailStore._claimed_direct_action",
             "app/email_store.py:EmailStore.complete_direct_action_attempt"
           ],
-          "storage": "stored"
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "updated_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.updated_at",
+              "target_owner": "Action",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.updated_at",
+              "target_owner": "Action",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.updated_at",
+              "target_owner": "Action",
+              "target_field": "updated_at"
+            }
+          ]
         }
       ]
     },
@@ -299,6 +821,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.id",
+              "target_owner": "Action Receipt",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.id",
+              "target_owner": "Action Receipt",
+              "target_field": "id"
+            }
           ]
         },
         {
@@ -312,6 +854,32 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": {
+              "function": "app/email_store.py:_direct_action_id",
+              "arguments": [
+                "Action.action_plan_id",
+                "Action.operation"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
           ]
         },
         {
@@ -325,6 +893,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "attempt_number",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.attempt_number",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.attempt_number",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            }
           ]
         },
         {
@@ -338,6 +926,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            }
           ]
         },
         {
@@ -351,6 +959,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "operation",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            }
           ]
         },
         {
@@ -364,6 +992,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "target",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            }
           ]
         },
         {
@@ -377,6 +1025,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            }
           ]
         },
         {
@@ -390,6 +1058,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "error_text",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            }
           ]
         },
         {
@@ -403,6 +1091,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "started_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.started_at",
+              "target_owner": "Action Receipt",
+              "target_field": "started_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.started_at",
+              "target_owner": "Action Receipt",
+              "target_field": "started_at"
+            }
           ]
         },
         {
@@ -416,6 +1124,26 @@
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "finished_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            }
           ]
         }
       ]
@@ -436,6 +1164,34 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": {
+              "identity": "source physical actions.id preserved as Action Receipt.id"
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
           ]
         },
         {
@@ -450,6 +1206,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "execution_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.execution_id",
+              "target_owner": "Action Receipt",
+              "target_field": "execution_id"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.execution_id",
+              "target_owner": "Action Receipt",
+              "target_field": "execution_id"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.execution_id",
+              "target_owner": "Action Receipt",
+              "target_field": "execution_id"
+            }
           ]
         },
         {
@@ -464,6 +1246,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "action_index",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.action_index",
+              "target_owner": "Action Receipt",
+              "target_field": "action_index"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.action_index",
+              "target_owner": "Action Receipt",
+              "target_field": "action_index"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.action_index",
+              "target_owner": "Action Receipt",
+              "target_field": "action_index"
+            }
           ]
         },
         {
@@ -478,6 +1286,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "external_action_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            }
           ]
         },
         {
@@ -492,6 +1326,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            }
           ]
         },
         {
@@ -506,6 +1366,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "outcome_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "outcome_json"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "outcome_json"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "outcome_json"
+            }
           ]
         },
         {
@@ -520,6 +1406,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "created_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "created_at"
+            }
           ]
         },
         {
@@ -534,6 +1446,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
             "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "updated_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.updated_at",
+              "target_owner": "Action Receipt",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.updated_at",
+              "target_owner": "Action Receipt",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.updated_at",
+              "target_owner": "Action Receipt",
+              "target_field": "updated_at"
+            }
           ]
         }
       ]
@@ -554,6 +1492,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "external_action_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            }
           ]
         },
         {
@@ -568,6 +1532,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "business_object_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.business_object_key",
+              "target_owner": "Action",
+              "target_field": "business_object_key"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.business_object_key",
+              "target_owner": "Action",
+              "target_field": "business_object_key"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.business_object_key",
+              "target_owner": "Action",
+              "target_field": "business_object_key"
+            }
           ]
         },
         {
@@ -582,6 +1572,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "action_identity",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.action_identity",
+              "target_owner": "Action",
+              "target_field": "action_identity"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.action_identity",
+              "target_owner": "Action",
+              "target_field": "action_identity"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.action_identity",
+              "target_owner": "Action",
+              "target_field": "action_identity"
+            }
           ]
         },
         {
@@ -596,6 +1612,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "operation",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            }
           ]
         },
         {
@@ -610,6 +1652,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "target",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.target_identifiers_json",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.target_identifiers_json",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.target_identifiers_json",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            }
           ]
         },
         {
@@ -624,6 +1692,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            }
           ]
         },
         {
@@ -638,6 +1732,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "result_digest",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.result_digest",
+              "target_owner": "Action Receipt",
+              "target_field": "result_digest"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.result_digest",
+              "target_owner": "Action Receipt",
+              "target_field": "result_digest"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.result_digest",
+              "target_owner": "Action Receipt",
+              "target_field": "result_digest"
+            }
           ]
         },
         {
@@ -652,6 +1772,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "agent_run_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.first_agent_run_id",
+              "target_owner": "Action Receipt",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.first_agent_run_id",
+              "target_owner": "Action Receipt",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.first_agent_run_id",
+              "target_owner": "Action Receipt",
+              "target_field": "agent_run_id"
+            }
           ]
         },
         {
@@ -666,6 +1812,32 @@
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
             "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "observed_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            }
           ]
         }
       ]
@@ -686,6 +1858,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "delivery_channel",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            }
           ]
         },
         {
@@ -700,6 +1898,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "delivery_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.delivery_key",
+              "target_owner": "Action",
+              "target_field": "delivery_key"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.delivery_key",
+              "target_owner": "Action",
+              "target_field": "delivery_key"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.delivery_key",
+              "target_owner": "Action",
+              "target_field": "delivery_key"
+            }
           ]
         },
         {
@@ -714,6 +1938,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "prepared_body",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.final_body",
+              "target_owner": "Action",
+              "target_field": "prepared_body"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.final_body",
+              "target_owner": "Action",
+              "target_field": "prepared_body"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.final_body",
+              "target_owner": "Action",
+              "target_field": "prepared_body"
+            }
           ]
         },
         {
@@ -728,6 +1978,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "feedback_token",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            }
           ]
         },
         {
@@ -742,6 +2018,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "postfix_version",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_version",
+              "target_owner": "Action",
+              "target_field": "postfix_version"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_version",
+              "target_owner": "Action",
+              "target_field": "postfix_version"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_version",
+              "target_owner": "Action",
+              "target_field": "postfix_version"
+            }
           ]
         },
         {
@@ -756,6 +2058,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "prepared_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.created_at",
+              "target_owner": "Action",
+              "target_field": "prepared_at"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.created_at",
+              "target_owner": "Action",
+              "target_field": "prepared_at"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.created_at",
+              "target_owner": "Action",
+              "target_field": "prepared_at"
+            }
           ]
         },
         {
@@ -770,6 +2098,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_receipt_provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            }
           ]
         },
         {
@@ -784,6 +2138,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "observed_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_receipt_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            }
           ]
         },
         {
@@ -798,6 +2178,32 @@
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
             "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "dispatched_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_dispatch_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "dispatched_at"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_dispatch_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "dispatched_at"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_dispatch_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "dispatched_at"
+            }
           ]
         }
       ]
@@ -818,6 +2224,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
           ]
         },
         {
@@ -832,6 +2264,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "conversation_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.conversation_id",
+              "target_owner": "Action",
+              "target_field": "conversation_id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.conversation_id",
+              "target_owner": "Action",
+              "target_field": "conversation_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.conversation_id",
+              "target_owner": "Action",
+              "target_field": "conversation_id"
+            }
           ]
         },
         {
@@ -846,6 +2304,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "trigger_message_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.trigger_message_id",
+              "target_owner": "Action",
+              "target_field": "trigger_message_id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.trigger_message_id",
+              "target_owner": "Action",
+              "target_field": "trigger_message_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.trigger_message_id",
+              "target_owner": "Action",
+              "target_field": "trigger_message_id"
+            }
           ]
         },
         {
@@ -860,6 +2344,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "parameters_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.reply_text",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.reply_text",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.reply_text",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            }
           ]
         },
         {
@@ -874,6 +2384,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "observed_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.sent_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.sent_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.sent_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            }
           ]
         },
         {
@@ -888,6 +2424,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.send_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.send_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.send_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            }
           ]
         },
         {
@@ -902,6 +2464,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recall_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recall_key",
+              "target_owner": "Action",
+              "target_field": "recall_key"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recall_key",
+              "target_owner": "Action",
+              "target_field": "recall_key"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recall_key",
+              "target_owner": "Action",
+              "target_field": "recall_key"
+            }
           ]
         },
         {
@@ -916,6 +2504,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recall_status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recall_status",
+              "target_owner": "Action",
+              "target_field": "recall_status"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recall_status",
+              "target_owner": "Action",
+              "target_field": "recall_status"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recall_status",
+              "target_owner": "Action",
+              "target_field": "recall_status"
+            }
           ]
         },
         {
@@ -923,13 +2537,39 @@
           "owner": "Action",
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_error",
-          "target": "error_text",
+          "target": "recall_error",
           "rule": "sent_replies.recall_error",
-          "inverse_rule": "Reconstruct sent_replies.recall_error from Action mapping target `error_text`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.recall_error from Action.recall_error; retain the exact source text and nullness.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recall_error",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recall_error",
+              "target_owner": "Action",
+              "target_field": "recall_error"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recall_error",
+              "target_owner": "Action",
+              "target_field": "recall_error"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recall_error",
+              "target_owner": "Action",
+              "target_field": "recall_error"
+            }
           ]
         },
         {
@@ -944,6 +2584,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recalled_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recalled_at",
+              "target_owner": "Action",
+              "target_field": "recalled_at"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recalled_at",
+              "target_owner": "Action",
+              "target_field": "recalled_at"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recalled_at",
+              "target_owner": "Action",
+              "target_field": "recalled_at"
+            }
           ]
         },
         {
@@ -958,6 +2624,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "feedback_token",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            }
           ]
         },
         {
@@ -972,6 +2664,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "delivery_channel",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            }
           ]
         },
         {
@@ -986,6 +2704,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "agent_run_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.agent_run_id",
+              "target_owner": "Action",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.agent_run_id",
+              "target_owner": "Action",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.agent_run_id",
+              "target_owner": "Action",
+              "target_field": "agent_run_id"
+            }
           ]
         },
         {
@@ -1000,6 +2744,32 @@
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
             "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "external_action_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            }
           ]
         }
       ]
@@ -1019,6 +2789,29 @@
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "action_id",
+            "via": {
+              "reference": "sent_replies.id",
+              "to": "Action.id"
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.sent_reply_id",
+              "target_owner": "Action Observer",
+              "target_field": "action_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.sent_reply_id",
+              "target_owner": "Action Observer",
+              "target_field": "action_id"
+            }
           ]
         },
         {
@@ -1032,6 +2825,26 @@
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "agent_run_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.agent_run_id",
+              "target_owner": "Action Observer",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.agent_run_id",
+              "target_owner": "Action Observer",
+              "target_field": "agent_run_id"
+            }
           ]
         },
         {
@@ -1045,6 +2858,26 @@
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "task_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.reply_task_id",
+              "target_owner": "Action Observer",
+              "target_field": "task_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.reply_task_id",
+              "target_owner": "Action Observer",
+              "target_field": "task_id"
+            }
           ]
         },
         {
@@ -1058,6 +2891,26 @@
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "created_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.created_at",
+              "target_owner": "Action Observer",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.created_at",
+              "target_owner": "Action Observer",
+              "target_field": "created_at"
+            }
           ]
         }
       ]
@@ -1100,7 +2953,15 @@
     "missing_and_empty_are_distinct": true,
     "null_vs_json_text": "retain SQL NULL separately from text such as null or {}",
     "attempt_cardinality": "one Action to zero or more actual provider receipts and execution observations; preserve each execution outcome/status/time independently; never store old attempt row or provider body wholesale",
-    "normalization_reason": "Multiple candidate execution observations can share one verified canonical external result. Keep local outcomes and clocks on execution observation receipts; keep the provider result once on its canonical result receipt."
+    "normalization_reason": "Multiple candidate execution observations can share one verified canonical external result. Keep local outcomes and clocks on execution observation receipts; keep the provider result once on its canonical result receipt.",
+    "version_lineage": {
+      "version_owner": "Action Receipt.provider_result_json",
+      "current_version": "For an observation's exact provider_receipt_id, follow its unique supersedes_provider_receipt_id successor chain; the terminal provider-result receipt with no successor in that chain is the current canonical version. Unlinked receipt facts remain independent roots.",
+      "supersedes": "supersedes_provider_receipt_id points to a prior immutable provider-result receipt owned by the same Action; the link cannot be changed after insert; one successor per prior version and links point to lower receipt IDs",
+      "reference": "provider_receipt_id on each NULL local outcome is set to the exact provider-result version referenced and cannot be changed once set",
+      "source_correction": "Copy-before-update in app/action_storage.py:preserve_candidate_result_references and app/reviewed_candidate_store.py:record_candidate_external_action; append accepted ambiguous-to-sent correction with same nested provider_result and preserve the old body",
+      "independent_facts": "A provider-result receipt without a supersedes link is a distinct historical fact. Do not attach email attempts or any other receipt solely because they share an Action."
+    }
   },
   "target": {
     "action_storage_type": "action",
@@ -1422,7 +3283,17 @@
           "sent_replies.send_result_json"
         ],
         "nullable": true,
-        "meaning": "Technical exact-reference link from a local NULL outcome to the provider receipt version it referenced; canonical corrections append a new provider receipt and do not rewrite old observations."
+        "meaning": "Technical exact-reference link from a local NULL outcome to the exact provider receipt version it referenced; once set it is immutable, and canonical corrections append a new provider receipt without rewriting old observations."
+      },
+      {
+        "name": "supersedes_provider_receipt_id",
+        "sources": [
+          "external_action_results.external_action_key",
+          "external_action_results.provider_result_json",
+          "external_action_results.result_digest"
+        ],
+        "nullable": true,
+        "meaning": "Append-only technical lineage from a corrected canonical result version to its prior provider receipt; the link is immutable, one successor per version, and chain tip identifies the current canonical version."
       }
     ],
     "table": "actions",
@@ -1472,6 +3343,11 @@
       "name": "idx_action_receipts_execution_order",
       "decision": "add partial",
       "reason": "execution_id/action_index order retained on execution observation receipt facts"
+    },
+    {
+      "name": "idx_action_receipts_one_successor",
+      "decision": "add unique partial",
+      "reason": "a provider receipt version may have only one immutable successor in its correction chain"
     }
   ],
   "retirement": {

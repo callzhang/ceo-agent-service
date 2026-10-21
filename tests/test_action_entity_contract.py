@@ -41,7 +41,7 @@ def install_action_target(db):
         sql = line.strip()
         if sql.lower().startswith(('create index ', 'create unique index ')):
             db.execute(sql)
-    for marker in ('create trigger trg_action_receipt_owner_insert', 'create trigger trg_action_observer_owner_insert', 'create trigger trg_action_receipt_reference_owner_insert'):
+    for marker in ('create trigger trg_action_receipt_owner_insert', 'create trigger trg_action_observer_owner_insert', 'create trigger trg_action_receipt_reference_owner_insert', 'create trigger trg_action_receipt_supersedes_owner_insert', 'create trigger trg_action_receipt_lineage_immutable'):
         start = DDL.lower().index(marker)
         end = DDL.lower().index('end;', start) + 4
         db.executescript(DDL[start:end])
@@ -131,12 +131,51 @@ def test_no_unsourced_business_column_or_duplicate_owner():
     with pytest.raises(ValueError, match='duplicate field'):
         validate_action_entity_contract(broken)
     for disposition in ('retain', 'reference', 'retire'):
-        for key in ('inverse_rule', 'consumers'):
+        for key in ('inverse_rule', 'consumers', 'inverse_mapping', 'consumer_assertions'):
             broken = json.loads(json.dumps(CONTRACT))
             field = next(field for source in broken['sources'] for field in source['fields'] if field['disposition'] == disposition)
             field.pop(key)
-            with pytest.raises(ValueError, match=key):
+            expected_error = {
+                'inverse_rule': 'inverse_rule', 'consumers': 'consumers',
+                'inverse_mapping': 'inverse mapping', 'consumer_assertions': 'consumer assertion',
+            }[key]
+            with pytest.raises(ValueError, match=expected_error):
                 validate_action_entity_contract(broken)
+
+
+def test_inverse_mapping_names_real_owner_and_reference_path():
+    fields = {(source['table'], field['name']): field for source in CONTRACT['sources'] for field in source['fields']}
+    config = fields[('email_actions', 'config_version')]['inverse_mapping']
+    assert config == {
+        'owner': 'Action Plan', 'owner_table': 'actions', 'owner_record_type': 'email_action_plans', 'owner_field': 'config_version',
+        'via': {'from': 'Action.action_plan_id', 'to': 'email_action_plans.action_plan_id', 'immutable': True},
+    }
+    assert fields[('email_action_attempts', 'status')]['inverse_mapping'] == {
+        'owner': 'Action Receipt', 'owner_table': 'action_receipts', 'owner_field': 'status', 'via': None,
+    }
+    email_identity = fields[('email_actions', 'action_id')]['inverse_mapping']
+    assert email_identity['via']['function'] == 'app/email_store.py:_direct_action_id'
+    assert email_identity['via']['arguments'] == ['Action.action_plan_id', 'Action.operation']
+    broken = json.loads(json.dumps(CONTRACT))
+    config = next(f for s in broken['sources'] if s['table'] == 'email_actions' for f in s['fields'] if f['name'] == 'config_version')
+    config['inverse_mapping']['owner_field'] = 'action_plan_id'
+    with pytest.raises(ValueError, match='inverse mapping|consumer assertion'):
+        validate_action_entity_contract(broken)
+    broken = json.loads(json.dumps(CONTRACT))
+    status = next(f for s in broken['sources'] if s['table'] == 'email_action_attempts' for f in s['fields'] if f['name'] == 'status')
+    status['inverse_mapping']['owner_table'] = 'actions'
+    with pytest.raises(ValueError, match='inverse mapping'):
+        validate_action_entity_contract(broken)
+    broken = json.loads(json.dumps(CONTRACT))
+    field = next(f for s in broken['sources'] if s['table'] == 'email_actions' for f in s['fields'] if f['name'] == 'status')
+    field['consumer_assertions'][0]['source_field'] = 'email_actions.config_version'
+    with pytest.raises(ValueError, match='consumer assertion'):
+        validate_action_entity_contract(broken)
+    broken = json.loads(json.dumps(CONTRACT))
+    retained = next(f for s in broken['sources'] if s['table'] == 'sent_replies' for f in s['fields'] if f['name'] == 'recall_error')
+    retained['inverse_mapping']['owner_field'] = 'error_text'
+    with pytest.raises(ValueError, match='inverse mapping|consumer assertion'):
+        validate_action_entity_contract(broken)
 
 
 def test_equal_source_public_ids_remain_distinct_action_identities():
@@ -198,12 +237,28 @@ def test_null_reference_stays_bound_to_original_provider_receipt_after_correctio
         db.execute("insert into actions(id,_kind,legacy_key,action_data,payload_json) values (1,70,NULL,jsonb(?),jsonb('[]'))", (json.dumps({'external_action_key':'stable-key','status':'verified'}),))
         db.commit()
         db.execute('pragma foreign_keys=on')
-        db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at) values (1,1,'{\"accepted\":true}','d1','v1')")
+        old_body = '{"verification":{"state":"ambiguous"},"provider_result":{"id":"provider-1"}}'
+        corrected_body = '{"verification":{"state":"sent"},"provider_result":{"id":"provider-1"}}'
+        db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at) values (1,1,?,'d1','v1')", (old_body,))
         db.execute("insert into action_receipts(id,action_id,status,execution_id,action_index,outcome_json,provider_receipt_id,updated_at) values (2,1,'verified',10,0,NULL,1,'t1')")
-        db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at) values (3,1,'{\"accepted\":true,\"corrected\":true}','d2','v2')")
+        db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at,supersedes_provider_receipt_id) values (3,1,?,'d2','v2',1)", (corrected_body,))
         assert db.execute('select provider_receipt_id,outcome_json from action_receipts where id=2').fetchone() == (1, None)
-        assert db.execute('select r.provider_result_json from action_receipts o join action_receipts r on r.id=o.provider_receipt_id where o.id=2').fetchone()[0] == '{"accepted":true}'
-        assert db.execute('select provider_result_json from action_receipts where id=3').fetchone()[0] == '{"accepted":true,"corrected":true}'
+        assert db.execute('select r.provider_result_json from action_receipts o join action_receipts r on r.id=o.provider_receipt_id where o.id=2').fetchone()[0] == old_body
+        assert db.execute('select provider_result_json,supersedes_provider_receipt_id from action_receipts where id=3').fetchone() == (corrected_body, 1)
+        assert db.execute('with recursive chain(id) as (select provider_receipt_id from action_receipts where id=2 union all select r.id from action_receipts r join chain c on r.supersedes_provider_receipt_id=c.id) select id from chain where not exists(select 1 from action_receipts n where n.supersedes_provider_receipt_id=chain.id)').fetchone()[0] == 3
+        db.execute("insert into action_receipts(id,action_id,provider_result_json,created_at) values (4,1,'null','unlinked-historical')")
+        db.execute("insert into action_receipts(id,action_id,provider_result_json,created_at) values (5,1,'{}','unlinked-historical-2')")
+        db.execute("insert into action_receipts(id,action_id,status,outcome_json,created_at) values (6,1,'uncertain','null','no-provider-body')")
+        assert db.execute('select provider_result_json,supersedes_provider_receipt_id from action_receipts where id in (4,5) order by id').fetchall() == [('null', None), ('{}', None)]
+        assert db.execute('select provider_result_json,outcome_json from action_receipts where id=6').fetchone() == (None, 'null')
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute('update action_receipts set provider_result_json=? where id=1', (corrected_body,))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute('update action_receipts set provider_receipt_id=3 where id=2')
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute('update action_receipts set supersedes_provider_receipt_id=null where id=3')
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute('insert into action_receipts(id,action_id,provider_result_json,supersedes_provider_receipt_id) values (7,1,\'{}\',1)')
         with pytest.raises(sqlite3.IntegrityError):
             db.execute("insert into action_receipts(action_id,status,execution_id,action_index,provider_receipt_id) values (1,'verified',11,0,999)")
 

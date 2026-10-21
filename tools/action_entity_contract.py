@@ -99,13 +99,16 @@ def build_target_ddl() -> str:
     rendered.extend((
         "create unique index idx_actions_action_external_key on actions(action_external_action_key) where record_type='action' and action_external_action_key is not null",
         "create unique index idx_actions_action_delivery_key on actions(action_delivery_channel,action_delivery_key) where record_type='action' and action_delivery_channel is not null and action_delivery_key is not null",
-        "create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_id integer, action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id))",
+        "create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_id integer, action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id), supersedes_provider_receipt_id integer references action_receipts(id), check(supersedes_provider_receipt_id is null or supersedes_provider_receipt_id<id))",
         "create index idx_action_receipts_action on action_receipts(action_id,id)",
         "create index idx_action_receipts_execution_order on action_receipts(execution_id,action_index,action_id) where execution_id is not null",
+        "create unique index idx_action_receipts_one_successor on action_receipts(supersedes_provider_receipt_id) where supersedes_provider_receipt_id is not null",
         "create table action_observers (action_id integer not null references actions(id), agent_run_id integer not null, task_id integer not null, created_at text not null, primary key(action_id,agent_run_id))",
         "create trigger trg_action_receipt_owner_insert before insert on action_receipts when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'receipt owner must be Action'); end",
         "create trigger trg_action_observer_owner_insert before insert on action_observers when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'observer owner must be Action'); end",
         "create trigger trg_action_receipt_reference_owner_insert before insert on action_receipts when new.provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
+        "create trigger trg_action_receipt_supersedes_owner_insert before insert on action_receipts when new.supersedes_provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.supersedes_provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'superseded provider receipt must resolve within Action'); end",
+        "create trigger trg_action_receipt_lineage_immutable before update of provider_result_json,result_digest,supersedes_provider_receipt_id,provider_receipt_id on action_receipts when old.provider_result_json is not new.provider_result_json or old.result_digest is not new.result_digest or old.supersedes_provider_receipt_id is not new.supersedes_provider_receipt_id or (old.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id) begin select raise(abort,'provider receipt versions and exact references are immutable'); end",
     ))
     return ";\n".join(rendered) + ";\n"
 
@@ -146,6 +149,46 @@ def validate_action_entity_contract(contract: dict) -> None:
                 path, symbol = consumer.split(':', 1)
                 if not (ROOT / path).is_file() or not re.search(rf'\bdef\s+{re.escape(symbol.rsplit(".", 1)[-1])}\s*\(', (ROOT / path).read_text()):
                     raise ValueError(f'{table}.{name}: consumer is not declared: {consumer}')
+            inverse = field.get('inverse_mapping')
+            if not isinstance(inverse, dict) or inverse.get('owner') != field['owner']:
+                raise ValueError(f'{table}.{name}: inverse mapping owner contradicts field owner')
+            owner_tables = {'Action': 'actions', 'Action Receipt': 'action_receipts', 'Action Observer': 'action_observers', 'Action Plan': 'actions'}
+            if inverse.get('owner_table') != owner_tables.get(field['owner']):
+                raise ValueError(f'{table}.{name}: inverse mapping owner table contradicts field owner')
+            target_name = field.get('target')
+            expected_owner_field = 'id' if target_name in ('id', 'action_id', 'receipt identity scoped to Action') else target_name
+            if field['owner'] == 'Action Observer' and target_name == 'action_id':
+                expected_owner_field = 'action_id'
+            if field['owner'] != 'Action Plan' and inverse.get('owner_field') != expected_owner_field:
+                raise ValueError(f'{table}.{name}: inverse mapping target contradicts declared target')
+            consumer_assertions = field.get('consumer_assertions')
+            if not isinstance(consumer_assertions, list) or {item.get('location') for item in consumer_assertions} != set(field['consumers']):
+                raise ValueError(f'{table}.{name}: consumer assertion coverage is incomplete')
+            for assertion in consumer_assertions:
+                if (assertion.get('source_field') != f'{table}.{name}'
+                        or assertion.get('target_owner') != field['owner']
+                        or assertion.get('target_field') != inverse.get('owner_field')):
+                    raise ValueError(f'{table}.{name}: consumer assertion source/owner is contradictory')
+            if field['owner'] == 'Action':
+                action_targets = set(ACTION_COLUMNS) | {'id'}
+                if inverse['owner_field'] not in action_targets:
+                    raise ValueError(f'{table}.{name}: inverse mapping names no Action field')
+            elif field['owner'] == 'Action Receipt':
+                receipt_targets = {column['name'] for column in contract.get('target', {}).get('receipt_columns', [])} | {'id'}
+                if inverse['owner_field'] not in receipt_targets:
+                    raise ValueError(f'{table}.{name}: inverse mapping names no Action Receipt field')
+            elif field['owner'] == 'Action Observer' and inverse['owner_field'] not in {'action_id', 'agent_run_id', 'task_id', 'created_at'}:
+                raise ValueError(f'{table}.{name}: inverse mapping names no Action Observer field')
+            elif field['owner'] == 'Action Plan':
+                expected_via = {'from': 'Action.action_plan_id', 'to': 'email_action_plans.action_plan_id', 'immutable': True}
+                if (inverse.get('owner_record_type') != 'email_action_plans'
+                        or inverse.get('owner_field') != 'config_version'
+                        or inverse.get('via') != expected_via):
+                    raise ValueError(f'{table}.{name}: inverse mapping must traverse immutable email_action_plans by action_plan_id')
+            if table in {'email_actions', 'email_action_attempts'} and name == 'action_id':
+                expected_identity = {'function': 'app/email_store.py:_direct_action_id', 'arguments': ['Action.action_plan_id', 'Action.operation']}
+                if inverse.get('via') != expected_identity:
+                    raise ValueError(f'{table}.{name}: inverse mapping must use the existing direct action identity function')
             if field['disposition'] not in {'retain', 'reference', 'retire'}:
                 raise ValueError(f'{table}.{name}: unsupported disposition')
     target = contract.get('target', {})
@@ -205,6 +248,12 @@ def validate_action_entity_contract(contract: dict) -> None:
         raise ValueError('public source IDs cannot define unified identity')
     if contract.get('receipts', {}).get('preserve_distinct_values') is not True:
         raise ValueError('distinct receipt facts must be retained')
+    lineage = contract.get('receipts', {}).get('version_lineage', {})
+    if (lineage.get('current_version') != "For an observation's exact provider_receipt_id, follow its unique supersedes_provider_receipt_id successor chain; the terminal provider-result receipt with no successor in that chain is the current canonical version. Unlinked receipt facts remain independent roots."
+            or 'supersedes_provider_receipt_id' not in lineage.get('supersedes', '')
+            or 'provider_receipt_id' not in lineage.get('reference', '')
+            or 'without a supersedes link' not in lineage.get('independent_facts', '')):
+        raise ValueError('provider receipt version lineage is incomplete')
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
