@@ -35,6 +35,14 @@ minutes, messages, logs, todos and calendars. Unreadable evidence remains a gap.
    Each result saves `okr-member-<userId-sha256>.json` with a verified source outcome. Retry a transient source failure with another member read; each read is one bounded attempt. Complete
    every member read before preparing analysis. Separate calls give source IO
    a bounded operation and expose real completed collection progress.
+   If the source confirms that the requested period is absent from a
+   successfully read, complete personal-period list (for example,
+   `MissingOkrPeriod` / `Dingteam OKR period not found: <period>`), stop this
+   run and return a failed result with the exact `error_code=MissingOkrPeriod`.
+   This is a confirmed absence, not a transient dependency read: do not label
+   it `dependency_read_unavailable`, `source_failed`, or another retryable
+   code. Do not substitute a different period. Other source transport or
+   incomplete-read failures keep their existing retry behavior.
 4. Run `consumer_run_skill_script` with `name=ceo-weekly-okr-report`,
    `script=scripts/report.py`, and arguments:
    `prepare --roster-file okr-roster.json --members-dir . --period-label <YYYY Qn> --report-date <YYYY-MM-DD> --output-dir .`.
