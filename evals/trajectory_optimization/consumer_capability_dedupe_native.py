@@ -393,7 +393,8 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
                   .replace("：", " ")
                   .replace("（", " ").replace("）", " ")
                   .replace("(", " ").replace(")", " ")
-                  .replace("；", "\n").replace(";", "\n"))
+                  .replace("；", "\n").replace(";", "\n")
+                  .replace(" / ", "/").replace(" /", "/").replace("/ ", "/"))
     year = datetime.fromisoformat(FIXED_TIME).year
     slots = []
     for line in normalized.splitlines():
@@ -407,11 +408,20 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
                     <= monthrange(year, int(date_parts[0]))[1]):
                 dates.append((int(date_parts[0]), int(date_parts[1])))
                 continue
-            time_parts = [part.split(":") for part in token.split("-")]
-            if (not dates or len(time_parts) != 2
-                    or any(len(part) != 2 or not all(value.isdecimal() for value in part)
-                           for part in time_parts)):
+            time_window = next((
+                token[offset:offset + 11]
+                for offset in range(max(0, len(token) - 10))
+                if token[offset:offset + 2].isdecimal()
+                and token[offset + 2] == ":"
+                and token[offset + 3:offset + 5].isdecimal()
+                and token[offset + 5] == "-"
+                and token[offset + 6:offset + 8].isdecimal()
+                and token[offset + 8] == ":"
+                and token[offset + 9:offset + 11].isdecimal()
+            ), None)
+            if not dates or time_window is None:
                 continue
+            time_parts = [part.split(":") for part in time_window.split("-")]
             (start_hour, start_minute), (end_hour, end_minute) = (
                 tuple(int(value) for value in part) for part in time_parts
             )
