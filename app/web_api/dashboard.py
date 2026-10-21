@@ -50,13 +50,17 @@ def _time(value: str | None) -> str:
 def _runtime_metadata(db: sqlite3.Connection, now: str) -> dict[int, dict]:
     """Live runtime metadata, tied to the current parent generation/run only."""
     generation = task20_column("reply_tasks", "execution_generation")
+    run_columns = {row[1] for row in db.execute("pragma table_info(runs)")}
+    summary_input_id = (
+        "domain.summary_input_id" if "summary_input_id" in run_columns else "NULL"
+    )
     rows = db.execute(
         f"""
         select runtime.legacy_key as runtime_id, runtime.workload_kind,
                runtime.workload_key, runtime.runtime_kind, runtime.model,
                runtime.started_at, runtime.updated_at, runtime.status, runtime.lease_owner,
                parent.role, parent.task_id as reply_task_id,
-               domain.task_id as domain_task_id, domain.summary_input_id
+               domain.task_id as domain_task_id, {summary_input_id} as summary_input_id
         from runs runtime
         left join runs parent on parent.id=runtime.parent_id
           and parent.record_type='agent_runs' and parent.status='running'
