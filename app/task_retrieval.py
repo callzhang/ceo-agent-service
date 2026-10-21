@@ -256,6 +256,10 @@ def retrieve_task_semantic_context(
     # Reserve the bucket for all known same-source Tasks before filling its
     # remaining lexical/Project budget; a forced overflow must not retain noise.
     for score, task in sorted(ranked_tasks, key=lambda pair: pair[1].id not in same_source_task_ids):
+        if (len(formal_rows) >= limit_per_kind
+                and len(unverified_rows) >= limit_per_kind
+                and task.id not in same_source_task_ids):
+            break
         if (score <= 0 and task.id not in same_source_task_ids and task.id not in project_task_ids) or task.stage.value != "formal":
             continue
         task_evidence = store.list_business_task_evidence(task.id)

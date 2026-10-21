@@ -119,6 +119,12 @@ def test_shared_source_same_source_formal_tasks_are_not_lost_to_rank_limit(tmp_p
         store.link_business_task_evidence(task_id=id, signal_id=signal, evidence_role="assignment")
         own.append(id)
         own_signals[signal] = "张三负责全部事项"
+    unverified = store.create_business_task(
+        title="旧会谈中待核对事项", stage="formal", formal_basis="explicit_assignment",
+    )
+    store.link_business_task_evidence(
+        task_id=unverified, signal_id=next(iter(own_signals)), evidence_role="discovery",
+    )
     item = WorkItem.model_validate({"source": {"type": "ai_minutes", "ref": "meeting:own#new"}, "summary": "完全变了的措辞", "context": {"source_conversation_kind": "minutes"}})
     reader = _fixture_source_reader(store, own_signals)
     _sourced_formal_task(store, title="完全变了的措辞", suffix="unrelated", source_reader=reader)
@@ -127,9 +133,68 @@ def test_shared_source_same_source_formal_tasks_are_not_lost_to_rank_limit(tmp_p
         source_reader=reader,
     )
     assert {task.id for task in context.formal_tasks} == set(own)
+    assert [task.id for task in context.unverified_formal_tasks] == [unverified]
     payload = json.loads(render_task_semantic_context(context, work_item=item))
     assert len(payload["source_signals"]) == 4
     assert len(payload["source_documents"]) == 2
+
+
+def test_semantic_context_stops_owner_reads_after_both_formal_buckets_are_full(tmp_path):
+    store = AutoReplyStore(tmp_path / "formal-buckets.sqlite3")
+
+    class CountingSourceReader(_FixtureSourceReader):
+        def __init__(self):
+            super().__init__()
+            self.read_refs = []
+
+        def _read(self, binding):
+            self.read_refs.append(binding.source_ref)
+            return super()._read(binding)
+
+    reader = CountingSourceReader()
+    tasks = {}
+    for label, has_owner_quote in (
+        ("ignored_verified", True),
+        ("ignored_unverified", False),
+        ("selected_unverified", False),
+        ("selected_verified", True),
+    ):
+        source_ref = f"message:{label}"
+        excerpt = "王明负责美国客户报价"
+        body = excerpt if has_owner_quote else "王明讨论美国客户报价"
+        task_id = store.create_business_task(
+            title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
+            owner_name="王明",
+            owner_evidence_json=json.dumps({
+                "source_ref": source_ref, "excerpt": excerpt,
+            }, ensure_ascii=False),
+        )
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=source_ref,
+            evidence_text=body, dedupe_key=source_ref,
+        )
+        store.link_business_task_evidence(
+            task_id=task_id, signal_id=signal_id, evidence_role="assignment",
+        )
+        reader.add_current(store.get_business_task_signal(signal_id), body)
+        tasks[label] = task_id
+
+    context = retrieve_task_semantic_context(
+        store, _work_item("美国客户报价"), limit_per_kind=1,
+        source_reader=reader,
+    )
+    assert [task.id for task in context.formal_tasks] == [tasks["selected_verified"]]
+    assert [task.id for task in context.unverified_formal_tasks] == [tasks["selected_unverified"]]
+    assert set(reader.read_refs) == {
+        "message:selected_verified", "message:selected_unverified",
+    }
+    payload = json.loads(render_task_semantic_context(context))
+    assert {row["id"] for row in payload["existing_formal_tasks"]} == {
+        tasks["selected_verified"],
+    }
+    assert {row["id"] for row in payload["unverified_formal_tasks"]} == {
+        tasks["selected_unverified"],
+    }
 
 
 def test_shared_source_owner_quote_in_decoded_json_remains_formal(tmp_path):
