@@ -1,6 +1,11 @@
 """The fixed calendar case scores time windows, not date typography."""
 
-from evals.trajectory_optimization.consumer_capability_dedupe_native import _checks
+from zoneinfo import ZoneInfo
+
+from evals.trajectory_optimization.consumer_capability_dedupe_native import (
+    _calendar_slots,
+    _checks,
+)
 
 
 def _calendar_result(content: str) -> dict:
@@ -30,6 +35,8 @@ def test_calendar_scoring_accepts_equivalent_dates_and_rejects_busy_overlap():
               "10 月 28 日（周三）10:00–11:00。两个时段目前空闲。")
     shared_time = "America/Los_Angeles：下周一（10/26）和周四（10/29）下午 14:00–15:00"
     numeric = "America/Los_Angeles:\n10/27 10:00–11:00\n10/29 10:00–11:00"
+    iso = "America/Los_Angeles：2026-10-26 09:00–10:00；2026-10-29 09:00–10:00"
+    iso_overlap = "America/Los_Angeles：2026-10-27 09:30–10:30；2026-10-29 09:00–10:00"
     overlapping = "America/Los_Angeles:\n10/27 09:30–10:30\n10/29 10:00–11:00"
     invalid_date = "America/Los_Angeles:\n2/30 10:00–11:00\n10/29 10:00–11:00"
 
@@ -38,5 +45,8 @@ def test_calendar_scoring_accepts_equivalent_dates_and_rejects_busy_overlap():
     assert _checks(_calendar_result(spaced))["two_non_conflicting_slots"]
     assert _checks(_calendar_result(shared_time))["two_non_conflicting_slots"]
     assert _checks(_calendar_result(numeric))["two_non_conflicting_slots"]
+    assert _checks(_calendar_result(iso))["two_non_conflicting_slots"]
+    assert len(_calendar_slots(iso_overlap, ZoneInfo("America/Los_Angeles"))) == 2
+    assert not _checks(_calendar_result(iso_overlap))["two_non_conflicting_slots"]
     assert not _checks(_calendar_result(overlapping))["two_non_conflicting_slots"]
     assert not _checks(_calendar_result(invalid_date))["two_non_conflicting_slots"]

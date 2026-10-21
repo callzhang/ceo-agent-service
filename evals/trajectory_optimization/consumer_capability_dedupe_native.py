@@ -408,6 +408,16 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
                     <= monthrange(year, int(date_parts[0]))[1]):
                 dates.append((int(date_parts[0]), int(date_parts[1])))
                 continue
+            iso_parts = token.split("-")
+            if (len(iso_parts) == 3 and len(iso_parts[0]) == 4
+                    and all(part.isdecimal() for part in iso_parts)):
+                try:
+                    parsed_date = datetime.fromisoformat(token)
+                except ValueError:
+                    continue
+                if parsed_date.year == year:
+                    dates.append((parsed_date.month, parsed_date.day))
+                continue
             time_window = next((
                 token[offset:offset + 11]
                 for offset in range(max(0, len(token) - 10))
