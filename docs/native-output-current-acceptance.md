@@ -22,4 +22,5 @@ Qwen 的六文件 custom-tool 传输修复仅在离线副本及 CPU 语法检查
 - 失败回归先报 `ModuleNotFoundError: app.native_agent_output`；加入当前合同的投影和还原器后，两个尾随非法字符回归又先 RED，确认旧解析器误接受多余 `}` 与零宽字符。原生路径改为严格解析最后一条完整 JSON 后，原生 codec、Consumer purpose 及 OA 编排定向测试 **27 passed**，Ruff 和 `git diff --check` 通过。测试覆盖普通 `no_action`、OA 四种专属动作、Audit `approve/return`、动态 JSON 的嵌套特殊键、空值和重复键拒绝。三份生成 schema 与提交快照逐值一致。
 - 本机 Codex CLI `0.163.0`、`gpt-6-luna`，匿名只读 `--output-schema` 冷启动：普通 Consumer `no_action`、OA Consumer `return`、Audit `return` 均有完成输出，当前 Pydantic 还原校验通过。这三次无工具冒烟仅证明 CLI 可接受结构。
 - 使用同一虚构 `read_case` MCP（只读，返回 nonce）后，普通 Consumer、OA Consumer、Audit 各完成冷启动及同 session 续会话。六轮每轮精确读取对应的新 case 一次，没有错误调用；续会话的 session ID 与冷启动相同，最终结果引用新 nonce 且通过当前完整 wire model。原始匿名 JSONL 和 MCP trace 临时保留在本任务 `/tmp` 目录，待核对后清理；不纳入仓库或业务记录。
+- GPU4 的 vLLM 0.29 **候选** custom-tool 代码经只读 SSH stdin 在内存中加载；当前三份 schema 分别有 21／21／11 个顶层字段，Qwen 结构语法均接受完整最终 JSON 和 custom `exec` 调用分支。此检查没有模型推理、已安装包替换或 slot 重载，不能算共享提供商修复与原生全角色运行通过。
 - 这些运行没有实际服务 Developer/Task 装配、完整角色工具目录、Work Profile、业务 Skill 或外部动作；不能代替四类任务固定案例、所有配置路线、生产读回，也不能据此打开运行时 schema。
