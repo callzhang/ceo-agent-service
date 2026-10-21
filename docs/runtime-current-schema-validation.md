@@ -30,4 +30,4 @@ The existing no-worker Console copy script traversed 15 API paths, including His
 
 ## Review and production
 
-Pending focused business regression completion, independent spec/quality review, upstream reconciliation, standard deployment, and live readback. Tests use outbound substitutes only. This document does not claim deployment or external business outcomes yet.
+Independent SPEC approved with the paired-version fix, and QUALITY approved commits through20d4a9f32. Main was reconciled normally through366dd8241; no schema factory changed upstream. The final54-case current/schema/inverse/publication/seed/Workbench batch passed, and the84-case updater/paired/bootstrap/explicit-Email batch passed. Five Workbench current/missing/schema cases also passed. Standard deployment and live readback remain pending. Tests use outbound substitutes only. This document does not claim deployment or external business outcomes yet.
