@@ -66,6 +66,7 @@ from app.task12_storage import insert_task12, task12_projection, task12_set_part
 from app.task20_definitions import TASK20_FIELDS, task20_column
 
 _EMAIL_CLASSIFICATION_KIND = 'email_agent_classification_tasks'
+EMAIL_CLASSIFICATION_MAX_ATTEMPTS = 3
 _EMAIL_CLASSIFICATION_SQL = task12_projection(_EMAIL_CLASSIFICATION_KIND)
 _EMAIL_CLASSIFICATION_COLUMNS = {
     field: task20_column(_EMAIL_CLASSIFICATION_KIND, field)
@@ -420,7 +421,9 @@ class EmailClassificationTaskAdapter:
 
         with self.email_store._connect() as db:
             db.execute("begin immediate")
-            return self._expire_running_claims(db, now=self._timestamp())
+            now = self._timestamp()
+            return (self._expire_running_claims(db, now=now)
+                    + self._close_exhausted_pending_tasks(db, now=now))
 
     def retry_failed_tasks(self, task_ids: Sequence[str]) -> int:
         """Requeue explicitly reviewed failed tasks without changing identity."""
@@ -457,11 +460,11 @@ class EmailClassificationTaskAdapter:
             eligible = db.execute(
                 f"""
                 select 1 from ({_EMAIL_CLASSIFICATION_SQL})
-                where (status='pending' and (available_at='' or available_at <= ?))
+                where (status='pending' and (attempt_count >= ? or available_at='' or available_at <= ?))
                    or (status='running' and lease_expires_at <= ?)
                 limit 1
                 """,
-                (now, now),
+                (EMAIL_CLASSIFICATION_MAX_ATTEMPTS, now, now),
             ).fetchone()
             if eligible is None:
                 return None
@@ -469,6 +472,7 @@ class EmailClassificationTaskAdapter:
             # recomputed under the writer lock, never from this snapshot.
             db.execute("begin immediate")
             self._expire_running_claims(db, now=now)
+            self._close_exhausted_pending_tasks(db, now=now)
             row = db.execute(
                 f"""
                 select * from ({_EMAIL_CLASSIFICATION_SQL})
@@ -505,16 +509,19 @@ class EmailClassificationTaskAdapter:
     def _expire_running_claims(self, db: sqlite3.Connection, *, now: str) -> int:
         expired = db.execute(
             f"""
-            select task_id
+            select task_id, attempt_count
             from ({_EMAIL_CLASSIFICATION_SQL})
             where status='running' and lease_expires_at <= ?
             """,
             (now,),
         ).fetchall()
         for row in expired:
+            exhausted = row['attempt_count'] >= EMAIL_CLASSIFICATION_MAX_ATTEMPTS
             parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
-                'status': 'pending', 'owner': '', 'lease_expires_at': '',
-                'available_at': now, 'error': 'classification task lease expired',
+                'status': 'failed' if exhausted else 'pending',
+                'owner': '', 'lease_expires_at': '',
+                'available_at': '' if exhausted else now,
+                'error': 'classification task lease expired',
                 'updated_at': now,
             })
             db.execute(
@@ -525,6 +532,21 @@ class EmailClassificationTaskAdapter:
             )
         return len(expired)
 
+    def _close_exhausted_pending_tasks(self, db: sqlite3.Connection, *, now: str) -> int:
+        error = _EMAIL_CLASSIFICATION_COLUMNS['error']
+        parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+            'status': 'failed', 'owner': '', 'lease_expires_at': '',
+            'available_at': '', 'updated_at': now,
+        }, update_sql={
+            'error': f"case when {error}='' then 'classification_retry_exhausted' else {error} end",
+        })
+        return db.execute(
+            f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+            f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='pending' "
+            f"and {_EMAIL_CLASSIFICATION_COLUMNS['attempt_count']}>=?",
+            (*parts.parameters, EMAIL_CLASSIFICATION_MAX_ATTEMPTS),
+        ).rowcount
+
     def complete(
         self, task: EmailClassificationTask, result: Mapping[str, object]
     ) -> None:
@@ -533,6 +555,7 @@ class EmailClassificationTaskAdapter:
     def fail(
         self, task: EmailClassificationTask, *, error: str, retryable: bool
     ) -> None:
+        retryable = retryable and task.attempt_count < EMAIL_CLASSIFICATION_MAX_ATTEMPTS
         available_at = (
             self._retry_available_at(task.attempt_count)
             if retryable

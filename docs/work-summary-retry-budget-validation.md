@@ -98,4 +98,7 @@ and recovers Meeting work from persisted state. SystemExecutor reuses verified
 candidate action attempts and reconciles dispatched/uncertain attempts. This
 repair adds no provider calls or external-action replay.
 
-Commit and production readback are pending.
+Runtime repair commit: 7a78c93804973036c4372c7e7cd93cc91ee9a863.
+The immediately preceding deployment readback confirmed input 416319 had reached
+47 attempts with the exact shared-session-busy error, directly corroborating the
+reproduced contention path. Production deployment/readback are pending.

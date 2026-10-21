@@ -4650,3 +4650,19 @@ attempt budget, while preserving its existing Task Agent run history. Normal
 provider-outage deferral, Audit behavior and external-action identity/recovery
 are unchanged. Regression and release evidence is in
 `docs/work-summary-retry-budget-validation.md`.
+
+
+### Email classification retry budget
+
+Dedicated Email classification tasks allow at most three processing attempts per
+explicit retry. A retryable read/network/model failure returns to pending with
+the existing capped backoff only before the third attempt; the third failure
+ends failed and retains the actual error. Expired running claims consume the
+same budget and become failed once it is exhausted. Startup recovery and queue
+claiming also close previously exhausted pending records, including ones with a
+future available_at, without incrementing their old count or calling the mail
+provider or Agent. Their source input, stable identity and original error remain
+available. Active unexpired claims and done tasks are not closed by this sweep.
+The existing explicit selected-task repair resets attempts and keeps task
+identity; discovery does not automatically reopen failed records. See
+`docs/email-classification-retry-budget-validation.md` for evidence.
