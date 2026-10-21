@@ -490,18 +490,21 @@
         "group_message_sent": false,
         "audit_approved": false
       },
-      "root_cause": "Production uses the legacy OKR browser source. Its confirmed MissingOkrPeriod exception is surfaced to the Agent as a shared source failure, and four Consumer turns inconsistently relabeled that same permanent member-period absence, causing retries. The already tested headless source returns a complete-period-list receipt with availability.status=goals_not_established for this member-level absence; PR #218 switches the configured/default entrypoint to that source while retaining true technical failures. Its local authenticity probes covered one missing and one valid member, but the production setting has not yet changed and no post-deployment report evidence exists. The production .env contains the legacy command, but it is only a default: the startup script exports its fallback before Python loads .env with os.environ.setdefault. Therefore the current production code uses the legacy fallback, and deploying PR #218’s new fallback should change the effective source; confirm by post-deploy readback. A separate retry-code-only PR was closed as it did not fix this source routing root cause.",
-      "next_action": "Complete PR #218 checks and review, merge and deploy through python -m app.deploy. Afterward read back the new PID, health and effective startup source. Then manually run a new OKR report and verify member-level goals_not_established receipts, complete Consumer/Audit trajectory, complete document readback, and real group-message receipt. Do not treat local source probes as report acceptance.",
+      "root_cause": "Production uses the legacy OKR browser source. Its confirmed MissingOkrPeriod exception is surfaced to the Agent as a shared source failure, and four Consumer turns inconsistently relabeled that same permanent member-period absence, causing retries. The already tested headless source returns a complete-period-list receipt with availability.status=goals_not_established for this member-level absence; PR #218 switches the configured/default entrypoint to that source while retaining true technical failures. Its local authenticity probes covered one missing and one valid member, but the production setting has not yet changed and no post-deployment report evidence exists. The startup script currently exports the legacy browser fallback. The Codex child-environment allowlist also omitted CEO_OKR_LIVE_SOURCE_COMMAND, so the child fell back to the legacy command in .env. PR #219 fixes inheritance and is merged to main; PR #218 changes the parent fallback to the absence-aware headless source. Both must be present in the deployed commit, then the effective source must be read back. A separate retry-code-only PR was closed as it did not fix this source routing root cause.",
+      "next_action": "Integrate PR #218 with the latest main containing merged PR #219, rerun focused tests and complete CI/review, merge and deploy through python -m app.deploy. Read back the new PID, health, and effective child source. Then manually run a new OKR report and verify member-level goals_not_established receipts, complete Consumer/Audit trajectory, full document readback, and the real group-message receipt.",
       "observed_at": "2026-10-21T22:22:31.850803+00:00",
       "reply_error": "dependency_read_unavailable",
       "terminal_evidence": "Reply-task readback returned status=failed after four failed Consumer turns; no Agent turn remains in flight.",
       "production_configuration_readback": {
         "launch_agent_env_override": false,
         "service_env_file": "/Users/derek/Services/ceo-agent-service/.env",
-        "service_env_file_value": "legacy_browser (present but not effective)",
-        "precedence": "scripts/run-local-service.sh exports its fallback before Python starts; app.config.load_env_file uses os.environ.setdefault, so this process value wins over the .env default",
-        "effective_source_at_current_production_revision": "legacy_browser fallback",
-        "effective_source_after_pr_218_deploy": "headless fallback, subject to post-deploy readback"
+        "service_env_file_value": "legacy_browser fallback",
+        "current_production_flow": "run-local-service.sh exports the legacy browser default; pre-PR-219 Codex child-environment filtering drops CEO_OKR_LIVE_SOURCE_COMMAND, so the child falls back to the same legacy .env value",
+        "fixes_required_for_effective_headless_source": [
+          "PR #218 switches the startup fallback to the absence-aware headless source",
+          "PR #219 passes CEO_OKR_LIVE_SOURCE_COMMAND through the reviewed Codex child environment"
+        ],
+        "effective_source_after_both_are_deployed": "headless source passed from service parent to Codex child; confirm by post-deploy readback"
       }
     },
     "service_observation": {
