@@ -28,6 +28,7 @@ from app.agent_runtime_contracts import RuntimeKind
 from app.codex_runner import memory_connector_config_issue
 from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
+from app.leak_check import contains_credential
 from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore
 from app.business_skills import bundled_business_skills_root
@@ -445,42 +446,81 @@ def _encode_task_agent_result(raw: str) -> str:
     from app.codex_decision import extract_codex_audit_events
 
     decision = _parse_task_agent_decision(raw)
+    result = {
+        "decision": decision.model_dump(mode="json", exclude_unset=True),
+        "audit_tool_events": audit_references_from_full_events(
+            extract_codex_audit_events(raw, limit=TASK_AGENT_AUDIT_EVENT_LIMIT),
+            limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
+        ),
+    }
     encoded = json.dumps(
-        {
-            "decision": decision.model_dump(mode="json", exclude_unset=True),
-            "audit_tool_events": audit_references_from_full_events(
-                extract_codex_audit_events(raw, limit=TASK_AGENT_AUDIT_EVENT_LIMIT),
-                limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
-            ),
-        },
+        result,
         ensure_ascii=False,
         separators=(",", ":"),
     )
     try:
         TASK_RESULT_CODEC.encode(encoded)
     except ValueError as exc:
+        credential_field = _first_credential_field_path(result)
         raise RoutedResultValidationError(
-            "task result contains a runtime path outside an evidence source field",
+            (
+                f"task result contains credential-like text in {credential_field}"
+                if credential_field
+                else "task result contains a runtime path outside an evidence source field"
+            ),
             raw_output=raw,
         ) from exc
     return encoded
+
+
+def _first_credential_field_path(value: object, path: tuple[str, ...] = ()) -> str:
+    """Name a sensitive leaf for correction without copying its value."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            safe_key = (
+                key_text
+                if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,63}", key_text)
+                and not contains_credential(key_text)
+                else "<field>"
+            )
+            if contains_credential(key_text):
+                return ".".join((*path, safe_key))
+            found = _first_credential_field_path(item, (*path, safe_key))
+            if found:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found = _first_credential_field_path(item, (*path, str(index)))
+            if found:
+                return found
+    elif isinstance(value, str) and contains_credential(value):
+        return ".".join(path)
+    return ""
 
 
 def _task_result_validation_repair_prompt(raw_output: str) -> str:
     """Return only the failed result's bounded validation errors for correction."""
     decision, problems = _validate_task_decision_candidates(raw_output)
     if decision is not None:
-        # The schema held, so the rejection came from the codec leak check in
-        # _encode_task_agent_result.
-        detail = (
-            "- the decision satisfied the schema but a business field "
-            "contained a runtime path"
+        # The schema held; give the codec's relevant category and field name,
+        # never the rejected value.
+        credential_field = _first_credential_field_path(
+            decision.model_dump(mode="json", exclude_unset=True)
         )
-        path_rule = (
-            "\nDo not include local filesystem paths, session paths, lock paths, "
-            "credentials, or runtime diagnostics in business fields. A source "
-            "path may appear only in an evidence field named source or source_ref."
-        )
+        if credential_field:
+            detail = f"- credential-like text in {credential_field}"
+            path_rule = "\nRemove the credential-like text from that field."
+        else:
+            detail = (
+                "- the decision satisfied the schema but a business field "
+                "contained a runtime path"
+            )
+            path_rule = (
+                "\nDo not include local filesystem paths, session paths, lock paths, "
+                "credentials, or runtime diagnostics in business fields. A source "
+                "path may appear only in an evidence field named source or source_ref."
+            )
     elif problems:
         detail = "\n".join(f"- {problem}" for problem in problems)
         path_rule = ""
