@@ -1,0 +1,214 @@
+# Task 1 report: Action field ownership and DDL
+
+Status: implementation and scoped verification complete. The source-copy checker opened the supplied SQLite file in read-only/query-only mode and verified its SHA-256 was unchanged before and after inspection. Tests use only synthetic databases.
+
+## Outputs
+
+- `tools/action_entity_contract.py`: source declaration inventory, field/DDL validation, and read-only source CLI. Validation executes the complete rebuilt target SQL in an in-memory database. The inspector never initializes Store.
+- `tests/test_action_entity_contract.py`: declaration-derived ownership, mutation rejection, source-copy-independent synthetic SQLite DDL and identity/receipt/state checks.
+- `docs/action-entity-field-map.json`: all source fields, owners/dispositions/inverse rules, common-state mappings, identity/cardinality/clock rules, coexistence and index policy.
+- `docs/action-entity-target.sql`: complete rebuilt `actions` declaration with one `_kind=70`, `record_type='action'` kind plus unchanged existing kinds, indexes/triggers and Action-owned receipt/observer relations.
+
+The common Action payload is one JSONB object (`action_data`) with fixed typed generated virtual columns. Unchanged records do not get dozens of nullable source columns or per-source Action layouts. The `actions` global discriminator remains only to distinguish Action from unchanged non-Action records; source/origin does not select Action layout. New Actions can have `legacy_key NULL`; existing non-Action namespace constraints/indexes/triggers remain equivalent. Existing Actions ids are not reassigned from source public IDs. Migration/inverse identity is explicit `(source table, original typed identity)` metadata, never a runtime alias.
+
+## Ownership and cardinality decisions
+
+- Seven declared source families contribute 30,110 rows in the supplied copy (counts below). Every declaration field is listed exactly once in the committed map; tests compare it against the independent declarations in `EMAIL_FIELDS`, `SOURCE_COLUMNS`, and prepared definitions. Unmapped arbitrary attempt payloads/native context are not copied.
+- `email_actions` current facts belong to Action. `email_action_attempts` are individual Action Receipt facts, preserving attempt number, exact status, provider operation/target/result id, error, and separate start/finish clocks. `attempt_count` is retired only as a separately stored counter; it is derived from retained receipt sequence.
+- `candidate_action_attempts` with the same exact external key and one canonical external-result owner can be multiple execution observations of one Action. The observed duplicate group has two rows, two execution ids, both statuses present, one NULL local outcome and one distinct text outcome, while canonical operation/target/provider result each have one value. The target keeps one Action and one canonical provider-result receipt, plus two per-execution receipt facts (`execution_id`, `action_index`, status, `outcome_json`, created/updated clocks). It does not overwrite the NULL or local result with the provider body. Conflicting canonical operation/target/result owners remain a conflict for migration resolution; the key alone never authorizes a merge.
+- `external_action_results` owns canonical provider receipt fields once. Existing candidate projection reads a provider result only for explicit `verified` with local result SQL NULL and exact external-key owner (`app/action_storage.py` result projection and `preserve_candidate_result_references`). That reference behavior does not erase the local NULL fact.
+- `sent_replies.send_result_json` keeps exact SQL NULL versus text. Existing readback shares a value only through exact external-key result ownership; exact text/type equality is a reference, while distinct local result text remains its own receipt fact (`app/action_storage.py` sent-result projection; `app/sent_result_schema.py`). In the copy, 478 sent rows have NULL local result while 486 have a nonblank external key.
+- `outbound_postfixes` owns prepared delivery channel/key/body/feedback/version and preparation time. `postfix_dispatch_created_at` and `postfix_receipt_created_at` map to separate receipt clocks; counts are 206 dispatch clocks and 866 receipt clocks. Prepared does not mean dispatched, and a dispatch/receipt clock or result JSON does not set Action status.
+- `sent_reply_observers` is an observer relationship, not a second effect: 486 rows point to 486 replies and represent 486 unique reply/run pairs. Receipt and observer tables are owned relations with Action foreign keys and no independent source-kind lifecycle.
+
+## State mapping
+
+Action-level status is the exact `email_actions` enum `pending`, `processing`, `done`, `skipped`, `failed`; it stays nullable where the source has no Action-level lifecycle fact. Email attempt statuses (`done`, `skipped`, `failed`) and candidate execution-observation statuses (`dispatched`, `verified`, `confirmed_no_effect`, `uncertain`, `failed`) stay on their receipt/observation row without normalization. `verified` is explicit evidence, `dispatched` only records dispatch, `confirmed_no_effect` is explicit, and `uncertain` remains uncertain; no provider JSON or timestamp promotes state to `done` or `verified`. The validator checks these sets against `EMAIL_CHECKS` and `ENUMS`, and the DDL constrains both state columns to those declared sets.
+
+## Source-copy evidence
+
+- Database SHA-256: `c16afd2ea0e45349aa1cee3d246ef23d87964998b809acd5e5022989adb3ddd1` (same before/after). Total Actions rows: 102,413; unchanged kinds in coexistence: 72,303.
+- Equal legacy public-id groups across covered families: 11,087; old numeric/public IDs do not define unified identity.
+- Duplicate candidate external-key groups: 1. Duplicate observation facts: 2 rows, 2 distinct execution IDs, 2 statuses present, 1 NULL local outcome, 1 canonical operation, 1 canonical target, 1 canonical provider result.
+- Prepared clocks: 206 dispatch timestamps and 866 receipt timestamps. Sent-result distinctions: 478 NULL result fields and 486 nonblank external keys. Observer counts: 486 rows, 486 sent replies, 486 unique reply/run pairs.
+
+Source row counts are evidence, not test constants:
+
+| Source family | Rows |
+| --- | ---: |
+| `candidate_action_attempts` | 398 |
+| `email_action_attempts` | 13,380 |
+| `email_actions` | 11,284 |
+| `external_action_results` | 574 |
+| `outbound_postfixes` | 1,481 |
+| `sent_replies` | 2,507 |
+| `sent_reply_observers` | 486 |
+
+## Index dispositions
+
+All 133 explicit indexes from the current `actions` declaration remain in the rebuilt target; their exact names and per-index disposition are emitted by the inspector JSON. Existing indexes are retained for unchanged record kinds. `idx_actions_public_id` retains its role for those kinds with the common Action excluded. No existing index is deleted. Four indexes are added: `idx_actions_action_external_key`, `idx_actions_action_delivery_key`, `idx_action_receipts_action`, and `idx_action_receipts_execution_order`. Reasons are frozen in the field map; the CLI output includes every index name and disposition.
+
+### Per-index disposition
+
+| Index | Decision | Reason |
+| --- | --- | --- |
+| `idx_actions_attempt_sequence` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_audit_run` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_attention_events_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_attention_proposal_tasks_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_attention_proposal_tasks_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_attention_tasks_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_attention_tasks_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_project_evidence_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_signal_public_id` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_anchor_links_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_anchor_links_task_id` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_date_evidence_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_evidence_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_evidence_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_relations_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_relations_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_relations_reverse` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_task_signals_dedupe_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_work_cluster_tasks_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_business_work_cluster_tasks_lookup` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_candidates_task` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_consumer_run` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_action_attempts_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_action_plans_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_action_plans_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_actions_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_actions_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_actions_2` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_actions_3` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_direct_retry_requests_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_feedback_requests_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_feedback_requests_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_feedback_requests_2` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_reply_dispatch_claims_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_reply_dispatch_claims_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_reply_dispatch_claims_2` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_reply_receipts_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_reply_receipts_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_cancellations_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_claims_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_claims_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_continuations_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_effects_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_receipts_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_receipts_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_email_unsubscribe_steps_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_history_created` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_operation_identity` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_operation_processing` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_email_public_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_errors_reply_task_settlement` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_errors_unresolved` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_execution_alias_candidate` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_execution_binding` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_execution_receipt_operation` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_execution_receipt_run` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_external_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_decision_feedback_round` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_decision_item` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_event_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_event_token` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_transition_batch_round` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_transition_feedback` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_fb_transition_round` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_global_business` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_history_public_id` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_intent_authorization` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_intent_operation` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_intent_run` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_memory_attempt` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_memory_public_order` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_memory_status` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_memory_unique` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_observer_identity` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_operation_public_id` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_parent_candidate` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_parent_review` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_postfix_identity` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_public_id` | retained | Retained for unchanged record kinds; common Action excluded. |
+| `idx_actions_reply_created` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_current_trigger` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_oa_history` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_public_order` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_run_recovery` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_status` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_trigger_history` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reply_trigger_message` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_reviews_candidate` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_selection_candidate` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sent_external_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sent_history` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sent_result_owner` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sent_result_receipt` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_signal_inline_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_signal_inline_source` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_signal_shared` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_skill_export_revision` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_skill_load_config` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_skill_load_pid` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_dingtalk_links_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_dingtalk_links_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_events_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_follow_up_send_attempts_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_follow_up_send_attempts_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_follow_ups_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_follow_ups_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_todo_sync_outbox_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_business_task_todo_sync_outbox_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_drafts_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_drafts_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_drafts_2` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_drafts_3` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_drafts_4` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_drafts_5` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_send_attempts_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_send_attempts_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_follow_up_send_attempts_2` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_task_todo_sync_outbox_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_task_todo_sync_outbox_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_work_todo_dingtalk_links_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_work_todo_dingtalk_links_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_work_todo_dingtalk_links_2` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_work_updates_0` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_sync_work_updates_1` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_meeting_due` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_meeting_lease` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_meeting_memory_unique` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_task_due` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_task_lease` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_task_memory_unique` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_wechat_status` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_td_wechat_task_generation` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_text_public_key` | retained | Retained with its existing predicate for unchanged record kinds. |
+| `idx_actions_action_external_key` | added | Unique common Action stable external identity. |
+| `idx_actions_action_delivery_key` | added | Unique prepared delivery identity. |
+| `idx_action_receipts_action` | added | Action receipt history lookup. |
+| `idx_action_receipts_execution_order` | added | Execution observation ordering by execution_id/action_index. |
+
+## Storage shape estimate
+
+The copy contains 72,303 rows that remain unchanged. The common layout adds one nullable `action_data` physical slot to the shared table; generated Action columns are virtual and occupy no row payload. At roughly one extra serial-type header byte for a NULL payload, that is about 72,303 bytes (~70.6 KiB) on those rows, versus roughly 2,241,393 bytes (~2.14 MiB) for 31 additional NULL physical fields. This is an order-of-magnitude record-header estimate, not an on-disk page-size benchmark.
+
+## TDD and verification
+
+1. RED: `python -m pytest -q tests/test_action_entity_contract.py` initially failed at import because `tools.action_entity_contract` did not exist (exit 2).
+2. GREEN: focused contract suite: `python -m pytest -q tests/test_action_entity_contract.py` — 10 passed.
+3. Source-copy CLI: `python tools/action_entity_contract.py --database /tmp/ceo-action-entity-d0ce4814/source.sqlite3 --output /tmp/ceo-action-entity-task1-report.json` — exit 0. JSON contains hashes, declaration field counts/locations, source row counts, collision/cardinality/timestamp counts, and per-index disposition; it contains no source payload values.
+4. Validator rebuilt/compared static DDL and executed the entire target SQL in an in-memory SQLite database. Focused synthetic tests execute the target table, common indexes, receipts, observers and owner triggers; they check identity, key uniqueness, text affinity (`action_plan_id='007'` stays text), NULL versus JSON text, failed/uncertain distinctions, execution outcome cardinality and foreign-key/owner constraints.
+5. `python -m compileall -q tools/action_entity_contract.py` — passed. `git diff --check` — passed. No full suite, provider calls, network sends, deploy or source database mutation.
+
+## Files and hashes
+
+- Contract SHA-256: `ab0c5b9faf1dba741650464b714215c94fad35cdd0b3579b55a22f12c6df93dd`.
+- Target DDL SHA-256: `447c18cd7b40ae875ea077bf7c0ff39192688ecd81ef35e8df8887b6ee151836`.
+- Full per-field mapping is in the committed contract; exact existing/new index-name disposition is in the generated inspector output.
+
+## Remaining concerns
+
+- The target freezes contract and coexistence behavior only; runtime/migration changes belong to Task 2. Migrators must preflight all candidate-key groups and stop if canonical operation/target/result ownership differs before key-based merge.
+- The in-memory harness validates SQLite behavior and exact declaration coverage, not a production migration or a physical database size benchmark.

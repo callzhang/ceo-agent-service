@@ -1,0 +1,1117 @@
+{
+  "contract_version": 1,
+  "scope": "first-release existing external action sources; this does not retire unrelated action writers or unsubscribe continuation/steps",
+  "source_snapshot": {
+    "path": "/tmp/ceo-action-entity-d0ce4814/source.sqlite3",
+    "mode": "read-only",
+    "observed_schema": "current unified actions table; standalone legacy tables are absent",
+    "use": "Read-only source provenance for local inspection only; test suite uses only synthetic databases."
+  },
+  "sources": [
+    {
+      "table": "email_actions",
+      "declaration": "app/action_email_definitions.py:EMAIL_FIELDS",
+      "fields": [
+        {
+          "name": "action_id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_id",
+          "target": "action_id",
+          "rule": "namespaced direct-action identity; migrate only through explicit mapping"
+        },
+        {
+          "name": "action_plan_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_plan_id",
+          "target": "action_plan_id",
+          "rule": "email_actions.action_plan_id"
+        },
+        {
+          "name": "classification_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.classification_id",
+          "target": "classification_id",
+          "rule": "email_actions.classification_id"
+        },
+        {
+          "name": "account_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.account_id",
+          "target": "account_id",
+          "rule": "email_actions.account_id"
+        },
+        {
+          "name": "action_type",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_type",
+          "target": "operation",
+          "rule": "email_actions.action_type"
+        },
+        {
+          "name": "parameters_json",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.parameters_json",
+          "target": "parameters_json",
+          "rule": "email_actions.parameters_json"
+        },
+        {
+          "name": "config_version",
+          "owner": "Action Plan",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.config_version",
+          "target": "action_plan_id",
+          "rule": "email_actions.action_plan_id -> immutable plan config_version"
+        },
+        {
+          "name": "status",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.status",
+          "target": "status",
+          "rule": "email_actions.status"
+        },
+        {
+          "name": "attempt_count",
+          "owner": "Action Receipt",
+          "disposition": "retire",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.attempt_count",
+          "target": "attempt_number",
+          "rule": "derived from retained receipt sequence; never a separate counter",
+          "inverse_rule": "derived from retained receipt sequence; never a separate counter"
+        },
+        {
+          "name": "started_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.started_at",
+          "target": "started_at",
+          "rule": "email_actions.started_at"
+        },
+        {
+          "name": "finished_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.finished_at",
+          "target": "finished_at",
+          "rule": "email_actions.finished_at"
+        },
+        {
+          "name": "next_attempt_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.next_attempt_at",
+          "target": "next_attempt_at",
+          "rule": "email_actions.next_attempt_at"
+        },
+        {
+          "name": "provider_operation",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_operation",
+          "target": "current_provider_operation",
+          "rule": "email_actions.provider_operation current value; do not substitute an attempt row"
+        },
+        {
+          "name": "provider_target",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_target",
+          "target": "current_provider_target",
+          "rule": "email_actions.provider_target current value; do not substitute an attempt row"
+        },
+        {
+          "name": "provider_result_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_result_id",
+          "target": "current_provider_result_id",
+          "rule": "email_actions.provider_result_id current value; do not substitute an attempt row"
+        },
+        {
+          "name": "error",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.error",
+          "target": "current_error_text",
+          "rule": "email_actions.error current value; preserve independently from historical attempt errors"
+        },
+        {
+          "name": "created_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.created_at",
+          "target": "created_at",
+          "rule": "email_actions.created_at"
+        },
+        {
+          "name": "updated_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.updated_at",
+          "target": "updated_at",
+          "rule": "email_actions.updated_at"
+        }
+      ]
+    },
+    {
+      "table": "email_action_attempts",
+      "declaration": "app/action_email_definitions.py:EMAIL_FIELDS",
+      "fields": [
+        {
+          "name": "id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.id",
+          "target": "receipt identity scoped to Action",
+          "rule": "email_action_attempts.id; repeated values remain separate receipts"
+        },
+        {
+          "name": "action_id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.action_id",
+          "target": "action_id",
+          "rule": "email_action_attempts.action_id foreign key"
+        },
+        {
+          "name": "attempt_number",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.attempt_number",
+          "target": "attempt_number",
+          "rule": "email_action_attempts.attempt_number; repeated values remain separate receipts"
+        },
+        {
+          "name": "status",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.status",
+          "target": "status",
+          "rule": "email_action_attempts.status; repeated values remain separate receipts"
+        },
+        {
+          "name": "provider_operation",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_operation",
+          "target": "operation",
+          "rule": "email_action_attempts.provider_operation; repeated values remain separate receipts"
+        },
+        {
+          "name": "provider_target",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_target",
+          "target": "target",
+          "rule": "email_action_attempts.provider_target; repeated values remain separate receipts"
+        },
+        {
+          "name": "provider_result_id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_result_id",
+          "target": "provider_result_id",
+          "rule": "email_action_attempts.provider_result_id; repeated values remain separate receipts"
+        },
+        {
+          "name": "error",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.error",
+          "target": "error_text",
+          "rule": "email_action_attempts.error; repeated values remain separate receipts"
+        },
+        {
+          "name": "started_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.started_at",
+          "target": "started_at",
+          "rule": "email_action_attempts.started_at; repeated values remain separate receipts"
+        },
+        {
+          "name": "finished_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.finished_at",
+          "target": "finished_at",
+          "rule": "email_action_attempts.finished_at; repeated values remain separate receipts"
+        }
+      ]
+    },
+    {
+      "table": "candidate_action_attempts",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.id",
+          "target": "id",
+          "rule": "candidate_action_attempts.id maps only through explicit migration map"
+        },
+        {
+          "name": "execution_id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.execution_id",
+          "target": "execution_id",
+          "rule": "candidate_action_attempts.execution_id retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+        },
+        {
+          "name": "action_index",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.action_index",
+          "target": "action_index",
+          "rule": "candidate_action_attempts.action_index retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+        },
+        {
+          "name": "external_action_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.external_action_key",
+          "target": "external_action_key",
+          "rule": "candidate_action_attempts.external_action_key exact stable identity"
+        },
+        {
+          "name": "status",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.status",
+          "target": "status",
+          "rule": "candidate_action_attempts.status retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+        },
+        {
+          "name": "result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.result_json",
+          "target": "outcome_json",
+          "rule": "candidate_action_attempts.result_json retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+        },
+        {
+          "name": "created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.created_at",
+          "target": "created_at",
+          "rule": "candidate_action_attempts.created_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+        },
+        {
+          "name": "updated_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.updated_at",
+          "target": "updated_at",
+          "rule": "candidate_action_attempts.updated_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+        }
+      ]
+    },
+    {
+      "table": "external_action_results",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "external_action_key",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.external_action_key",
+          "target": "external_action_key",
+          "rule": "external_action_results.external_action_key exact stable identity"
+        },
+        {
+          "name": "business_object_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.business_object_key",
+          "target": "business_object_key",
+          "rule": "external_action_results.business_object_key"
+        },
+        {
+          "name": "action_identity",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.action_identity",
+          "target": "action_identity",
+          "rule": "external_action_results.action_identity"
+        },
+        {
+          "name": "operation",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.operation",
+          "target": "operation",
+          "rule": "external_action_results.operation provider result fact"
+        },
+        {
+          "name": "target_identifiers_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.target_identifiers_json",
+          "target": "target",
+          "rule": "external_action_results.target_identifiers_json"
+        },
+        {
+          "name": "provider_result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.provider_result_json",
+          "target": "provider_result_json",
+          "rule": "external_action_results.provider_result_json exact text including null-like JSON text"
+        },
+        {
+          "name": "result_digest",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.result_digest",
+          "target": "result_digest",
+          "rule": "external_action_results.result_digest"
+        },
+        {
+          "name": "first_agent_run_id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.first_agent_run_id",
+          "target": "agent_run_id",
+          "rule": "external_action_results.first_agent_run_id"
+        },
+        {
+          "name": "created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.created_at",
+          "target": "observed_at",
+          "rule": "external_action_results.created_at"
+        }
+      ]
+    },
+    {
+      "table": "outbound_postfixes",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "channel",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.channel",
+          "target": "delivery_channel",
+          "rule": "outbound_postfixes.channel"
+        },
+        {
+          "name": "delivery_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.delivery_key",
+          "target": "delivery_key",
+          "rule": "outbound_postfixes.delivery_key"
+        },
+        {
+          "name": "final_body",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.final_body",
+          "target": "prepared_body",
+          "rule": "outbound_postfixes.final_body; retain until independent exact readback proves retirement"
+        },
+        {
+          "name": "feedback_token",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.feedback_token",
+          "target": "feedback_token",
+          "rule": "outbound_postfixes.feedback_token"
+        },
+        {
+          "name": "postfix_version",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.postfix_version",
+          "target": "postfix_version",
+          "rule": "outbound_postfixes.postfix_version"
+        },
+        {
+          "name": "created_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.created_at",
+          "target": "prepared_at",
+          "rule": "outbound_postfixes.created_at records preparation time, not dispatch or receipt time"
+        },
+        {
+          "name": "postfix_receipt_provider_result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/prepared_action_definitions.py:SLOTS",
+          "target": "provider_result_json",
+          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.provider_result_json; preserve exact value"
+        },
+        {
+          "name": "postfix_receipt_created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/prepared_action_definitions.py:SLOTS",
+          "target": "observed_at",
+          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.created_at; provider receipt clock"
+        },
+        {
+          "name": "postfix_dispatch_created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/prepared_action_definitions.py:SLOTS",
+          "target": "dispatched_at",
+          "rule": "prepared_action_definitions.SLOTS.native_reply_dispatches.created_at; dispatch clock"
+        }
+      ]
+    },
+    {
+      "table": "sent_replies",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.id",
+          "target": "id",
+          "rule": "sent_replies.id maps only through explicit migration map"
+        },
+        {
+          "name": "conversation_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.conversation_id",
+          "target": "conversation_id",
+          "rule": "sent_replies.conversation_id"
+        },
+        {
+          "name": "trigger_message_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.trigger_message_id",
+          "target": "trigger_message_id",
+          "rule": "sent_replies.trigger_message_id"
+        },
+        {
+          "name": "reply_text",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.reply_text",
+          "target": "parameters_json",
+          "rule": "sent_replies.reply_text exact body"
+        },
+        {
+          "name": "sent_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.sent_at",
+          "target": "observed_at",
+          "rule": "sent_replies.sent_at; distinct from prepared/created timestamp"
+        },
+        {
+          "name": "send_result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.send_result_json",
+          "target": "provider_result_json",
+          "rule": "sent_replies.send_result_json exact source value"
+        },
+        {
+          "name": "recall_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_key",
+          "target": "recall_key",
+          "rule": "sent_replies.recall_key"
+        },
+        {
+          "name": "recall_status",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_status",
+          "target": "recall_status",
+          "rule": "sent_replies.recall_status"
+        },
+        {
+          "name": "recall_error",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_error",
+          "target": "error_text",
+          "rule": "sent_replies.recall_error"
+        },
+        {
+          "name": "recalled_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recalled_at",
+          "target": "recalled_at",
+          "rule": "sent_replies.recalled_at"
+        },
+        {
+          "name": "feedback_token",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.feedback_token",
+          "target": "feedback_token",
+          "rule": "sent_replies.feedback_token"
+        },
+        {
+          "name": "channel",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.channel",
+          "target": "delivery_channel",
+          "rule": "sent_replies.channel"
+        },
+        {
+          "name": "agent_run_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.agent_run_id",
+          "target": "agent_run_id",
+          "rule": "sent_replies.agent_run_id"
+        },
+        {
+          "name": "external_action_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.external_action_key",
+          "target": "external_action_key",
+          "rule": "sent_replies.external_action_key exact existing key"
+        }
+      ]
+    },
+    {
+      "table": "sent_reply_observers",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "sent_reply_id",
+          "owner": "Action Observer",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.sent_reply_id",
+          "target": "action_id",
+          "rule": "sent_reply_observers.sent_reply_id foreign key"
+        },
+        {
+          "name": "agent_run_id",
+          "owner": "Action Observer",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.agent_run_id",
+          "target": "agent_run_id",
+          "rule": "sent_reply_observers.agent_run_id; observer, not effect"
+        },
+        {
+          "name": "reply_task_id",
+          "owner": "Action Observer",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.reply_task_id",
+          "target": "task_id",
+          "rule": "sent_reply_observers.reply_task_id"
+        },
+        {
+          "name": "created_at",
+          "owner": "Action Observer",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.created_at",
+          "target": "created_at",
+          "rule": "sent_reply_observers.created_at"
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "unified_identity": "actions.id",
+    "public_id_is_identity": false,
+    "same_external_identity": [
+      "external_action_key",
+      "operation",
+      "target_identifiers_json"
+    ],
+    "external_action_key_uniqueness": "one Action for a key only when canonical operation/target/result owner match; otherwise preserve distinct Actions and raise conflict for resolution",
+    "mapping": "explicit migration mapping keyed by source table and source public identity",
+    "physical_id": "new unified actions.id allocated independently of source keys",
+    "source_identities": {
+      "email_actions.action_id": "keep exact source identity in migration/inverse map only",
+      "candidate_action_attempts.id": "retain exact attempt identity in migration/inverse map and bind each observation receipt to its owning common Action",
+      "sent_replies.id": "keep exact source identity in migration/inverse map only"
+    }
+  },
+  "relationships": {
+    "observers": {
+      "cardinality": "many-to-one",
+      "identity": [
+        "sent_reply_id",
+        "agent_run_id"
+      ],
+      "effect_owner": "sent_replies"
+    },
+    "orphan_policy": "retain independent fact",
+    "receipt_reuse": "same external_action_key may be observed by multiple Runs"
+  },
+  "receipts": {
+    "collection": "action_receipts",
+    "deduplication": "exact existing external_action_key only",
+    "preserve_distinct_values": true,
+    "missing_and_empty_are_distinct": true,
+    "null_vs_json_text": "retain SQL NULL separately from text such as null or {}",
+    "attempt_cardinality": "one Action to zero or more actual provider receipts and execution observations; preserve each execution outcome/status/time independently; never store old attempt row or provider body wholesale",
+    "normalization_reason": "Multiple candidate execution observations can share one verified canonical external result. Keep local outcomes and clocks on execution observation receipts; keep the provider result once on its canonical result receipt."
+  },
+  "target": {
+    "action_storage_type": "action",
+    "layout_selector": null,
+    "business_columns": [
+      {
+        "name": "operation",
+        "sources": [
+          "email_actions.action_type"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "parameters_json",
+        "sources": [
+          "email_actions.parameters_json"
+        ]
+      },
+      {
+        "name": "status",
+        "sources": [
+          "email_actions.status"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "action_plan_id",
+        "sources": [
+          "email_actions.action_plan_id"
+        ],
+        "sqlite_type": "TEXT (source identity is text)"
+      },
+      {
+        "name": "classification_id",
+        "sources": [
+          "email_actions.classification_id"
+        ]
+      },
+      {
+        "name": "account_id",
+        "sources": [
+          "email_actions.account_id"
+        ]
+      },
+      {
+        "name": "external_action_key",
+        "sources": [
+          "external_action_results.external_action_key",
+          "sent_replies.external_action_key"
+        ]
+      },
+      {
+        "name": "next_attempt_at",
+        "sources": [
+          "email_actions.next_attempt_at"
+        ]
+      },
+      {
+        "name": "started_at",
+        "sources": [
+          "email_actions.started_at"
+        ]
+      },
+      {
+        "name": "finished_at",
+        "sources": [
+          "email_actions.finished_at"
+        ]
+      },
+      {
+        "name": "created_at",
+        "sources": [
+          "email_actions.created_at"
+        ]
+      },
+      {
+        "name": "updated_at",
+        "sources": [
+          "email_actions.updated_at"
+        ]
+      },
+      {
+        "name": "prepared_body",
+        "sources": [
+          "outbound_postfixes.final_body",
+          "sent_replies.reply_text"
+        ]
+      },
+      {
+        "name": "delivery_channel",
+        "sources": [
+          "outbound_postfixes.channel",
+          "sent_replies.channel"
+        ]
+      },
+      {
+        "name": "delivery_key",
+        "sources": [
+          "outbound_postfixes.delivery_key"
+        ]
+      },
+      {
+        "name": "feedback_token",
+        "sources": [
+          "outbound_postfixes.feedback_token",
+          "sent_replies.feedback_token"
+        ]
+      },
+      {
+        "name": "postfix_version",
+        "sources": [
+          "outbound_postfixes.postfix_version"
+        ]
+      },
+      {
+        "name": "conversation_id",
+        "sources": [
+          "sent_replies.conversation_id"
+        ]
+      },
+      {
+        "name": "trigger_message_id",
+        "sources": [
+          "sent_replies.trigger_message_id"
+        ]
+      },
+      {
+        "name": "recall_key",
+        "sources": [
+          "sent_replies.recall_key"
+        ]
+      },
+      {
+        "name": "recall_status",
+        "sources": [
+          "sent_replies.recall_status"
+        ]
+      },
+      {
+        "name": "recall_error",
+        "sources": [
+          "sent_replies.recall_error"
+        ]
+      },
+      {
+        "name": "recalled_at",
+        "sources": [
+          "sent_replies.recalled_at"
+        ]
+      },
+      {
+        "name": "agent_run_id",
+        "sources": [
+          "sent_replies.agent_run_id"
+        ]
+      },
+      {
+        "name": "business_object_key",
+        "sources": [
+          "external_action_results.business_object_key"
+        ]
+      },
+      {
+        "name": "action_identity",
+        "sources": [
+          "external_action_results.action_identity"
+        ]
+      },
+      {
+        "name": "current_provider_operation",
+        "sources": [
+          "email_actions.provider_operation"
+        ]
+      },
+      {
+        "name": "current_provider_target",
+        "sources": [
+          "email_actions.provider_target"
+        ]
+      },
+      {
+        "name": "current_provider_result_id",
+        "sources": [
+          "email_actions.provider_result_id"
+        ]
+      },
+      {
+        "name": "current_error_text",
+        "sources": [
+          "email_actions.error"
+        ]
+      },
+      {
+        "name": "prepared_at",
+        "sources": [
+          "outbound_postfixes.created_at"
+        ]
+      }
+    ],
+    "receipt_columns": [
+      {
+        "name": "action_id",
+        "sources": [
+          "email_action_attempts.action_id",
+          "candidate_action_attempts.id",
+          "external_action_results.external_action_key",
+          "sent_replies.id"
+        ]
+      },
+      {
+        "name": "attempt_number",
+        "sources": [
+          "email_action_attempts.attempt_number"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "sources": [
+          "email_action_attempts.status"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "operation",
+        "sources": [
+          "email_action_attempts.provider_operation",
+          "external_action_results.operation"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "target",
+        "sources": [
+          "email_action_attempts.provider_target",
+          "external_action_results.target_identifiers_json"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "provider_result_id",
+        "sources": [
+          "email_action_attempts.provider_result_id"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "provider_result_json",
+        "sources": [
+          "external_action_results.provider_result_json",
+          "sent_replies.send_result_json",
+          "outbound_postfixes.postfix_receipt_provider_result_json"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "result_digest",
+        "sources": [
+          "external_action_results.result_digest"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "agent_run_id",
+        "sources": [
+          "external_action_results.first_agent_run_id"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "observed_at",
+        "sources": [
+          "external_action_results.created_at",
+          "sent_replies.sent_at",
+          "outbound_postfixes.postfix_receipt_created_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "error_text",
+        "sources": [
+          "email_action_attempts.error"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "dispatched_at",
+        "sources": [
+          "outbound_postfixes.postfix_dispatch_created_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "started_at",
+        "sources": [
+          "email_action_attempts.started_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "finished_at",
+        "sources": [
+          "email_action_attempts.finished_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "execution_id",
+        "sources": [
+          "candidate_action_attempts.execution_id"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "action_index",
+        "sources": [
+          "candidate_action_attempts.action_index"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "outcome_json",
+        "sources": [
+          "candidate_action_attempts.result_json"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "sources": [
+          "candidate_action_attempts.created_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "updated_at",
+        "sources": [
+          "candidate_action_attempts.updated_at"
+        ],
+        "nullable": true
+      }
+    ],
+    "table": "actions",
+    "receipt_table": "action_receipts",
+    "observer_table": "action_observers",
+    "coexistence": {
+      "legacy_container": "actions",
+      "plan": "Rebuild existing actions table declaration retaining all non-Action kinds, columns, indexes and triggers. Add exactly one common _kind=70 / record_type='action' layout. New Actions use action_data JSONB and generated virtual fields; no source/origin selector. Keep all existing kinds' facts and checks equivalent. legacy_key may be NULL only for Action; retain its existing namespace check for every other kind. Exclude Action from legacy namespace/public-key allocator and public-key index. Physical id and true external_action_key identify unified Actions.",
+      "partial_release": "Only the seven enumerated effect source families are converted in this first release. Other existing Actions kinds and specialized unsubscribe writers remain in the same physical table and are explicitly not retired.",
+      "migration_inverse": "Use explicit source-kind + original typed identity mapping only during conversion/inverse; never persist a legacy alias on Action rows."
+    },
+    "action_kind_value": 70,
+    "common_payload": "action_data SQLite JSONB object; every Action uses this same payload and typed generated virtual columns; only the discriminator selects Action versus unchanged existing record kinds.",
+    "payload_layout": "one common JSONB object for common Action business facts; generated virtual columns provide SQL query/index access and avoid adding ~35 payload columns to each untouched row.",
+    "status_columns": {
+      "action_status": "Action lifecycle status uses email_actions declared enum only; nullable where absent.",
+      "receipt_status": "Owned receipt/observation state is nullable and stores the exact declared email-attempt or candidate-execution enum."
+    }
+  },
+  "indexes": [
+    {
+      "name": "current actions indexes",
+      "decision": "retain",
+      "reason": "canonical rebuilt declaration preserves all existing indexes and their predicates for their existing record kinds"
+    },
+    {
+      "name": "idx_actions_public_id",
+      "decision": "modify predicate",
+      "reason": "existing public-id access remains for unchanged kinds and explicitly excludes the new Action kind"
+    },
+    {
+      "name": "idx_actions_action_external_key",
+      "decision": "add unique partial",
+      "reason": "true external identity maps one concrete Action; canonical conflict must be resolved before merge"
+    },
+    {
+      "name": "idx_actions_action_delivery_key",
+      "decision": "add unique partial",
+      "reason": "delivery key is stable prepared-message identity; bounded source copy has unique nonblank keys"
+    },
+    {
+      "name": "idx_action_receipts_action",
+      "decision": "add",
+      "reason": "lookup actual owned receipt and execution-observation facts by Action"
+    },
+    {
+      "name": "idx_action_receipts_execution_order",
+      "decision": "add partial",
+      "reason": "execution_id/action_index order retained on execution observation receipt facts"
+    }
+  ],
+  "retirement": {
+    "records": "first-release source records translate into one Action layout, with receipts/observers in supporting relations",
+    "full_type_retirement": false,
+    "remaining": "email unsubscribe writers and continuation/step records remain outside this contract"
+  },
+  "evidence_locations": [
+    "app/action_email_definitions.py:EMAIL_FIELDS",
+    "app/action_storage.py:SOURCE_COLUMNS",
+    "app/reviewed_candidate_store.py:record_candidate_action_outcome,record_candidate_external_action",
+    "app/email_store.py:direct action attempt writers",
+    "app/store.py:sent_reply_observers writers",
+    "app/prepared_action_definitions.py:COLUMNS,SLOTS"
+  ],
+  "state_mappings": {
+    "action_status": {
+      "source": "email_actions.status",
+      "declared_values": [
+        "pending",
+        "processing",
+        "done",
+        "skipped",
+        "failed"
+      ],
+      "target": "Action.status (nullable for Actions with no source Action-level lifecycle status)",
+      "mapping": {
+        "pending": "pending",
+        "processing": "processing",
+        "done": "done",
+        "skipped": "skipped",
+        "failed": "failed"
+      },
+      "semantic_rule": "Preserve exact current lifecycle value. No provider result presence or receipt timestamp changes this field."
+    },
+    "receipt_status": {
+      "sources": [
+        "email_action_attempts.status",
+        "candidate_action_attempts.status"
+      ],
+      "declared_values": [
+        "done",
+        "skipped",
+        "failed",
+        "dispatched",
+        "verified",
+        "confirmed_no_effect",
+        "uncertain"
+      ],
+      "target": "Action Receipt.status",
+      "mapping": "identity; retain exact state on its owning attempt or execution observation",
+      "semantic_rule": "dispatched records dispatch, verified records explicit verification, confirmed_no_effect records an explicit no-effect determination, uncertain stays uncertain, failed stays failed. Never infer done/verified from provider JSON or timestamps."
+    },
+    "evidence": [
+      "app/action_email_definitions.py:EMAIL_CHECKS.email_actions",
+      "app/action_email_definitions.py:EMAIL_CHECKS.email_action_attempts",
+      "app/action_storage.py:ENUMS.candidate_action_attempts",
+      "app/action_storage.py:source caller uses verified status only for explicit verification"
+    ]
+  }
+}
