@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from app.agent_runtime_router import RoutedCodexExecution
 from app.codex_memory_write import CodexMemoryWriteFailed
-from app.external_retry import retry_delay_seconds
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, retry_delay_seconds
 from app.memory_connector_client import (
     MemoryConnectorError,
     MemoryConnectorNotAuthorized,
@@ -28,11 +28,9 @@ LOGGER = logging.getLogger(__name__)
 
 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
-# A retryable dependency that never recovers must still stop. At the delay
-# ceiling this is about five hours of retrying before the event becomes a
-# visible `failed` row; `requeue_failed_meeting_memory_write_event` puts it
-# back once the dependency is fixed.
-MEETING_MEMORY_WRITE_MAX_ATTEMPTS = 20
+# A retryable dependency that never recovers must still stop after the shared
+# four-call budget; explicit recovery can enqueue a new bounded budget later.
+MEETING_MEMORY_WRITE_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 MEETING_MEMORY_TITLE_LIMIT = 80
 # One write calls a single connector tool with arguments already decided when
 # the event was queued. Measured against the live connector it takes 74-95

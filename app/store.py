@@ -35,6 +35,7 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, MAX_AUTOMATIC_RETRIES
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
 )
@@ -295,17 +296,17 @@ SQLITE_READ_CACHE_SIZE = -65536
 # Keep SQLite reads on its normal VFS path instead of retaining mapped pages
 # across concurrent checkpoints and external maintenance snapshots.
 SQLITE_MMAP_SIZE_BYTES = 0
-STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
+STORE_WRITE_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
 SETTLED_REPLY_RECONCILE_BATCH_SIZE = 100
 OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE = 100
-AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
+AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
-CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
+CODEX_SESSION_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
-SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
+SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
@@ -9970,7 +9971,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     #: How many times a task may be resumed before it is allowed to fail. A
     #: resume that never stops is worse than a closed task: it hides a
     #: permanent fault behind an endless queue.
-    RESUMABLE_MAX_ATTEMPTS = 5
+    RESUMABLE_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 
     @classmethod
     def _failure_is_resumable(cls, structured_error_json: str | None) -> bool:
@@ -11669,7 +11670,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def requeue_unperformed_wechat_deliveries(
         self,
         *,
-        max_retries: int = 2,
+        max_retries: int = MAX_AUTOMATIC_RETRIES,
         retry_delay_seconds: int = 5 * 60,
     ) -> int:
         """Return aged pre-action failures to the send queue for a bounded retry."""
@@ -12158,7 +12159,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         expected_execution_generation: str,
         reason: str,
         inactive_before: str,
-        max_retries: int = 2,
+        max_retries: int = MAX_AUTOMATIC_RETRIES,
     ) -> None:
         generation = expected_execution_generation.strip()
         explanation = reason.strip()
@@ -23521,7 +23522,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) where "
-                "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
+                f"(status='queued' or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} and next_attempt_at<=?)) "
                 "order by id limit 1", (now,)
             ).fetchone()
             if row is None:
@@ -23580,7 +23581,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if row is None:
                 raise ValueError("business task todo sync outbox does not exist")
             attempts = int(row["attempt_count"])
-            exhausted = attempts >= 3
+            exhausted = attempts >= MAX_AUTOMATIC_ATTEMPTS
             next_attempt_at = "" if exhausted else (
                 datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
             ).strftime("%Y-%m-%d %H:%M:%S")

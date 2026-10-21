@@ -6418,7 +6418,7 @@ def test_run_json_uses_process_exit_code_when_dws_stderr_is_not_json(monkeypatch
     assert sleeps == [1.0]
 
 
-def test_run_json_uses_configured_retry_count_and_exponential_backoff(monkeypatch):
+def test_run_json_caps_retries_at_three_and_uses_exponential_backoff(monkeypatch):
     calls = []
     sleeps = []
     timeout_payload = '{"error":{"category":"discovery","code":6}}'
@@ -6433,7 +6433,7 @@ def test_run_json_uses_configured_retry_count_and_exponential_backoff(monkeypatc
     monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     client = DwsClient(
-        transient_retry_attempts=3,
+        transient_retry_attempts=10,
         transient_retry_delay_seconds=0.25,
     )
 
@@ -6908,6 +6908,31 @@ def test_download_oa_process_attachment_uses_shared_exponential_backoff(
         == b"docx-bytes"
     )
     assert sleeps == [0.25, 0.5]
+
+
+def test_oa_attachment_download_caps_configured_retries_at_three(monkeypatch):
+    calls = []
+
+    class FakeClient(DwsClient):
+        def _dingtalk_api_json(
+            self,
+            method,
+            path,
+            *,
+            params=None,
+            payload=None,
+            config_path=None,
+        ):
+            calls.append((method, path))
+            raise TimeoutError("temporary download URL failure")
+
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda _seconds: None)
+    with pytest.raises(TimeoutError, match="temporary download URL failure"):
+        FakeClient(transient_retry_attempts=50).download_oa_process_attachment(
+            "proc-1", "file-1",
+        )
+
+    assert len(calls) == 4
 
 
 def test_a_business_error_carries_the_provider_message_and_server_key(

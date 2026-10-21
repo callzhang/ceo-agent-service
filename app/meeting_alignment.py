@@ -21,7 +21,11 @@ from app.config import codex_capacity_retry_duration, principal_display_name
 from app.decision_quality import DecisionQuality, DecisionRisk, classify_decision_quality
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
-from app.external_retry import is_external_dependency_error, retry_delay_seconds
+from app.external_retry import (
+    MAX_AUTOMATIC_ATTEMPTS,
+    is_external_dependency_error,
+    retry_delay_seconds,
+)
 from app.group_discovery import (
     DingTalkGroupDiscoveryProvider,
     DiscussionEvidence,
@@ -112,7 +116,7 @@ TERMINAL_STATUSES = frozenset(
 # minutes, and genuinely separate meetings sat at three hours and beyond.
 MEETING_SEGMENT_MAX_GAP = timedelta(hours=2)
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
-DEFAULT_MEETING_MAX_ATTEMPTS = 3
+DEFAULT_MEETING_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # The provider-outage wait code shared with the DingTalk and WeChat workers:
 # a meeting decision turn that could not enter any route, or whose last live
 # route failed on capacity/transport with every other route paused, is a wait
@@ -1082,6 +1086,7 @@ def _analyze_meeting_job(
     max_attempts: int,
     embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> None:
+    max_attempts = min(max_attempts, MAX_AUTOMATIC_ATTEMPTS)
     try:
         payload = json.loads(job.source_json)
         evidence = CalendarMeetingEvidence.model_validate(
@@ -1489,6 +1494,7 @@ def _deliver_meeting_job(
     retry_delay: timedelta,
     max_attempts: int,
 ) -> None:
+    max_attempts = min(max_attempts, MAX_AUTOMATIC_ATTEMPTS)
     try:
         previous = _saved_delivery_result(job.send_result_json)
     except (ValidationError, ValueError) as exc:

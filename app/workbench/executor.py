@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.store import _utc_store_time
 from app.workbench.models import (
     TurnStatus,
@@ -28,7 +29,7 @@ from app.workbench.store import WorkbenchStore
 
 
 _MAX_CLAIMS = 2
-_RECOVERY_SQLITE_LOCK_RETRY_ATTEMPTS = 3
+_RECOVERY_SQLITE_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 _RECOVERY_SQLITE_LOCK_RETRY_DELAY_SECONDS = 0.1
 _RUNTIME_FAILURE = "Runtime execution could not be completed."
 _KNOWN_RUNTIME_FAILURE_DETAILS = {

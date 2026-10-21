@@ -1487,8 +1487,8 @@ Runtime Router 的 Agent 轮次（`EmailClassifierRoutedBackend`），与其他 
 并继续排除已内联的 `ceo-email-classifier` 原生副本；默认常驻插件入口可保留。
 目录选择在命令构建时读取原生 Skill 根，服务不复制或维护另一套静态清单。
 Claude/Friday 路线、完整冻结 Skill 正文和分类结果合同不变。
-分类请求允许正常的模型响应时间；临时网络、超时和租约中断在同一任务的三次尝试预算内按共享
-指数退避重试，重试间隔最多 15 分钟；第三次失败进入 `failed` 并保留实际错误。输入、契约或
+分类请求允许正常的模型响应时间；临时网络、超时和租约中断在同一任务的四次尝试预算内（首次调用加三次 retry）按共享
+指数退避重试，重试间隔最多 15 分钟；第四次失败进入 `failed` 并保留实际错误。输入、契约或
 持久化冲突等不可重试错误直接进入 `failed`。修复根因后的显式重试重置当前预算并保留任务身份。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
 Email worker 的汇总健康状态代替任务状态。
 
@@ -2304,9 +2304,9 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 执行标记在退订请求前落库。浏览器返回属于瞬时外部失败清单的明确错误时，服务把当前标记原子更新为 `retryable`，只保留错误码、次数和原任务身份；下一次领取仍按本段的固定次数与指数退避执行同一授权动作。没有明确失败结果（例如进程中断）、非瞬时错误或无回执异常仍保留原 pending 标记，阻止自动重放；这与已归类的外部浏览器错误分开处理，不能把未知结果当成可重试失败。
 
 `email_unsubscribe_browser_timeout`、`email_unsubscribe_browser_session_unavailable`、兜底码 `email_unsubscribe_browser_failed` 这三个瞬时失败会先退避重试；用完固定次数后写终态 `failed` 错误文本时，只有兜底码把 `task_error` 里已经带的 `: category=<名称>`（或未预期异常的类名与消息）一并写入，其余两个专属码保持裸码——`app/external_failures.py` 只登记了这个精确格式。此前用完次数一律只写裸码，2026-09-25 那 6 次失败因此从未真正匹配过外部原因清单：它们的错误文本是裸的 `email_unsubscribe_browser_failed`，本该在 Attention 之外却一直在里面（Derek 2026-09-28 指出后修复）。控制台看到的失败原因同样有这道口子：一个还没读到任何页面、因而没有回执的退订任务（浏览器在读页面前就报错），观测时间线过去只给状态不给原因，2026-09-28 起把任务自己的错误文本一并投影进 `kind=unsubscribe` 的记录（`list_email_classification_observability` 和 `list_unsubscribe_states` 的 `error` 字段），控制台把已知的码译成人话，未知的码原样显示而不是不显示。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
-同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，在下一次 provider 调用之前结果就是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数只在该角色同修订出现 `completed` run 时中断；实际失败的容量、连接和运行时 turn 都计入六次上限。尚未实际执行的活动租约等待不产生失败 turn；授权缺失沿用不可重试终态。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。内容反馈预算耗尽时进入 failed 并保留具体修改意见，不创建人工问题或停止选项。
+同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避，封顶 15 分钟，`external_retry.retry_delay_seconds`）。Consumer 与 Audit 的失败次数分别按持久化同角色 run 计算，首次失败后最多重试 3 次；同一角色 4 次连续失败后，在下一次 provider 调用之前结果为 `failed_terminal`。容量、连接、来源刷新和其他可重试技术失败都计数，另一角色的失败不占用本角色预算，同角色成功 turn 会重置连续失败计数。错误码与 Agent 原文 `source_code` 保留在诊断和结果摘要里，任务结束为 `failed`，不再重新入队。尚未实际执行的活动租约等待不产生失败 turn；授权缺失沿用不可重试终态。该角色预算独立于 worker/task attempt；各自最多 3 次 retry（初始调用之外），不会退款或跨角色共用。定时执行与 Email 延期不再把已失败的 Consumer/Audit turn 退款后无限重跑。内容反馈预算是业务修订循环，不属于技术 retry 预算。
 
-`dependency_read_unavailable` 进入普通连续六次技术失败上限，不再作为无限外部等待例外。`agent_context_refresh_failed` 保留服务侧外部刷新等待；同码持久化 run 按 60、120、240 秒递增，最长 15 分钟。成功读取但无匹配数据、证据缺失/歧义或规则未定义走正常证据/业务判断，不能伪报依赖故障。权限申请后等待使用经审核的 Consumer purpose `retry`，规则如下。
+`dependency_read_unavailable` 和 `agent_context_refresh_failed` 都计入该角色最多 4 次失败 turn 的预算，不形成无限外部等待例外。`agent_context_refresh_failed` 仍保留服务侧外部刷新等待；同码持久化 run 按共享退避逐步延长，最长 15 分钟。成功读取但无匹配数据、证据缺失/歧义或规则未定义走正常证据/业务判断，不能伪报依赖故障。权限申请后等待使用经审核的 Consumer purpose `retry`，规则如下。
 
 ## 周期性工作的归属
 
@@ -2586,12 +2586,12 @@ continuation；新 revision 或 Skill/契约版本表示业务规则/结果版�
 Agent 返回的错误只是它观察到的现象，含义由服务决定（`app/agent_reported_error.py`）。wire 结果里的
 `error_retryable` 与 `error_authorization_required` 不被读取；`error_code` 先统一为小写，服务认识的码
 （需要授权或确认、dry run、可自行恢复的依赖、浏览器工具回报的退订码，以及缺少已声明操作的 `operation_unavailable`）按服务政策决定是否重试、
-是否等人；其他任何失败码记为 `agent_reported_failure`，走有上限的普通重试（同一 revision 连续失败 6 次 turn 即
+是否等人；其他任何失败码记为 `agent_reported_failure`，走有上限的普通重试（同一 role、generation、revision 连续失败 4 次 turn，即初始调用加三次 retry，
 终止为 `failed`，见上文），Agent 原文保存在 `source_code` 供排查。非失败结果（`needs_human`、`no_action` 等）上的码只作为原因标签，不驱动重试
 或授权。编排层依赖的服务码（`runtime_*`、`codex_provider_*`、租约与恢复类）只能由服务写入，
 Agent 写入时一律按 `agent_reported_failure` 处理。
 
-服务反馈回调的结果格式校验失败属于结果解析失败：保留原始 `feedback_callback_pair_invalid` 在 `detail`，通过 `ResultParseError` 进入现有 `codex_result_invalid` 纠错流程；每次处理最多两个回合，同一修订连续六次失败后终止为 `failed`。校验不能抛出普通 `ValueError` 绕过编排后由调度器无限重新领取。该异常转换不改变反馈链接配对规则、历史来源校验、审核职责或调度器所有权。
+服务反馈回调的结果格式校验失败属于结果解析失败：保留原始 `feedback_callback_pair_invalid` 在 `detail`，通过 `ResultParseError` 进入现有 `codex_result_invalid` 纠错流程；每次处理最多两个回合，同一角色/代次/修订连续四次失败后终止为 `failed`（首次调用加三次 retry）。校验不能抛出普通 `ValueError` 绕过编排后由调度器无限重新领取。该异常转换不改变反馈链接配对规则、历史来源校验、审核职责或调度器所有权。
 
 **原则：任何更底层观察到的错误码或原文，被归并成更通用的服务码时都不能丢失，必须原样带到 Agent 报错记录里，供事后排查。** 通用化是给重试/授权决策用的分类，不是删除诊断信息的许可。已落实的例子：`agent_reported_failure` 保留 Agent 原文在 `source_code`；Agent 报告的 typed 失败结果保留其必填的 `summary` 在 `reported_summary`（2026-09-28，见下段）；Codex 进程失败保留 stderr 与 JSONL 里的 `error`/`message`/`detail`/`reason` 字段在 `detail`（`_process_failure_detail`，裁剪到 1000 字符、脱敏凭证）；路由执行错误沿 `__cause__` 链找具体解析/校验异常的 `reason`（`_runtime_failure_detail`）；退订浏览器错误保留异常类名和截断消息（见上文退订段落）。新增一处错误归并时必须同样保留来源，不能只留下分类码。
 
@@ -3279,11 +3279,11 @@ Derek 明确授权解除生产循环对部署的阻塞。`python -m app.deploy -
 
 ### 调度异常的重试上限（2026-10-05）
 
-Derek 要求 retry 有上限。ReplyQueueAdapter 的 handler 异常计入既有任务 attempts，
-不再退款或立即重新领取；前两次按共享指数退避延后 60/120 秒，第三次原任务记为 failed，
+Derek 要求自动重试统一最多三次 retry（首次调用之外），即最多四次调用。ReplyQueueAdapter 的 handler 异常计入既有任务 attempts，
+不再退款或立即重新领取；前三次按共享指数退避延后 60/120/240 秒，第四次原任务记为 failed，
 保留原错误、业务对象、执行代和运行历史。ScheduledExecutionQueueAdapter 继承同一规则。
-普通主动 release 仍是未执行业务的调度释放，不消费异常预算。Consumer/Audit 的已持久化
-技术失败独立受每角色、同执行代、同修订连续六次上限约束，调用前检查，拒绝第七次调用；
+普通主动 release 仍是未执行业务的调度释放，不消费异常预算。Consumer 与 Audit 的已持久化
+技术失败分别使用独立的每角色、同执行代、同修订四次尝试预算（每个角色最多三次 retry），调用前检查；
 底层 code/source_code 保留，预算耗尽不伪造 needs_human 或业务完成。
 
 ### 原生消息 ledger 读回（2026-10-05）
@@ -3298,13 +3298,13 @@ provider 字段解码。通用 senderId 只与真实通讯录 profile 的 user_i
 
 ### System 与未创建角色运行的实际失败上限（2026-10-05）
 
-定时任务在 Consumer/Audit 已完成后的 System 实际失败使用三次持久化任务 attempts，
-前两次至少延后 60/120 秒，第三次 failed；重新入队不退回计数。候选、审核、动作键和
+定时任务在 Consumer/Audit 已完成后的 System 实际失败使用四次持久化任务 attempts
+（首次调用加三次 retry），前三次至少延后 60/120/240 秒，第四次 failed；重新入队不退回计数。候选、审核、动作键和
 已核验回执保持不变，效果 uncertain 仍保留 uncertain 并只回读核验，不重发。
 execution_claim_unavailable 是未取得执行领取的等待，至少延后 60 秒，不消费失败预算。
-定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第三次写入 failed 历史，
+定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第四次写入 failed 历史，
 保留原错误和 summary。既有授权、活跃运行及 provider 恢复等待沿用原等待机制；
-真正开始后产生的角色技术失败仍计入上述六次持久化角色预算。
+真正开始后产生的 Consumer 与 Audit 技术失败分别计入独立、持久化、同执行代/同修订的四次尝试预算（每个角色最多三次 retry）。
 
 ## Runtime Context 与 Settings 渲染输入
 
@@ -4707,9 +4707,9 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 OA `request_access` 是普通 Consumer purpose 动作，不进入 Audit。target 必须包含准确流程和文件 ID；同一任务同一文件的权限请求去重，不同文件可分别申请。服务经现有 OA 评论执行器提交只读权限请求，并在同一 `service_state` purpose 记录里持久化 action key、分发时间、状态及回执。恢复时依据该记录精确对账；原回执未确认前不重发。Consumer 请求阶段必须结束当前材料审核；评论送达不证明权限已恢复。只有回执验证成功后才开始权限等待。权限未恢复时 Consumer 输出 `retry`，引用本任务的已核验权限申请回执；retry 同样不进入 Audit，不产生外部写操作，只安排预算内的延后重读。解析准备阶段和编排层均从当前任务已核验的原权限请求核对它确为 request_access，不解析 reason 关键词。兼容迁移前缺少 purpose_output 的 OA 候选时，只接受本任务唯一且完全匹配 `material-read-access-block` identity 的已核验评论；其他评论、未知 key、uncertain 回执和其他任务的请求不能充当成功申请。普通 OA 审批结果候选仍走完整 Consumer → Audit → System Execution。
 
-预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时期限；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的回执引用在匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，随后与已验证动作存储的原始 key 精确比较。Consumer request_access 执行并核验后先等待，再进入后续 Consumer；Consumer retry 按同一 purpose 的预算延后重读。首次间隔 300 秒，此后按已预留次数指数增长，单次最多 43200 秒；next_at 截在 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
+预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时硬截止；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的回执引用在匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，随后与已验证动作存储的原始 key 精确比较。Consumer request_access 执行并核验后先等待，再进入后续 Consumer；Consumer retry 按同一 purpose 的预算延后重读。最多启动 3 次后续 Consumer 重读，每次固定间隔 12 小时；旧版本已排队的等待首次加载时同步更新为 12 小时间隔，不清零原次数、reservation 或 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
 
-每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 10 次。所有被请求文件共享一个业务对象和 purpose 预算。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 10 次或 72 小时后不再刷新来源或启动新 Consumer，记录预算耗尽并停止自动重读。未读取到新事实不等于业务不合格；预算耗尽本身不会自动执行 return、reject 或发送消息。若需形成 OA return，必须由 Consumer 生成普通审批结果候选并经 Audit、执行器和节点读回。
+每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 3 次。所有被请求文件共享一个业务对象和 purpose 预算。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 3 次或 72 小时后不再刷新来源或启动新 Consumer，记录预算耗尽并停止自动重读。未读取到新事实不等于业务不合格；预算耗尽本身不会自动执行 return、reject 或发送消息。若需形成 OA return，必须由 Consumer 生成普通审批结果候选并经 Audit、执行器和节点读回。
 
 Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。字段、动作表、JSON 示例和计数边界见 [Consumer purpose 输出与权限重试](consumer-purpose-output.md)；发布证据见 [验证记录](consumer-purpose-actions-validation.md)。
 
@@ -4801,13 +4801,14 @@ so in its expanded details. Membership, terminal states and retry policy do not 
 
 ### Work Summary retry budget
 
-Work Summary processing retains its existing three-attempt failure budget. A
+Work Summary processing allows three retries after the initial call (four
+attempts total). A
 shared Task Agent session already owned by another worker is a scheduling wait:
 the input returns to pending with a delayed available_at and refunds only the
 current claim, just like the existing provider-capacity deferral. Actual failures
 continue to consume attempts. An exception escaping the dispatch handler before
 an Agent run is created now uses the same fenced, delayed failure transition as
-Reply dispatch; the third failure ends failed and retains its error.
+Reply dispatch; the fourth failure ends failed and retains its error.
 
 The Work Summary dispatcher closes an already exhausted pending or expired
 processing input as failed with work_summary_retry_exhausted before admitting
@@ -4822,9 +4823,10 @@ are unchanged. Regression and release evidence is in
 
 ### Email classification retry budget
 
-Dedicated Email classification tasks allow at most three processing attempts per
-explicit retry. A retryable read/network/model failure returns to pending with
-the existing capped backoff only before the third attempt; the third failure
+Dedicated Email classification tasks allow at most three retries after the
+initial call (four processing attempts total) per explicit retry. A retryable
+read/network/model failure returns to pending with the existing capped backoff
+only before the fourth attempt; the fourth failure
 ends failed and retains the actual error. Expired running claims consume the
 same budget and become failed once it is exhausted. Startup recovery and queue
 claiming also close previously exhausted pending records, including ones with a

@@ -1,5 +1,12 @@
 # Work Summary retry budget repair
 
+## Current retry contract update, 2026-10-21
+
+The historical repair details below describe the then-current three-attempt
+limit. Current automatic processing allows three retries after the initial
+call (four attempts total); actual failures one through three are delayed,
+and failure four ends the item as failed. Capacity waits remain non-failures.
+
 ## Expected and observed
 
 Expected: automatic processing has a three-attempt failure budget; a worker
