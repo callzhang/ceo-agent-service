@@ -52,3 +52,31 @@ scoped change. The earlier broad two-file test run is not used as acceptance:
 it captured the pre-fix fake-adapter signature failure and continued through
 unrelated database-heavy tests. The corrected focused Meeting Agent file and
 two planner/prompt integration tests above are the completed local checks.
+
+## Release and production readback
+
+PR #194 merged at `366dd8241d295c6d5c1188e94910abcf3db0d206` on
+2026-10-21. A standard `python -m app.deploy --target-commit` deployment of
+that exact commit completed without `--skip-quiet-wait`. Immediately after the
+deployment, the production checkout was clean at the merge commit, launchd
+supervisor PID `79458` and service worker PID `79470` were new, `/healthz`
+returned HTTP 200 with `ok: true`, the queue endpoint reported zero active
+items, and Attention and History both returned HTTP 200 with readable items.
+
+A post-deploy anonymous Meeting run used the deployed commit's
+`RoutedCodexExecution` and Meeting command factory with a temporary SQLite
+database, an empty MCP manifest, a fictional business-alignment source and
+synthetic profile. Its native session was
+`01a15ded-c3f6-71b0-816e-24965a563424`. The structured decision passed
+the fixed recipient, rollout and owner checks and made zero tool calls. The
+native input contained the service Meeting prompt and the global CLI bootstrap,
+but no User message for `/Users/derek/Documents/memory/AGENTS.md` and no
+`Memory 资料目录：用途与存放规则` heading. The first readback attempt lacked the
+local `MEMORY_CONNECTOR_URL` environment variable and stopped before command
+build; the successful run used an empty temporary MCP manifest and did not
+connect to business MCP or perform an external action.
+
+No natural production Meeting job had run after the deployment at the time of
+this readback. This result verifies the deployed command's native input and
+one fictional structured decision; it does not claim a live recipient outcome
+or a measured general token saving.
