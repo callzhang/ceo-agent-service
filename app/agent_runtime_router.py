@@ -184,6 +184,7 @@ class CodexCommandFactory:
     skill_names: tuple[str, ...] | None = None
     inlined_skill_names: tuple[str, ...] = ()
     project_doc_max_bytes: int | None = None
+    model_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -200,6 +201,7 @@ class CodexCommandFactory:
         skill_names: Sequence[str] | None = None,
         inlined_skill_names: Sequence[str] = (),
         project_doc_max_bytes: int | None = None,
+        model_only: bool = False,
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -209,6 +211,7 @@ class CodexCommandFactory:
             skill_names=tuple(skill_names) if skill_names is not None else None,
             inlined_skill_names=tuple(inlined_skill_names),
             project_doc_max_bytes=project_doc_max_bytes,
+            model_only=model_only,
         )
 
     def build(
@@ -241,6 +244,10 @@ class CodexCommandFactory:
         if self.inlined_skill_names:
             build_options["inlined_skill_names"] = self.inlined_skill_names
         command = adapter.build_command(**build_options)
+        if self.model_only:
+            from app.wechat.codex_safety import make_model_only_agent_command
+
+            make_model_only_agent_command(command)
         return command, adapter.build_env(route)
 
 
@@ -1882,10 +1889,16 @@ class RoutedCodexExecution:
         """
         adapter = self._claude_adapter
         assert adapter is not None
+        from app.claude_runtime_adapter import ClaudeCommandPolicy
+
         command = adapter.build_command(
             route=route,
             session_id=session_id,
             max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
+            policy=(
+                ClaudeCommandPolicy.no_tools()
+                if command_factory.model_only else ClaudeCommandPolicy.normal()
+            ),
         )
         env = adapter.build_env(route)
         normalizer = adapter.new_event_normalizer(expected_session_id=session_id)

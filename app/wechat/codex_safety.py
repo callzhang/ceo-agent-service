@@ -368,6 +368,45 @@ def make_audit_agent_command(
     )
 
 
+def make_model_only_agent_command(command: list[str]) -> None:
+    """Keep a decision turn inside the model, with no native or MCP tools."""
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    if "--skip-git-repo-check" not in command:
+        exec_index = command.index("exec")
+        option_index = exec_index + (2 if command[exec_index + 1] == "resume" else 1)
+        command.insert(option_index, "--skip-git-repo-check")
+    configured = set(configured_transport_server_names(command))
+    _remove_config_options(
+        command,
+        prefixes=(
+            "approval_policy=", "sandbox_mode=", "tools.enabled_tools=",
+            "project_doc_max_bytes=", "skills.config=",
+            "features.code_mode_only=", "features.code_mode.enabled=",
+            *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
+        ),
+    )
+    options = [
+        "-c", 'approval_policy="never"',
+        "-c", 'sandbox_mode="read-only"',
+        "-c", "tools.enabled_tools=[]",
+        "-c", "project_doc_max_bytes=0",
+        "-c", "features.code_mode_only=false",
+        "-c", "features.code_mode.enabled=false",
+        *(
+            option
+            for feature in ROLE_DISABLED_NATIVE_FEATURES
+            for option in ("-c", f"features.{feature}=false")
+        ),
+    ]
+    skill_override = codex_skill_config_override(())
+    if skill_override:
+        options.extend(("-c", skill_override))
+    for name in sorted(configured | set(inherited_native_server_names())):
+        options.extend(("-c", f"mcp_servers.{name}.enabled=false"))
+    _insert_command_options(command, options)
+
+
 def disable_automatic_review(command: list[str]) -> None:
     """Run the turn without Codex's automatic reviewer.
 

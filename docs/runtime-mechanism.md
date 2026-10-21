@@ -2473,6 +2473,7 @@ Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因
 代次、角色和运行终态仍需匹配。该路径不生成审核批准或 System 回执，原结果仍
 只存原生轨迹。新版 proposal 及其他通道
 继续执行完整候选校验，独立微信既有交付检查和外部动作拒绝不变。
+该微信决策运行在 model-only 环境：Codex 没有原生命令和 MCP 工具，Claude 没有工具，Friday 不可选；文本回复仍由持久化 Sender 单独投递。model-only 不等于投递前有独立 Audit，自动发送模式的后续审核缺口仍需另行解决。
 
 AgentRun 的终态重复完成先在写事务外读取准确原生引用。独立微信原生
 `AgentEnvelope` 按 Runner 同一解析及依赖失败规则转换为 `CodexDecision`，
