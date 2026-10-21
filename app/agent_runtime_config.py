@@ -29,7 +29,9 @@ ADDED_ROUTE_KINDS = ("codex_oauth", "codex_api", "claude_oauth", "claude_api")
 # An OAuth kind reuses this machine's login, so an added one carries a model
 # and no credential of its own.
 ADDED_ROUTE_KINDS_WITH_KEY = ("codex_api", "claude_api")
-ADDED_ROUTE_SETTING_SUFFIXES = ("KIND", "BASE_URL", "MODEL", "API_KEY")
+ADDED_ROUTE_SETTING_SUFFIXES = (
+    "KIND", "BASE_URL", "MODEL", "REASONING_EFFORT", "API_KEY"
+)
 # The only routes with fixed names (Derek 2026-09-24). Every other name in
 # CEO_AGENT_RUNTIME_ROUTES is an added route that describes itself through
 # CEO_RUNTIME_<NAME>_* settings and can be renamed.
@@ -255,6 +257,12 @@ def _added_route(
     runtime_kind = (
         RuntimeKind.CODEX_CLI if kind.startswith("codex") else RuntimeKind.CLAUDE_CLI
     )
+    reasoning_effort = env.get(f"{prefix}REASONING_EFFORT", "").strip()
+    if reasoning_effort and (
+        runtime_kind is not RuntimeKind.CODEX_CLI
+        or reasoning_effort not in SUPPORTED_RUNTIME_REASONING_EFFORTS
+    ):
+        raise ValueError(f"{prefix}REASONING_EFFORT is unsupported")
     credential_mode = (
         CredentialMode.SERVICE_API
         if kind in ADDED_ROUTE_KINDS_WITH_KEY
@@ -274,6 +282,7 @@ def _added_route(
             credential_mode=credential_mode,
             model=model,
             base_url=base_url,
+            reasoning_effort=reasoning_effort,
         ),
         secret,
     )
