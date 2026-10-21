@@ -1466,9 +1466,9 @@ Runtime Router 的 Agent 轮次（`EmailClassifierRoutedBackend`），与其他 
 分类器 Codex 调用设置原生 `project_doc_max_bytes=0`，因此不会把仓库 `AGENTS.md`
 项目说明重复加入这一封邮件的判断输入；服务仍提交冻结分类 Skill、当前邮件、允许类别及退订候选，
 结果仍按严格结构校验，并只用候选索引绑定本轮原 URL。其他任务的原生项目文档设置不变。
-分类请求允许正常的模型响应时间；临时网络、超时和租约中断不进入终态 `failed`，而是在同一
-任务上按共享指数退避重试，重试间隔最多 15 分钟。只有输入、契约或持久化冲突等不可重试
-错误进入 `failed`。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
+分类请求允许正常的模型响应时间；临时网络、超时和租约中断在同一任务的三次尝试预算内按共享
+指数退避重试，重试间隔最多 15 分钟；第三次失败进入 `failed` 并保留实际错误。输入、契约或
+持久化冲突等不可重试错误直接进入 `failed`。修复根因后的显式重试重置当前预算并保留任务身份。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
 Email worker 的汇总健康状态代替任务状态。
 
 `Settings -> Skills` 的开关位于任务生产边界。功能与业务 Skill 的多对多关系由

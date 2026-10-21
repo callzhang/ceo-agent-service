@@ -88,22 +88,34 @@ model-input lifecycle and similarity tests passed. Ruff and diff checks passed.
 ## Publication and selected task recovery
 
 Runtime fixes are pushed to main in 901a752c0 and 28666636f (the intervening
-20537b83d merge preserves concurrent main work). At 2026-10-21 05:25 UTC,
-production remained a79d8e279 with healthz HTTP 200. Normal deployment was
-waiting for Work Summary input 416319: processing since 04:58:41 UTC, attempts 1,
-with a live continuously renewed dispatcher claim and no active Agent/runtime
-run. No task was interrupted and no quiet-wait bypass was used. An explicit
-request for permission to use the established skip-quiet-wait deployment option
-was sent; permission is pending. The input's body remains persisted and startup
-calls reset_processing_work_summary_inputs; no manual state mutation was made.
+20537b83d merge preserves concurrent main work). Derek authorized controlled
+restart through the existing --skip-quiet-wait option. Before that command
+acquired the repository lock, the serialized normal deploy of the same target
+completed. The command returned "another deploy got there first"; no second
+restart was necessary.
+
+Production receipt: succeeded at 2026-10-21 05:57:07 UTC, from a79d8e279 to
+7fe8db7f1c83e1648334d6f75bd54ccb733bcda3. The production checkout was clean;
+new supervisor PID 81519 and service/console/email children 81522/81523/81524
+were running. healthz returned ok=true, and queues, Attention and History
+returned HTTP 200. Deploy retained its verified database backup in the normal
+backup directory. Work Summary 416319 had independently reached done at
+05:29:29 UTC with attempts 1, empty error and terminal body compaction; it was
+not reopened or replayed. The post-deploy Work queue had no failed input.
 
 The exact eight selected classification records were backed up and the backup
 read back: 8 rows, mode 0600, SHA-256
 `a0ea8109d02427b8eeb1e6d3bb4192b307d842fb5237fdde403d23bed92f228d`.
-All eight still have their original failed state and attempt counts. Recovery
-will use the existing EmailClassificationTaskAdapter.retry_failed_tasks entry
-point after the runtime repair is actually deployed, first for one exact
-identity and then the remaining seven after actual Agent result verification.
-One-task recovery, remaining-task recovery and final classification outcomes
-are pending. No direct provider mutation or manual classification result will
-be used to impersonate a successful Agent run.
+At 05:57:58 UTC the existing EmailClassificationTaskAdapter.retry_failed_tasks
+entry point restored only the first exact identity (physical task 416045) to
+pending, attempt 0. The production worker claimed it at 05:58:08, attempt 1. Task 416045 completed
+at 06:14:47 UTC, attempt 1, with processed/work/certain. Canonical classification
+5068306659856539788 has classification_source=agent and a durable Agent result;
+native Email classification runtime 388696 completed on codex_oauth / gpt-6-luna
+(started 06:14:37 UTC, empty failure code). This verifies the source and Agent
+path, not merely queue acceptance. Total first-task time was about 999 seconds,
+most of it before the model call; shared-account waits and the cold historical
+context remain slow. At 06:15 UTC the exact remaining seven identities were
+explicitly restored through the same adapter, following the successful small
+batch. Their final outcomes are pending. No manual classification result or
+direct provider mutation was used to impersonate a successful Agent run.
