@@ -1401,6 +1401,44 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
+def _bound_direct_chat_sender(
+    db_path: Path | None,
+    task_id: int | None,
+    generation: str | None,
+    conversation_id: str,
+) -> str | None:
+    """Use the claimed task's exact trigger as a direct-chat read target."""
+    if db_path is None or task_id is None:
+        return None
+    database = Path(db_path).resolve()
+    with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+        row = connection.execute(
+            "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
+            "tasks.conversation_id, tasks.trigger_message_id, "
+            "inputs.trigger_message_json, inputs.input_compacted "
+            f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
+            "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
+            "where tasks.id=?",
+            (task_id,),
+        ).fetchone()
+    if row is None or row[0] != generation:
+        raise ValueError("bound task generation or input changed")
+    if row[1] != "dingtalk" or not row[2] or row[3] != conversation_id:
+        return None
+    if row[6]:
+        raise ValueError("bound direct trigger identity is unavailable")
+    from app.dingtalk_models import DingTalkMessage
+
+    source = DingTalkMessage.model_validate_json(row[5])
+    if (
+        source.open_message_id != row[4]
+        or source.open_conversation_id != conversation_id
+        or not source.sender_open_dingtalk_id
+    ):
+        raise ValueError("bound direct trigger identity does not match the task")
+    return source.sender_open_dingtalk_id
+
+
 def _read_bound_task_skill(
     db_path: Path | None,
     task_id: int | None,
@@ -2190,10 +2228,9 @@ def build_role_server(
     ) -> dict[str, object]:
         """Read recent messages of an identified DingTalk conversation.
 
-        For a direct chat, pass the trigger sender's openDingTalkId as
-        direct_open_dingtalk_id; this selects the direct-chat read even when
-        single_chat is omitted. A conversation ID alone cannot identify the
-        direct-message read target. Group chats need only conversation_id.
+        For the current bound direct-chat task, the exact trigger supplies the
+        sender's openDingTalkId when omitted. Other direct chats require
+        direct_open_dingtalk_id or a title. Groups need only conversation_id.
 
         For repeated raw strings, raw_payload_field_refs maps each null raw
         field to the same message's top-level field holding its exact value.
@@ -2203,6 +2240,12 @@ def build_role_server(
         from app.dws_client import DwsClient
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("message read limit is invalid")
+        bound_sender = None
+        if not direct_open_dingtalk_id.strip() and not title.strip():
+            bound_sender = _bound_direct_chat_sender(
+                db_path, task_id, artifact_generation, conversation_id,
+            )
+            direct_open_dingtalk_id = bound_sender or ""
         is_direct_chat = single_chat or bool(direct_open_dingtalk_id.strip())
         if is_direct_chat and not direct_open_dingtalk_id.strip() and not title.strip():
             raise ValueError("direct chat sender openDingTalkId or title is required")
@@ -2212,6 +2255,10 @@ def build_role_server(
             direct_open_dingtalk_id=direct_open_dingtalk_id,
         )
         messages = DwsClient().read_recent_messages(conversation, limit=limit)
+        if bound_sender and any(
+            message.open_conversation_id != conversation_id for message in messages
+        ):
+            raise ValueError("bound direct messages belong to another conversation")
         return {"messages": [
             share_message_raw_payload(item.model_dump(mode="json")) for item in messages
         ]}
@@ -2293,11 +2340,30 @@ def build_role_server(
     def read_dingtalk_messages_in_window(
         conversation_id: str, start: str, end: str,
     ) -> dict[str, object]:
-        """Read one identified group's messages over the report window."""
+        """Read one identified conversation over an explicit time window."""
+        from app.dingtalk_models import DingTalkConversation
         from app.dws_client import DwsClient
         if not conversation_id.strip() or not start.strip() or not end.strip():
-            raise ValueError("group conversation and window are required")
+            raise ValueError("conversation and window are required")
         dws = DwsClient()
+        bound_sender = _bound_direct_chat_sender(
+            db_path, task_id, artifact_generation, conversation_id,
+        )
+        if bound_sender:
+            conversation = DingTalkConversation(
+                open_conversation_id=conversation_id, title="", single_chat=True,
+                unread_point=0, direct_open_dingtalk_id=bound_sender,
+            )
+            messages = dws.read_complete_message_window(conversation, start, end)
+            if any(message.open_conversation_id != conversation_id for message in messages):
+                raise ValueError("bound direct messages belong to another conversation")
+            return {
+                "complete": True, "hasMore": False,
+                "messages": [
+                    share_message_raw_payload(item.model_dump(mode="json"))
+                    for item in messages
+                ],
+            }
         return dws.run_json([
             dws.dws_bin, "chat", "+chat-messages", "--group", conversation_id,
             "--start", start, "--end", end, "--order", "asc", "--page-all",

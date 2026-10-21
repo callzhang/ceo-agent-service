@@ -3777,6 +3777,8 @@ OA review round binding (2026-10-15, completed 2026-10-17): when the scheduled O
 
 Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files. `search_dingtalk_documents` publishes `page_size` 1–20 in its native parameter schema; invalid sizes fail argument validation before DWS, while omitted and valid sizes keep the existing query behavior.
 
+The task-bound `read_dingtalk_messages` and `read_dingtalk_messages_in_window` resolve the direct-chat counterparty from the claimed trigger's stable openDingTalkId when given that task's conversation ID. The resolver compares task generation, original message ID and conversation ID before use. The window path calls `read_complete_message_window`, so it returns `complete=true` only after the existing pagination and query-range checks; its messages must still belong to the bound conversation. Other group windows and explicit direct targets keep their prior behavior. No message, mail or approval action is exposed to Consumer or Audit.
+
 
 ### 第五期A：候选与执行存储合并
 
