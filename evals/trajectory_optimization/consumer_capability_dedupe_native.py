@@ -397,7 +397,7 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
     year = datetime.fromisoformat(FIXED_TIME).year
     slots = []
     for line in normalized.splitlines():
-        date = None
+        dates = []
         for raw_token in line.split():
             token = raw_token.strip(".,，。:：()（）[]【】")
             date_parts = token.split("/")
@@ -405,10 +405,10 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
                     and 1 <= int(date_parts[0]) <= 12
                     and 1 <= int(date_parts[1])
                     <= monthrange(year, int(date_parts[0]))[1]):
-                date = (int(date_parts[0]), int(date_parts[1]))
+                dates.append((int(date_parts[0]), int(date_parts[1])))
                 continue
             time_parts = [part.split(":") for part in token.split("-")]
-            if (date is None or len(time_parts) != 2
+            if (not dates or len(time_parts) != 2
                     or any(len(part) != 2 or not all(value.isdecimal() for value in part)
                            for part in time_parts)):
                 continue
@@ -418,12 +418,12 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
             if not (0 <= start_hour < 24 and 0 <= end_hour < 24
                     and 0 <= start_minute < 60 and 0 <= end_minute < 60):
                 continue
-            month, day = date
-            slots.append((
-                datetime(year, month, day, start_hour, start_minute, tzinfo=zone),
-                datetime(year, month, day, end_hour, end_minute, tzinfo=zone),
-            ))
-            date = None
+            for month, day in dates:
+                slots.append((
+                    datetime(year, month, day, start_hour, start_minute, tzinfo=zone),
+                    datetime(year, month, day, end_hour, end_minute, tzinfo=zone),
+                ))
+            dates = []
     return slots
 
 
