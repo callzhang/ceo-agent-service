@@ -27,4 +27,17 @@ characters of matching full metadata, and an exact read of
 `dingtang-okr-review` returns its unchanged complete body. `git diff --check`
 and Python compilation passed.
 
-Production deployment and readback are separate evidence gates.
+## Production readback
+
+PR #206 merged as `c444162e1d585087b113a2f71e883e43b2cfac17`.
+The standard `python -m app.deploy` completed and moved production from
+`17da0fe46520d738c724b09bfd3d0a72c8c88e74` to that merge commit.
+The supervisor PID changed from 64002 to 72101. `/healthz` returned HTTP 200
+with `ok=true`; queue, Attention and History APIs returned HTTP 200. The
+dashboard showed one active and 19 queued items, Attention had 13 existing
+items and History reported 36,868 entries at readback. Production's
+`app/agent_cli.py` and `app/business_skills.py` SHA-256 hashes matched the
+deployed development source. This proves the release and observable service
+health, not a new natural Agent Skill-selection outcome. The GitHub test job
+was still queued at readback; the 83 focused local tests above are the
+completed behavior verification.
