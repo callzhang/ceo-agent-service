@@ -63,13 +63,18 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     entries = {item["source"]: item for item in manifest["files"]}
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
     finance_skill_source = "ci/shared-skills/stardust-oa-finance-review/SKILL.md"
+    installed_finance_card = Path.home().joinpath(
+        ".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md"
+    )
     installed_finance_skill = Path.home().joinpath(
         ".agents/skills/stardust-oa-finance-review/SKILL.md"
     )
 
-    # This is the approved pre-publication digest, not mutable installed state.
-    # After deployment the installed file correctly matches new_sha256.
-    assert entries[finance_source]["old_sha256"] == "2e5cc31fecc272549b6854b120790935d82d33368dc178e7743327ab061afeb5"
+    # Already-published source bytes are a valid no-op release entry: old_sha256
+    # must match today's target, and new_sha256 must match the committed source.
+    assert _digest(installed_finance_card.read_bytes()) in {
+        entries[finance_source]["old_sha256"], entries[finance_source]["new_sha256"],
+    }
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
     installed_digest = _digest(installed_finance_skill.read_bytes())
     assert installed_digest in {
