@@ -15,7 +15,7 @@ Consumer 运行 389361、389061 的完整 trajectory 在嵌套 `payload` 后多�
 
 ## 当前尚缺
 
-Qwen 的六文件 custom-tool 传输修复仅在离线副本及 CPU 语法检查通过，未发布到共享提供商，不能算 Qwen 原生全角色验证。OpenAI API 路线此前有 429 与有限的草稿对照，需要按当前合同重验；Codex OAuth 已有旧合同草稿证据，也不能替代本轮 OA purpose 验收。上述缺口未闭合前，CEO 服务保持原生 schema 关闭，PR #31 保持草稿状态。
+Qwen 的六文件 custom-tool 传输修复仅在离线副本及 CPU 语法检查通过，未发布到共享提供商，不能算 Qwen 原生全角色验证。`codex_api` 当前匿名 schema-on/off 对照均无有效冷启动输出，具体失败层未查实；此前的 429 也不能据此解释为 schema 缺陷。Codex OAuth 的局部合同与工具传输检查不能替代完整业务案例。上述缺口未闭合前，CEO 服务保持原生 schema 关闭，PR #31 保持草稿状态。
 
 ## 本轮局部证据（未启用运行时）
 
