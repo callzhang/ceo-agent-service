@@ -91,14 +91,14 @@ record_action_result(db, action_id: int, *, expected: Mapping[str, object], chan
 
 ## Task 3: 切换真实执行与恢复，删除旧分派
 
-**Files:** Modify `app/shared_action_lifecycle.py`, `app/reviewed_candidate_store.py`, `app/system_executor.py`, `app/email_store.py`, `app/email_provider_actions.py`, `app/email_action_reconcile.py`, `app/store.py`, `app/outbound_postfix.py`, `app/service_message_sender.py`; Create `tests/test_action_entity_callers.py`。
+**Files:** Inspect the actual caller paths in `app/shared_action_lifecycle.py`, `app/reviewed_candidate_store.py`, `app/system_executor.py`, `app/email_store.py`, `app/email_provider_actions.py`, `app/email_action_reconcile.py`, `app/store.py`, `app/outbound_postfix.py`, and `app/service_message_sender.py`; modify only files that own the storage call being converted. Create `tests/test_action_entity_callers.py`. The implementation record must explain any inspected file left unchanged with its concrete call path and storage owner.
 **Consumes:** Task2四接口，现有 provider adapter 和既有事务/批准/恢复判定。
 **Produces:** 覆盖来源全部只调用统一owner；旧来源专用写入和已无调用的DTO/投影删除。
 
 - [ ] **Step 1: 写参数化测试** `test_reviewed_email_prepared_share_owner`，三来源分别走实际caller后均读取同一实体字段集；`test_restart_after_provider_acceptance_does_not_resend` 在既有provider返回和本地完成之间中断，恢复后替身发送总计1；`test_two_claimants_only_one_provider_call` 并发claim只允许一个调用；`test_old_revision_keeps_its_approved_binding` 保留原审查版本；`test_retry_keeps_original_external_identity` 保留重试实际身份与历史回执。
 - [ ] **Step 2: 运行** `python -m pytest -q tests/test_action_entity_callers.py`，预期旧caller不走新owner的断言失败。
 - [ ] **Step 3: 替换真实caller。** 邮件配置从不可变父计划读取；不把配置版本复制到子Action。prepared的准备/领取/接受回执分别提交于其既有边界。已接受但未知最终效果仍用既有恢复，不自动重发。删除范围内 `origin` 分支和旧allocator；仅迁移模块可理解旧namespace。退订专有流程保持范围外原实现，不改授权或核对规则。
-- [ ] **Step 4: 运行** `python -m pytest -q tests/test_action_entity_callers.py tests/test_native_reply_reconciliation.py tests/test_shared_action_lifecycle.py tests/test_outbound_postfix.py`，并对 Task1消费者清单做调用引用检查；预期覆盖范围的旧writer调用点为0，新增审查/授权策略为0。
+- [ ] **Step 4: 运行并记录** `python -m pytest -q tests/test_action_entity_callers.py tests/test_native_reply_reconciliation.py tests/test_shared_action_lifecycle.py tests/test_outbound_postfix.py`，并对 Task1消费者清单做调用引用检查；预期覆盖范围的旧writer调用点为0，新增审查/授权策略为0。保留并运行整个既有混合写入/History/Attention/queue/important测试，不删除、不跳过、不弱化任何断言。若当前owner写断言通过而既有History读取断言因Task4 reader尚未转换而失败，Task3报告精确失败层和未到达的断言；这不是Task3运行时扩围的理由，也不能报告完整组合验收通过。Task4必须在真实读取转换后使该原测试节点及本Step完整命令全绿，作为组合验收门槛。
 - [ ] **Step 5: 提交** 本任务文件和两份机制文档；提交 `refactor(actions): route effect execution through action owner`。此时仅在分支，不将不完整schema发布main。
 
 ## Task 4: 切换详情、回执、撤回和反馈读取

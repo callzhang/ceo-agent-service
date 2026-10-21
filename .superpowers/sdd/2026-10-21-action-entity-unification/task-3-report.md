@@ -57,7 +57,7 @@ python -m pytest -q tests/test_configs_source_contract.py::test_six_account_bloc
 
 The assertions compare the retained historical guard definitions to the target-only Action guards and verify the historical external installer remains exact and idempotent. `app/action_email_storage.py` is unchanged.
 
-An earlier prescribed run collected the same 38 tests and exposed three stale assertions in `tests/test_shared_action_lifecycle.py` that still selected direct-email rows by the removed legacy hash alias. Those assertions now use the current physical Action id and retain their claim, attempt, receipt and rollback checks. No tests were deleted or deselected. The restored reader assertion above remains a required Task 4 acceptance item.
+An earlier prescribed run collected the same 38 tests and exposed three stale assertions in `tests/test_shared_action_lifecycle.py` that still selected direct-email rows by the removed legacy hash alias. Those assertions now use the current physical Action id and retain their claim, attempt, receipt and rollback checks. No tests were deleted or deselected. The restored reader assertion above remains a required Task 4 acceptance item. The Task 3 writer work can be reviewed on its focused owner evidence, but the prescribed group is not currently fully green and combined Task 3/4 reader acceptance remains open until Task 4 passes the exact node and full prescribed group recorded in its brief and handoff.
 
 ## Caller and retirement inventory
 
@@ -69,6 +69,13 @@ An earlier prescribed run collected the same 38 tests and exposed three stale as
 
 ## Self-review and boundaries
 
+The four files listed for inspection but unchanged have no storage operation to retarget in their own bodies:
+
+- `app/system_executor.py:389-462` calls the existing Store facade methods `begin_candidate_action`, `record_candidate_external_action`, `record_candidate_action_outcome`, and prior reconciliation. Those methods are implemented by `app/reviewed_candidate_store.py:422-609`, where begin, provider receipt, outcome and reconciliation now delegate to the common Action owner. The executor's approved-plan selection, provider call, verification and recovery conditions did not need a change.
+- `app/email_provider_actions.py:131-167` defines the deterministic provider executor; `execute` performs provider-side read/apply/readback and returns a `ProviderActionResult`, without writing storage. Its actual caller `app/email_worker.py:2759-2769` records the result through `EmailStore.complete_direct_action_attempt`, whose common-owner implementation is in `app/email_store.py:12039-12090`. Provider behavior and result handling remain caller-owned.
+- `app/email_action_reconcile.py:373-410` coordinates the already-verified reconciliation. It calls `claim_failed_direct_action_for_reconciliation` and `complete_direct_action_attempt`; the converted methods are in `app/email_store.py:11844-11878` and `12039-12090`. No source-specific persistence remains in this coordinator.
+- `app/outbound_postfix.py:27-58` composes and validates the prepared message and feedback text; it is a pure helper. Persistence happens through `Store._prepare_outbound_postfix_in_transaction` in `app/store.py:1806-1844`, which invokes `shared_action_lifecycle.prepare_outbound_action`. The sender continues to call the Store API; no storage edit belongs in the postfix helper.
+
 `service_message_sender.py` and `system_action_handlers.py` only pass the actual `send_message` or `send_reply_to_trigger` operation into the existing receipt/claim APIs. Provider calls, acceptance handling, verification, uncertain recovery and retry branches are unchanged. Reviewed provider reuse now queries `EXTERNAL_ACTION_RESULT_SQL`, which follows the explicit canonical binding/tip instead of selecting an arbitrary newest provider body. Failed-Audit adoption retains the prior eligibility check and source digest rule.
 
 No full suite, migration, deployment, push, production database access, or Task 4 conversion was performed. A prior broad `tests/test_email_store.py` investigation had 105 passes and 57 failures across legacy direct-action fixtures/readers; those were not treated as acceptance evidence or widened into this caller task. The specific current-owner claim, retry, guard, and receipt behavior is covered by the focused runs above. The preexisting native readback baseline failures documented by Task 2 remain outside this change and were not used to change policy.
@@ -77,4 +84,11 @@ The task ledger does not retain an initial fail-first command/output for the new
 
 ## Commit
 
-Pending final source review and commit by the Task 3 implementer.
+Task 3 implementation commit: `fb4605d8b39d7e749954acd7acefa4b7c57ca7f7`. This report was corrected in the bounded review follow-up; the follow-up commit is recorded in the appended review-fix section. The original implementation remains a reviewed writer-scope change with the mixed reader test failure visible; no combined Task 3/4 acceptance is claimed.
+
+
+## Review fix 1/5 (documentation-only)
+
+Addressed the two Important review findings and the stale commit-status Minor. The Task 3 plan and brief now mark the nine code paths for inspection, with edits only where the storage operation is owned; the four no-edit call paths and converted storage owners are documented above. Task3 still records the restored mixed reader node failure and does not claim the complete prescribed group is green. Task4 brief and handoff now require both the exact original node and the full Task3 prescribed caller group to pass, with every assertion preserved. The initial TDD RED evidence remains unavailable and is reported as a process gap; no result was reconstructed.
+
+No runtime source or test code changed in this follow-up. `git diff --check` was run after these documentation edits. The exact plan/brief/source evidence and acceptance-boundary correction are also recorded in `progress.md`.
