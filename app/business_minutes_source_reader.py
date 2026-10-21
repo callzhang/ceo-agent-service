@@ -135,12 +135,12 @@ def read_minutes_source_body(
                     if meeting is not None:
                         raise MinutesSourceIncomplete("duplicate exact AI Minutes UUID")
                     meeting = item
+            if has_more and next_token in seen_tokens:
+                raise MinutesSourceIncomplete("repeated AI Minutes page token")
             if page_cache is not None:
                 page_cache[cursor] = page
             if not has_more:
                 break
-            if next_token in seen_tokens:
-                raise MinutesSourceIncomplete("repeated AI Minutes page token")
             seen_tokens.add(next_token)
             cursor = next_token
         if meeting is None:
