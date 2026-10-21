@@ -511,3 +511,48 @@ def test_independent_okr_and_wechat_runtime_metadata(tmp_path):
         next(row for row in rows if row["source"] == "微信 Memory 导入")["retry_number"]
         is None
     )
+
+
+def test_scheduled_command_shows_saved_name_and_first_claim_clock(tmp_path):
+    from datetime import timedelta
+    from app.state_storage import insert_state
+    from app.web_api.dashboard import read_dashboard_queues
+
+    store = AutoReplyStore(tmp_path / "scheduled.db")
+    task = store.create_scheduled_task(name="处理新的日历邀请", command="calendar-invites-once",
+        cron_expression="10 * * * * *", timezone_name="UTC", enabled=True, now=NOW)
+    run = store.create_scheduled_task_run(task.id, trigger_kind="scheduled", scheduled_for=NOW - timedelta(minutes=10),
+        now=NOW - timedelta(minutes=10))
+    store.claim_scheduled_task_run(run.id, owner="worker", lease_seconds=600,
+        now=NOW - timedelta(minutes=2))
+    with store._connect() as db:
+        db.execute("begin immediate")
+        insert_state(db, "dispatcher_claim_leases", dict(adapter_name="scheduled", source_id=str(run.id),
+            owner="worker", owner_pid=123, generation=3, lease_expires_at="2026-10-20T17:08:00+00:00",
+            created_at="2026-10-20 16:58:00", updated_at="2026-10-20 16:59:55", terminal_at="", last_error=""))
+        before = db.total_changes
+        [row] = read_dashboard_queues(db, now=NOW)["active"]
+        assert db.total_changes == before
+    assert row["title"] == "处理新的日历邀请"
+    assert row["agent"] == "调度器"
+    assert row["runtime_kind"] == "内置命令"
+    assert row["model"] == ""
+    assert row["stage"] == "dispatching"
+    assert row["started_at"] == "2026-10-20T16:58:00+00:00"
+    assert row["updated_at"] == "2026-10-20T16:59:55+00:00"
+    assert row["retry_number"] is None  # lease generation is not an Agent retry count
+    assert row["detail_url"] == f"/scheduled-tasks?id={task.id}"
+
+
+def test_unclaimed_scheduled_agent_dispatch_does_not_claim_to_be_running_a_model(tmp_path):
+    from app.web_api.dashboard import read_dashboard_queues
+    store = AutoReplyStore(tmp_path / "scheduled.db")
+    task = store.create_scheduled_task(name="日报", prompt="生成日报", runtime_id="codex_oauth",
+        runtime_options={"model":"configured-model"}, working_directory="/tmp",
+        cron_expression="0 * * * * *", timezone_name="UTC", enabled=True, now=NOW)
+    store.create_scheduled_task_run(task.id, trigger_kind="scheduled", scheduled_for=NOW, now=NOW)
+    with store._connect() as db:
+        [row] = read_dashboard_queues(db, now=NOW)["queued"]
+    assert row["title"] == "日报"
+    assert row["model"] == ""
+    assert row["started_at"] == ""

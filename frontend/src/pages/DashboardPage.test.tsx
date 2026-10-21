@@ -201,3 +201,19 @@ it("does not present creation time as an unrecorded eligible time", async () => 
   expect(await screen.findByText("尚未安排时间")).toBeInTheDocument();
   expect(screen.queryByText(row.id)).not.toBeInTheDocument();
 });
+
+ it("identifies scheduled dispatch without missing Agent retry placeholders", async () => {
+    vi.mocked(api.listAttention).mockResolvedValue({ items: [], meta });
+    vi.mocked(getDashboardQueue).mockResolvedValue({items:[{...row,
+      id:"scheduled_task_runs:12", title:"处理新的日历邀请", status:"running", stage:"dispatching",
+      agent:"调度器", runtime_kind:"内置命令", retry_number:null,
+      started_at:"2026-10-20T16:58:00Z", updated_at:"2026-10-20T16:59:55Z",
+      detail_url:"/scheduled-tasks?id=9"}],counts:{active:1,queued:0},meta:{...meta,total:1}});
+    show();
+    expect(await screen.findByText("处理新的日历邀请")).toBeInTheDocument();
+    expect(screen.getByText("调度器")).toBeInTheDocument();
+    expect(screen.getByText("调度中")).toHaveClass("status-progress");
+    expect(screen.getByText("本次触发")).toBeInTheDocument();
+    expect(screen.getByText("2m 0s")).toBeInTheDocument();
+    expect(screen.queryByText("重试次数未提供")).not.toBeInTheDocument();
+  });

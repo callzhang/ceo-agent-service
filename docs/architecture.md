@@ -3728,6 +3728,15 @@ Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动�
 
 ## Dashboard console (2026-10-20)
 
+Pending scheduled triggers display the immutable run snapshot's task name. A claimed
+trigger is identified as the scheduler dispatching a built-in command or handing
+off a task, without presenting its configured runtime as an executing Agent/model.
+Elapsed time starts at the persisted first dispatcher claim, and last update uses
+the matching claim's renewal clock; enqueue time is not substituted for a start.
+The execution column says 本次触发: dispatcher lease generations are not Agent retry
+counts. Dispatched child tasks keep their own existing execution metadata.
+
+
 The /history workspace and navigation label are Dashboard. A single Service row
 precedes Failed / Active tasks / Queued tabs; there is no visible page/date title.
 Failed reuses the existing Attention API unchanged, including current unresolved

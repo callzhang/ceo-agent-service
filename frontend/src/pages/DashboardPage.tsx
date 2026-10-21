@@ -37,6 +37,7 @@ function duration(value: string, snapshot: string) {
       : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 export function retryLabel(row: DashboardQueueItem, state: QueueState) {
+  if (row.id.startsWith("scheduled_task_runs:")) return "本次触发";
   if (row.retry_number === null) return "重试次数未提供";
   if (row.retry_number === 0) return "首次执行";
   return state === "active"
