@@ -564,20 +564,20 @@ health; Status/Attention/History request timeouts remain under investigation.
 This publication does not complete the full10+1 redesign.
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
-body-free TSV metadata with separate Root and Relative path columns. Joining
+body-free TSV names and paths with separate Root and Relative path columns. Joining
 the referenced root directory with the relative component reconstructs the
 absolute source path; no combined alias expression is presented as a read argument.
-The full name, description
-and reconstructed absolute read path of every authorized source are retained,
+The full name and reconstructed absolute read path of every authorized source are retained,
 including distinct paths sharing a name. The response includes its path joining
 and table quoting instructions. Named/path reads, source authorization and
 ambiguity checks are unchanged; no output budget or role policy is changed.
 When an Agent needs another Skill, the Task points to
-`agent_cli.read_skill(query=...)`. This returns the same complete metadata
+`agent_cli.read_skill(query=...)`. This returns complete name, description and path metadata
 fields for entries whose name or description contains every supplied topic
 term, in any order and without case sensitivity, without returning bodies. An
 empty query is rejected;
-`read_skill()` still returns the full catalog when the topic is unknown.
+`read_skill()` still lists every authorized source when the topic is unknown,
+without repeating all descriptions. A topic query supplies those descriptions.
 The Agent selects an exact name or path for the subsequent full Skill read.
 
 Email unsubscribe page judgement explicitly selects an empty task Skill catalog
@@ -1511,6 +1511,13 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 ### 外部动作结果与重试
 
+自动重试共享上限为 3 次 retry（含首次调用最多 4 次尝试），由
+`app.external_retry.MAX_AUTOMATIC_RETRIES` 和
+`MAX_AUTOMATIC_ATTEMPTS` 定义。持久化 Consumer 与 Audit 失败预算分角色记录，
+每个角色最多四次失败尝试；权限申请后的材料重读采用独立节奏预算，最多三次、
+每 12 小时一次、原申请起 72 小时截止。只有可安全重试的技术失败进入自动预算；
+非重试错误直接终止，任何外部效果不确定时先对账原对象，不因次数预算自动重放。
+
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
 OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。若 OpenAPI 操作记录只有秒级时间，读回同一实例的 DWS 结构化审批流水，并按操作类型、操作人及同一秒唯一关联其毫秒 `operationTime`；有多条匹配或来源不完整时仍保留 uncertain，不能放宽派发时间边界。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。若目标任务创建时间被钉钉截断到秒级，只有当时间桶从退回事件之后开始且完整早于下一操作，或该桶与唯一退回流水落在同一秒、OpenAPI 与 DWS 流水在该秒内均无其他操作且该桶与派发/接受区间相交时，才可将其作为目标节点读回；仍须匹配精确目标 activity 与实例。精确到毫秒的目标创建时间继续按精确事件区间判断，桶与操作边界相交时保持 uncertain。证据不完整时保留 uncertain，恢复不重发退回。
@@ -2005,6 +2012,9 @@ Router 取下一条已配置且健康的路由。列表里出现的名字分两�
   和模型——`RuntimeRoute.base_url` 就是为此存在，Codex adapter 用的是**该路由自己的**地址，
   而不是某个全局配置。`codex_api`、`claude_api` 以前是内置路由（`CEO_CODEX_API_*`、
   `CEO_CLAUDE_API_*`），现在只是两条添加线路的名字，没有任何代码按名字认它们。
+  添加的 Codex 路由还可选 `CEO_RUNTIME_<大写名>_REASONING_EFFORT`，支持 `low`、`medium`、
+  `high`、`xhigh`；空值继续使用全局 Codex thinking 强度。Settings 同一字段保存、展示、改名和删除。
+  具体提供商可能只接受其中部分取值，配置时应以该路由的实测能力为准。
 - **按种类、不按名字**：依赖认证方式的规则看 `RuntimeRoute.is_cli_api_route`（凭自己 API Key
   登录的 Codex/Claude CLI 路由）。「临时失败后在同一路由换新会话重试一次」适用于所有这类路由；
   Consumer 连续两次结果不可用时强制换新会话，对所有路由一视同仁，没有例外（Derek 2026-09-25；
@@ -2188,7 +2198,7 @@ Friday 会把它当成自己的结构化信封解析，找不到回复正文时�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 按普通连续六次技术失败上限处理；本轮缺少所需的已声明工具或可执行的选定 Skill 脚本时，Consumer/Audit 报告 `operation_unavailable`，服务直接终止该次失败，不重复运行相同能力集合，也不把技术缺口变成人工授权请求。权限申请后的等待由经审核的 purpose `retry` 动作表示。`agent_context_refresh_failed` 仍是服务侧来源刷新等待，沿用持久化 run 计数和 60、120、240 秒、最长 15 分钟的退避，不形成业务结论。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
+角色同一 revision 每个 pass 最多两个技术 turn；Consumer、Audit 各自按持久化的同角色失败 run 计数，首次失败后最多再重试 3 次（4 次失败 turn 后终止），互不占用对方预算。容量、连接、来源刷新和其他可重试技术失败均计入该角色预算，并保留真实 source_code；同角色成功 turn 会重置连续失败计数。`dependency_read_unavailable` 按同一上限处理；本轮缺少所需的已声明工具或可执行的选定 Skill 脚本时，Consumer/Audit 报告 `operation_unavailable`，服务直接终止该次失败，不重复运行相同能力集合，也不把技术缺口变成人工授权请求。权限申请后的等待由经审核的 purpose `retry` 动作表示。`agent_context_refresh_failed` 使用持久化 run 计数与共享退避，最长 15 分钟，也受该角色总预算限制。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
 
 ## 统一外发消息后缀
 
@@ -2387,8 +2397,8 @@ Derek 明确授权解除生产循环对部署的阻塞。`python -m app.deploy -
 正常空闲检查、部署备份、主线快进、构建、验证、启动和健康检查继续执行。确认进程树全灭、尚未应用代码或契约时的准备失败才启动
 原服务；冻结、终止失败或 needs_manual 保持停止。生产源码仍在 finally 重新锁定。不修改业务成功状态、不手工抢租约、不重放风险拒绝。
 
-调度器处理 Reply handler 异常时计入既有三次任务 attempts：前两次共享退避 60/120 秒，
-第三次 failed，不再退回 attempts 并立即重新领取。此规则也适用于定时执行的 Reply 子类，
+调度器处理 Reply handler 异常时最多执行四次任务 attempts（首次调用加三次 retry）：
+前三次共享退避 60/120/240 秒，第四次 failed，不再退回 attempts 并立即重新领取。此规则也适用于定时执行的 Reply 子类，
 保留业务对象、代次和底层错误。正常调度 release 与实际 handler 失败分开。
 
 ### 原生消息 ledger 读回（2026-10-05）
@@ -2403,13 +2413,13 @@ provider 字段解码。通用 senderId 只与真实通讯录 profile 的 user_i
 
 ### System 与未创建角色运行的实际失败上限（2026-10-05）
 
-定时任务在 Consumer/Audit 已完成后的 System 实际失败使用三次持久化任务 attempts，
-前两次至少延后 60/120 秒，第三次 failed；重新入队不退回计数。候选、审核、动作键和
+定时任务在 Consumer/Audit 已完成后的 System 实际失败使用四次持久化任务 attempts
+（首次调用加三次 retry），前三次至少延后 60/120/240 秒，第四次 failed；重新入队不退回计数。候选、审核、动作键和
 已核验回执保持不变，效果 uncertain 仍保留 uncertain 并只回读核验，不重发。
 execution_claim_unavailable 是未取得执行领取的等待，至少延后 60 秒，不消费失败预算。
-定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第三次写入 failed 历史，
+定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第四次写入 failed 历史，
 保留原错误和 summary。既有授权、活跃运行及 provider 恢复等待沿用原等待机制；
-真正开始后产生的角色技术失败仍计入上述六次持久化角色预算。
+真正开始后产生的 Consumer 与 Audit 技术失败分别计入独立、持久化、同执行代/同修订的四次尝试预算（每个角色最多三次 retry）。
 
 ## 运行环境与能力说明、Settings 完整输入预览
 
@@ -2465,6 +2475,8 @@ Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单�
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 
+Audit 传输结果的 `feedback` 在 `approve` 或 `failed` 时可省略，解析为 `None`；在 `return` 或 `reject` 时仍必须提供完整反馈。批准结果若携带非空反馈仍拒绝。服务绑定的候选、审查业务模型、结果校验、审核决策和外部动作权限不变。这个字段语义对齐针对两次完整轨迹中唯一的格式错误，验证见 `docs/audit-null-feedback-validation.md`。
+
 
 运行输入的分段来源由同一装配函数提供：每段记录 name、source、placement（Developer/Task）及脱敏正文 characters，长度不含段间分隔符。runtime.prompt 是运行期 RAM 中的准备/调用回执；终态不另存正文副本。Settings 公共预览使用当前角色装配，任务绑定预览区分当前 Developer 与该角色实际保存的 Task。历史预览读取选定 runtime attempt 的原生输入范围：Codex 只取带 generic.developer_instructions 与 user.text 标记的服务消息，排除 CLI 基础指令、AGENTS、环境、工具和历史；续会话明确标记 session 先前保存的 Developer，不冒充本轮配置提交回执。Claude 读取本轮原生服务合并消息的既有 Developer/Task 封装。没有细分来源、配置指纹或渲染时间时保持未记录，不用当前配置补齐。尝试列表保留不可读来源的准确 ID/路线；最新或选定来源缺失时明确不可用，不改显示较早输入。读取不重跑任务、修改数据库或保存原文副本。日历时区解释流程位于 ceo-calendar-invite Skill，Runtime Context 仅保留显式参与者时区事实。
 
@@ -2474,7 +2486,7 @@ System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。Runtime Context 缩短工具说明；Codex CodeMode 的可用工具清单显示原生 `mcp__server__tool` 可调用名称，Claude 保持 `server.tool` 表示法，其他环境事实不变。Task 中的 Skill 调用提示仍使用服务命名空间的 `agent_cli.read_*` 表示法；该提示与清单的区别在 `docs/runtime-mcp-tool-name-validation.md` 记录。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；无参数调用返回授权目录内的全部 name 和路径，不重复所有用途描述；按主题 `query` 查询返回匹配项的完整 name、用途和路径元数据，均不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。Runtime Context 缩短工具说明；Codex CodeMode 的可用工具清单显示原生 `mcp__server__tool` 可调用名称，Claude 保持 `server.tool` 表示法，其他环境事实不变。Task 中的 Skill 调用提示仍使用服务命名空间的 `agent_cli.read_*` 表示法；该提示与清单的区别在 `docs/runtime-mcp-tool-name-validation.md` 记录。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -2824,6 +2836,8 @@ OA Attention keeps process instances present in the latest successful pending sc
 The scheduled OA Consumer prompt names the available operation and business Skills and directs the Agent to use their rules and the generic OA action table. Business thresholds and case-routing policy live in the selected Skills. Startup migrates only the exact known stale OA prompt; later administrator edits remain untouched.
 
 Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files. Document search exposes its existing page-size limit of 1–20 in the native tool schema and retains the same service-side guard.
+
+For the bound DingTalk direct-chat task, the message readers take the counterparty's stable openDingTalkId from the exact claimed trigger when the Agent supplies only its conversation ID. They verify the trigger message and conversation identities before reading; a mismatched or compacted source fails rather than guessing from the contact name. `read_dingtalk_messages_in_window` uses the existing complete, bounded direct-chat window reader for that task, while unrelated group reads retain their command and response. This repairs Audit source access without changing candidate review or outbound execution.
 
 
 ### 第五期A：候选与执行存储合并
@@ -3741,7 +3755,7 @@ Consumer 的业务核心输出统一为 `action/reason/target/payload/evidence_r
 
 OA `request_access` 是 Consumer purpose 直接发起的只读权限请求，不是审批结果 proposal，不进入 Audit。每个权限动作必须带准确 `process_instance_id` 和 `file_id`，经现有 OA 评论执行器向责任人留言；同一任务同一文件去重，不同文件可各自申请。执行状态在既有 purpose 等待状态中持久化，重启时仅核对原请求回执，不能盲目重复留言。请求阶段必须停止当前材料审核；成功送达只表示权限申请已发出，不表示权限已恢复。Consumer 的普通 `retry` 也不进入 Audit、不产生外部写操作；它必须引用本任务已核验的权限申请回执，服务在共享预算内安排延后重读。匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，再与存储的原始 key 精确比较。迁移前没有 `purpose_output` 的旧 OA 候选，仅当它本身唯一的评论提案和已核验回执具有相同的 `material-read-access-block` action identity 时兼容为权限请求；普通评论、未经核验的请求、其他任务的回执仍不满足条件。OA approve、reject、return、comment 以及普通业务 proposal 仍由 Audit 审核。所有文件共享按业务对象和 purpose 绑定的同一预算，在既有 service_state 中用短事务持久化，不因 session、revision、attempt 退款或进程重启重置，也不能换回执清零。
 
-从原请求发出时刻起最多 72 小时、最多启动 10 次后续 Consumer 调用，先达到任一限制即停止。请求发出时间只从已验证动作记录取值，不信任模型时间；以 dispatch 记录时间作保守边界。退避从 5 分钟指数增长、单次封顶 12 小时，预约不晚于期限。每次重读前事务预留次数；重复检查同一预约不递增。崩溃时已预留的次数保留，不会突破上限。到期检查在刷新来源和调用 Consumer 之前完成。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
+原权限请求不计入重读次数；之后最多启动 3 次 Consumer 重读，固定每 12 小时一次，并保留从已验证动作 dispatch 时刻起算的 72 小时硬截止。先达到次数或截止即停止。每次重读前在既有 service_state 短事务预留次数；重复检查同一预约不递增，进程崩溃后已预留的次数保留。旧版本已排队的时间在首次读取时更新为 12 小时间隔，原 deadline、计数和 reservation 不重置。预算耗尽记 `consumer_purpose_retry_exhausted`，不产生未经审核的业务退回。真实无权访问且无法申请权限时，Consumer 可按 OA Skill 提出真实 return；解析、OCR 等审阅端失败仍不能归责申请人。
 
 Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。字段、动作表、JSON 示例和计数边界见 [Consumer purpose 输出与权限重试](consumer-purpose-output.md)；发布证据见 [验证记录](consumer-purpose-actions-validation.md)。
 
@@ -3844,13 +3858,14 @@ so in its expanded details. Membership, terminal states and retry policy do not 
 
 ### Work Summary retry budget
 
-Work Summary processing retains its existing three-attempt failure budget. A
+Work Summary processing allows three retries after the initial call (four
+attempts total). A
 shared Task Agent session already owned by another worker is a scheduling wait:
 the input returns to pending with a delayed available_at and refunds only the
 current claim, just like the existing provider-capacity deferral. Actual failures
 continue to consume attempts. An exception escaping the dispatch handler before
 an Agent run is created now uses the same fenced, delayed failure transition as
-Reply dispatch; the third failure ends failed and retains its error.
+Reply dispatch; the fourth failure ends failed and retains its error.
 
 The Work Summary dispatcher closes an already exhausted pending or expired
 processing input as failed with work_summary_retry_exhausted before admitting
@@ -3865,9 +3880,10 @@ are unchanged. Regression and release evidence is in
 
 ### Email classification retry budget
 
-Dedicated Email classification tasks allow at most three processing attempts per
-explicit retry. A retryable read/network/model failure returns to pending with
-the existing capped backoff only before the third attempt; the third failure
+Dedicated Email classification tasks allow at most three retries after the
+initial call (four processing attempts total) per explicit retry. A retryable
+read/network/model failure returns to pending with the existing capped backoff
+only before the fourth attempt; the fourth failure
 ends failed and retains the actual error. Expired running claims consume the
 same budget and become failed once it is exhausted. Startup recovery and queue
 claiming also close previously exhausted pending records, including ones with a

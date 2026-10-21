@@ -296,7 +296,10 @@ def test_business_task_todo_failed_delivery_waits_before_bounded_retry(tmp_path:
     third = adapter.claim(NOW + timedelta(minutes=3), owner="dispatcher-c", owner_pid=303, lease=timedelta(minutes=5))
     assert third is not None and third.attempt == 3
     adapter.finish_delivery(third, owner="dispatcher-c", now=NOW + timedelta(minutes=3), status="failed", error="temporary outage")
-    assert adapter.claim(NOW + timedelta(hours=1), owner="dispatcher-d", owner_pid=404, lease=timedelta(minutes=5)) is None
+    fourth = adapter.claim(NOW + timedelta(hours=1), owner="dispatcher-d", owner_pid=404, lease=timedelta(minutes=5))
+    assert fourth is not None and fourth.attempt == 4
+    adapter.finish_delivery(fourth, owner="dispatcher-d", now=NOW + timedelta(hours=1, minutes=1), status="failed", error="temporary outage")
+    assert adapter.claim(NOW + timedelta(hours=2), owner="dispatcher-e", owner_pid=505, lease=timedelta(minutes=5)) is None
     assert "retry_exhausted" in store.get_business_task_todo_sync_outbox(source_id)["error"]
 
 
@@ -2404,7 +2407,7 @@ def test_a_finished_claim_that_lets_go_is_claimable_while_its_owner_lives(
 
 
 @pytest.mark.parametrize("scheduled", [False, True])
-def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, scheduled):
+def test_reply_handler_errors_stop_after_four_claims_with_backoff(tmp_path, scheduled):
     from app.dispatcher.adapters import ScheduledExecutionQueueAdapter
     store = _store(tmp_path)
     _reply(store)
@@ -2413,7 +2416,7 @@ def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, sch
             _update_task_facts(db, "reply_tasks", 1, {"channel": "scheduled"})
     adapter = (ScheduledExecutionQueueAdapter if scheduled else ReplyQueueAdapter)(store, owner_alive=lambda _pid: False)
     when = NOW
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):
         envelope = adapter.claim(when, owner='test', owner_pid=101, lease=timedelta(minutes=5))
         assert envelope is not None and envelope.attempt == attempt
         adapter.handle_handler_error(envelope, owner='test', now=when, error='root failure')
@@ -2421,7 +2424,7 @@ def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, sch
         assert task.attempts == attempt
         assert task.execution_generation == 'generation-7'
         assert task.error == 'root failure'
-        if attempt < 3:
+        if attempt < 4:
             assert task.status == 'pending'
             assert adapter.claim(when, owner='test', owner_pid=101, lease=timedelta(minutes=5)) is None
             when += timedelta(seconds=60 * 2 ** (attempt - 1))

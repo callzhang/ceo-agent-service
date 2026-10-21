@@ -628,10 +628,10 @@ def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Pat
     assert adapter.get_task(third.task_id).status == "done"
 
 
-def test_classifier_retryable_failure_stops_after_three_attempts(tmp_path: Path):
+def test_classifier_retryable_failure_stops_after_four_attempts(tmp_path: Path):
     adapter = EmailClassificationTaskAdapter(_email_store(tmp_path), retry_base_seconds=0)
     original = adapter.ensure_task(_classification_input(uid=245))
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):
         claimed = adapter.claim_next(owner="worker")
         assert claimed is not None
         assert claimed.attempt_count == attempt
@@ -646,13 +646,13 @@ def test_classifier_retryable_failure_stops_after_three_attempts(tmp_path: Path)
     assert adapter.claim_next(owner="worker").attempt_count == 1
 
 
-def test_classifier_repeated_expired_claims_stop_after_three_attempts(tmp_path: Path):
+def test_classifier_repeated_expired_claims_stop_after_four_attempts(tmp_path: Path):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
         _email_store(tmp_path), now=lambda: now[0], lease_seconds=1,
     )
     original = adapter.ensure_task(_classification_input(uid=246))
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):
         claimed = adapter.claim_next(owner="crashed-worker")
         assert claimed is not None
         assert claimed.attempt_count == attempt
@@ -660,7 +660,7 @@ def test_classifier_repeated_expired_claims_stop_after_three_attempts(tmp_path: 
         adapter.recover_running_tasks()
     exhausted = adapter.get_task(original.task_id)
     assert exhausted.status == "failed"
-    assert exhausted.attempt_count == 3
+    assert exhausted.attempt_count == 4
     assert exhausted.error == "classification task lease expired"
     assert adapter.claim_next(owner="replacement") is None
 

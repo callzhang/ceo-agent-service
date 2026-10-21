@@ -20,13 +20,14 @@ from typing import Callable, Protocol
 from urllib.request import urlopen
 
 from app.database_backup import _backup_directory_lock, create_database_backup
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.repository_upgrade import GitRepository
 from app.current_publication_sources import publication_run_sources
 from app.current_publication_sources import publication_meeting_sources, publication_task_sources
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
-UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
+UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
 LAUNCHD_STOP_TIMEOUT_SECONDS = 10.0
 LAUNCHD_STOP_POLL_SECONDS = 0.1

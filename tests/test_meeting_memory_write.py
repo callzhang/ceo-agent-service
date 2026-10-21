@@ -1279,7 +1279,7 @@ def test_a_missing_credential_fails_the_event_instead_of_retrying(tmp_path: Path
 
     The connector issues no API keys, so a service without an authorization
     stays without one until a person runs `authorize-memory-connector`.
-    Retrying twenty times first only hides that for five hours.
+    Retrying four times first only hides that the authorization is still absent.
     """
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     _store_sent_job(store)

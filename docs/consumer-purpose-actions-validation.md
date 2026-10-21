@@ -2,12 +2,26 @@
 
 ## Scope and evidence
 
-The approved purpose output uses action/reason/target/payload/evidence_refs.
-OA return is a business return through the existing revert_task executor.
-Permission retries reserve at most ten subsequent Consumer attempts and stop
-starting new reads at 72 hours from the original verified request dispatch.
-The tests use synthetic records and fake providers; no historical OA action
-was replayed.
+## Current unified retry policy — 2026-10-21
+
+The 2026-10-19 ten-read policy below records the original release and is
+superseded by the current policy: all automatic retry budgets allow at most
+three retries after an initial attempt (four calls total). Permission reads
+after a verified request are a separate cadence budget: at most three reads,
+one every 12 hours, within the original 72-hour deadline. Consumer and Audit
+technical failures each have their own persisted four-call budget for the same
+execution generation and proposal revision; one role never consumes the
+other's count. Explicit user-triggered repair/retry starts a new budget under
+the existing repair rules. Uncertain external effects still require receipt
+reconciliation and are never automatically replayed.
+
+The original 2026-10-19 purpose-output release used
+action/reason/target/payload/evidence_refs. OA return is a business return
+through the existing revert_task executor. Its initial permission retry policy
+reserved at most ten subsequent Consumer attempts within 72 hours. The tests
+used synthetic records and fake providers; no historical OA action was
+replayed. The 2026-10-21 unified retry policy above supersedes that retry
+ceiling and cadence while preserving the original business output contract.
 
 The new regression files cover strict purpose schemas, exact string IDs,
 required return parameters, rejection of unsupported actions, verified request
@@ -29,7 +43,7 @@ serialization so their immutable bytes and digests remain stable.
 - Purpose budgets, orchestration, release manifest and document Skill group:
   183 passed before the final retry-error-state constraint; the final schema
   group above covers that constraint.
-- Ordinary six-turn limits, remaining context-refresh backoff, Worker
+- Separate three-retry Consumer/Audit limits, remaining context-refresh backoff, Worker
   permission wait and Email deferral group: 15 passed.
 - Consumer retry/schema/guard targeted groups passed, including the explicit
   request -> verified action -> wait -> retry -> audited business return path.

@@ -21,6 +21,7 @@ from app.store import AgentRole
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
 from app.worker import (
+    MAX_REPLY_TASK_ATTEMPTS,
     REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
     RUNTIME_OUTAGE_WAIT_ERRORS,
     _is_runtime_outage_error,
@@ -54,7 +55,7 @@ def _is_reply_transport_action(action: object) -> bool:
 class WechatReplyConsumer:
     def __init__(self, store, runner, reader, account: WechatAccount, *,
                  leak_check: Callable[[str], str] | None = None,
-                 max_task_attempts: int = 3,
+                 max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
                  retry_delay: timedelta = timedelta(minutes=1),
                  now_provider: Callable[[], datetime] | None = None):
         if max_task_attempts <= 0:
@@ -66,7 +67,7 @@ class WechatReplyConsumer:
         self.reader = reader
         self.account = account
         self.leak_check = leak_check
-        self.max_task_attempts = max_task_attempts
+        self.max_task_attempts = min(max_task_attempts, MAX_REPLY_TASK_ATTEMPTS)
         self.retry_delay = retry_delay
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
 

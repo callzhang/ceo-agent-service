@@ -32,6 +32,7 @@ from app.email_store import EmailStore, is_valid_unsubscribe_opaque_reference
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
 from app.external_retry import (
     DEFAULT_MAX_RETRY_DELAY_SECONDS,
+    MAX_AUTOMATIC_ATTEMPTS,
     retry_delay_seconds,
 )
 from app.email_unsubscribe import (
@@ -66,7 +67,7 @@ from app.task12_storage import insert_task12, task12_projection, task12_set_part
 from app.task20_definitions import TASK20_FIELDS, task20_column
 
 _EMAIL_CLASSIFICATION_KIND = 'email_agent_classification_tasks'
-EMAIL_CLASSIFICATION_MAX_ATTEMPTS = 3
+EMAIL_CLASSIFICATION_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 _EMAIL_CLASSIFICATION_SQL = task12_projection(_EMAIL_CLASSIFICATION_KIND)
 _EMAIL_CLASSIFICATION_COLUMNS = {
     field: task20_column(_EMAIL_CLASSIFICATION_KIND, field)

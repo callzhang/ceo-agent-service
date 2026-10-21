@@ -50,6 +50,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert "old_managed_sha256" not in entry
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
     assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"

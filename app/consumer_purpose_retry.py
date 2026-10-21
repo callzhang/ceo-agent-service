@@ -6,9 +6,12 @@ import json
 
 from app.state_definitions import state_projection
 from app.state_storage import state_json_field, upsert_state
+from app.external_retry import MAX_AUTOMATIC_RETRIES
 
-MAX_PURPOSE_RETRIES = 10
+MAX_PURPOSE_RETRIES = MAX_AUTOMATIC_RETRIES
 MAX_PERMISSION_WAIT = timedelta(days=3)
+PERMISSION_RETRY_INTERVAL = timedelta(hours=12)
+PERMISSION_RETRY_INTERVAL_SECONDS = int(PERMISSION_RETRY_INTERVAL.total_seconds())
 RETRY_REQUESTED = 'consumer_purpose_retry_requested'
 RETRY_EXHAUSTED = 'consumer_purpose_retry_exhausted'
 
@@ -39,7 +42,9 @@ class PurposeRetryBudget:
         if now >= utc_time(state['deadline']):
             raise RetryBudgetExhausted('permission retry deadline reached (72 hours)')
         if state['count'] >= MAX_PURPOSE_RETRIES:
-            raise RetryBudgetExhausted('permission retry count reached (10)')
+            raise RetryBudgetExhausted(
+                f'permission retry count reached ({MAX_PURPOSE_RETRIES})'
+            )
 
     def _update(self, mutate):
         with self.store._immediate_write_transaction() as db:
@@ -108,13 +113,15 @@ class PurposeRetryBudget:
             if state is None:
                 state = {'receipts': [], 'requested_at': requested_at.isoformat(),
                          'deadline': (requested_at + MAX_PERMISSION_WAIT).isoformat(),
-                         'count': 0, 'reservations': [], 'review': ''}
+                         'count': 0, 'reservations': [], 'review': '',
+                         'retry_interval_seconds': PERMISSION_RETRY_INTERVAL_SECONDS}
             else:
                 state.setdefault('access_requests', [])
                 if 'requested_at' not in state:
                     state.update({'receipts': [], 'requested_at': requested_at.isoformat(),
                                   'deadline': (requested_at + MAX_PERMISSION_WAIT).isoformat(),
-                                  'count': 0, 'reservations': [], 'review': ''})
+                                  'count': 0, 'reservations': [], 'review': '',
+                                  'retry_interval_seconds': PERMISSION_RETRY_INTERVAL_SECONDS})
                 # Existing persisted budgets used one receipt. Promote it into
                 # the receipt set in place, preserving the original deadline,
                 # count and reservation history.
@@ -130,10 +137,17 @@ class PurposeRetryBudget:
                 receipts.append({'receipt': receipt, 'requested_at': requested_at.isoformat()})
             self._check(state, now)
             state['closed'] = False
-            if state['review'] != review:
-                delay = min(300 * (2 ** state['count']), 12 * 3600)
-                state['next_at'] = min(now + timedelta(seconds=delay), utc_time(state['deadline'])).isoformat()
+            if (
+                state.get('retry_interval_seconds')
+                != PERMISSION_RETRY_INTERVAL_SECONDS
+                or state['review'] != review
+            ):
+                state['next_at'] = min(
+                    now + PERMISSION_RETRY_INTERVAL,
+                    utc_time(state['deadline']),
+                ).isoformat()
                 state['review'] = review
+                state['retry_interval_seconds'] = PERMISSION_RETRY_INTERVAL_SECONDS
             return state, utc_time(state['next_at'])
 
         return self._update(mutate)

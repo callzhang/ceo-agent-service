@@ -162,7 +162,7 @@ def test_oauth_route_rejects_an_api_key(adapter, config):
         adapter.build_env(route(config, "codex_oauth"), api_key="service-secret")
 
 
-def test_adapter_builds_an_added_route_against_its_own_endpoint(tmp_path: Path):
+def test_adapter_builds_an_added_route_against_its_own_endpoint(tmp_path: Path, monkeypatch):
     """An added OpenAI-compatible route must reach its own provider."""
 
     config = load_runtime_config(
@@ -171,10 +171,12 @@ def test_adapter_builds_an_added_route_against_its_own_endpoint(tmp_path: Path):
             "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
             "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8002/v1",
             "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+            "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT": "medium",
             "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
         }
     )
     adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
+    monkeypatch.setenv("CEO_CODEX_MODEL_REASONING_EFFORT", "high")
 
     command = adapter.build_command(
         route(config, "qwen_gpu4"),
@@ -189,7 +191,25 @@ def test_adapter_builds_an_added_route_against_its_own_endpoint(tmp_path: Path):
     )
 
     assert "qwen3.8-27b" in command
+    assert 'model_reasoning_effort="medium"' in command
+    assert 'model_reasoning_effort="high"' not in command
     assert any("http://100.93.145.69:8002/v1" in item for item in command)
+
+    oauth_command = adapter.build_command(
+        route(config, "codex_oauth"), prompt="hello", session_id=None,
+        image_paths=None, output_schema_path=None, use_output_schema=False,
+        approval_policy="never", developer_instructions=None,
+        use_approval_bypass=False,
+    )
+    assert 'model_reasoning_effort="high"' in oauth_command
+
+    task_override = adapter.build_command(
+        route(config, "qwen_gpu4"), prompt="hello", session_id=None,
+        image_paths=None, output_schema_path=None, use_output_schema=False,
+        approval_policy="never", developer_instructions=None,
+        use_approval_bypass=False, reasoning_effort="low",
+    )
+    assert 'model_reasoning_effort="low"' in task_override
 
 
 def test_adapter_rejects_runtime_and_credential_mismatches(adapter):
