@@ -47,7 +47,33 @@ and service-module import checks passed. No full-suite run was performed.
 
 ## Deployment
 
-Publication and production readback are pending. The first Work Summary-only
+Publication and production readback are recorded below. The first Work Summary-only
 release is draining through normal app.deploy. Its final in-flight claim was an
 old Email classification attempt 58, with lease expiration
 2026-10-21T04:17:12.597326+00:00; no active claim was forcibly changed.
+
+
+## Final production readback
+
+Final runtime commit: `7d00e82e2f2860dd16d01004643c40ba239245a9`.
+Normal deployments completed d812e043 -> 7a78c938 -> 9d372c93 -> 7d00e82e.
+No quiet-wait bypass or manual service kill/restart was used. The old Email
+attempt 59 finished with its actual read timeout before the second deployment.
+Production checkout was clean after deployment. Supervisor PID 97407, worker
+97410, API 97411 and Email worker 97412 were running after the final restart.
+
+On 2026-10-20 21:24 Pacific (2026-10-21 04:24 UTC), read-only inspection of all
+active Task kinds found **zero** pending/processing/retry/running/queued/waiting
+records at ten or more attempts. The eight original Email records were failed
+at counts 59, 54, 48, 29, 23, 19, 14 and 11. The original Work Summary input
+416319 was failed at 48 with work_summary_retry_exhausted and no next retry
+time. Its count includes the final closure claim; it was not reset to zero.
+Input 416320 was processing at attempt 3, while 416321/416322 remained pending
+at zero, demonstrating ordinary work admission had resumed.
+
+Healthz returned HTTP 200 / ok=true. Console Status, Attention and History
+returned HTTP 200. Attention had 15 items; History's current total was 36627.
+The higher failed counts expose the stopped technical failures and are not
+business-success claims. Source UID availability, timeouts and DNS failures
+were retained for diagnosis or explicit repair; this task did not pretend the
+original email classifications or Work Summary business work had succeeded.
