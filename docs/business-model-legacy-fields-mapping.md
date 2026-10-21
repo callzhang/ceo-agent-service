@@ -1,5 +1,7 @@
 # 旧业务九字段处置与当前字段映射
 
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+
 Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字段，不保存其旧值副本；schema inverse 只恢复这些字段的声明及中性默认值。其余业务事实、来源、关系和 provider 回执保留当前 SQL 值与类型。Store `2026-10-19.11`／Email53 实现这一边界。
 
 批准来源绑定到 Store19.8／Email53 副本 SHA-256 `60ee5d5b88395235768868deda215b5b371facf931522932463a29d474f539a2`。该副本的严格来源导入清单 `c98c046df64a8c4c681314d2c4142dff5df047f8b2bee6f01c51049dcd2c3a6e` 将 975 个 WorkProject、3,327 个 WorkTodo 和 5,468 个 WorkUpdate（共 9,770 个有来源限定的身份）全部归为 `history_only`；逐身份处置记录绑定各自 source digest。这是该来源的结果，不是将未来记录一概归为历史的规则。

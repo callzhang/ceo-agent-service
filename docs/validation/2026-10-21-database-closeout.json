@@ -1,0 +1,251 @@
+{
+  "source": {
+    "source_head": "cf501b3778768830b95eb99a99660b93428f7985",
+    "integrity": "ok",
+    "store": "2026-10-19.11",
+    "email": 53,
+    "fk": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "bytes": 487153664,
+    "sha256": "f15dcf77dcd0410910ed7e21ce3fdf9018f195000000397c8fb518543e5d1186"
+  },
+  "copy_api": {
+    "checks": [
+      {
+        "url": "/api/console/history?page=1&page_size=20&include_chart=false",
+        "http": 200,
+        "items": 20
+      },
+      {
+        "url": "/api/console/history?page=2&page_size=20&include_chart=false",
+        "http": 200,
+        "items": 20
+      },
+      {
+        "url": "/api/console/history?object_type=meeting&page_size=10&include_chart=false",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/attention",
+        "http": 200,
+        "items": 5
+      },
+      {
+        "url": "/api/console/dashboard/queues",
+        "http": 200,
+        "items": 1
+      },
+      {
+        "url": "/api/console/tasks/all?page_size=5",
+        "http": 200,
+        "items": 5
+      },
+      {
+        "url": "/api/console/tasks/projects?page_size=5",
+        "http": 200,
+        "items": 5
+      },
+      {
+        "url": "/api/console/tasks/legacy-projects/54",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/tasks/legacy-projects/9007199254740991",
+        "http": 404,
+        "items": 0
+      },
+      {
+        "url": "/api/console/tasks/sent-todos?page_size=10",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/tasks/items/744",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/meeting-attempts/2539",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/history/15814",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/email/classifications?status=all&page_size=10",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/email/classifications/5106363250407065488",
+        "http": 502,
+        "items": 0
+      }
+    ],
+    "tables": {
+      "actions": {
+        "rows": 101323,
+        "sha256": "b1d16a635474a4b6b1a90223624d89964d653bc18cd543c1016bd07ff8097944"
+      },
+      "business": {
+        "rows": 5180,
+        "sha256": "c579382bb560564f9b7ff1932f04bfc27a89cf4e536682cb7e2bc0b1d573a855"
+      },
+      "configs": {
+        "rows": 6211,
+        "sha256": "8cf7c34e62fc3322d649b1d9cea2e522e345ce7ceada2088646541d4c84e64a5"
+      },
+      "email_schema_migrations": {
+        "rows": 40,
+        "sha256": "9540042351edce86618472033486007b3a96cf8338726860418b41ff5500654c"
+      },
+      "emails": {
+        "rows": 9669,
+        "sha256": "eb219343aa37ce1e90a0d5f1e536f91343d0a02bb87ea97b11931a63aee1a9fa"
+      },
+      "provenance": {
+        "rows": 152,
+        "sha256": "c2b8a8bb463d40eaa58fa2c3db8b15576ec9953c81af7d91e283e86c3714aed2"
+      },
+      "provider_state": {
+        "rows": 72457,
+        "sha256": "c512a88bb4f9d618474a4b6ff6ced89b0ae29de7caf1825556f6416eaae7c7a1"
+      },
+      "runs": {
+        "rows": 257663,
+        "sha256": "7bb9c26bc7c6db6cf95d87bfd0b5d8963ecce92d4c93204898317fc4cf1f9da4"
+      },
+      "schedules": {
+        "rows": 15,
+        "sha256": "adfe34b4234c7a3f71f4f80cb7706f1d9c0bd5d0c305f8d629e4a5d2141c5b31"
+      },
+      "sqlite_sequence": {
+        "rows": 51,
+        "sha256": "1668eac19038a0a87aa7486ec36837c2b42b62977d9275215175f513ee366063"
+      },
+      "state": {
+        "rows": 23814,
+        "sha256": "850a85130887d5d80c8430e0d603ef7959e355ff1c462ef2efcd282da9fd8c69"
+      },
+      "tasks": {
+        "rows": 36964,
+        "sha256": "bc9db52f944444dd63df08b455f09cbcb8ecdb01228ba65369c550eb1190dd24"
+      }
+    },
+    "persisted_values_unchanged": true,
+    "provider_substitute_reads": 1,
+    "real_sends": 0,
+    "lifespan_started": false,
+    "legacy_todos": 8,
+    "legacy_updates": 20,
+    "meeting_public_id": 2539,
+    "meeting_physical_id": 190283
+  },
+  "backup_initial_copy": {
+    "store": "2026-10-19.11",
+    "email": 53,
+    "bytes": 487153664,
+    "verified_before_old_deletion": true,
+    "failed_replacement_previous_sha_unchanged": true,
+    "only_latest_retained": true,
+    "sha256": "b31b7045aad67176998df0253ff1b65b06cdf7f437ef37cc6a56b3aac99ba5d3"
+  },
+  "tests": {
+    "migration_backend": {
+      "passed": 66,
+      "files": [
+        "tests/test_logical_run_owner.py",
+        "tests/test_prepared_action_owner.py",
+        "tests/test_task_lifecycle_storage.py",
+        "tests/test_email_source_web_api.py",
+        "tests/test_history_actions.py"
+      ]
+    },
+    "frontend": {
+      "passed": 173,
+      "files": [
+        "TasksPage",
+        "TaskDetailPage",
+        "TaskProjectDetailPage",
+        "TaskAttentionDetailPage",
+        "HistoryPage",
+        "EmailPage",
+        "AttemptDetailPage"
+      ],
+      "layer": "mocked_HTTP_component_tests"
+    },
+    "api_recovery_initial": {
+      "passed": 22,
+      "failed": 4,
+      "classification": "stale fixtures; corrections tracked separately"
+    },
+    "fixture_full_files": {
+      "passed": 40,
+      "files": [
+        "tests/test_task_api_release_contract.py",
+        "tests/test_web_api_task_attention.py",
+        "tests/test_meeting_alignment_store.py"
+      ],
+      "does_not_rewrite_initial_failure": true,
+      "final_index_case": {
+        "passed": 1,
+        "seconds": 1.16
+      }
+    },
+    "backup_updater_maintenance_final": {
+      "passed": 83,
+      "seconds": 37.0,
+      "files": [
+        "tests/test_database_backup.py",
+        "tests/test_repository_updater.py",
+        "tests/test_deploy_maintenance.py"
+      ],
+      "green_log_sha256": "caaabf60ae98261fbe720fc64c9d35641032f9cd1ce1d7407bd89d80eb6a68b6",
+      "regressions": [
+        "copy and integrity failures preserve previous bytes",
+        "missing completion stamp preserves previous bytes",
+        "new source captured each deployment",
+        "daily waits through loaded verification and rollback",
+        "owned crash stage removed before no-space failure; unrelated temp preserved"
+      ]
+    }
+  },
+  "prior_schema_inverse_and_native": {
+    "report": "docs/validation/2026-10-20-database-gpt6-copy.json",
+    "rerun": false,
+    "reason": "no schema or migration/inverse module changed"
+  },
+  "deployment": {
+    "status": "ready_not_started"
+  },
+  "all_copy_email_previews": {
+    "rows": 9669,
+    "max_unicode_characters": 1000,
+    "over_bound": 0
+  },
+  "reviews": {
+    "spec": "passed",
+    "quality": "approved",
+    "code_commit": "740745e5b"
+  },
+  "backup_final_copy": {
+    "store": "2026-10-19.11",
+    "email": 53,
+    "bytes": 487153664,
+    "verified_before_old_deletion": true,
+    "failed_replacement_previous_sha_unchanged": true,
+    "only_latest_retained": true,
+    "sha256": "b31b7045aad67176998df0253ff1b65b06cdf7f437ef37cc6a56b3aac99ba5d3"
+  }
+}

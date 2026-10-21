@@ -1,5 +1,7 @@
 # GPT-6 数据库副本与发布验收
 
+> 发布状态说明：本页末尾记录了2026-10-20已完成的生产部署。前段“待确认／待发布”是当时检查点，不是当前阻塞；后续备份与验收收尾见[迁移收尾记录](database-migration-closeout-validation.md)。
+
 本记录对应 Store `2026-10-19.11`／Email53 数据库重构，承接[九字段退休验收](business-model-legacy-fields-root-acceptance.md)。Derek 在 2026-10-20 明确选择先以真实 GPT-6 在副本重跑完整链路，不新增事实核对工具，副本与 schema inverse 通过后再按标准流程部署。
 
 ## 范围与来源

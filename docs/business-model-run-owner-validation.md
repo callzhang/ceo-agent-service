@@ -1,5 +1,7 @@
 # C2：共同 Logical Run owner
 
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+
 本切片把三种真实专业运行历史归入已有 `runs[agent_runs]`。准确来源是
 `45f3324be3c568b9f91709c25306e19d73a15087` 的 Store `2026-10-19.9`／Email53，
 目标是 Store `2026-10-19.10`／Email53。当前仍是局部实现与定向验证候选。

@@ -1,5 +1,7 @@
 # B2b specialized Email actions: local evidence
 
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+
 This bounded implementation is on
 `codex/business-model-specialized-actions-20261019`, based on reviewed merge
 `af9e265597f847c7a289b3022415050dbc2b5d53`. It includes the parent's separately

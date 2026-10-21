@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.business_source_reader import AvailableSource, RequestSourceReader
 from app.business_storage import update_business
 from app.business_candidate_storage import update_business_candidate
 from app.project_context_service import ProjectContextService
@@ -53,7 +54,7 @@ def test_semantic_routes_do_not_return_legacy_projects(tmp_path):
         assert client.get("/api/console/tasks/projects").status_code == 200
 
 
-def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path):
+def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     closed_id = store.create_business_task(title="Closed project task", stage="candidate", status="done", business_relevance="relevant")
@@ -71,11 +72,23 @@ def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path):
         )
         attention_id = store.create_business_attention_item_in_transaction(stable_key="launch", category="decision", title="Launch decision", business_area="Product", why_attention="Gate", current_state="Pending", ceo_action="Decide", anchor_id=anchor_id, evidence_signal_id=signal_id, now="2026-09-02T00:00:00+00:00", _db=db)
         store.link_business_attention_task_in_transaction(attention_item_id=attention_id, task_id=task_id, _db=db)
+    source_binding = store.get_business_task_signal(signal_id).source
+    source_body = "Derek assigned Launch"
+    assert source_binding.matches_body(source_body)
+
+    class SyntheticMeetingSourceReader(RequestSourceReader):
+        def _read(self, binding):
+            if binding == source_binding:
+                return AvailableSource(binding, source_body)
+            return super()._read(binding)
+
+    monkeypatch.setattr(AutoReplyStore, "business_source_reader", lambda self, *, provider_reader=None: SyntheticMeetingSourceReader(provider_reader=provider_reader))
     with _client(tmp_path) as client:
         task = client.get(f"/api/console/tasks/items/{task_id}").json()["item"]
         attention = client.get(f"/api/console/tasks/attention/{attention_id}").json()["item"]
         project = client.get(f"/api/console/tasks/projects/{project_id}").json()["item"]
     assert task["evidence"][0]["signal"]["evidence_text"] == "Derek assigned Launch"
+    assert task["evidence"][0]["signal"]["source_ref"] == "minutes-1"
     assert task["official_projects"][0]["id"] == project_id
     assert [row["id"] for row in attention["linked_tasks"]] == [task_id]
     assert attention["assessment"] == {}

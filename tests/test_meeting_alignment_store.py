@@ -6,8 +6,7 @@ import pytest
 import app.store as store_module
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import AutoReplyStore
-from app.state_storage import insert_state
-from app.state_definitions import state_projection
+from app import task_lifecycle_storage as task_claims
 from app.task20_definitions import TASK20_INDEX_DDL
 
 
@@ -59,7 +58,8 @@ def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
         if sql.endswith("where record_type='meeting_alignment_jobs'")
     }
     assert expected_meeting_indexes
-    assert expected_meeting_indexes | {"idx_meeting_alignment_runs_job"} <= indexes
+    assert expected_meeting_indexes | {"idx_logical_runs_task"} <= indexes
+    assert "idx_meeting_alignment_runs_job" not in indexes
 
 
 def test_incomplete_unmarked_meeting_source_is_rejected_without_mutation(tmp_path):
@@ -113,7 +113,7 @@ def test_current_schema_manifest_detects_missing_meeting_payload_column(tmp_path
         before = tuple(db.iterdump())
         user_version = db.execute("pragma user_version").fetchone()[0]
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
+    with pytest.raises(sqlite3.IntegrityError, match="malformed current Task lifecycle declaration"):
         AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         assert tuple(db.iterdump()) == before
@@ -337,10 +337,11 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
     )
     with store._connect() as db:
         db.execute("begin immediate")
-        insert_state(db, "dispatcher_claim_leases", {
-            "adapter_name": "meeting", "source_id": str(job_id), "owner": "old-service",
-            "owner_pid": 123, "generation": 1, "lease_expires_at": "2026-07-14 03:00:00",
-        })
+        task_claims.acquire_claim(
+            db, adapter_name="meeting", source_id=job_id, owner="old-service",
+            owner_pid=123, lease_expires_at="2026-07-14 03:00:00",
+            now="2026-07-14 02:11:00",
+        )
 
     [recovered] = store.reset_processing_meeting_alignment_jobs()
 
@@ -355,7 +356,7 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
     assert runtime_attempt.finished_at
     with store._connect() as db:
         lease = db.execute(
-            f"select owner, owner_pid, lease_expires_at from ({state_projection('dispatcher_claim_leases')}) "
+            f"select owner, owner_pid, lease_expires_at from ({task_claims.claim_projection()}) "
             "where adapter_name='meeting' and source_id=?",
             (str(job_id),),
         ).fetchone()

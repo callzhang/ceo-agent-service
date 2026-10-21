@@ -1,4 +1,32 @@
-# Business model simplification execution
+# Business model simplification: current completion and closeout
+
+## Current authoritative status — 2026-10-21
+
+The approved A/B/C/D implementation and Store19.11 / Email53 production migration completed on 2026-10-20. The release was `a79d8e279`, with actual production schema, process, effective GPT-6 Luna/high configuration, health, queues, Attention and History read back. This describes that verified release, not an assertion about an unqueried later process. [Final release evidence](database-gpt6-release-validation.md) supersedes the earlier publication-pending checkpoints below.
+
+| Unit | Completed behavior | Acceptance source |
+| --- | --- | --- |
+| A1 | Selection binds immutable candidate + option; no second selected branch body | [A1 copy](business-model-a1-copy-validation.md), [native/UI](business-model-a1-runtime-validation.md) |
+| A2 / A4 | Verified external receipt is authoritative; attempt and Sent retain references and independent local results | [Execution checkpoints](#historical-execution-checkpoints), [final release](database-gpt6-release-validation.md) |
+| A3 / A5 | Candidate owns execution; Prepared Action owns dispatch claim / accepted receipt; retired duplicate writers removed | [Prepared owner](database-redesign-prepared-actions-validation.md), [final combined copy/inverse](database-gpt6-release-validation.md) |
+| B1 | One message metadata owner; preview bounded to 1,000 Unicode characters; original read explicitly from source | [Email metadata](database-redesign-email-metadata-validation.md) |
+| B2 | Shared direct and specialized Email action claim/result ownership | [Specialized actions](database-redesign-specialized-actions-validation.md), [final release](database-gpt6-release-validation.md) |
+| C1 | Nine executable kinds share actual Task lifecycle ownership; other kinds retain their domain facts | [C1](business-model-task-lifecycle-validation.md) |
+| C2 | Professional histories use common logical Run owner with preserved public identities and native references | [C2 parent copy](business-model-run-owner-parent-validation.md) |
+| D | Old Project/Todo operational producers retired; history/provenance/receipts retained; 51 → 42 fields | [Legacy Todo](business-model-legacy-todo-parent-validation.md), [field mapping](business-model-legacy-fields-mapping.md), [published nine-field proof](database-gpt6-release-validation.md) |
+
+The combined full-copy current-data inverse, actual old-code cold read and reforward passed. The real GPT-6 Luna Consumer → Audit → public selection → Worker/SystemExecutor → verified substitute receipt chain passed; real test sends were zero. The original FK finding and historical model failures remain recorded, rather than relabeled as successes. The nine approved retired controls are unrecoverable: inverse restores only neutral defaults.
+
+## Authorized closeout in progress — 2026-10-21
+
+The 36-route UI matrix was a generic inventory and only recorded six early browser observations. It did not imply 336 functional failures. Later browser evidence is now reconciled separately from frontend mock tests, fresh-copy API traversal and native/DB proof. Unobserved generic browser states remain `not_run`; their migration impact and the actual acceptance layer are explicit in [the matrix](business-model-ui-coverage.json).
+
+This closeout repairs backup replacement and fresh deployment snapshots, validates the real Store19.11 copy read paths and focused recovery/idempotency boundaries, then follows normal deployment. Current evidence and remaining steps are tracked in [closeout validation](database-migration-closeout-validation.md). No new Audit policy or fact-check tool is included; outbound tests use substitutes.
+
+## Historical execution checkpoints
+
+The following is the original chronological implementation record. Its “pending”, “active” and version claims describe their dated checkpoints, not current deployment status. Historical failures and evidence boundaries are preserved.
+
 
 Derek authorized Subagent-Driven execution of four units, current-data copy inverse before publication, and substitute sends in tests. The work remains active.
 

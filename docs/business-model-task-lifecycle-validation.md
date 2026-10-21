@@ -1,5 +1,7 @@
 # C1: Task lifecycle ownership
 
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+
 This candidate changes Store `2026-10-19.7` / Email53 to Store
 `2026-10-19.8` / Email53. Its source is reviewed B2b `211eabb87` plus
 the accepted local baseline `1aed63ec3c9abb345b685749e70852958bf22776`.

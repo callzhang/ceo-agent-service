@@ -1,5 +1,7 @@
 # 旧 Project / Todo / Update 九字段：根任务验收
 
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+
 2026-10-20。九字段实现、独立 SPEC / QUALITY 审查、两套真实全量数据库副本的正迁—新增事实—schema inverse—实际旧代码冷读—再次正迁均已通过。本记录不表示生产已迁移。整批候选仍有此前两个 A5 原生内容验收 FAIL，`release_ready=false`；没有将该失败改成通过，也没有增加 Audit 策略。
 
 ## 批准的处置

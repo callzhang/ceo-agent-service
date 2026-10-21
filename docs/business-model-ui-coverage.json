@@ -1,6 +1,6 @@
 {
   "source": "frontend/src/app/router.tsx",
-  "boundary": "Actual copy-UI evidence is recorded per scenario. All other scenarios remain not_run; no production acceptance implied.",
+  "boundary": "Browser scenario passed means actual isolated-copy browser observation. Frontend mock tests, copy HTTP traversal, native model chains and database invariants are separate evidence layers below. Generic not_run browser states are not inferred failures or automatically migration gates.",
   "routes": [
     {
       "route": "*",
@@ -45,7 +45,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/",
@@ -95,7 +97,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/attempts/:attemptId",
@@ -156,7 +160,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/attempts/:attemptId/execution/:role",
@@ -213,7 +219,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/attention",
@@ -263,7 +271,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/codex",
@@ -313,7 +323,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/codex/:sessionId",
@@ -365,7 +377,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/config",
@@ -410,7 +424,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/developer-prompt",
@@ -455,7 +471,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/email",
@@ -472,8 +490,11 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/database-redesign-email-metadata-validation.md#parent-actual-copy-and-visible-ui-acceptance"
+          ],
+          "observation": "Historical copy browser: B1 searched synthetic subject/opened complete substituted source."
         },
         {
           "name": "api_error",
@@ -535,7 +556,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/errors",
@@ -580,7 +603,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/errors/:errorId",
@@ -620,7 +645,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/history",
@@ -674,7 +701,9 @@
             "docs/superpowers/specs/2026-10-19-business-model-a1-runtime-copy.json"
           ]
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/history/attempts/:attemptId",
@@ -729,7 +758,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/history/errors/:errorId",
@@ -769,7 +800,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/history/meeting-attempts/:runId",
@@ -824,7 +857,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/history/oa-approvals/:processInstanceId",
@@ -879,7 +914,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/logs",
@@ -924,7 +961,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/meeting-attempts/:runId",
@@ -979,7 +1018,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/notifications",
@@ -1019,7 +1060,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/oa-approvals/:processInstanceId",
@@ -1074,7 +1117,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/scheduled-tasks",
@@ -1129,7 +1174,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/settings",
@@ -1179,7 +1226,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/status",
@@ -1229,7 +1278,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/tasks",
@@ -1294,7 +1345,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/tasks/attention/:attentionId",
@@ -1359,7 +1412,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/tasks/item/:taskId",
@@ -1376,8 +1431,11 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/business-model-legacy-fields-root-acceptance.md"
+          ],
+          "observation": "Historical Store19.11 copy browser: Project54 historical facts / Task736 owner, date evidence and Todo summary; not every underlying row was clicked."
         },
         {
           "name": "api_error",
@@ -1424,7 +1482,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/tasks/legacy-project/:legacyProjectId",
@@ -1441,8 +1501,11 @@
         },
         {
           "name": "populated",
-          "result": "not_run",
-          "evidence": []
+          "result": "passed",
+          "evidence": [
+            "docs/business-model-legacy-fields-root-acceptance.md"
+          ],
+          "observation": "Historical Store19.11 copy browser: Project54 historical facts / Task736 owner, date evidence and Todo summary; not every underlying row was clicked."
         },
         {
           "name": "api_error",
@@ -1474,7 +1537,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/tasks/project/:projectId",
@@ -1539,7 +1604,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
     },
     {
       "route": "/tutorial",
@@ -1579,7 +1646,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/user-feedback",
@@ -1634,7 +1703,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/wechat/conversations",
@@ -1689,7 +1760,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/wechat/deliveries",
@@ -1744,7 +1817,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/wechat/memory-review",
@@ -1799,7 +1874,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/wechat/review",
@@ -1854,7 +1931,9 @@
           "result": "not_run",
           "evidence": []
         }
-      ]
+      ],
+      "migration_scope": "no_changed_storage_identity_in_closeout",
+      "scope_note": "General UI/product behavior is outside this database closeout; no browser pass is inferred."
     },
     {
       "route": "/workers",
@@ -1904,7 +1983,131 @@
           "result": "not_run",
           "evidence": []
         }
+      ],
+      "migration_scope": "affected_read_surface",
+      "scope_note": "Specific migrated identity/source/result checks are tracked under migration_checks; unobserved generic browser states remain not_run."
+    }
+  ],
+  "closeout": {
+    "date": "2026-10-21",
+    "status": "copy_verified_release_pending",
+    "report": "docs/database-migration-closeout-validation.md",
+    "production_release_before_closeout": "a79d8e279",
+    "interpretation": "Only migration_checks are closeout gates. The original general UI inventory is preserved without promoting unobserved browser states."
+  },
+  "migration_checks": [
+    {
+      "id": "history_public_id_links",
+      "result": "passed",
+      "layer": "copy_http",
+      "evidence": [
+        "scripts/validate_database_closeout_copy.py",
+        "docs/business-model-run-owner-parent-validation.md",
+        "docs/validation/2026-10-21-database-closeout.json"
       ]
+    },
+    {
+      "id": "legacy_retained_fields_and_distinct_formal_tasks",
+      "result": "passed",
+      "layer": "copy_http_and_browser_history",
+      "evidence": [
+        "scripts/validate_database_closeout_copy.py",
+        "docs/business-model-legacy-fields-root-acceptance.md",
+        "docs/validation/2026-10-21-database-closeout.json"
+      ]
+    },
+    {
+      "id": "email_preview_bounded_no_original_fetch",
+      "result": "passed",
+      "layer": "copy_http",
+      "evidence": [
+        "scripts/validate_database_closeout_copy.py",
+        "tests/test_email_source_web_api.py",
+        "docs/validation/2026-10-21-database-closeout.json"
+      ]
+    },
+    {
+      "id": "email_unavailable_original_no_body_fallback",
+      "result": "passed",
+      "layer": "copy_http_and_synthetic_http",
+      "evidence": [
+        "scripts/validate_database_closeout_copy.py",
+        "tests/test_email_source_web_api.py",
+        "docs/validation/2026-10-21-database-closeout.json"
+      ]
+    },
+    {
+      "id": "read_paths_preserve_all_persisted_values",
+      "result": "passed",
+      "layer": "copy_sql_digest",
+      "evidence": [
+        "scripts/validate_database_closeout_copy.py",
+        "docs/validation/2026-10-21-database-closeout.json"
+      ]
+    },
+    {
+      "id": "logical_run_and_prepared_receipt_owner",
+      "result": "passed",
+      "layer": "focused_backend_tests",
+      "evidence": [
+        "tests/test_logical_run_owner.py",
+        "tests/test_prepared_action_owner.py",
+        "docs/database-migration-closeout-validation.md"
+      ]
+    },
+    {
+      "id": "nine_kind_lifecycle_and_claim_fences",
+      "result": "passed",
+      "layer": "focused_backend_tests",
+      "evidence": [
+        "tests/test_task_lifecycle_storage.py",
+        "docs/database-migration-closeout-validation.md"
+      ]
+    },
+    {
+      "id": "affected_frontend_presentation",
+      "result": "passed",
+      "layer": "frontend_mock_tests",
+      "evidence": [
+        "docs/database-migration-closeout-validation.md"
+      ]
+    },
+    {
+      "id": "native_consumer_audit_selected_receipt",
+      "result": "passed",
+      "layer": "prior_real_native_copy_fake_send",
+      "evidence": [
+        "docs/database-gpt6-release-validation.md",
+        "docs/validation/2026-10-20-database-gpt6-copy.json"
+      ]
+    },
+    {
+      "id": "current_data_schema_inverse_old_code_reforward",
+      "result": "passed",
+      "layer": "prior_full_copy_inverse",
+      "evidence": [
+        "docs/database-gpt6-release-validation.md"
+      ]
+    },
+    {
+      "id": "new_backup_verified_before_old_cleanup",
+      "result": "passed",
+      "layer": "focused_failure_injection_and_real_copy_backup",
+      "evidence": [
+        "tests/test_database_backup.py",
+        "tests/test_repository_updater.py",
+        "docs/validation/2026-10-21-database-closeout.json"
+      ]
+    },
+    {
+      "id": "deployment_current_source_snapshot",
+      "result": "pending",
+      "layer": "updater_regression_and_live_deploy",
+      "evidence": [
+        "tests/test_repository_updater.py"
+      ],
+      "copy_result": "passed",
+      "live_result": "pending"
     }
   ]
 }

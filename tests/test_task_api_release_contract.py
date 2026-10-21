@@ -75,7 +75,10 @@ def test_task_detail_contains_all_relations_and_anchor_links(tmp_path):
                 "status": "open", "commitment_status": "none",
                 "business_relevance": "relevant",
             }).lastrowid)
-            db.execute("insert into business_task_relations (from_task_id, to_task_id, relation_type, supporting_signal_id) values (?, ?, 'related_to', ?)", (task_id, other_id, signal_id))
+            store.create_business_task_relation_in_transaction(
+                from_task_id=task_id, to_task_id=other_id, relation_type="related_to",
+                status="proposed", supporting_signal_id=signal_id, _db=db,
+            )
             anchor_id = store.create_business_anchor_in_transaction(anchor_type="matter", anchor_ref=f"matter-{index}", title=f"Matter {index}", _db=db)
             store.create_business_task_anchor_link_in_transaction(task_id=task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
     with _client(tmp_path) as client:
@@ -89,11 +92,21 @@ def test_task_detail_contains_all_follow_ups_beyond_store_page(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = store.create_business_task(title="Follow up", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
-        signal_id = _signal(store, db, "follow-up-source")
+        signal_id = store.create_business_task_signal_in_transaction(
+            source_type="test", source_ref="follow-up-source",
+            evidence_text="Status?", dedupe_key="follow-up-source",
+            conversation_id="conversation-1", _db=db,
+        )
+        store.link_business_task_evidence_in_transaction(
+            task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db,
+        )
         for index in range(201):
-            db.execute(
-                "insert into business_task_follow_ups (business_task_id, source_signal_id, target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key) values (?, ?, 'conversation-1', 'group', 'Status?', '2026-10-01T00:00:00+00:00', ?)",
-                (task_id, signal_id, f"follow-up-{index}"),
+            store.create_business_task_follow_up(
+                business_task_id=task_id, source_signal_id=signal_id,
+                target_conversation_id="conversation-1", target_kind="group",
+                question_text="Status?", scheduled_at="2026-10-01T00:00:00+00:00",
+                owner_user_id="owner-1", owner_name="Owner",
+                dedupe_key=f"follow-up-{index}", _db=db,
             )
     with _client(tmp_path) as client:
         detail = client.get(f"/api/console/tasks/items/{task_id}").json()["item"]

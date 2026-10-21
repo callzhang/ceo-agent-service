@@ -1,5 +1,7 @@
 # A5a — prepared message owns its dispatch claim and accepted receipt
 
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+
 This is the local implementation and review handoff for Store `2026-10-19.8` /
 Email53 → Store `2026-10-19.9` / Email53. The independently archived source is
 `c4a9e794d0fe7b8954a8746b01fec118337dc188`. At the implementer handoff, this worktree had not committed, pushed, invoked

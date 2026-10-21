@@ -12,7 +12,7 @@
 
 ## 0. 计划状态与执行边界
 
-这是实施总计划，现已进入隔离 worktree 实施。A1 运行代码、数据库副本正逆迁移和真实 CLI／替身回执链路已有验收证据；A2 实施中，其他单元尚未完成。当前事实以 `docs/business-model-execution-progress.md` 及各单元验收报告为准；下面的代码版本和统计保留为制定计划时的基线，不能当作最新部署状态。
+这是实施总计划，A/B/C/D 已通过组合副本验证与回退演练，并随 Store19.11／Email53 上线。最新已核实状态以 `docs/business-model-execution-progress.md`、最终发布验收及 2026-10-21 收尾记录为准。下方未勾选清单保留制定计划时的原文，不表示对应实现仍未完成；逐项证据见总进度表。
 
 - 已部署代码基线：`a3779da46b1563228a0f3de8948227d1e6cfec5b`。
 - 计划 worktree：`/Users/derek/.codex/worktrees/business-model-plans/ceo-agent-service`。
