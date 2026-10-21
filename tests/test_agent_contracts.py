@@ -1339,6 +1339,34 @@ def test_review_feedback_required_on_return_and_reject(outcome):
     ).outcome.value == outcome
     with pytest.raises(ValidationError):
         AuditAgentWireResult.model_validate({**payload, "feedback": None})
+    without_feedback = {key: value for key, value in payload.items() if key != "feedback"}
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate(without_feedback)
+
+
+def test_audit_approve_omitted_feedback_means_no_feedback():
+    wire_schema = AuditAgentWireResult.model_json_schema()
+    assert "feedback" not in wire_schema["$defs"]["_AuditWire"]["required"]
+    assert "feedback" in AuditAgentResult.model_json_schema()["required"]
+    payload = {
+        "outcome": "approve", "summary": "Exact candidate reviewed",
+        "evidence_refs": ["message:1"], "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "error_code": "", "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    result = AuditAgentWireResult.model_validate(payload).to_result(
+        proposal_revision=0, candidate_digest="a" * 64,
+    )
+    assert result.outcome.value == "approve"
+    assert result.feedback is None
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate({
+            **payload,
+            "feedback": {
+                "rule": "Any", "observation": "Wrong", "requested_revision": "Revise",
+            },
+        })
 
 
 def test_audit_wire_omits_service_owned_candidate_bindings():

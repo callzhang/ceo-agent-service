@@ -3361,6 +3361,8 @@ Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单�
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 
+Audit 传输结果的 `feedback` 在 `approve` 或 `failed` 时可省略，解析为 `None`；在 `return` 或 `reject` 时仍必须提供完整反馈。批准结果若携带非空反馈仍拒绝。服务绑定的候选、审查业务模型、结果校验、审核决策和外部动作权限不变。这个字段语义对齐针对两次完整轨迹中唯一的格式错误，验证见 `docs/audit-null-feedback-validation.md`。
+
 Worker 上下文回归分别验证当前业务事实、执行阶段和会话恢复，不要求把 Developer 的角色合同复制进用户上下文。Consumer 的真实命令捕获回归另行检查 Developer 中仍包含提案／审核／系统执行边界，且用户输入不重复该角色合同；精简上下文不代表移除安全合同。
 
 Task Agent 的当前 Skill 合同回归核对所选根目录的准确文件与完整内容，不固定旧版本号。定时输入仍验证未采用历史冻结正文、保留运行身份且未修改原输入，当前 Project／Task 输出边界断言继续保留。
