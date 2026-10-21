@@ -21,6 +21,7 @@ from app.task_agent import (
     build_task_agent_prompt,
     process_work_item,
     _parse_task_agent_decision,
+    _encode_task_agent_result,
     _canonicalize_current_source_provenance,
     _report_project_registry_title,
     _task_result_validation_repair_prompt,
@@ -1276,6 +1277,39 @@ def test_task_result_validation_repair_prompt_after_runtime_path_leak():
     )
     assert "Do not include local filesystem paths" in prompt
     assert not contains_local_runtime_leak(prompt)
+
+
+def test_task_result_validation_identifies_credential_field_without_echoing_value():
+    marker = "eyJabc123.def456.ghi789"
+    decision = {
+        "project_decisions": [],
+        "project_assessments": [],
+        "task_decisions": [],
+        "update_summary": "No relevant Project or Task was found.",
+        "search_trace": [{
+            "source_kind": "memory",
+            "result": "none",
+            "source_ref": "memory:synthetic",
+            "reason": f"No match after checking {marker}.",
+        }],
+    }
+    raw = _agent_message_jsonl(json.dumps(decision))
+
+    with pytest.raises(RoutedResultValidationError, match="credential") as raised:
+        _encode_task_agent_result(raw)
+    prompt = _task_result_validation_repair_prompt(raw)
+
+    assert "search_trace.0.reason" in str(raised.value)
+    assert "search_trace.0.reason" in prompt
+    assert "credential-like" in prompt
+    assert marker not in str(raised.value)
+    assert marker not in prompt
+    assert not contains_credential(prompt)
+
+    decision["search_trace"][0]["reason"] = "No matching evidence was found."
+    assert _encode_task_agent_result(
+        _agent_message_jsonl(json.dumps(decision))
+    )
 
 
 def test_task_result_validation_repair_prompt_caps_problem_list():

@@ -4409,6 +4409,11 @@ as a candidate. Malformed relationship syntax supplies no inferred relationship
 errors. Supporting membership violations are reported together. Full candidate
 validation, the native output schema, and the one-correction budget are unchanged.
 
+The Task Agent codec's existing sensitive-result rejection now gives a schema-valid
+credential-like result a field-path-only correction hint in the same Agent session.
+The value is never copied into the hint. Runtime-path guidance, rejection rules,
+and the one-correction budget remain unchanged.
+
 Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current State Memory and generic publication readers select the complete current declaration.
 
 
