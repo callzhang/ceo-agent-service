@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from app.dws_client import DwsError
@@ -26,6 +27,73 @@ def _source_uuid(source_ref: str) -> str:
     if not uuid or not separator or len(suffix) != 64 or any(c not in "0123456789abcdef" for c in suffix):
         raise MinutesInvalidLocator("invalid AI Minutes source reference")
     return uuid
+
+
+def _list_window(dws: Any, uuid: str) -> tuple[str, str, dict[str, Any]]:
+    """Bound the list using the provider's exact UUID and start time."""
+    payload = dws.get_minutes_info(uuid)
+    if not isinstance(payload, dict) or not isinstance(payload.get("result"), dict):
+        raise MinutesSourceIncomplete("AI Minutes exact info unavailable")
+    info = payload["result"]
+    if info.get("taskUuid") != uuid:
+        raise MinutesSourceIncomplete("AI Minutes exact info identity differs")
+    start_ms = info.get("startTime")
+    if isinstance(start_ms, bool) or not isinstance(start_ms, int):
+        raise MinutesSourceIncomplete("AI Minutes exact start time unavailable")
+    try:
+        instant = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise MinutesSourceIncomplete("AI Minutes exact start time invalid") from exc
+    if not 2000 <= instant.year <= 2100:
+        raise MinutesSourceIncomplete("AI Minutes exact start time invalid")
+    day = datetime.combine(instant.date(), time.min, tzinfo=timezone.utc)
+    return (
+        (day - timedelta(days=1)).isoformat(),
+        (day + timedelta(days=2)).isoformat(),
+        info,
+    )
+
+
+def _list_exact_minutes(
+    dws: Any, uuid: str, *, start: str, end: str,
+    page_cache: dict[tuple[str, str, str], dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    from app.task_scanners import _minutes_id
+
+    meeting = None
+    cursor = ""
+    seen_tokens: set[str] = set()
+    while True:
+        cache_key = (start, end, cursor)
+        if page_cache is not None and cache_key in page_cache:
+            page = page_cache[cache_key]
+        else:
+            page = dws.list_minutes_page(
+                scope="all", limit=50, cursor=cursor, start=start, end=end,
+            )
+        if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+            raise MinutesSourceIncomplete("malformed AI Minutes list page")
+        has_more = page.get("has_more")
+        next_token = page.get("next_token")
+        if not isinstance(has_more, bool) or not isinstance(next_token, str):
+            raise MinutesSourceIncomplete("missing AI Minutes pagination state")
+        if has_more != bool(next_token):
+            raise MinutesSourceIncomplete("contradictory AI Minutes pagination")
+        for item in page["items"]:
+            if not isinstance(item, dict):
+                raise MinutesSourceIncomplete("malformed AI Minutes list item")
+            if _minutes_id(item) == uuid:
+                if meeting is not None:
+                    raise MinutesSourceIncomplete("duplicate exact AI Minutes UUID")
+                meeting = item
+        if has_more and next_token in seen_tokens:
+            raise MinutesSourceIncomplete("repeated AI Minutes page token")
+        if page_cache is not None:
+            page_cache[cache_key] = page
+        if not has_more:
+            return meeting
+        seen_tokens.add(next_token)
+        cursor = next_token
 
 
 def minutes_provider_locator(
@@ -85,9 +153,9 @@ def read_minutes_source_body(
     *,
     source_ref: str,
     dws: Any,
-    page_cache: dict[str, dict[str, Any]] | None = None,
+    page_cache: dict[tuple[str, str, str], dict[str, Any]] | None = None,
 ) -> str:
-    """Exhaust the unwindowed list before accepting one exact UUID record."""
+    """Verify one exact UUID in complete time-bounded provider pages."""
     uuid = _source_uuid(source_ref)
     if not isinstance(locator, dict) or not {"kind", "minutes_id", "components"} <= set(locator):
         raise MinutesInvalidLocator("invalid AI Minutes locator")
@@ -108,43 +176,19 @@ def read_minutes_source_body(
             raise MinutesInvalidLocator("missing or unknown transcript excerpt format")
     if set(locator) != expected_keys:
         raise MinutesInvalidLocator("invalid AI Minutes locator fields")
-    from app.task_scanners import _canonical_minutes_todos_payload, _minutes_id, _minutes_todo_actions
+    from app.task_scanners import _canonical_minutes_todos_payload, _minutes_todo_actions
 
-    meeting = None
-    cursor = ""
-    seen_tokens: set[str] = set()
     try:
-        while True:
-            page = (
-                page_cache[cursor]
-                if page_cache is not None and cursor in page_cache
-                else dws.list_minutes_page(scope="all", limit=50, cursor=cursor)
-            )
-            if not isinstance(page, dict) or not isinstance(page.get("items"), list):
-                raise MinutesSourceIncomplete("malformed AI Minutes list page")
-            has_more = page.get("has_more")
-            next_token = page.get("next_token")
-            if not isinstance(has_more, bool) or not isinstance(next_token, str):
-                raise MinutesSourceIncomplete("missing AI Minutes pagination state")
-            if has_more != bool(next_token):
-                raise MinutesSourceIncomplete("contradictory AI Minutes pagination")
-            for item in page["items"]:
-                if not isinstance(item, dict):
-                    raise MinutesSourceIncomplete("malformed AI Minutes list item")
-                if _minutes_id(item) == uuid:
-                    if meeting is not None:
-                        raise MinutesSourceIncomplete("duplicate exact AI Minutes UUID")
-                    meeting = item
-            if has_more and next_token in seen_tokens:
-                raise MinutesSourceIncomplete("repeated AI Minutes page token")
-            if page_cache is not None:
-                page_cache[cursor] = page
-            if not has_more:
-                break
-            seen_tokens.add(next_token)
-            cursor = next_token
+        start, end, info = _list_window(dws, uuid)
+        meeting = _list_exact_minutes(dws, uuid, start=start, end=end, page_cache=page_cache)
         if meeting is None:
             raise MinutesSourceUnavailable("AI Minutes UUID missing")
+        if any(
+            info.get(field) != meeting.get(field)
+            for field in ("taskUuid", "title", "startTime", "endTime")
+            if field in info
+        ):
+            raise MinutesSourceIncomplete("AI Minutes exact info differs from list item")
         todos_payload = dws.get_minutes_todos(uuid)
         if not isinstance(todos_payload, dict) or _minutes_todo_actions(todos_payload) is None:
             raise MinutesSourceIncomplete("AI Minutes actions unrecognized")

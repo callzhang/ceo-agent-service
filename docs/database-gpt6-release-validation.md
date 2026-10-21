@@ -10,11 +10,11 @@
 - 正式发布入口在完整副本上正迁至19.11，保留事实使用源侧列名、SQL 类型、ROWID、真实 sequence、父子引用及 FK finding 独立比较，不使用模型结果作为 schema oracle。
 - 九项已批准控制／评估字段永久退休；schema inverse 只补中性默认值。provenance、必要业务事实、完整 changes_json、follow_up_question、import_task_id 和回执继续保留。
 
-## GPT-6 型号与原生来源
+## CLI0.154 时的 GPT-6 型号与原生来源
 
 首次按生产 `.env` 已保存的设置使用 `gpt-6-luna/high`，ChatGPT 登录通道返回400，尚未产生候选或执行任何发送。独立 `gpt-6-sol` 探针同样返回400。已有 API 路线的 Luna 探针返回429，未将这些调用计为语义验收。
 
-应 Derek 要求重新通过原生 `codex app-server` 的 `model/list` 读取实时清单：当前 ChatGPT 通道的 GPT-6 只有 `gpt-6-astra`，且标为默认；API `/models` 列出的 Luna／Sol 不表示它们能在 ChatGPT 通道使用。 进一步只读核对：生产进程 Settings 当前有效值仍为 `gpt-5.6-luna/high`，与文件中已保存的 `gpt-6-luna` 不同；`load_env_file()` 在新进程导入配置时读取该文件，launchd 未另设模型覆盖。不能把文件改动说成当前进程已使用新型号，也不能假设重启后有效型号不变。最终验收明确固定单一路线 `codex_oauth`、`gpt-6-astra/high`，不自动切换到旧模型。
+应 Derek 要求重新通过原生 `codex app-server` 的 `model/list` 读取实时清单：当时 CLI0.154 的 ChatGPT 通道列表仅有 `gpt-6-astra`，且标为默认；API `/models` 列出的 Luna／Sol 不表示它们能在 ChatGPT 通道使用。 进一步只读核对：生产进程 Settings 当前有效值仍为 `gpt-5.6-luna/high`，与文件中已保存的 `gpt-6-luna` 不同；`load_env_file()` 在新进程导入配置时读取该文件，launchd 未另设模型覆盖。不能把文件改动说成当前进程已使用新型号，也不能假设重启后有效型号不变。该轮验收明确固定单一路线 `codex_oauth`、`gpt-6-astra/high`，不自动切换到旧模型。
 
 脚本 [validate_business_model_gpt6_copy.py](../scripts/validate_business_model_gpt6_copy.py) 在不同进程分别执行 prepare／select／finish。真实 Consumer／Audit 只读取本任务合成 artifact 和现有系统动作契约；执行端使用现有 InMemoryProvider，对外真实发送次数必须为0。每次调用的实际型号及 effort 从原生 trajectory 的限定行范围读取，原轨迹仍只保存在 Codex 自己的空间，验收记录只保存定位和元数据。
 
@@ -48,4 +48,16 @@ Derek 拒绝因成本切生产 Astra，并升级原生CLI到0.163.0。重新读�
 
 同步upstream7d00e82e2的WorkSummary与Email重试修复，并将其新增历史Run fixture改为当前logical接口；81项相关检查通过。迁移DDL和转换模块与此前完整inverse／实际旧代码冷读／reforward验证字节不变，本次只针对新增运行代码和升级后的Luna调用补验，没有重复原schema实验或将Astra的旧通过改记成Luna结果。脚本增加显式--model选择及实际CLI版本记录，仍逐次核对原生turn_context中的型号和high；独立增量审查通过。
 
-**尚未部署。** 型号选择已解决，现按标准quiet deploy发布，再核对新PID、healthz、队列、Attention、History、Store19.11／Email53和有效Luna设置。此处副本通过不代表线上已部署。
+## 实际生产发布结果
+
+2026-10-20 21:58 Pacific（2026-10-21 04:58 UTC），标准 `python -m app.deploy --target-commit a79d8e279c3b40b15590d8cf34aa156090c67236` 成功，将生产从7d00e82e更新至a79d8e279。等待现有Work Summary输入416320及其租约自然释放后才正常停止服务、迁移与重启；没有skip-quiet、手动kill、重放或测试真发。操作deploy-50fc3d71-7745-4907-92ff-1932c5338cd6记录succeeded，无error。
+
+线上只读核验：新supervisor PID30806，生产Git干净；Store19.11／Email53，10张核心表加既有迁移账本共11张普通表；九字段／退休索引缺失检查通过，integrity_check=ok，原FK finding仍只有runs190042→tasks1，未制造新finding。Healthz、Status、Attention、History返回200。API有效主型号gpt-6-luna/high，生产PATH解析的CLI0.163.0；codex_api备用型号仍5.6-luna，route顺序及其他配置保持。
+
+初次读回pending14／processing0／failed21，随后恢复正常派发且failed仍21；现有21项历史失败与11项Attention不是本发布修复的业务结果，不把它们说成全部成功。主文件487,153,664字节，1,125空闲页；未执行VACUUM。Astra和Luna两个副本case合计2次替身发送及核验，真实测试发送0。实际线上型号／schema与副本验收分别记录，不能将生产Settings读回替代某个具体对外业务结果的provider回执。
+
+## 最新备份与回退来源元数据
+
+标准部署复用了24小时内完整的当日备份，后续核验发现它的schema是19.7／Email53，不能称为本次19.8来源快照。本轮未修改该24小时复用策略代码。发布后另行使用SQLite一致性backup建立当前19.11／Email53备份，完整性检查、complete标记及版本核对通过后，才删除旧19.7文件；只保留最新auto-reply-2026-10-20.sqlite3（487,153,664字节）。两份只在新备份验证期间同时存在。
+
+当前事实schema inverse仍由此前实际19.8副本完整往返验证；另保留既有BusinessLegacyFieldSchemaRelease的original_version、email_versions、source_schema和source_fk小型元数据收据，来源是已验证的19.8输入，含原marker时钟与实际声明变体。上游并发提交只改运行重试及文档，未改19.8声明或时钟。该收据没有业务行、输入正文或退休九字段的旧值；它与当前完整备份的用途不同，不能把19.11备份冒充19.8原文件。

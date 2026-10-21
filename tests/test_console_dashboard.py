@@ -1,6 +1,7 @@
 """Dashboard uses current persisted execution facts, without changing them."""
 
 from datetime import UTC, datetime
+import sqlite3
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,6 +11,54 @@ from app.task8_storage import task8_set_parts
 from app.task_lifecycle_storage import encoded
 
 NOW = datetime(2026, 10, 20, 17, 0, tzinfo=UTC)
+
+
+def test_runtime_metadata_supports_deployed_runs_schema_without_summary_input_id():
+    from app.web_api.dashboard import _runtime_metadata
+
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.executescript(
+        """
+        create table runs (
+            id integer primary key,
+            record_type text,
+            legacy_key text,
+            task_id integer,
+            parent_id integer,
+            execution_generation text,
+            role text,
+            status text,
+            lease_owner text,
+            lease_expires_at text,
+            started_at text,
+            updated_at text,
+            workload_kind text,
+            workload_key text,
+            runtime_kind text,
+            model text
+        );
+        create table tasks (
+            id integer primary key,
+            record_type text,
+            lifecycle_status text,
+            "reply_tasks__execution_generation" text,
+            lifecycle_lease_owner text,
+            lifecycle_lease_expires_at text
+        );
+        insert into tasks values
+            (9, 'meeting_alignment_jobs', 'processing', 'generation-1', 'worker', '2026-10-20T17:10:00+00:00');
+        insert into runs values
+            (1, 'meeting_alignment_runs', '55', 9, null, null, null, 'running', '', '',
+             '2026-10-20T16:59:00+00:00', '2026-10-20T16:59:00+00:00',
+             null, null, null, null),
+            (2, 'agent_runtime_attempts', '2', null, null, null, 'consumer', 'running',
+             'worker', '2026-10-20T17:10:00+00:00', '2026-10-20T16:59:00+00:00',
+             '2026-10-20T16:59:00+00:00', 'meeting', '55', 'codex_cli', 'test-model');
+        """
+    )
+
+    assert _runtime_metadata(db, "2026-10-20T17:00:00+00:00")[9]["model"] == "test-model"
 
 
 def seed(store, key, *, status="pending", attempts=0, lease=""):

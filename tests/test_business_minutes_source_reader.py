@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -19,7 +20,8 @@ from test_business_source_reader import signal
 
 UUID = "a36a9b28-25f5-4a7e-8f85-18009e9ea771"
 REF = f"{UUID}#todos-sha256={'a' * 64}"
-MEETING = {"taskUuid": UUID, "title": "会议🙂"}
+START_MS = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
+MEETING = {"taskUuid": UUID, "title": "会议🙂", "startTime": START_MS, "endTime": START_MS + 3_600_000}
 TODOS = {"result": {"actions": [{"title": "办事"}]}}
 PARAGRAPHS = [{"startTime": 0, "endTime": 2000, "nickName": "甲", "paragraph": "请办事。"}]
 
@@ -35,6 +37,14 @@ class FakeDws:
     def list_minutes_page(self, **kwargs):
         self.calls.append(("list", kwargs))
         return self.pages[len([c for c in self.calls if c[0] == "list"]) - 1]
+
+    def get_minutes_info(self, uuid):
+        self.calls.append(("info", uuid))
+        item = next(
+            (item for page in self.pages for item in page["items"] if item.get("taskUuid") == uuid),
+            MEETING,
+        )
+        return {"result": {key: item[key] for key in ("taskUuid", "title", "startTime", "endTime")}}
 
     def get_minutes_todos(self, uuid):
         self.calls.append(("todos", uuid))
@@ -64,8 +74,11 @@ def test_two_components_exact_multibyte_and_once_per_version():
     reader = RequestSourceReader(provider_reader=fake)
     assert isinstance(reader.resolve(binding, source_ref=REF, quote="会议🙂"), AvailableSource)
     assert isinstance(reader.resolve(binding), AvailableSource)
-    assert [name for name, _ in fake.calls] == ["list", "todos"]
-    assert fake.calls[0][1] == {"scope": "all", "limit": 50, "cursor": ""}
+    assert [name for name, _ in fake.calls] == ["info", "list", "todos"]
+    assert fake.calls[1][1] == {
+        "scope": "all", "limit": 50, "cursor": "",
+        "start": "2026-10-19T00:00:00+00:00", "end": "2026-10-22T00:00:00+00:00",
+    }
     assert reader.resolve(binding, quote="absent").reason is SourceUnavailableReason.QUOTE_MISSING
     assert reader.resolve(binding, source_ref="wrong").reason is SourceUnavailableReason.SOURCE_REF_MISMATCH
     assert reader.resolve(replace(binding, provider_locator_json='{"other":1}')).reason is SourceUnavailableReason.BINDING_CONFLICT
@@ -75,7 +88,7 @@ def test_two_components_exact_multibyte_and_once_per_version():
 def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
     other_uuid = "b46b9c39-36f6-5b8f-9f96-29110fafb882"
     other_ref = f"{other_uuid}#todos-sha256={'b' * 64}"
-    other_meeting = {"taskUuid": other_uuid, "title": "另一场会议"}
+    other_meeting = {"taskUuid": other_uuid, "title": "另一场会议", "startTime": START_MS, "endTime": START_MS + 3_600_000}
     first_body = _canonical_minutes_todos_payload(
         minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[]
     )
@@ -94,7 +107,7 @@ def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
 
     assert isinstance(reader.resolve(bound(first_body)), AvailableSource)
     assert isinstance(reader.resolve(other_binding), AvailableSource)
-    assert [name for name, _ in fake.calls] == ["list", "list", "todos", "todos"]
+    assert [name for name, _ in fake.calls] == ["info", "list", "list", "todos", "info", "todos"]
 
     changed = FakeDws(pages=[
         {"items": [{**MEETING, "title": "已修改"}, other_meeting],
@@ -103,7 +116,106 @@ def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
     assert RequestSourceReader(provider_reader=changed).resolve(
         bound(first_body)
     ).reason is SourceUnavailableReason.VERSION_MISMATCH
-    assert [name for name, _ in changed.calls] == ["list", "todos"]
+    assert [name for name, _ in changed.calls] == ["info", "list", "todos"]
+
+
+def test_exact_info_bounds_list_and_reuses_pages_for_same_day_sources():
+    other_uuid = "b46b9c39-36f6-5b8f-9f96-29110fafb882"
+    start_ms = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
+    meetings = [
+        {**MEETING, "startTime": start_ms, "endTime": start_ms + 3_600_000},
+        {"taskUuid": other_uuid, "title": "另一场会议", "startTime": start_ms + 60_000,
+         "endTime": start_ms + 3_660_000},
+    ]
+
+    class TimedDws(FakeDws):
+        def __init__(self):
+            super().__init__(pages=[
+                {"items": [meetings[0]], "has_more": True, "next_token": "next"},
+                {"items": [meetings[1]], "has_more": False, "next_token": ""},
+            ])
+
+        def get_minutes_info(self, uuid):
+            self.calls.append(("info", uuid))
+            item = next(item for item in meetings if item["taskUuid"] == uuid)
+            return {"result": {key: item[key] for key in ("taskUuid", "title", "startTime", "endTime")}}
+
+    bindings = []
+    for item in meetings:
+        ref = f"{item['taskUuid']}#todos-sha256={'a' * 64}"
+        body = _canonical_minutes_todos_payload(minutes=item, todos_payload=TODOS, transcript_excerpts=[])
+        fact = signal(body, source_type="ai_minutes", source_ref=ref)
+        bindings.append(SourceVersionBinding.from_signal(fact, provider_locator=minutes_provider_locator(fact)))
+
+    fake = TimedDws()
+    reader = RequestSourceReader(provider_reader=fake)
+    assert all(isinstance(reader.resolve(binding), AvailableSource) for binding in bindings)
+    assert [name for name, _ in fake.calls] == ["info", "list", "list", "todos", "info", "todos"]
+    list_calls = [args for name, args in fake.calls if name == "list"]
+    assert [args["cursor"] for args in list_calls] == ["", "next"]
+    assert all(args["start"] == "2026-10-19T00:00:00+00:00" for args in list_calls)
+    assert all(args["end"] == "2026-10-22T00:00:00+00:00" for args in list_calls)
+
+
+def test_exact_info_conflict_or_scoped_duplicate_rejects_source():
+    start_ms = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
+    meeting = {**MEETING, "startTime": start_ms, "endTime": start_ms + 3_600_000}
+    body = _canonical_minutes_todos_payload(minutes=meeting, todos_payload=TODOS, transcript_excerpts=[])
+
+    class TimedDws(FakeDws):
+        def __init__(self, *, wrong_title=False, duplicate=False):
+            items = [meeting, meeting] if duplicate else [meeting]
+            super().__init__(pages=[{"items": items, "has_more": False, "next_token": ""}])
+            self.wrong_title = wrong_title
+
+        def get_minutes_info(self, uuid):
+            self.calls.append(("info", uuid))
+            return {"result": {"taskUuid": uuid, "title": "不一致" if self.wrong_title else meeting["title"],
+                               "startTime": start_ms, "endTime": meeting["endTime"]}}
+
+    for fake in (TimedDws(wrong_title=True), TimedDws(duplicate=True)):
+        assert RequestSourceReader(provider_reader=fake).resolve(bound(body)).reason is SourceUnavailableReason.SOURCE_INCOMPLETE
+        assert [name for name, _ in fake.calls] == ["info", "list"]
+
+
+def test_exact_info_without_start_time_stops_before_list_read():
+    body = _canonical_minutes_todos_payload(
+        minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[]
+    )
+
+    class IncompleteInfoDws(FakeDws):
+        def get_minutes_info(self, uuid):
+            self.calls.append(("info", uuid))
+            return {"result": {"taskUuid": uuid}}
+
+    fake = IncompleteInfoDws()
+    assert RequestSourceReader(provider_reader=fake).resolve(
+        bound(body)
+    ).reason is SourceUnavailableReason.SOURCE_INCOMPLETE
+    assert [name for name, _ in fake.calls] == ["info"]
+
+
+def test_scoped_absence_is_source_missing_without_unbounded_scan():
+    start_ms = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
+    meeting = {**MEETING, "startTime": start_ms, "endTime": start_ms + 3_600_000}
+    body = _canonical_minutes_todos_payload(minutes=meeting, todos_payload=TODOS, transcript_excerpts=[])
+
+    class DelayedIndexDws(FakeDws):
+        def get_minutes_info(self, uuid):
+            self.calls.append(("info", uuid))
+            return {"result": {"taskUuid": uuid, "title": meeting["title"],
+                               "startTime": start_ms, "endTime": meeting["endTime"]}}
+
+        def list_minutes_page(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return {"items": [] if kwargs.get("start") else [meeting],
+                    "has_more": False, "next_token": ""}
+
+    fake = DelayedIndexDws()
+    assert RequestSourceReader(provider_reader=fake).resolve(bound(body)).reason is SourceUnavailableReason.SOURCE_MISSING
+    assert [args.get("start", "") for name, args in fake.calls if name == "list"] == [
+        "2026-10-19T00:00:00+00:00",
+    ]
 
 
 def test_four_components_and_changed_current_body():
@@ -119,7 +231,7 @@ def test_four_components_and_changed_current_body():
     binding = bound(body)
     assert json.loads(binding.provider_locator_json)["components"] == ["meeting", "todos", "transcript_excerpts", "meeting_summary"]
     assert isinstance(RequestSourceReader(provider_reader=fake).resolve(binding, quote="甲：请办事。"), AvailableSource)
-    assert [name for name, _ in fake.calls] == ["list", "todos", "transcript", "summary"]
+    assert [name for name, _ in fake.calls] == ["info", "list", "todos", "transcript", "summary"]
     changed = FakeDws(todos=timed_todos, transcript={"paragraphs": PARAGRAPHS}, summary={"result": {"fullSummary": "changed"}})
     assert RequestSourceReader(provider_reader=changed).resolve(binding).reason is SourceUnavailableReason.VERSION_MISMATCH
 
