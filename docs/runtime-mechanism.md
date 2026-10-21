@@ -3749,7 +3749,9 @@ Consumer/Audit Codex commands use the existing per-tool native output budget of3
 Consumer 通用 Skill 约定只规定独立选择并应用适用 Skill；每轮 Task 发现入口统一决定何时读取，避免通用层的读取措辞与冻结来源复用条件冲突。安装来源和未选择 Skill 的既有读取入口不变，不新增缓存或读取回执。
 
 
-Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000，用于完整交付已请求的消息字段；该设置冷启动和续会话均保留。不提高全局输出限额，不改变消息查询参数、窗口工具、正文或分流/审核规则；长目录与文件读取保持各自现有单工具设置。
+Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000，用于完整交付已请求的消息字段；该设置冷启动和续会话均保留。不提高全局输出限额，不改变窗口工具、正文或分流/审核规则；长目录与文件读取保持各自现有单工具设置。
+
+`read_dingtalk_messages` 可用 `direct_open_dingtalk_id` 传入触发消息的对方身份；该参数即选择单聊路径，无需同时设置 `single_chat=true`。DWS 通过 `list-direct --open-dingtalk-id` 读取，不把单聊 CID 当作用户身份。显式设置 `single_chat=true` 却未给身份且标题为空时，在服务工具边界明确失败，避免空字符串联系人搜索；标题解析和群聊读取沿用原路径。此变更不增加 Audit 规则或改变消息正文投影。
 
 `agent_cli.read_dingtalk_messages` 只在每条消息顶层字符串与同条 `raw_payload` 直接字符串字段完全相同、且按 FastMCP 实际缩进 JSON 格式放入 `messages` 数组后的模型可见文本更短时，才将重复的原始字段值改为 `null`，增加 `raw_payload_field_refs` 指向仍完整保留的顶层字段。展开引用可恢复原始字段值和键顺序；未重复字段、引用消息、反应、资源、身份、消息数量和顺序、失败结果保持原样。此投影只发生在该工具返回边界，不改变 DWS 查询、其他 MCP 工具、Prompt 或审核策略。
 
