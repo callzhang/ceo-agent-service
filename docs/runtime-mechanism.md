@@ -4690,6 +4690,9 @@ business-object ownership, leases and runtime model/role metadata without native
 trajectory hydration. Queued includes initial work and source-scheduled retries;
 Active includes current valid Task/runtime leases and current provider-action
 processing. Expired/superseded execution records do not become live Agents.
+If a deployed `runs` schema lacks the optional summary-input link, runtime
+metadata omits that association while queue rows, counts and other available
+lease metadata remain readable.
 Retry ordinals exclude first execution and remain unknown where the source has
 no execution counter; Audit content revisions are not retries. Source state,
 retry/recovery policy, authorization and execution mechanisms do not change.

@@ -3737,7 +3737,9 @@ WeChat Memory import, Memory/Todo outbox, email-action and scheduled-dispatch me
 counts and paginated rows. Task/Run generation, business-object identity and
 existing lease facts determine the current execution view; expired Task leases
 are not presented as running. Native runtime metadata adds Agent role/model and
-start/update times without loading trajectories. Email provider operations use
+start/update times without loading trajectories. When a deployed `runs` schema
+does not expose the optional summary-input link, Dashboard omits only that link
+and still returns queue rows and other available runtime metadata. Email provider operations use
 their existing current-plan processing state and native retry predicate. Unknown
 attempt counts remain unknown; first execution is zero retries, a queued item
 with two prior executions is about to retry twice, and a running third execution
