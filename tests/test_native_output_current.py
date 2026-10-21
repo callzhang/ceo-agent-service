@@ -7,11 +7,17 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from app.agent_result import ResultParseError
-from app.agent_wire_contracts import AuditAgentWireResult, consumer_wire_model
+from app.agent_wire_contracts import (
+    AuditAgentWireResult,
+    consumer_wire_model,
+    parse_audit_agent_wire_result,
+    parse_consumer_agent_wire_result,
+)
 from app.native_agent_output import (
     native_output_schema,
     native_output_schema_path,
     parse_native_output,
+    parse_native_result,
 )
 
 
@@ -66,6 +72,48 @@ def test_native_oa_return_restores_target_and_payload_with_original_values():
     assert result.proposal.actions[0].payload == payload
     with pytest.raises(ResultParseError):
         parse_native_output(_event(native), "consumer", purpose="general")
+
+
+def test_native_result_keeps_the_existing_purpose_parser():
+    target = {
+        "process_instance_id": "p", "task_id": "001", "target_activity_id": "a",
+    }
+    payload = {"remark": "请补充材料", "revert_action": "REVERT_FOR_RESUBMIT"}
+    native = _consumer("return", purpose="oa", target=target, payload=payload)
+    result = parse_native_result(
+        _event(native), "consumer", purpose="oa",
+        parser=lambda raw: parse_consumer_agent_wire_result(raw, purpose="oa"),
+    )
+    assert result.purpose_output["action"] == "return"
+    assert result.proposal.actions[0].target == target
+    assert result.proposal.actions[0].payload == payload
+
+
+def test_native_result_keeps_audit_binding_and_parser_failures():
+    native = AuditAgentWireResult.model_validate({
+        "outcome": "approve", "summary": "Verified candidate", "risk": "low",
+        "error_code": None, "error_retryable": False,
+        "error_authorization_required": False,
+        "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "evidence_refs": ["source:1"],
+        "feedback": None,
+    }).model_dump(mode="json")
+    result = parse_native_result(
+        _event(native), "audit",
+        parser=lambda raw: parse_audit_agent_wire_result(
+            raw, proposal_revision=3, candidate_digest="a" * 64,
+        ),
+    )
+    assert result.proposal_revision == 3
+    assert result.candidate_digest == "a" * 64
+
+    def reject_candidate(_raw):
+        raise ResultParseError("candidate mismatch")
+
+    with pytest.raises(ResultParseError, match="candidate mismatch"):
+        parse_native_result(
+            _event(native), "audit", parser=reject_candidate,
+        )
 
 
 @pytest.mark.parametrize("action,target,payload", [

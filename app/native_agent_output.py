@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from pydantic import JsonValue, RootModel, ValidationError
 
 from app.agent_result import ResultParseError, parse_agent_text_result
 from app.agent_wire_contracts import AuditAgentWireResult, consumer_wire_model
+
+
+ResultT = TypeVar("ResultT")
 
 
 _UNSUPPORTED = {
@@ -143,3 +148,15 @@ def parse_native_output(raw: str, role: str, *, purpose: str = "general") -> str
     except (ValueError, ValidationError, TypeError) as exc:
         raise ResultParseError("native result failed current wire contract") from exc
     return result
+
+
+def parse_native_result(
+    raw: str, role: str, *, parser: Callable[[str], ResultT], purpose: str = "general"
+) -> ResultT:
+    """Pass a strictly restored native result through the existing role parser."""
+    restored = parse_native_output(raw, role, purpose=purpose)
+    event = json.dumps({
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": restored},
+    }, ensure_ascii=False)
+    return parser(event)
