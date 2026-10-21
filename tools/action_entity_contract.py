@@ -37,7 +37,7 @@ def _declared_status_values():
         raise ValueError(f'{kind}: declared status enum missing')
 
     return {
-        'action_status': email_statuses('email_actions'),
+        'action_status': list(dict.fromkeys(email_statuses('email_actions') + list(ENUMS['candidate_action_attempts'][1]))),
         'email_receipt_status': email_statuses('email_action_attempts'),
         'candidate_observation_status': list(ENUMS['candidate_action_attempts'][1]),
     }
@@ -48,15 +48,20 @@ ACTION_COLUMNS = {
     "status": "TEXT", "action_plan_id": "TEXT",
     "classification_id": "INTEGER", "account_id": "TEXT",
     "external_action_key": "TEXT", "next_attempt_at": "TEXT",
-    "started_at": "TEXT", "finished_at": "TEXT", "created_at": "TEXT", "updated_at": "TEXT",
+    "started_at": "TEXT", "created_at": "TEXT", "updated_at": "TEXT",
     "prepared_body": "TEXT", "prepared_at": "TEXT", "delivery_channel": "TEXT",
     "delivery_key": "TEXT", "feedback_token": "TEXT", "postfix_version": "TEXT",
     "conversation_id": "TEXT", "trigger_message_id": "TEXT", "recall_key": "TEXT",
     "recall_status": "TEXT", "recall_error": "TEXT", "recalled_at": "TEXT",
     "agent_run_id": "INTEGER", "business_object_key": "TEXT", "action_identity": "TEXT",
-    "current_provider_operation": "TEXT", "current_provider_target": "TEXT",
-    "current_provider_result_id": "TEXT", "current_error_text": "TEXT",
 }
+
+
+def source_identity(source_table: str, source_id: object) -> tuple[str, str, str]:
+    """Return a migration-only identity preserving source namespace and SQLite type."""
+    if source_table not in SOURCE_TABLES:
+        raise ValueError(f'unknown source identity namespace: {source_table}')
+    return source_table, type(source_id).__name__, str(source_id)
 
 
 def build_target_ddl() -> str:
@@ -79,7 +84,8 @@ def build_target_ddl() -> str:
     if marker not in table:
         raise ValueError("current Actions declaration changed; target rebuild marker missing")
     table = table.replace(marker, generated + marker, 1)
-    table = table[:-1] + ",check(record_type<>'action' or (legacy_key is null and typeof(action_data)='blob' and json_valid(action_data,8) and json_type(action_data)='object')),check(record_type='action' or action_data is null),check(record_type<>'action' or action_status is null or action_status in ('pending','processing','done','skipped','failed')))"
+    status_sql = ",".join("'" + value.replace("'", "''") + "'" for value in _declared_status_values()['action_status'])
+    table = table[:-1] + f",check(record_type<>'action' or (legacy_key is null and typeof(action_data)='blob' and json_valid(action_data,8) and json_type(action_data)='object')),check(record_type='action' or action_data is null),check(record_type<>'action' or action_status is null or action_status in ({status_sql})))"
     rendered = ["-- Full current Actions declaration rebuilt with one common Action kind (70).",
                 "-- Existing kinds retain their original columns, checks, indexes and triggers.",
                 "-- Action fields use one fixed JSONB object; generated columns are virtual.", table]
@@ -93,12 +99,13 @@ def build_target_ddl() -> str:
     rendered.extend((
         "create unique index idx_actions_action_external_key on actions(action_external_action_key) where record_type='action' and action_external_action_key is not null",
         "create unique index idx_actions_action_delivery_key on actions(action_delivery_channel,action_delivery_key) where record_type='action' and action_delivery_channel is not null and action_delivery_key is not null",
-        "create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_id integer, action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text)",
+        "create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_id integer, action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id))",
         "create index idx_action_receipts_action on action_receipts(action_id,id)",
         "create index idx_action_receipts_execution_order on action_receipts(execution_id,action_index,action_id) where execution_id is not null",
         "create table action_observers (action_id integer not null references actions(id), agent_run_id integer not null, task_id integer not null, created_at text not null, primary key(action_id,agent_run_id))",
         "create trigger trg_action_receipt_owner_insert before insert on action_receipts when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'receipt owner must be Action'); end",
         "create trigger trg_action_observer_owner_insert before insert on action_observers when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'observer owner must be Action'); end",
+        "create trigger trg_action_receipt_reference_owner_insert before insert on action_receipts when new.provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
     ))
     return ";\n".join(rendered) + ";\n"
 
@@ -122,14 +129,25 @@ def validate_action_entity_contract(contract: dict) -> None:
             raise ValueError(f'{table}: duplicate field declaration')
         if set(by_name) != set(names):
             raise ValueError(f'{table}: field coverage differs from declarations')
+        if table == 'email_actions':
+            from app.current_action_schema import current_action_payloads
+            physical = set(current_action_payloads().layouts['email_actions'].fields)
+            for name, field in by_name.items():
+                expected_storage = 'stored' if name in physical else 'derived_projection'
+                if field.get('storage') != expected_storage:
+                    raise ValueError(f'email_actions.{name}: current source storage differs from current_action_payloads')
         for name, field in by_name.items():
-            for key in ('owner', 'disposition', 'evidence'):
+            for key in ('owner', 'disposition', 'evidence', 'inverse_rule', 'consumers'):
                 if not field.get(key):
                     raise ValueError(f'{table}.{name}: missing {key}')
+            if not isinstance(field['consumers'], list) or not field['consumers'] or any(':' not in item or not item.startswith('app/') for item in field['consumers']):
+                raise ValueError(f'{table}.{name}: consumers must name concrete app functions')
+            for consumer in field['consumers']:
+                path, symbol = consumer.split(':', 1)
+                if not (ROOT / path).is_file() or not re.search(rf'\bdef\s+{re.escape(symbol.rsplit(".", 1)[-1])}\s*\(', (ROOT / path).read_text()):
+                    raise ValueError(f'{table}.{name}: consumer is not declared: {consumer}')
             if field['disposition'] not in {'retain', 'reference', 'retire'}:
                 raise ValueError(f'{table}.{name}: unsupported disposition')
-            if field['disposition'] == 'retire' and not field.get('inverse_rule'):
-                raise ValueError(f'{table}.{name}: retirement requires inverse_rule')
     target = contract.get('target', {})
     if target.get('layout_selector') is not None:
         raise ValueError('target layout cannot branch on source or origin')
@@ -137,8 +155,11 @@ def validate_action_entity_contract(contract: dict) -> None:
         raise ValueError('all first-release records use action storage type')
     mappings = contract.get('state_mappings', {})
     declared_states = _declared_status_values()
-    if mappings.get('action_status', {}).get('declared_values') != declared_states['action_status']:
-        raise ValueError('Action status mapping differs from EMAIL_CHECKS')
+    action_mapping = mappings.get('action_status', {})
+    if action_mapping.get('declared_values') != declared_states['action_status']:
+        raise ValueError('Action status mapping differs from source lifecycle enums')
+    if set(action_mapping.get('mapping', {})) != set(declared_states['action_status']):
+        raise ValueError('Action status mapping must account for each source lifecycle value')
     receipt_values = set(mappings.get('receipt_status', {}).get('declared_values', []))
     if receipt_values != set(declared_states['email_receipt_status']) | set(declared_states['candidate_observation_status']):
         raise ValueError('receipt status mapping differs from source enums')
@@ -180,7 +201,7 @@ def validate_action_entity_contract(contract: dict) -> None:
         raise ValueError('target receipt DDL contains unsourced or missing fact columns')
     if not {'action_id', 'agent_run_id', 'task_id', 'created_at'} <= observer_columns:
         raise ValueError('target DDL is missing observer relationship fields')
-    if contract.get('identity', {}).get('public_id_is_identity') is not False:
+    if contract.get('identity', {}).get('public_id_is_identity') is not False or contract.get('identity', {}).get('migration_identity') != 'typed (source_table, source_id) mapping; physical Action id is allocated independently':
         raise ValueError('public source IDs cannot define unified identity')
     if contract.get('receipts', {}).get('preserve_distinct_values') is not True:
         raise ValueError('distinct receipt facts must be retained')

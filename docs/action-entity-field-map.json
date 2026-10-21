@@ -18,7 +18,14 @@
           "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_id",
           "target": "action_id",
-          "rule": "namespaced direct-action identity; migrate only through explicit mapping"
+          "rule": "namespaced direct-action identity; migrate only through explicit mapping",
+          "inverse_rule": "Reconstruct email_actions.action_id from Action mapping target `action_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "action_plan_id",
@@ -26,7 +33,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_plan_id",
           "target": "action_plan_id",
-          "rule": "email_actions.action_plan_id"
+          "rule": "email_actions.action_plan_id",
+          "inverse_rule": "Reconstruct email_actions.action_plan_id from Action mapping target `action_plan_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "classification_id",
@@ -34,7 +48,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.classification_id",
           "target": "classification_id",
-          "rule": "email_actions.classification_id"
+          "rule": "email_actions.classification_id",
+          "inverse_rule": "Reconstruct email_actions.classification_id from Action mapping target `classification_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "account_id",
@@ -42,7 +63,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.account_id",
           "target": "account_id",
-          "rule": "email_actions.account_id"
+          "rule": "email_actions.account_id",
+          "inverse_rule": "Reconstruct email_actions.account_id from Action mapping target `account_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "action_type",
@@ -50,7 +78,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_type",
           "target": "operation",
-          "rule": "email_actions.action_type"
+          "rule": "email_actions.action_type",
+          "inverse_rule": "Reconstruct email_actions.action_type from Action mapping target `operation`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "parameters_json",
@@ -58,7 +93,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.parameters_json",
           "target": "parameters_json",
-          "rule": "email_actions.parameters_json"
+          "rule": "email_actions.parameters_json",
+          "inverse_rule": "Reconstruct email_actions.parameters_json from Action mapping target `parameters_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "config_version",
@@ -66,7 +108,14 @@
           "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.config_version",
           "target": "action_plan_id",
-          "rule": "email_actions.action_plan_id -> immutable plan config_version"
+          "rule": "email_actions.action_plan_id -> immutable plan config_version",
+          "inverse_rule": "Reconstruct email_actions.config_version from Action mapping target `action_plan_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "status",
@@ -74,7 +123,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.status",
           "target": "status",
-          "rule": "email_actions.status"
+          "rule": "email_actions.status",
+          "inverse_rule": "Reconstruct email_actions.status from Action mapping target `status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "attempt_count",
@@ -82,8 +138,14 @@
           "disposition": "retire",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.attempt_count",
           "target": "attempt_number",
-          "rule": "derived from retained receipt sequence; never a separate counter",
-          "inverse_rule": "derived from retained receipt sequence; never a separate counter"
+          "rule": "Count child attempts as in `shared_action_definitions.py:email_projection`; no separate parent value is stored.",
+          "inverse_rule": "Recompute `email_actions.attempt_count` with `shared_action_definitions.py:email_projection`: Count child attempts as in `shared_action_definitions.py:email_projection`; no separate parent value is stored.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection"
         },
         {
           "name": "started_at",
@@ -91,15 +153,29 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.started_at",
           "target": "started_at",
-          "rule": "email_actions.started_at"
+          "rule": "email_actions.started_at",
+          "inverse_rule": "Reconstruct email_actions.started_at from Action mapping target `started_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "finished_at",
-          "owner": "Action",
-          "disposition": "retain",
+          "owner": "Action Receipt",
+          "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.finished_at",
           "target": "finished_at",
-          "rule": "email_actions.finished_at"
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's finished_at or empty.",
+          "inverse_rule": "Recompute `email_actions.finished_at` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's finished_at or empty.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection"
         },
         {
           "name": "next_attempt_at",
@@ -107,39 +183,74 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.next_attempt_at",
           "target": "next_attempt_at",
-          "rule": "email_actions.next_attempt_at"
+          "rule": "email_actions.next_attempt_at",
+          "inverse_rule": "Reconstruct email_actions.next_attempt_at from Action mapping target `next_attempt_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "provider_operation",
-          "owner": "Action",
-          "disposition": "retain",
+          "owner": "Action Receipt",
+          "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_operation",
-          "target": "current_provider_operation",
-          "rule": "email_actions.provider_operation current value; do not substitute an attempt row"
+          "target": "operation",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_operation or empty.",
+          "inverse_rule": "Recompute `email_actions.provider_operation` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's provider_operation or empty.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection"
         },
         {
           "name": "provider_target",
-          "owner": "Action",
-          "disposition": "retain",
+          "owner": "Action Receipt",
+          "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_target",
-          "target": "current_provider_target",
-          "rule": "email_actions.provider_target current value; do not substitute an attempt row"
+          "target": "target",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_target or empty.",
+          "inverse_rule": "Recompute `email_actions.provider_target` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's provider_target or empty.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection"
         },
         {
           "name": "provider_result_id",
-          "owner": "Action",
-          "disposition": "retain",
+          "owner": "Action Receipt",
+          "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_result_id",
-          "target": "current_provider_result_id",
-          "rule": "email_actions.provider_result_id current value; do not substitute an attempt row"
+          "target": "provider_result_id",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_result_id or empty.",
+          "inverse_rule": "Recompute `email_actions.provider_result_id` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's provider_result_id or empty.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection"
         },
         {
           "name": "error",
-          "owner": "Action",
-          "disposition": "retain",
+          "owner": "Action Receipt",
+          "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.error",
-          "target": "current_error_text",
-          "rule": "email_actions.error current value; preserve independently from historical attempt errors"
+          "target": "error_text",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's error or empty.",
+          "inverse_rule": "Recompute `email_actions.error` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's error or empty.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection"
         },
         {
           "name": "created_at",
@@ -147,7 +258,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.created_at",
           "target": "created_at",
-          "rule": "email_actions.created_at"
+          "rule": "email_actions.created_at",
+          "inverse_rule": "Reconstruct email_actions.created_at from Action mapping target `created_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         },
         {
           "name": "updated_at",
@@ -155,7 +273,14 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.updated_at",
           "target": "updated_at",
-          "rule": "email_actions.updated_at"
+          "rule": "email_actions.updated_at",
+          "inverse_rule": "Reconstruct email_actions.updated_at from Action mapping target `updated_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored"
         }
       ]
     },
@@ -169,7 +294,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.id",
           "target": "receipt identity scoped to Action",
-          "rule": "email_action_attempts.id; repeated values remain separate receipts"
+          "rule": "email_action_attempts.id; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.id from Action mapping target `receipt identity scoped to Action`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "action_id",
@@ -177,7 +307,12 @@
           "disposition": "reference",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.action_id",
           "target": "action_id",
-          "rule": "email_action_attempts.action_id foreign key"
+          "rule": "email_action_attempts.action_id foreign key",
+          "inverse_rule": "Reconstruct email_action_attempts.action_id from Action mapping target `action_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "attempt_number",
@@ -185,7 +320,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.attempt_number",
           "target": "attempt_number",
-          "rule": "email_action_attempts.attempt_number; repeated values remain separate receipts"
+          "rule": "email_action_attempts.attempt_number; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.attempt_number from Action mapping target `attempt_number`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "status",
@@ -193,7 +333,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.status",
           "target": "status",
-          "rule": "email_action_attempts.status; repeated values remain separate receipts"
+          "rule": "email_action_attempts.status; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.status from Action mapping target `status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "provider_operation",
@@ -201,7 +346,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_operation",
           "target": "operation",
-          "rule": "email_action_attempts.provider_operation; repeated values remain separate receipts"
+          "rule": "email_action_attempts.provider_operation; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_operation from Action mapping target `operation`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "provider_target",
@@ -209,7 +359,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_target",
           "target": "target",
-          "rule": "email_action_attempts.provider_target; repeated values remain separate receipts"
+          "rule": "email_action_attempts.provider_target; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_target from Action mapping target `target`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "provider_result_id",
@@ -217,7 +372,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_result_id",
           "target": "provider_result_id",
-          "rule": "email_action_attempts.provider_result_id; repeated values remain separate receipts"
+          "rule": "email_action_attempts.provider_result_id; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_result_id from Action mapping target `provider_result_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "error",
@@ -225,7 +385,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.error",
           "target": "error_text",
-          "rule": "email_action_attempts.error; repeated values remain separate receipts"
+          "rule": "email_action_attempts.error; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.error from Action mapping target `error_text`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "started_at",
@@ -233,7 +398,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.started_at",
           "target": "started_at",
-          "rule": "email_action_attempts.started_at; repeated values remain separate receipts"
+          "rule": "email_action_attempts.started_at; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.started_at from Action mapping target `started_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         },
         {
           "name": "finished_at",
@@ -241,7 +411,12 @@
           "disposition": "retain",
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.finished_at",
           "target": "finished_at",
-          "rule": "email_action_attempts.finished_at; repeated values remain separate receipts"
+          "rule": "email_action_attempts.finished_at; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.finished_at from Action mapping target `finished_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ]
         }
       ]
     },
@@ -255,7 +430,13 @@
           "disposition": "reference",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.id",
           "target": "id",
-          "rule": "candidate_action_attempts.id maps only through explicit migration map"
+          "rule": "candidate_action_attempts.id maps only through explicit migration map",
+          "inverse_rule": "Reconstruct candidate_action_attempts.id from Action mapping target `id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "execution_id",
@@ -263,7 +444,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.execution_id",
           "target": "execution_id",
-          "rule": "candidate_action_attempts.execution_id retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+          "rule": "candidate_action_attempts.execution_id retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.execution_id from Action mapping target `execution_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "action_index",
@@ -271,7 +458,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.action_index",
           "target": "action_index",
-          "rule": "candidate_action_attempts.action_index retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+          "rule": "candidate_action_attempts.action_index retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.action_index from Action mapping target `action_index`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "external_action_key",
@@ -279,7 +472,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.external_action_key",
           "target": "external_action_key",
-          "rule": "candidate_action_attempts.external_action_key exact stable identity"
+          "rule": "candidate_action_attempts.external_action_key exact stable identity",
+          "inverse_rule": "Reconstruct candidate_action_attempts.external_action_key from Action mapping target `external_action_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "status",
@@ -287,7 +486,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.status",
           "target": "status",
-          "rule": "candidate_action_attempts.status retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+          "rule": "candidate_action_attempts.status retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.status from Action mapping target `status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "result_json",
@@ -295,7 +500,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.result_json",
           "target": "outcome_json",
-          "rule": "candidate_action_attempts.result_json retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+          "rule": "candidate_action_attempts.result_json retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.result_json from Action mapping target `outcome_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "created_at",
@@ -303,7 +514,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.created_at",
           "target": "created_at",
-          "rule": "candidate_action_attempts.created_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+          "rule": "candidate_action_attempts.created_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.created_at from Action mapping target `created_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         },
         {
           "name": "updated_at",
@@ -311,7 +528,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.updated_at",
           "target": "updated_at",
-          "rule": "candidate_action_attempts.updated_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action."
+          "rule": "candidate_action_attempts.updated_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.updated_at from Action mapping target `updated_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ]
         }
       ]
     },
@@ -325,7 +548,13 @@
           "disposition": "reference",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.external_action_key",
           "target": "external_action_key",
-          "rule": "external_action_results.external_action_key exact stable identity"
+          "rule": "external_action_results.external_action_key exact stable identity",
+          "inverse_rule": "Reconstruct external_action_results.external_action_key from Action mapping target `external_action_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "business_object_key",
@@ -333,7 +562,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.business_object_key",
           "target": "business_object_key",
-          "rule": "external_action_results.business_object_key"
+          "rule": "external_action_results.business_object_key",
+          "inverse_rule": "Reconstruct external_action_results.business_object_key from Action mapping target `business_object_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "action_identity",
@@ -341,7 +576,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.action_identity",
           "target": "action_identity",
-          "rule": "external_action_results.action_identity"
+          "rule": "external_action_results.action_identity",
+          "inverse_rule": "Reconstruct external_action_results.action_identity from Action mapping target `action_identity`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "operation",
@@ -349,7 +590,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.operation",
           "target": "operation",
-          "rule": "external_action_results.operation provider result fact"
+          "rule": "external_action_results.operation provider result fact",
+          "inverse_rule": "Reconstruct external_action_results.operation from Action mapping target `operation`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "target_identifiers_json",
@@ -357,7 +604,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.target_identifiers_json",
           "target": "target",
-          "rule": "external_action_results.target_identifiers_json"
+          "rule": "external_action_results.target_identifiers_json",
+          "inverse_rule": "Reconstruct external_action_results.target_identifiers_json from Action mapping target `target`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "provider_result_json",
@@ -365,7 +618,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.provider_result_json",
           "target": "provider_result_json",
-          "rule": "external_action_results.provider_result_json exact text including null-like JSON text"
+          "rule": "external_action_results.provider_result_json exact text including null-like JSON text",
+          "inverse_rule": "Reconstruct external_action_results.provider_result_json from Action mapping target `provider_result_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "result_digest",
@@ -373,7 +632,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.result_digest",
           "target": "result_digest",
-          "rule": "external_action_results.result_digest"
+          "rule": "external_action_results.result_digest",
+          "inverse_rule": "Reconstruct external_action_results.result_digest from Action mapping target `result_digest`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "first_agent_run_id",
@@ -381,7 +646,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.first_agent_run_id",
           "target": "agent_run_id",
-          "rule": "external_action_results.first_agent_run_id"
+          "rule": "external_action_results.first_agent_run_id",
+          "inverse_rule": "Reconstruct external_action_results.first_agent_run_id from Action mapping target `agent_run_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         },
         {
           "name": "created_at",
@@ -389,7 +660,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.created_at",
           "target": "observed_at",
-          "rule": "external_action_results.created_at"
+          "rule": "external_action_results.created_at",
+          "inverse_rule": "Reconstruct external_action_results.created_at from Action mapping target `observed_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ]
         }
       ]
     },
@@ -403,7 +680,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.channel",
           "target": "delivery_channel",
-          "rule": "outbound_postfixes.channel"
+          "rule": "outbound_postfixes.channel",
+          "inverse_rule": "Reconstruct outbound_postfixes.channel from Action mapping target `delivery_channel`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "delivery_key",
@@ -411,7 +694,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.delivery_key",
           "target": "delivery_key",
-          "rule": "outbound_postfixes.delivery_key"
+          "rule": "outbound_postfixes.delivery_key",
+          "inverse_rule": "Reconstruct outbound_postfixes.delivery_key from Action mapping target `delivery_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "final_body",
@@ -419,7 +708,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.final_body",
           "target": "prepared_body",
-          "rule": "outbound_postfixes.final_body; retain until independent exact readback proves retirement"
+          "rule": "outbound_postfixes.final_body; retain until independent exact readback proves retirement",
+          "inverse_rule": "Reconstruct outbound_postfixes.final_body from Action mapping target `prepared_body`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "feedback_token",
@@ -427,7 +722,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.feedback_token",
           "target": "feedback_token",
-          "rule": "outbound_postfixes.feedback_token"
+          "rule": "outbound_postfixes.feedback_token",
+          "inverse_rule": "Reconstruct outbound_postfixes.feedback_token from Action mapping target `feedback_token`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "postfix_version",
@@ -435,7 +736,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.postfix_version",
           "target": "postfix_version",
-          "rule": "outbound_postfixes.postfix_version"
+          "rule": "outbound_postfixes.postfix_version",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_version from Action mapping target `postfix_version`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "created_at",
@@ -443,7 +750,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.created_at",
           "target": "prepared_at",
-          "rule": "outbound_postfixes.created_at records preparation time, not dispatch or receipt time"
+          "rule": "outbound_postfixes.created_at records preparation time, not dispatch or receipt time",
+          "inverse_rule": "Reconstruct outbound_postfixes.created_at from Action mapping target `prepared_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "postfix_receipt_provider_result_json",
@@ -451,7 +764,13 @@
           "disposition": "retain",
           "evidence": "app/prepared_action_definitions.py:SLOTS",
           "target": "provider_result_json",
-          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.provider_result_json; preserve exact value"
+          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.provider_result_json; preserve exact value",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_provider_result_json from Action mapping target `provider_result_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "postfix_receipt_created_at",
@@ -459,7 +778,13 @@
           "disposition": "retain",
           "evidence": "app/prepared_action_definitions.py:SLOTS",
           "target": "observed_at",
-          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.created_at; provider receipt clock"
+          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.created_at; provider receipt clock",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_created_at from Action mapping target `observed_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         },
         {
           "name": "postfix_dispatch_created_at",
@@ -467,7 +792,13 @@
           "disposition": "retain",
           "evidence": "app/prepared_action_definitions.py:SLOTS",
           "target": "dispatched_at",
-          "rule": "prepared_action_definitions.SLOTS.native_reply_dispatches.created_at; dispatch clock"
+          "rule": "prepared_action_definitions.SLOTS.native_reply_dispatches.created_at; dispatch clock",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_dispatch_created_at from Action mapping target `dispatched_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ]
         }
       ]
     },
@@ -481,7 +812,13 @@
           "disposition": "reference",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.id",
           "target": "id",
-          "rule": "sent_replies.id maps only through explicit migration map"
+          "rule": "sent_replies.id maps only through explicit migration map",
+          "inverse_rule": "Reconstruct sent_replies.id from Action mapping target `id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "conversation_id",
@@ -489,7 +826,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.conversation_id",
           "target": "conversation_id",
-          "rule": "sent_replies.conversation_id"
+          "rule": "sent_replies.conversation_id",
+          "inverse_rule": "Reconstruct sent_replies.conversation_id from Action mapping target `conversation_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "trigger_message_id",
@@ -497,7 +840,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.trigger_message_id",
           "target": "trigger_message_id",
-          "rule": "sent_replies.trigger_message_id"
+          "rule": "sent_replies.trigger_message_id",
+          "inverse_rule": "Reconstruct sent_replies.trigger_message_id from Action mapping target `trigger_message_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "reply_text",
@@ -505,7 +854,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.reply_text",
           "target": "parameters_json",
-          "rule": "sent_replies.reply_text exact body"
+          "rule": "sent_replies.reply_text exact body",
+          "inverse_rule": "Reconstruct sent_replies.reply_text from Action mapping target `parameters_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "sent_at",
@@ -513,7 +868,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.sent_at",
           "target": "observed_at",
-          "rule": "sent_replies.sent_at; distinct from prepared/created timestamp"
+          "rule": "sent_replies.sent_at; distinct from prepared/created timestamp",
+          "inverse_rule": "Reconstruct sent_replies.sent_at from Action mapping target `observed_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "send_result_json",
@@ -521,7 +882,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.send_result_json",
           "target": "provider_result_json",
-          "rule": "sent_replies.send_result_json exact source value"
+          "rule": "sent_replies.send_result_json exact source value",
+          "inverse_rule": "Reconstruct sent_replies.send_result_json from Action mapping target `provider_result_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "recall_key",
@@ -529,7 +896,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_key",
           "target": "recall_key",
-          "rule": "sent_replies.recall_key"
+          "rule": "sent_replies.recall_key",
+          "inverse_rule": "Reconstruct sent_replies.recall_key from Action mapping target `recall_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "recall_status",
@@ -537,7 +910,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_status",
           "target": "recall_status",
-          "rule": "sent_replies.recall_status"
+          "rule": "sent_replies.recall_status",
+          "inverse_rule": "Reconstruct sent_replies.recall_status from Action mapping target `recall_status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "recall_error",
@@ -545,7 +924,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_error",
           "target": "error_text",
-          "rule": "sent_replies.recall_error"
+          "rule": "sent_replies.recall_error",
+          "inverse_rule": "Reconstruct sent_replies.recall_error from Action mapping target `error_text`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "recalled_at",
@@ -553,7 +938,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recalled_at",
           "target": "recalled_at",
-          "rule": "sent_replies.recalled_at"
+          "rule": "sent_replies.recalled_at",
+          "inverse_rule": "Reconstruct sent_replies.recalled_at from Action mapping target `recalled_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "feedback_token",
@@ -561,7 +952,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.feedback_token",
           "target": "feedback_token",
-          "rule": "sent_replies.feedback_token"
+          "rule": "sent_replies.feedback_token",
+          "inverse_rule": "Reconstruct sent_replies.feedback_token from Action mapping target `feedback_token`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "channel",
@@ -569,7 +966,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.channel",
           "target": "delivery_channel",
-          "rule": "sent_replies.channel"
+          "rule": "sent_replies.channel",
+          "inverse_rule": "Reconstruct sent_replies.channel from Action mapping target `delivery_channel`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "agent_run_id",
@@ -577,7 +980,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.agent_run_id",
           "target": "agent_run_id",
-          "rule": "sent_replies.agent_run_id"
+          "rule": "sent_replies.agent_run_id",
+          "inverse_rule": "Reconstruct sent_replies.agent_run_id from Action mapping target `agent_run_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         },
         {
           "name": "external_action_key",
@@ -585,7 +994,13 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.external_action_key",
           "target": "external_action_key",
-          "rule": "sent_replies.external_action_key exact existing key"
+          "rule": "sent_replies.external_action_key exact existing key",
+          "inverse_rule": "Reconstruct sent_replies.external_action_key from Action mapping target `external_action_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ]
         }
       ]
     },
@@ -599,7 +1014,12 @@
           "disposition": "reference",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.sent_reply_id",
           "target": "action_id",
-          "rule": "sent_reply_observers.sent_reply_id foreign key"
+          "rule": "sent_reply_observers.sent_reply_id foreign key",
+          "inverse_rule": "Reconstruct sent_reply_observers.sent_reply_id from Action mapping target `action_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ]
         },
         {
           "name": "agent_run_id",
@@ -607,7 +1027,12 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.agent_run_id",
           "target": "agent_run_id",
-          "rule": "sent_reply_observers.agent_run_id; observer, not effect"
+          "rule": "sent_reply_observers.agent_run_id; observer, not effect",
+          "inverse_rule": "Reconstruct sent_reply_observers.agent_run_id from Action mapping target `agent_run_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ]
         },
         {
           "name": "reply_task_id",
@@ -615,7 +1040,12 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.reply_task_id",
           "target": "task_id",
-          "rule": "sent_reply_observers.reply_task_id"
+          "rule": "sent_reply_observers.reply_task_id",
+          "inverse_rule": "Reconstruct sent_reply_observers.reply_task_id from Action mapping target `task_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ]
         },
         {
           "name": "created_at",
@@ -623,7 +1053,12 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.created_at",
           "target": "created_at",
-          "rule": "sent_reply_observers.created_at"
+          "rule": "sent_reply_observers.created_at",
+          "inverse_rule": "Reconstruct sent_reply_observers.created_at from Action mapping target `created_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ]
         }
       ]
     }
@@ -643,7 +1078,8 @@
       "email_actions.action_id": "keep exact source identity in migration/inverse map only",
       "candidate_action_attempts.id": "retain exact attempt identity in migration/inverse map and bind each observation receipt to its owning common Action",
       "sent_replies.id": "keep exact source identity in migration/inverse map only"
-    }
+    },
+    "migration_identity": "typed (source_table, source_id) mapping; physical Action id is allocated independently"
   },
   "relationships": {
     "observers": {
@@ -726,12 +1162,6 @@
         "name": "started_at",
         "sources": [
           "email_actions.started_at"
-        ]
-      },
-      {
-        "name": "finished_at",
-        "sources": [
-          "email_actions.finished_at"
         ]
       },
       {
@@ -831,30 +1261,6 @@
         "name": "action_identity",
         "sources": [
           "external_action_results.action_identity"
-        ]
-      },
-      {
-        "name": "current_provider_operation",
-        "sources": [
-          "email_actions.provider_operation"
-        ]
-      },
-      {
-        "name": "current_provider_target",
-        "sources": [
-          "email_actions.provider_target"
-        ]
-      },
-      {
-        "name": "current_provider_result_id",
-        "sources": [
-          "email_actions.provider_result_id"
-        ]
-      },
-      {
-        "name": "current_error_text",
-        "sources": [
-          "email_actions.error"
         ]
       },
       {
@@ -1005,6 +1411,18 @@
           "candidate_action_attempts.updated_at"
         ],
         "nullable": true
+      },
+      {
+        "name": "provider_receipt_id",
+        "sources": [
+          "candidate_action_attempts.external_action_key",
+          "candidate_action_attempts.result_json",
+          "external_action_results.external_action_key",
+          "sent_replies.external_action_key",
+          "sent_replies.send_result_json"
+        ],
+        "nullable": true,
+        "meaning": "Technical exact-reference link from a local NULL outcome to the provider receipt version it referenced; canonical corrections append a new provider receipt and do not rewrite old observations."
       }
     ],
     "table": "actions",
@@ -1020,8 +1438,8 @@
     "common_payload": "action_data SQLite JSONB object; every Action uses this same payload and typed generated virtual columns; only the discriminator selects Action versus unchanged existing record kinds.",
     "payload_layout": "one common JSONB object for common Action business facts; generated virtual columns provide SQL query/index access and avoid adding ~35 payload columns to each untouched row.",
     "status_columns": {
-      "action_status": "Action lifecycle status uses email_actions declared enum only; nullable where absent.",
-      "receipt_status": "Owned receipt/observation state is nullable and stores the exact declared email-attempt or candidate-execution enum."
+      "action_status": "One common nullable Action.status covers declared email lifecycle and reviewed candidate observation states; ordered raw observations remain in Action Receipt facts.",
+      "receipt_status": "Action Receipt.status retains each exact email attempt or candidate execution observation state, including NULL where source lacks status."
     }
   },
   "indexes": [
@@ -1071,23 +1489,40 @@
   ],
   "state_mappings": {
     "action_status": {
-      "source": "email_actions.status",
+      "sources": [
+        "email_actions.status",
+        "candidate_action_attempts.status"
+      ],
       "declared_values": [
         "pending",
         "processing",
         "done",
         "skipped",
-        "failed"
+        "failed",
+        "dispatched",
+        "verified",
+        "confirmed_no_effect",
+        "uncertain"
       ],
-      "target": "Action.status (nullable for Actions with no source Action-level lifecycle status)",
+      "target": "Action.status",
       "mapping": {
         "pending": "pending",
         "processing": "processing",
         "done": "done",
         "skipped": "skipped",
-        "failed": "failed"
+        "failed": "failed",
+        "dispatched": "dispatched",
+        "verified": "verified",
+        "confirmed_no_effect": "confirmed_no_effect",
+        "uncertain": "uncertain"
       },
-      "semantic_rule": "Preserve exact current lifecycle value. No provider result presence or receipt timestamp changes this field."
+      "current_observation_order": [
+        "updated_at",
+        "execution_id",
+        "action_index",
+        "id"
+      ],
+      "semantic_rule": "Use the last explicit source lifecycle observation in the frozen order; candidate verified means the source writer accepted an explicit verification receipt. No provider JSON/timestamp inference. Preserve every source observation unchanged."
     },
     "receipt_status": {
       "sources": [
@@ -1103,9 +1538,10 @@
         "confirmed_no_effect",
         "uncertain"
       ],
-      "target": "Action Receipt.status",
+      "target": "Action Receipt.status (exact per-observation source status)",
       "mapping": "identity; retain exact state on its owning attempt or execution observation",
-      "semantic_rule": "dispatched records dispatch, verified records explicit verification, confirmed_no_effect records an explicit no-effect determination, uncertain stays uncertain, failed stays failed. Never infer done/verified from provider JSON or timestamps."
+      "semantic_rule": "Keep each observation state exactly on its execution/attempt fact. Candidate verified is written only by the existing source writer after explicit verification receipt semantics; JSON/timestamps alone never establish verified/done. Historical prepared rows without a status remain NULL.",
+      "current_action_rule": "The Action.status is the value of the last explicit candidate observation by updated_at, execution_id, action_index, id; an explicit later verified observation supersedes an earlier failed observation while both raw receipts and local outcomes remain. Historical result JSON may differ on reforward; each source observation remains independently reconstructible."
     },
     "evidence": [
       "app/action_email_definitions.py:EMAIL_CHECKS.email_actions",
