@@ -342,6 +342,7 @@ class EmailClassifierRoutedBackend:
                     "do not return or rewrite its URL."
                 ),
                 use_output_schema=False,
+                skill_names=(),
                 inlined_skill_names=(self.skill_name,),
                 project_doc_max_bytes=0,
             ),
