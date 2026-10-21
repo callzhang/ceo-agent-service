@@ -212,8 +212,9 @@ finance 预置摘要错误地与已更新的安装文件比较，改为固定原
 
 ### 新版 CEO 日报自然结果（2026-10-21）
 
-- `scheduled_task_run` 389818 于 13:00 UTC 正常触发，task 14 / 配置 v40，快照绑定
-  `ceo-daily-report` managed revision 203；没有手动运行或补发。
+- `scheduled_task_run` 389818 于 13:00 UTC 正常触发，task 14 / 配置 v40（cron `21:00`
+  `Asia/Shanghai`；本次等于洛杉矶 06:00 PDT），快照绑定 `ceo-daily-report` managed
+  revision 203；没有手动运行或补发。
 - Consumer run 389822 completed，Audit run 389848 completed；attempt 15859 与 reply task
   416660 均为终态 `done`，revision_count=0。已读取两份原生完整轨迹。Consumer 一次
   `read_service_activity` 因不支持的来源名返回明确错误，随后以有效来源重试并完成；没有将错误

@@ -205,6 +205,8 @@
       "dispatch_status": "dispatched",
       "terminal_status": "done",
       "task_config_version": 40,
+      "task_cron_expression": "0 0 21 * * *",
+      "task_timezone_name": "Asia/Shanghai",
       "managed_skill": "ceo-daily-report",
       "managed_skill_revision_id": 203,
       "consumer_run_id": 389822,
