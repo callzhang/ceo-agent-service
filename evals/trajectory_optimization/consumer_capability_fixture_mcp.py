@@ -81,7 +81,16 @@ def serve(case: dict, trace: Path) -> None:
                     [OA_TOOL] if case.get("kind") == "oa" else
                     list(SCHEDULED_TOOLS) if case.get("kind") == "scheduled" else []
                 )
-                result = {"tools": [*source_catalog(case), CONTRACT_TOOL, *special]}
+                source_tools = source_catalog(case)
+                if case.get("skill_lookup_by_name"):
+                    for tool in source_tools:
+                        if tool["name"] == "read_skill":
+                            tool["inputSchema"]["properties"].update({
+                                "name": {"type": "string"},
+                                "query": {"type": "string"},
+                            })
+                            tool["inputSchema"]["required"] = []
+                result = {"tools": [*source_tools, CONTRACT_TOOL, *special]}
             elif method == "tools/call":
                 params = request.get("params") or {}
                 name = params.get("name")
@@ -131,6 +140,29 @@ def serve(case: dict, trace: Path) -> None:
                                              "content": artifacts[artifact_name]}, False
                     else:
                         payload, is_error = {"code": "artifact_not_found"}, True
+                elif name == "read_skill" and case.get("skill_lookup_by_name"):
+                    skill_name = arguments.get("name")
+                    query = arguments.get("query")
+                    if skill_name and not arguments.get("path") and not query:
+                        payload, is_error = source_response(
+                            case, name, {"path": f"/synthetic/{skill_name}/SKILL.md"},
+                        )
+                    elif query is not None and not skill_name and not arguments.get("path"):
+                        terms = str(query).casefold().split()
+                        payload = {"catalog": [
+                            {"name": item, "description": "Synthetic installed Skill"}
+                            for item in case["skill_content"]
+                            if terms and all(term in item.casefold() for term in terms)
+                        ]}
+                        is_error = not terms
+                    elif not arguments:
+                        payload = {"catalog": [
+                            {"name": item, "description": "Synthetic installed Skill"}
+                            for item in case["skill_content"]
+                        ]}
+                        is_error = False
+                    else:
+                        payload, is_error = source_response(case, name, arguments)
                 else:
                     payload, is_error = source_response(case, name, arguments)
                 with trace.open("a", encoding="utf-8") as stream:

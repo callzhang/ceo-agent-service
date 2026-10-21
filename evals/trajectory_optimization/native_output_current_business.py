@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import copy
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import subprocess
@@ -28,7 +30,7 @@ def _probe_case(manifest: dict, case_id: str) -> dict:
         item for item in json.loads(CASE_MANIFEST.read_text(encoding="utf-8"))["cases"]
         if item["id"] == case_id
     )
-    case = _case(manifest, specification["base_case"])
+    case = copy.deepcopy(_case(manifest, specification["base_case"]))
     case["id"] = case_id
     if "trigger" in specification:
         case["trigger"] = specification["trigger"]
@@ -45,6 +47,20 @@ def _probe_case(manifest: dict, case_id: str) -> dict:
 
 
 def _checks_for_probe(run: dict) -> dict[str, bool]:
+    if run["case"] == "candidate-windows-unknown-zone":
+        checks = _checks(run)
+        actions = ((run.get("result") or {}).get("proposal") or {}).get("actions") or []
+        checks["exact_reply_with_timezone"] = any(
+            action.get("target") == {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101",
+            } and any(
+                label in str(action.get("payload", {}).get("content", ""))
+                for label in ("America/Los_Angeles", "洛杉矶时间")
+            )
+            for action in actions
+        ) and (run.get("result") or {}).get("outcome") == "proposal"
+        return checks
     if run["case"] != "oa-return-explicit-target":
         return _checks(run)
     result = run.get("result") or {}
@@ -73,13 +89,17 @@ def _checks_for_probe(run: dict) -> dict[str, bool]:
 
 
 def _run(case: dict, *, native: bool, manifest: dict, developer: str,
-         task_prompt: str, include_trajectory: bool = False) -> dict:
+         task_prompt: str, include_trajectory: bool = False,
+         workdir: Path | None = None, resume_session_id: str = "") -> dict:
     case_id = case["id"]
     purpose = "oa" if case.get("kind") == "oa" else "general"
-    with tempfile.TemporaryDirectory(prefix="native-output-business-", dir="/tmp") as temporary:
+    context = (nullcontext(workdir) if workdir is not None else
+               tempfile.TemporaryDirectory(prefix="native-output-business-", dir="/tmp"))
+    with context as temporary:
         work = Path(temporary)
         case_manifest = work / "case.json"
         trace = work / "tool-trace.jsonl"
+        previous_trace_lines = len(trace.read_text().splitlines()) if trace.exists() else 0
         skill_content = dict(manifest["skill_content"])
         if case.get("skill_source"):
             skill_content["ceo-message-triage"] = (
@@ -100,9 +120,12 @@ def _run(case: dict, *, native: bool, manifest: dict, developer: str,
             "cases": [case], "skill_content": skill_content,
         }, ensure_ascii=False), encoding="utf-8")
         command = [
-            "codex", "exec", "--ignore-user-config", "--ignore-rules",
-            "--ephemeral", "--skip-git-repo-check", "-C", str(work),
-            "-s", "read-only", "-m", MODEL, "--json",
+            "codex", "exec", *(["resume"] if resume_session_id else []),
+            "--ignore-user-config", "--ignore-rules",
+            *([] if workdir is not None or resume_session_id else ["--ephemeral"]),
+            "--skip-git-repo-check",
+            *([] if resume_session_id else ["-C", str(work), "-s", "read-only"]),
+            "-m", MODEL, "--json",
             "--disable", "shell_tool", "--disable", "apps",
             "--disable", "plugins", "--disable", "hooks",
             "--disable", "multi_agent",
@@ -121,7 +144,7 @@ def _run(case: dict, *, native: bool, manifest: dict, developer: str,
                 "consumer", purpose=purpose,
             ))]
               if native else []),
-            "-",
+            *([resume_session_id] if resume_session_id else []), "-",
         ]
         try:
             process = subprocess.run(
@@ -130,7 +153,7 @@ def _run(case: dict, *, native: bool, manifest: dict, developer: str,
             )
         except subprocess.TimeoutExpired:
             return {"case": case_id, "native": native, "status": "timeout"}
-        calls = ([json.loads(line) for line in trace.read_text().splitlines()]
+        calls = ([json.loads(line) for line in trace.read_text().splitlines()[previous_trace_lines:]]
                  if trace.exists() else [])
         result = None
         validation_error = ""
@@ -176,17 +199,20 @@ def _run(case: dict, *, native: bool, manifest: dict, developer: str,
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    case_specs = json.loads(CASE_MANIFEST.read_text(encoding="utf-8"))["cases"]
+    specifications = json.loads(CASE_MANIFEST.read_text(encoding="utf-8"))
+    case_specs = specifications["cases"]
     parser.add_argument("--case", choices=[case["id"] for case in case_specs],
                         default="source-no-match")
+    parser.add_argument("--continuation", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--include-trajectory", action="store_true")
     args = parser.parse_args()
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    old_capabilities = _old_capability_text()
     case = _probe_case(manifest, args.case)
-    task_prompt, prompts = _prompts(case, _old_capability_text())
+    task_prompt, prompts = _prompts(case, old_capabilities)
     developer = prompts["candidate"]
-    if case.get("kind") == "oa":
+    if case.get("kind") == "oa" and not args.continuation:
         runtime = (
             "Anonymous read-only OA fixture. Available direct MCP reads: "
             "mcp__agent_cli__read_skill and mcp__agent_cli__read_dingtalk_oa. "
@@ -197,19 +223,65 @@ def main() -> None:
                 runtime_context=runtime, work_profile="", purpose_name="oa",
             ), placement="developer", omit_empty=True,
         )
-    runs = [_run(case, native=native, manifest=manifest,
-                 developer=developer, task_prompt=task_prompt,
-                 include_trajectory=args.include_trajectory)
-            for native in (False, True)]
+    runs = []
+    if args.continuation:
+        continuation = specifications["continuation"]
+        cold_case = _probe_case(manifest, continuation["cold_case"])
+        next_case = _probe_case(manifest, continuation["next_case"])
+        next_case["trigger_message_id"] = continuation["next_trigger_message_id"]
+        next_message = {
+            **cold_case["messages"][0],
+            "open_message_id": continuation["next_trigger_message_id"],
+            "create_time": continuation["next_message_time"],
+            "content": next_case["trigger"],
+        }
+        next_case["messages"] = [next_message, *copy.deepcopy(cold_case["messages"])]
+        assert next_message["open_message_id"] not in {
+            item["open_message_id"] for item in cold_case["messages"]
+        }
+        cold_task, cold_prompts = _prompts(cold_case, old_capabilities)
+        next_task, next_prompts = _prompts(next_case, old_capabilities)
+        assert cold_prompts["candidate"] == next_prompts["candidate"]
+        for native in (False, True):
+            with tempfile.TemporaryDirectory(prefix="native-output-continuation-", dir="/tmp") as directory:
+                work = Path(directory)
+                cold = _run(cold_case, native=native, manifest=manifest,
+                            developer=cold_prompts["candidate"], task_prompt=cold_task,
+                            include_trajectory=args.include_trajectory, workdir=work)
+                cold["phase"] = "cold"
+                runs.append(cold)
+                if not cold.get("session_id") or cold.get("result") is None:
+                    continue
+                resumed = _run(next_case, native=native, manifest=manifest,
+                               developer=next_prompts["candidate"], task_prompt=next_task,
+                               include_trajectory=args.include_trajectory, workdir=work,
+                               resume_session_id=cold["session_id"])
+                resumed["phase"] = "same_session"
+                resumed["checks"]["reused_session"] = resumed["session_id"] == cold["session_id"]
+                resumed["checks"]["read_new_source"] = any(
+                    call["tool"] == "read_dingtalk_messages"
+                    and any(item.get("open_message_id") == next_case["trigger_message_id"]
+                            and item.get("content") == next_case["trigger"]
+                            for item in call.get("result", {}).get("messages", []))
+                    for call in resumed.get("tool_trace", [])
+                )
+                runs.append(resumed)
+    else:
+        runs = [_run(case, native=native, manifest=manifest,
+                     developer=developer, task_prompt=task_prompt,
+                     include_trajectory=args.include_trajectory)
+                for native in (False, True)]
     args.output.write_text(json.dumps({
         "version": 1, "case_manifest": str(CASE_MANIFEST.relative_to(ROOT)),
         "base_manifest": str(MANIFEST.relative_to(ROOT)),
-        "model": MODEL, "same_developer_and_task": True,
+        "model": MODEL, "same_developer_and_task_between_arms": True,
+        "continuation": args.continuation,
         "scope": "anonymous read-only fake MCP; no business provider or Work Profile",
         "runs": runs,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     for run in runs:
-        print(args.case, "native" if run["native"] else "free-form",
+        print(run["case"], run.get("phase", "cold"),
+              "native" if run["native"] else "free-form",
               run["status"], run.get("checks", {}), flush=True)
 
 

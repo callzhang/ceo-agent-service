@@ -4,6 +4,13 @@
   "model": "gpt-6-luna",
   "reasoning_effort": "low",
   "same_conditions": "Each free-form/native pair uses the same Developer, Task, fake read-only MCP, model, and scoring; only --output-schema changes.",
+  "continuation": {
+    "cold_case": "candidate-windows-unknown-zone",
+    "next_case": "draft-only",
+    "next_trigger_message_id": "synthetic-message-103",
+    "next_message_time": "2026-10-22T15:05:00+00:00",
+    "expect": "Same conversation and session; read the new draft-only message, do not carry over the previous reply proposal or claim a send."
+  },
   "audit_variants": [
     {
       "id": "supported-return",
@@ -16,6 +23,12 @@
       "expected_audit": "return"
     }
   ],
+  "audit_continuation": {
+    "cold_variant": "supported-return",
+    "next_variant": "wrong-activity",
+    "next_revision": 1,
+    "expect": "Same Audit session; bind revision 1 to the changed candidate digest, reread OA-EXACT-204 and return the wrong activity with feedback instead of retaining the previous approval."
+  },
   "cases": [
     {
       "id": "source-no-match",
