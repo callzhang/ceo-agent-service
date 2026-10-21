@@ -11,6 +11,7 @@ import pytest
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, _operation_id, _scheduled_consumer_work_receipts
+from app.agent_reported_error import agent_error_payload
 from app.agent_result import AgentError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dws_client import DwsError
@@ -404,6 +405,23 @@ def test_nonretryable_authorization_failure_stays_technical(tmp_path):
     assert result.status == "failed_terminal"
     assert result.error.authorization_required is True
     assert store.current_reviewed_candidate(task.id, task.execution_generation) is None
+
+
+def test_missing_declared_operation_stops_after_one_consumer_turn(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    error = AgentError.model_validate(
+        agent_error_payload("operation_unavailable", failed=True)
+    )
+    consumer = ScriptedConsumer(store, error)
+    audit = ScriptedAudit(store)
+    driver, handler = orchestrator(store, consumer, audit)
+
+    result = driver.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "failed_terminal"
+    assert result.error.code == "operation_unavailable"
+    assert len(consumer.calls) == 1
+    assert audit.calls == handler.calls == []
 
 
 def test_technical_failure_keeps_structured_provider_source_code(tmp_path):

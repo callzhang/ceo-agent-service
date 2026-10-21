@@ -386,6 +386,9 @@ In other runtimes, use their declared read tools. If the read or OCR call fails,
 preserve its concrete tool/provider error.
 """.strip()
 _CAPABILITY_COMMON_TAIL = """
+If no declared tool or callable selected Skill script can perform a required
+operation, return failed with error_code `operation_unavailable`. A declared
+tool that fails is a different error; preserve its actual failure code.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
