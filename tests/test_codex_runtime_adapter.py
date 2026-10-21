@@ -77,6 +77,20 @@ def test_child_environment_retains_only_reviewed_locale_keys(adapter, config, mo
     assert "LC_BACKDOOR" not in env
 
 
+@pytest.mark.parametrize("route_name", ["codex_oauth", "codex_api"])
+def test_child_environment_keeps_configured_okr_source_command(
+    adapter, config, monkeypatch, route_name
+):
+    command = "/service/python /service/scripts/dingteam_okr_headless_source.py fetch"
+    monkeypatch.setenv("CEO_OKR_LIVE_SOURCE_COMMAND", command)
+    monkeypatch.setenv("UNRELATED_CONFIGURATION", "must-not-pass")
+
+    env = adapter.build_env(route(config, route_name))
+
+    assert env["CEO_OKR_LIVE_SOURCE_COMMAND"] == command
+    assert "UNRELATED_CONFIGURATION" not in env
+
+
 def test_api_route_injects_only_selected_secret(adapter, config):
     env = adapter.build_env(route(config, "codex_api"), api_key="service-secret")
 
