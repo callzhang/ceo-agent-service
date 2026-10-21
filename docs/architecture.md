@@ -739,6 +739,7 @@ OKR 评审的实时数据读取由业务 Skill 选择当前可用的 provider �
 旧 Skill 浏览器入口不会把完整个人季度缺席转成成员级收据），并返回包含
 `processed.objectives`、`processed.okrRows` 的实时载荷，或经完整个人周期列表验证的
 `availability.status=goals_not_established` 收据；它是一种可用实现而非应用层命令契约。
+Codex 路线将服务进程配置的该命令传给 `agent_cli` 子进程，避免子进程因环境筛选回读旧 `.env` 入口。
 
 即时叮当 OKR 评分与定时周报分析是两种任务。普通 Consumer 可用
 `read_okr_member` 和 `read_dingtang_okr_score_detail` 取得实时目标、当前评分批次、

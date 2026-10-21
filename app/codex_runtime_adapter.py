@@ -37,6 +37,7 @@ from app.codex_runner import (
 from app.service_codex_config import service_mcp_config_options
 
 _SAFE_ENV_KEYS = {
+    "CEO_OKR_LIVE_SOURCE_COMMAND",
     "CODEX_CA_CERTIFICATE",
     "CODEX_HOME",
     "COLORTERM",
