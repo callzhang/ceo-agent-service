@@ -108,6 +108,8 @@ def build_target_ddl() -> str:
         "create trigger trg_action_observer_owner_insert before insert on action_observers when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'observer owner must be Action'); end",
         "create trigger trg_action_receipt_reference_owner_insert before insert on action_receipts when new.provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
         "create trigger trg_action_receipt_supersedes_owner_insert before insert on action_receipts when new.supersedes_provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.supersedes_provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'superseded provider receipt must resolve within Action'); end",
+        "create trigger trg_action_receipt_reference_owner_update before update of provider_receipt_id on action_receipts when new.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id and not exists(select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
+        "create trigger trg_action_receipt_identity_immutable before update of id,action_id on action_receipts when old.id is not new.id or old.action_id is not new.action_id begin select raise(abort,'receipt identity and owner are immutable'); end",
         "create trigger trg_action_receipt_lineage_immutable before update of provider_result_json,result_digest,supersedes_provider_receipt_id,provider_receipt_id on action_receipts when old.provider_result_json is not new.provider_result_json or old.result_digest is not new.result_digest or old.supersedes_provider_receipt_id is not new.supersedes_provider_receipt_id or (old.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id) begin select raise(abort,'provider receipt versions and exact references are immutable'); end",
     ))
     return ";\n".join(rendered) + ";\n"
@@ -152,6 +154,8 @@ def validate_action_entity_contract(contract: dict) -> None:
             inverse = field.get('inverse_mapping')
             if not isinstance(inverse, dict) or inverse.get('owner') != field['owner']:
                 raise ValueError(f'{table}.{name}: inverse mapping owner contradicts field owner')
+            if field.get('inverse_rule') != _inverse_rule_text(table, name, inverse):
+                raise ValueError(f'{table}.{name}: inverse prose contradicts structured inverse mapping')
             owner_tables = {'Action': 'actions', 'Action Receipt': 'action_receipts', 'Action Observer': 'action_observers', 'Action Plan': 'actions'}
             if inverse.get('owner_table') != owner_tables.get(field['owner']):
                 raise ValueError(f'{table}.{name}: inverse mapping owner table contradicts field owner')
@@ -254,6 +258,18 @@ def validate_action_entity_contract(contract: dict) -> None:
             or 'provider_receipt_id' not in lineage.get('reference', '')
             or 'without a supersedes link' not in lineage.get('independent_facts', '')):
         raise ValueError('provider receipt version lineage is incomplete')
+
+
+def _inverse_rule_text(source_table: str, source_field: str, inverse: dict) -> str:
+    """Render inverse prose from the structured owner/path as a consistency check."""
+    owner_record_type = inverse.get('owner_record_type')
+    owner = inverse['owner_table']
+    if owner_record_type:
+        owner += f"[record_type={owner_record_type}]"
+    via = inverse.get('via')
+    path = json.dumps(via, sort_keys=True, separators=(',', ':')) if via is not None else 'direct'
+    return (f'Reconstruct {source_table}.{source_field} from {owner}.{inverse["owner_field"]} '
+            f'via {path}; preserve source nullness and exact stored representation.')
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()

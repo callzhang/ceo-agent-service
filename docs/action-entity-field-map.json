@@ -19,7 +19,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_id",
           "target": "action_id",
           "rule": "namespaced direct-action identity; migrate only through explicit mapping",
-          "inverse_rule": "Reconstruct email_actions.action_id from Action mapping target `action_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.action_id from actions.id via {\"arguments\":[\"Action.action_plan_id\",\"Action.operation\"],\"function\":\"app/email_store.py:_direct_action_id\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -66,7 +66,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_plan_id",
           "target": "action_plan_id",
           "rule": "email_actions.action_plan_id",
-          "inverse_rule": "Reconstruct email_actions.action_plan_id from Action mapping target `action_plan_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.action_plan_id from actions.action_plan_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -107,7 +107,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.classification_id",
           "target": "classification_id",
           "rule": "email_actions.classification_id",
-          "inverse_rule": "Reconstruct email_actions.classification_id from Action mapping target `classification_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.classification_id from actions.classification_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -148,7 +148,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.account_id",
           "target": "account_id",
           "rule": "email_actions.account_id",
-          "inverse_rule": "Reconstruct email_actions.account_id from Action mapping target `account_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.account_id from actions.account_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -189,7 +189,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_type",
           "target": "operation",
           "rule": "email_actions.action_type",
-          "inverse_rule": "Reconstruct email_actions.action_type from Action mapping target `operation`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.action_type from actions.operation via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -230,7 +230,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.parameters_json",
           "target": "parameters_json",
           "rule": "email_actions.parameters_json",
-          "inverse_rule": "Reconstruct email_actions.parameters_json from Action mapping target `parameters_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.parameters_json from actions.parameters_json via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -271,7 +271,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.config_version",
           "target": "action_plan_id",
           "rule": "email_actions.action_plan_id -> immutable plan config_version",
-          "inverse_rule": "Reconstruct email_actions.config_version from Action mapping target `action_plan_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.config_version from actions[record_type=email_action_plans].config_version via {\"from\":\"Action.action_plan_id\",\"immutable\":true,\"to\":\"email_action_plans.action_plan_id\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -317,7 +317,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.status",
           "target": "status",
           "rule": "email_actions.status",
-          "inverse_rule": "Reconstruct email_actions.status from Action mapping target `status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.status from actions.status via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -358,7 +358,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.attempt_count",
           "target": "attempt_number",
           "rule": "Count child attempts as in `shared_action_definitions.py:email_projection`; no separate parent value is stored.",
-          "inverse_rule": "Recompute `email_actions.attempt_count` with `shared_action_definitions.py:email_projection`: Count child attempts as in `shared_action_definitions.py:email_projection`; no separate parent value is stored.",
+          "inverse_rule": "Reconstruct email_actions.attempt_count from action_receipts.attempt_number via {\"aggregate\":\"count\",\"by\":\"Action Receipt.attempt_number\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/shared_action_definitions.py:email_projection",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -402,7 +402,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.started_at",
           "target": "started_at",
           "rule": "email_actions.started_at",
-          "inverse_rule": "Reconstruct email_actions.started_at from Action mapping target `started_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.started_at from actions.started_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -443,7 +443,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.finished_at",
           "target": "finished_at",
           "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's finished_at or empty.",
-          "inverse_rule": "Recompute `email_actions.finished_at` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's finished_at or empty.",
+          "inverse_rule": "Reconstruct email_actions.finished_at from action_receipts.finished_at via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/shared_action_definitions.py:email_projection",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -492,7 +492,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.next_attempt_at",
           "target": "next_attempt_at",
           "rule": "email_actions.next_attempt_at",
-          "inverse_rule": "Reconstruct email_actions.next_attempt_at from Action mapping target `next_attempt_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.next_attempt_at from actions.next_attempt_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -533,7 +533,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_operation",
           "target": "operation",
           "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_operation or empty.",
-          "inverse_rule": "Recompute `email_actions.provider_operation` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's provider_operation or empty.",
+          "inverse_rule": "Reconstruct email_actions.provider_operation from action_receipts.operation via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/shared_action_definitions.py:email_projection",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -582,7 +582,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_target",
           "target": "target",
           "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_target or empty.",
-          "inverse_rule": "Recompute `email_actions.provider_target` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's provider_target or empty.",
+          "inverse_rule": "Reconstruct email_actions.provider_target from action_receipts.target via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/shared_action_definitions.py:email_projection",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -631,7 +631,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_result_id",
           "target": "provider_result_id",
           "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_result_id or empty.",
-          "inverse_rule": "Recompute `email_actions.provider_result_id` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's provider_result_id or empty.",
+          "inverse_rule": "Reconstruct email_actions.provider_result_id from action_receipts.provider_result_id via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/shared_action_definitions.py:email_projection",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -680,7 +680,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.error",
           "target": "error_text",
           "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's error or empty.",
-          "inverse_rule": "Recompute `email_actions.error` with `shared_action_definitions.py:email_projection`: Current projection returns empty for pending/processing, otherwise the latest attempt's error or empty.",
+          "inverse_rule": "Reconstruct email_actions.error from action_receipts.error_text via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/shared_action_definitions.py:email_projection",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -729,7 +729,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.created_at",
           "target": "created_at",
           "rule": "email_actions.created_at",
-          "inverse_rule": "Reconstruct email_actions.created_at from Action mapping target `created_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.created_at from actions.created_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -770,7 +770,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.updated_at",
           "target": "updated_at",
           "rule": "email_actions.updated_at",
-          "inverse_rule": "Reconstruct email_actions.updated_at from Action mapping target `updated_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_actions.updated_at from actions.updated_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore._next_direct_action_row",
             "app/email_store.py:EmailStore._claimed_direct_action",
@@ -817,7 +817,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.id",
           "target": "receipt identity scoped to Action",
           "rule": "email_action_attempts.id; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.id from Action mapping target `receipt identity scoped to Action`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.id from action_receipts.id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -850,7 +850,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.action_id",
           "target": "action_id",
           "rule": "email_action_attempts.action_id foreign key",
-          "inverse_rule": "Reconstruct email_action_attempts.action_id from Action mapping target `action_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.action_id from actions.id via {\"arguments\":[\"Action.action_plan_id\",\"Action.operation\"],\"function\":\"app/email_store.py:_direct_action_id\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -889,7 +889,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.attempt_number",
           "target": "attempt_number",
           "rule": "email_action_attempts.attempt_number; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.attempt_number from Action mapping target `attempt_number`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.attempt_number from action_receipts.attempt_number via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -922,7 +922,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.status",
           "target": "status",
           "rule": "email_action_attempts.status; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.status from Action mapping target `status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.status from action_receipts.status via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -955,7 +955,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_operation",
           "target": "operation",
           "rule": "email_action_attempts.provider_operation; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.provider_operation from Action mapping target `operation`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_operation from action_receipts.operation via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -988,7 +988,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_target",
           "target": "target",
           "rule": "email_action_attempts.provider_target; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.provider_target from Action mapping target `target`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_target from action_receipts.target via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -1021,7 +1021,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_result_id",
           "target": "provider_result_id",
           "rule": "email_action_attempts.provider_result_id; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.provider_result_id from Action mapping target `provider_result_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_result_id from action_receipts.provider_result_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -1054,7 +1054,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.error",
           "target": "error_text",
           "rule": "email_action_attempts.error; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.error from Action mapping target `error_text`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.error from action_receipts.error_text via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -1087,7 +1087,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.started_at",
           "target": "started_at",
           "rule": "email_action_attempts.started_at; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.started_at from Action mapping target `started_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.started_at from action_receipts.started_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -1120,7 +1120,7 @@
           "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.finished_at",
           "target": "finished_at",
           "rule": "email_action_attempts.finished_at; repeated values remain separate receipts",
-          "inverse_rule": "Reconstruct email_action_attempts.finished_at from Action mapping target `finished_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct email_action_attempts.finished_at from action_receipts.finished_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/email_store.py:EmailStore.append_action_attempt",
             "app/email_store.py:EmailStore.list_action_attempts"
@@ -1159,7 +1159,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.id",
           "target": "id",
           "rule": "candidate_action_attempts.id maps only through explicit migration map",
-          "inverse_rule": "Reconstruct candidate_action_attempts.id from Action mapping target `id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.id from actions.id via {\"identity\":\"source physical actions.id preserved as Action Receipt.id\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1201,7 +1201,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.execution_id",
           "target": "execution_id",
           "rule": "candidate_action_attempts.execution_id retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
-          "inverse_rule": "Reconstruct candidate_action_attempts.execution_id from Action mapping target `execution_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.execution_id from action_receipts.execution_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1241,7 +1241,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.action_index",
           "target": "action_index",
           "rule": "candidate_action_attempts.action_index retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
-          "inverse_rule": "Reconstruct candidate_action_attempts.action_index from Action mapping target `action_index`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.action_index from action_receipts.action_index via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1281,7 +1281,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.external_action_key",
           "target": "external_action_key",
           "rule": "candidate_action_attempts.external_action_key exact stable identity",
-          "inverse_rule": "Reconstruct candidate_action_attempts.external_action_key from Action mapping target `external_action_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1321,7 +1321,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.status",
           "target": "status",
           "rule": "candidate_action_attempts.status retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
-          "inverse_rule": "Reconstruct candidate_action_attempts.status from Action mapping target `status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.status from action_receipts.status via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1361,7 +1361,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.result_json",
           "target": "outcome_json",
           "rule": "candidate_action_attempts.result_json retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
-          "inverse_rule": "Reconstruct candidate_action_attempts.result_json from Action mapping target `outcome_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.result_json from action_receipts.outcome_json via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1401,7 +1401,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.created_at",
           "target": "created_at",
           "rule": "candidate_action_attempts.created_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
-          "inverse_rule": "Reconstruct candidate_action_attempts.created_at from Action mapping target `created_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.created_at from action_receipts.created_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1441,7 +1441,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.updated_at",
           "target": "updated_at",
           "rule": "candidate_action_attempts.updated_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
-          "inverse_rule": "Reconstruct candidate_action_attempts.updated_at from Action mapping target `updated_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.updated_at from action_receipts.updated_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
@@ -1487,7 +1487,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.external_action_key",
           "target": "external_action_key",
           "rule": "external_action_results.external_action_key exact stable identity",
-          "inverse_rule": "Reconstruct external_action_results.external_action_key from Action mapping target `external_action_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1527,7 +1527,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.business_object_key",
           "target": "business_object_key",
           "rule": "external_action_results.business_object_key",
-          "inverse_rule": "Reconstruct external_action_results.business_object_key from Action mapping target `business_object_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.business_object_key from actions.business_object_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1567,7 +1567,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.action_identity",
           "target": "action_identity",
           "rule": "external_action_results.action_identity",
-          "inverse_rule": "Reconstruct external_action_results.action_identity from Action mapping target `action_identity`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.action_identity from actions.action_identity via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1607,7 +1607,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.operation",
           "target": "operation",
           "rule": "external_action_results.operation provider result fact",
-          "inverse_rule": "Reconstruct external_action_results.operation from Action mapping target `operation`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.operation from action_receipts.operation via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1647,7 +1647,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.target_identifiers_json",
           "target": "target",
           "rule": "external_action_results.target_identifiers_json",
-          "inverse_rule": "Reconstruct external_action_results.target_identifiers_json from Action mapping target `target`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.target_identifiers_json from action_receipts.target via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1687,7 +1687,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.provider_result_json",
           "target": "provider_result_json",
           "rule": "external_action_results.provider_result_json exact text including null-like JSON text",
-          "inverse_rule": "Reconstruct external_action_results.provider_result_json from Action mapping target `provider_result_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.provider_result_json from action_receipts.provider_result_json via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1727,7 +1727,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.result_digest",
           "target": "result_digest",
           "rule": "external_action_results.result_digest",
-          "inverse_rule": "Reconstruct external_action_results.result_digest from Action mapping target `result_digest`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.result_digest from action_receipts.result_digest via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1767,7 +1767,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.first_agent_run_id",
           "target": "agent_run_id",
           "rule": "external_action_results.first_agent_run_id",
-          "inverse_rule": "Reconstruct external_action_results.first_agent_run_id from Action mapping target `agent_run_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.first_agent_run_id from action_receipts.agent_run_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1807,7 +1807,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.created_at",
           "target": "observed_at",
           "rule": "external_action_results.created_at",
-          "inverse_rule": "Reconstruct external_action_results.created_at from Action mapping target `observed_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct external_action_results.created_at from action_receipts.observed_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
@@ -1853,7 +1853,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.channel",
           "target": "delivery_channel",
           "rule": "outbound_postfixes.channel",
-          "inverse_rule": "Reconstruct outbound_postfixes.channel from Action mapping target `delivery_channel`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.channel from actions.delivery_channel via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -1893,7 +1893,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.delivery_key",
           "target": "delivery_key",
           "rule": "outbound_postfixes.delivery_key",
-          "inverse_rule": "Reconstruct outbound_postfixes.delivery_key from Action mapping target `delivery_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.delivery_key from actions.delivery_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -1933,7 +1933,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.final_body",
           "target": "prepared_body",
           "rule": "outbound_postfixes.final_body; retain until independent exact readback proves retirement",
-          "inverse_rule": "Reconstruct outbound_postfixes.final_body from Action mapping target `prepared_body`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.final_body from actions.prepared_body via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -1973,7 +1973,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.feedback_token",
           "target": "feedback_token",
           "rule": "outbound_postfixes.feedback_token",
-          "inverse_rule": "Reconstruct outbound_postfixes.feedback_token from Action mapping target `feedback_token`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.feedback_token from actions.feedback_token via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -2013,7 +2013,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.postfix_version",
           "target": "postfix_version",
           "rule": "outbound_postfixes.postfix_version",
-          "inverse_rule": "Reconstruct outbound_postfixes.postfix_version from Action mapping target `postfix_version`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_version from actions.postfix_version via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -2053,7 +2053,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.created_at",
           "target": "prepared_at",
           "rule": "outbound_postfixes.created_at records preparation time, not dispatch or receipt time",
-          "inverse_rule": "Reconstruct outbound_postfixes.created_at from Action mapping target `prepared_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.created_at from actions.prepared_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -2093,7 +2093,7 @@
           "evidence": "app/prepared_action_definitions.py:SLOTS",
           "target": "provider_result_json",
           "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.provider_result_json; preserve exact value",
-          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_provider_result_json from Action mapping target `provider_result_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_provider_result_json from action_receipts.provider_result_json via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -2133,7 +2133,7 @@
           "evidence": "app/prepared_action_definitions.py:SLOTS",
           "target": "observed_at",
           "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.created_at; provider receipt clock",
-          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_created_at from Action mapping target `observed_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_created_at from action_receipts.observed_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -2173,7 +2173,7 @@
           "evidence": "app/prepared_action_definitions.py:SLOTS",
           "target": "dispatched_at",
           "rule": "prepared_action_definitions.SLOTS.native_reply_dispatches.created_at; dispatch clock",
-          "inverse_rule": "Reconstruct outbound_postfixes.postfix_dispatch_created_at from Action mapping target `dispatched_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_dispatch_created_at from action_receipts.dispatched_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.prepare_outbound_postfix",
             "app/store.py:Store.get_outbound_postfix",
@@ -2219,7 +2219,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.id",
           "target": "id",
           "rule": "sent_replies.id maps only through explicit migration map",
-          "inverse_rule": "Reconstruct sent_replies.id from Action mapping target `id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.id from actions.id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2259,7 +2259,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.conversation_id",
           "target": "conversation_id",
           "rule": "sent_replies.conversation_id",
-          "inverse_rule": "Reconstruct sent_replies.conversation_id from Action mapping target `conversation_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.conversation_id from actions.conversation_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2299,7 +2299,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.trigger_message_id",
           "target": "trigger_message_id",
           "rule": "sent_replies.trigger_message_id",
-          "inverse_rule": "Reconstruct sent_replies.trigger_message_id from Action mapping target `trigger_message_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.trigger_message_id from actions.trigger_message_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2339,7 +2339,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.reply_text",
           "target": "parameters_json",
           "rule": "sent_replies.reply_text exact body",
-          "inverse_rule": "Reconstruct sent_replies.reply_text from Action mapping target `parameters_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.reply_text from actions.parameters_json via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2379,7 +2379,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.sent_at",
           "target": "observed_at",
           "rule": "sent_replies.sent_at; distinct from prepared/created timestamp",
-          "inverse_rule": "Reconstruct sent_replies.sent_at from Action mapping target `observed_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.sent_at from action_receipts.observed_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2419,7 +2419,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.send_result_json",
           "target": "provider_result_json",
           "rule": "sent_replies.send_result_json exact source value",
-          "inverse_rule": "Reconstruct sent_replies.send_result_json from Action mapping target `provider_result_json`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.send_result_json from action_receipts.provider_result_json via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2459,7 +2459,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_key",
           "target": "recall_key",
           "rule": "sent_replies.recall_key",
-          "inverse_rule": "Reconstruct sent_replies.recall_key from Action mapping target `recall_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.recall_key from actions.recall_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2499,7 +2499,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_status",
           "target": "recall_status",
           "rule": "sent_replies.recall_status",
-          "inverse_rule": "Reconstruct sent_replies.recall_status from Action mapping target `recall_status`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.recall_status from actions.recall_status via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2539,7 +2539,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_error",
           "target": "recall_error",
           "rule": "sent_replies.recall_error",
-          "inverse_rule": "Reconstruct sent_replies.recall_error from Action.recall_error; retain the exact source text and nullness.",
+          "inverse_rule": "Reconstruct sent_replies.recall_error from actions.recall_error via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2579,7 +2579,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recalled_at",
           "target": "recalled_at",
           "rule": "sent_replies.recalled_at",
-          "inverse_rule": "Reconstruct sent_replies.recalled_at from Action mapping target `recalled_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.recalled_at from actions.recalled_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2619,7 +2619,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.feedback_token",
           "target": "feedback_token",
           "rule": "sent_replies.feedback_token",
-          "inverse_rule": "Reconstruct sent_replies.feedback_token from Action mapping target `feedback_token`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.feedback_token from actions.feedback_token via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2659,7 +2659,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.channel",
           "target": "delivery_channel",
           "rule": "sent_replies.channel",
-          "inverse_rule": "Reconstruct sent_replies.channel from Action mapping target `delivery_channel`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.channel from actions.delivery_channel via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2699,7 +2699,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.agent_run_id",
           "target": "agent_run_id",
           "rule": "sent_replies.agent_run_id",
-          "inverse_rule": "Reconstruct sent_replies.agent_run_id from Action mapping target `agent_run_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.agent_run_id from actions.agent_run_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2739,7 +2739,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.external_action_key",
           "target": "external_action_key",
           "rule": "sent_replies.external_action_key exact existing key",
-          "inverse_rule": "Reconstruct sent_replies.external_action_key from Action mapping target `external_action_key`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_replies.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.get_sent_reply",
@@ -2785,7 +2785,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.sent_reply_id",
           "target": "action_id",
           "rule": "sent_reply_observers.sent_reply_id foreign key",
-          "inverse_rule": "Reconstruct sent_reply_observers.sent_reply_id from Action mapping target `action_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_reply_observers.sent_reply_id from action_observers.action_id via {\"reference\":\"sent_replies.id\",\"to\":\"Action.id\"}; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
@@ -2821,7 +2821,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.agent_run_id",
           "target": "agent_run_id",
           "rule": "sent_reply_observers.agent_run_id; observer, not effect",
-          "inverse_rule": "Reconstruct sent_reply_observers.agent_run_id from Action mapping target `agent_run_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_reply_observers.agent_run_id from action_observers.agent_run_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
@@ -2854,7 +2854,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.reply_task_id",
           "target": "task_id",
           "rule": "sent_reply_observers.reply_task_id",
-          "inverse_rule": "Reconstruct sent_reply_observers.reply_task_id from Action mapping target `task_id`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_reply_observers.reply_task_id from action_observers.task_id via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
@@ -2887,7 +2887,7 @@
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.created_at",
           "target": "created_at",
           "rule": "sent_reply_observers.created_at",
-          "inverse_rule": "Reconstruct sent_reply_observers.created_at from Action mapping target `created_at`; retain source nullness, JSON text/JSONB semantics and SQLite storage class exactly as declared.",
+          "inverse_rule": "Reconstruct sent_reply_observers.created_at from action_observers.created_at via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/store.py:Store.record_completed_agent_message_delivery",
             "app/store.py:Store.list_sent_replies_for_attempts"
@@ -3283,7 +3283,7 @@
           "sent_replies.send_result_json"
         ],
         "nullable": true,
-        "meaning": "Technical exact-reference link from a local NULL outcome to the exact provider receipt version it referenced; once set it is immutable, and canonical corrections append a new provider receipt without rewriting old observations."
+        "meaning": "Technical exact-reference link from a local NULL outcome to its provider-result receipt version; initial assignment requires the referenced result receipt to have the same immutable Action owner, and set links cannot be changed."
       },
       {
         "name": "supersedes_provider_receipt_id",
@@ -3293,7 +3293,7 @@
           "external_action_results.result_digest"
         ],
         "nullable": true,
-        "meaning": "Append-only technical lineage from a corrected canonical result version to its prior provider receipt; the link is immutable, one successor per version, and chain tip identifies the current canonical version."
+        "meaning": "Append-only technical lineage from a corrected canonical result version to its prior provider receipt; the reference and receipt owner identity are immutable, and one successor per version identifies the chain tip."
       }
     ],
     "table": "actions",
