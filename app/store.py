@@ -35,13 +35,8 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
-from app.email_metadata_schema_release import TARGET_EMAIL_VERSION
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
-)
-from app.logical_run_current_schema import (
-    create_current_run11_schema, current_run11_schema_is_current,
-    current_configs_schema_is_current,
 )
 
 from app.configs_definitions import config_projection
@@ -56,19 +51,10 @@ from app.schedules_storage import (
     insert_schedule, update_schedule, delete_schedule,
     rename_schedule_runtime,
 )
-from app.configs_schema_transfer import (
-    SOURCE_TABLES as CONFIG_SOURCE_TABLES,
-    _target_declarations as _config_target_declarations,
-)
-from app.action_email_schema_release import (
-    require_current_email_pair,
-    configs_current_or_known_skill_guard_repair,
-    CURRENT_STATE_REPAIRABLE_INDEXES, state_current_or_known_dispatcher_index_repair,
-)
-from app.email_publication_sources import current_email_actions_available
+from app.current_schema_manifest import require_current_pair, schema_is_current, schema_objects
+from app.current_publication_sources import current_email_actions_available
 from app.run_storage import (
-    SCHEDULED_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES,
-    install_run_child_guards, insert_run,
+    SCHEDULED_RUN_SQL, RUNTIME_ATTEMPT_SQL, insert_run,
 )
 from app.logical_run_store import LogicalRunStoreMixin
 from app.logical_run_storage import AGENT_RUN_SQL, logical_run_projection, recover_logical_runs
@@ -77,30 +63,22 @@ from app.runs11_definitions import run11_projection
 from app.runs11_storage import insert_run11_fact
 
 from app.task_storage import (
-    task_id_expression, RETIRED_TASK_TABLES,
+    task_id_expression,
 )
 
 from app.task_lifecycle_definitions import (
-    TASK20_FIELDS as SOURCE_COLUMNS, TASK20_INDEX_DDL, TASK20_TRIGGER_DDL,
-    TASK20_NEW_KINDS, task20_column, task20_projection,
-)
-from app.task_lifecycle_current_schema import (
-    create_current_task20_schema, install_current_task_child_guards,
-    task20_schema_is_current, task20_feedback_child_is_current,
+    TASK20_FIELDS as SOURCE_COLUMNS, task20_column, task20_projection,
 )
 from app import task_lifecycle_storage as task_claims
 from app.task8_storage import (
     register_task8_functions, task8_insert_parts, task8_set_parts, task8_meeting_returning,
 )
 from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
-from app.action_feedback_definitions import FEEDBACK_KINDS, feedback_projection
+from app.action_feedback_definitions import feedback_projection
 from app.action_feedback_storage import (insert_feedback_action,
     upsert_feedback_event, insert_feedback_decision_items,
     resolve_feedback_events, reopen_feedback_event)
 
-from app.workbench_storage import (
-    RETIRED_WORKBENCH_TABLES,
-)
 
 from app.agent_cron.models import (
     ScheduledTask,
@@ -116,8 +94,7 @@ from app.agent_cron.models import (
     parse_utc_datetime,
 )
 from app.business_identity import oa_identifiers_from_url, reply_business_object_key
-from app.state_definitions import STATE_INDEX_DDL, state_projection
-from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES, state_schema_is_current
+from app.state_definitions import state_projection
 from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
 from app.business_definitions import (
     BUSINESS_TASK_LIST_PROJECTION,
@@ -125,7 +102,8 @@ from app.business_definitions import (
 from app.business_storage import (
     insert_business, update_business,
 )
-from app.business_legacy_fields import (CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS, current_business_schema_is_current, current_action_objects, current_action_variants, create_current_action_schema)
+from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
+from app.current_action_schema import current_reply_action_projection
 
 from app.business_candidate_definitions import candidate_projection
 from app.business_candidate_storage import (
@@ -177,7 +155,6 @@ from app.feedback_spike import (
 )
 from app import history_types
 from app.history import HistoryItem
-from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.managed_skills import (
     ManagedSkill,
     ManagedSkillExportReceipt,
@@ -257,24 +234,17 @@ from app.business_source_reader import (
     BusinessTaskSignalFact, RequestSourceReader, SourceVersionBinding,
 )
 from app.provenance_definitions import SOURCE_FIELDS
-from app.provenance_storage import signal_projection, insert_signal_version, provenance_schema_is_current
+from app.provenance_storage import signal_projection, insert_signal_version
 from app.wechat.models import WechatReplyScope
 
 
 from app.action_storage import (
     ACTION_RECORD_TYPES, _action_layout,
-    _current_objects as action_schema_objects,
-    email_action_auxiliary_objects_are_current,
-    ACTION_TYPES, DELIVERY_ACTION_TYPES, REPLY_ACTION_TYPES,
-    POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
-    RECEIPT_ACTION_TYPES,
-    action_schema_is_current,
+    OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     insert_action,
     update_action,
     delete_action,
     insert_sync_action,
-    reply_action_projection,
-    _reply_variant_for,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     CANDIDATE_EXECUTION_SQL,
@@ -296,7 +266,7 @@ from app.action_storage import (
     insert_error_action,
     error_set_parts,
 )
-from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS, TASK_DELIVERY_DEFAULTS_FRESH, TASK_DELIVERY_KINDS
+from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS
 from app.action_error_definitions import error_projection
 
 from app.shared_action_definitions import email_projection as email_action_projection
@@ -455,338 +425,18 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.11"
+STORE_SCHEMA_VERSION = "2026-10-19.12"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
 # never-written shape (one row per task, a single memory_id).
-TASK_MEMORY_WRITE_EVENTS_DDL = """
-create table if not exists task_memory_write_events (
-    id integer primary key autoincrement,
-    reply_task_id integer not null,
-    execution_generation text not null,
-    consumer_run_id integer,
-    memories_json text not null default '[]',
-    written_memory_ids_json text not null default '[]',
-    status text not null default 'pending',
-    attempts integer not null default 0,
-    available_at text not null default '',
-    error text not null default '',
-    skip_reason text not null default '',
-    lease_owner text not null default '',
-    lease_expires_at text not null default '',
-    started_at text not null default '',
-    created_at text not null default current_timestamp,
-    updated_at text not null default current_timestamp,
-    unique(reply_task_id, execution_generation),
-    foreign key(reply_task_id) references tasks(id)
-);
-create index if not exists idx_task_memory_write_events_due
-    on task_memory_write_events(status, available_at, id);
-create index if not exists idx_task_memory_write_events_lease
-    on task_memory_write_events(status, lease_expires_at, id);
-"""
 
 # Fresh Store bootstraps the exact retired source declarations inside its
 # existing publication transaction, then immediately converts them to Actions.
 # Current Store opens never create these tables.
-FRESH_TASK_DELIVERY_SOURCE_DDL = """
-                create table if not exists meeting_alignment_delivery_claims (
-                    job_id integer primary key,
-                    claim_token text not null,
-                    foreign key(job_id) references tasks(id) on delete cascade
-                );
 
 
 
-
-
-
-
-
-
-                create table if not exists meeting_memory_write_events (
-                    id integer primary key autoincrement,
-                    meeting_job_id integer not null unique,
-                    execution_generation text not null,
-                    payload_json text not null,
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    available_at text not null default '',
-                    error text not null default '',
-                    memory_id text not null default '',
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    started_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(meeting_job_id) references tasks(id)
-                );
-                create index if not exists idx_meeting_memory_write_events_due
-                    on meeting_memory_write_events(status, available_at, id);
-
-
-
-                create table if not exists wechat_deliveries (
-                    id integer primary key autoincrement,
-                    reply_task_id integer not null,
-                    account_id text not null,
-                    target_type text not null,
-                    target_id text not null,
-                    conversation_id text not null default '',
-                    reply_text text not null,
-                    execution_generation text not null default 'initial',
-                    status text not null default 'ready_to_send',
-                    action_started_at text not null default '',
-                    pre_action_failure integer not null default 0,
-                    evidence_json text not null default '{}',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(reply_task_id) references tasks(id)
-                );
-                create index if not exists idx_wechat_deliveries_status
-                    on wechat_deliveries(status, id);
-""" + TASK_MEMORY_WRITE_EVENTS_DDL + """
-create index if not exists idx_meeting_memory_write_events_lease on meeting_memory_write_events(status, lease_expires_at, id);
-create index if not exists idx_wechat_deliveries_task_generation on wechat_deliveries(reply_task_id, execution_generation, id);
-"""
-
-STORE_SCHEMA_REQUIRED_TABLES = (
-    "actions",
-    "state",
-    "runs",
-    "tasks",
-    "business",
-    "provenance",
-)
-STORE_SCHEMA_REQUIRED_INDEXES = (
-    "idx_runtime_attempt_active_route",
-    "idx_runtime_attempt_active_lease",
-    "idx_agent_runtime_attempts_run",
-    "idx_logical_runs_active_task",
-    "idx_agent_run_state_events_run",
-    "idx_workbench_events_turn_id_id",
-    "idx_workbench_events_event_type",
-    "idx_scheduled_task_runs_scheduled_instant",
-    "idx_scheduled_task_runs_dispatch",
-    "idx_scheduled_task_runs_claim",
-    "idx_scheduled_task_runs_latest",
-    "idx_scheduled_task_runs_reply_execution",
-    "idx_business_public_id",
-    "idx_business_typed_id",
-    "idx_business_typed_anchor",
-    "idx_business_task_relevance",
-    "idx_business_task_stage",
-    "idx_business_task_updated",
-    "idx_business_project_anchor",
-    "idx_business_anchor_identity",
-    "idx_business_anchor_public_type",
-    "idx_business_context_project",
-    "idx_business_task_public_id",
-    "idx_business_project_public_id",
-    "idx_business_anchor_public_id",
-    "idx_business_work_cluster_public_id",
-    "idx_business_work_project_public_id",
-    "idx_business_work_todo_public_id",
-    "idx_business_work_todo_project_status",
-    "idx_business_todo_evidence_dedupe_key",
-    "idx_business_todo_evidence_todo",
-    "idx_business_todo_evidence_status",
-    "idx_business_todo_evidence_work_input",
-    "idx_business_todo_evidence_project",
-    "idx_business_project_candidate_cluster",
-    "idx_business_attention_list",
-    "idx_business_attention_stable_key",
-    "idx_business_wechat_candidate_identity",
-    *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"')
-      for sql in TASK20_INDEX_DDL),
-)
-STORE_SCHEMA_REMOVED_TABLES = (
-    "reply_task_deferral_receipts",
-    "business_source_documents",
-    "business_legacy_links",
-    *BUSINESS_ACTION_KINDS,
-    *FEEDBACK_KINDS,
-    "errors",
-    "workbench_confirmations",
-    *TASK_DELIVERY_KINDS,
-    *STATE_SOURCE_TABLES,
-    *TASK20_NEW_KINDS,
-    "business_tasks",
-    "business_projects",
-    "business_anchors",
-    "business_project_context_revisions",
-    "service_bugfix_candidates",
-    "business_work_clusters",
-    "todo_evidence_candidates",
-    "work_projects",
-    "work_todos",
-    "business_project_candidates",
-    "business_attention_items",
-    "wechat_memory_candidates",
-    *REPLY_ACTION_TYPES,
-    *DELIVERY_ACTION_TYPES,
-    *POSTFIX_ACTION_TYPES,
-    *RECEIPT_ACTION_TYPES,
-    *SYNC_ACTION_PROJECTIONS,
-    *RETIRED_WORKBENCH_TABLES,
-    *RETIRED_TASK_TABLES,
-    "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
-    "agent_runs", "agent_runtime_attempts", "agent_run_state_events", "agent_run_events",
-    "universal_plan_executions",
-    "universal_action_executions",
-)
-def _business_action_bootstrap_evidence_dates_sql() -> str:
-    return f"""
-                create table if not exists business_task_evidence (
-                    task_id integer not null,
-                    signal_id integer not null,
-                    evidence_role text not null check(evidence_role in (
-                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',
-                        'correction', 'merge_identity', 'relevance', 'resolution'
-                    )),
-                    created_at text not null default current_timestamp,
-                    primary key(task_id, signal_id, evidence_role),
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_evidence_task
-                    on business_task_evidence(task_id, created_at, signal_id);
-                create table if not exists business_task_date_evidence (
-                    id integer primary key autoincrement,
-                    task_id integer not null,
-                    date_type text not null check(date_type in (
-                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',
-                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'
-                    )),
-                    value_at text not null default '',
-                    raw_phrase text not null check({_business_nonblank_sql("raw_phrase")}),
-                    source_signal_id integer not null,
-                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),
-                    actor_user_id text not null default '',
-                    actor_name text not null default '',
-                    created_at text not null default current_timestamp,
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(source_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_date_evidence_task
-                    on business_task_date_evidence(task_id, id);
-                create trigger if not exists trg_business_task_date_evidence_immutable_update
-                before update on business_task_date_evidence
-                begin select raise(abort, 'business task date evidence is immutable'); end;
-                create trigger if not exists trg_business_task_date_evidence_immutable_delete
-                before delete on business_task_date_evidence
-                begin select raise(abort, 'business task date evidence is immutable'); end;
-                create trigger if not exists trg_business_task_date_evidence_immutable_replace
-                before insert on business_task_date_evidence
-                when exists (select 1 from business_task_date_evidence where id=new.id)
-                begin select raise(abort, 'business task date evidence is immutable'); end;
-    """
-
-
-def _business_action_bootstrap_links_sql() -> str:
-    fresh = True
-    return f"""
-                create table if not exists business_task_relations (
-                    from_task_id integer not null,
-                    to_task_id integer not null,
-                    relation_type text not null check(relation_type in (
-                        'depends_on', 'blocks', 'supports', 'supersedes', 'related_to'
-                    )),
-                    status text not null default 'proposed'
-                        check(status in ('proposed', 'confirmed', 'rejected')),
-                    supporting_signal_id integer not null,
-                    reason text not null default '',
-                    created_at text not null default current_timestamp,
-                    primary key(from_task_id, to_task_id, relation_type),
-                    check(from_task_id <> to_task_id),
-                    foreign key(from_task_id) references business(task_public_id),
-                    foreign key(to_task_id) references business(task_public_id),
-                    foreign key(supporting_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_relations_from
-                    on business_task_relations(from_task_id, relation_type, to_task_id);
-                create index if not exists idx_business_task_relations_to
-                    on business_task_relations(to_task_id, relation_type, from_task_id);
-                create table if not exists business_work_cluster_tasks (
-                    cluster_id integer not null,
-                    task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(cluster_id, task_id),
-                    foreign key(cluster_id) references business(work_cluster_public_id),
-                    foreign key(task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_work_cluster_tasks_task
-                    on business_work_cluster_tasks(task_id, cluster_id);
-
-                create table if not exists business_task_anchor_links (
-                    id integer primary key autoincrement,
-                    task_id integer not null,
-                    anchor_id integer not null,
-                    status text not null default 'proposed'
-                        check(status in ('proposed', 'confirmed', 'rejected')),
-                    active integer not null default 1 check(active in (0, 1)),
-                    evidence_signal_id integer not null,
-                    reason text not null default '',
-                    created_at text not null default current_timestamp,
-                    unique(task_id, anchor_id),
-                    foreign key(task_id) references business(task_public_id),
-                    foreign key(anchor_id) references business(anchor_public_id),
-                    foreign key(evidence_signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_task_anchor_links_task
-                    on business_task_anchor_links(task_id, status, active, anchor_id);
-
-
-
-                create table if not exists business_project_evidence (
-                    project_id integer not null,
-                    signal_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(project_id, signal_id),
-                    foreign key(project_id) references business(project_public_id),
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create table if not exists business_attention_tasks (
-                    attention_item_id integer not null,
-                    task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(attention_item_id, task_id),
-                    foreign key(attention_item_id) references {('business_attention_items(id)' if fresh else 'business(attention_item_public_id)')},
-                    foreign key(task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_attention_tasks_task
-                    on business_attention_tasks(task_id, attention_item_id);
-                create table if not exists business_attention_proposal_tasks (
-                    attention_item_id integer not null,
-                    task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(attention_item_id, task_id),
-                    foreign key(attention_item_id) references {('business_attention_items(id)' if fresh else 'business(attention_item_public_id)')},
-                    foreign key(task_id) references business(task_public_id)
-                );
-                create index if not exists idx_business_attention_proposal_tasks_task
-                    on business_attention_proposal_tasks(task_id, attention_item_id);
-                create table if not exists business_attention_events (
-                    id integer primary key autoincrement,
-                    attention_item_id integer not null,
-                    event_type text not null check(event_type in (
-                        'opened', 'updated', 'category_changed', 'resolved', 'reopened'
-                    )),
-                    signal_id integer not null,
-                    before_json text not null
-                        check(json_valid(before_json) and json_type(before_json) = 'object'),
-                    after_json text not null
-                        check(json_valid(after_json) and json_type(after_json) = 'object'),
-                    reason text not null check({_business_nonblank_sql("reason")}),
-                    created_at text not null default current_timestamp,
-                    foreign key(attention_item_id) references {('business_attention_items(id)' if fresh else 'business(attention_item_public_id)')},
-                    foreign key(signal_id) references business_task_signals(id)
-                );
-                create index if not exists idx_business_attention_events_item
-                    on business_attention_events(attention_item_id, created_at, id);
-    """
 
 
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
@@ -794,196 +444,6 @@ BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_sign
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
                           for kind in BUSINESS_ACTION_AUTO}
 
-STORE_SCHEMA_REMOVED_COLUMNS = {
-    "tasks": ("final_text",),
-    "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
-             "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
-}
-STORE_SCHEMA_REQUIRED_COLUMNS = {
-    "tasks": (
-        "id", "record_type", "legacy_key", "payload_json", "parent_id",
-        "current_input_id", "claimed_input_id", "parent_type",
-        *(kind + "__" + field for kind, fields in SOURCE_COLUMNS.items()
-          for field in fields),
-    ),
-    "business": ("id", "record_type", "public_id", "task_public_id",
-                 "project_public_id", "anchor_public_id", "work_cluster_public_id",
-                 "work_project_public_id", "work_todo_public_id", "completed_at",
-                 "source_type", "source_ref", "source_created_at",
-                 "todo_evidence_candidate_dedupe_key",
-                 "attention_item_public_id", "project_candidate_public_id",
-                 "wechat_memory_candidate_public_id", "import_task_id"),
-    "provenance": ("id", *SOURCE_FIELDS),
-    "runs": (
-        "record_type", "legacy_key", "task_id", "parent_id",
-        "error", "projection_json", "job_id",
-        "session_mode",
-        "source_session_id",
-        "attempt_purpose",
-        "validation_retry_policy_id",
-        "validation_result_schema_id",
-        "lease_owner",
-        "lease_expires_at",
-        "result_schema_id",
-    ),
-}
-STORE_SCHEMA_REQUIRED_TRIGGERS = (
-    "trg_runtime_attempt_session_evidence_trim_insert",
-    "trg_runtime_attempt_session_evidence_trim_update",
-    "trg_runtime_attempt_generalized_lease_insert",
-    "trg_runtime_attempt_generalized_lease_update",
-    "trg_runtime_attempt_lineage_insert",
-    "trg_runtime_attempt_lineage_update",
-    "trg_runtime_attempt_lineage_immutable",
-    *(sql.split()[2] for sql in TASK20_TRIGGER_DDL),
-)
-MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_managed_skill_revisions_immutable_update
-before update on managed_skill_revisions
-begin
-    select raise(abort, 'managed Skill revisions are immutable');
-end
-""".strip()
-MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_managed_skill_revisions_immutable_delete
-before delete on managed_skill_revisions
-begin
-    select raise(abort, 'managed Skill revisions are immutable');
-end
-""".strip()
-MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_managed_skill_export_receipts_immutable_update
-before update on managed_skill_export_receipts
-begin
-    select raise(abort, 'managed Skill export receipts are append-only');
-end
-""".strip()
-MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_managed_skill_export_receipts_immutable_delete
-before delete on managed_skill_export_receipts
-begin
-    select raise(abort, 'managed Skill export receipts are append-only');
-end
-""".strip()
-RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_skill_configs_immutable_update
-before update on runtime_skill_configs
-when new.id <> old.id
-  or new.parent_id is not old.parent_id
-  or new.created_at <> old.created_at
-  or old.status not in ('pending_restart')
-  or new.status not in ('active', 'load_failed')
-  or (
-      new.status = 'active'
-      and not exists (
-          select 1
-          from runtime_skill_load_receipts as receipt
-          where receipt.config_id = new.id
-            and receipt.error = ''
-            and not exists (
-                select 1
-                from runtime_skill_bindings as binding
-                join managed_skill_revisions as revision
-                  on revision.id = binding.revision_id
-                where binding.config_id = new.id
-                  and binding.enabled = 1
-                  and not exists (
-                      select 1 from json_each(receipt.loaded_json) as loaded
-                      where loaded.key = cast(binding.skill_id as text)
-                        and loaded.value = revision.sha256
-                  )
-            )
-            and not exists (
-                select 1 from json_each(receipt.loaded_json) as loaded
-                where not exists (
-                    select 1
-                    from runtime_skill_bindings as binding
-                    join managed_skill_revisions as revision
-                      on revision.id = binding.revision_id
-                    where binding.config_id = new.id
-                      and binding.enabled = 1
-                      and cast(binding.skill_id as text) = loaded.key
-                      and revision.sha256 = loaded.value
-                )
-            )
-      )
-  )
-  or (
-      new.status = 'load_failed'
-      and not exists (
-          select 1 from runtime_skill_load_receipts as receipt
-          where receipt.config_id = new.id and receipt.error <> ''
-      )
-  )
-begin
-    select raise(
-        abort, 'runtime Skill activation requires matching load receipt'
-    );
-end
-""".strip()
-RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_skill_configs_immutable_delete
-before delete on runtime_skill_configs
-begin
-    select raise(abort, 'runtime Skill configurations are immutable');
-end
-""".strip()
-RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_skill_bindings_immutable_update
-before update on runtime_skill_bindings
-begin
-    select raise(abort, 'runtime Skill bindings are immutable');
-end
-""".strip()
-RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_skill_bindings_immutable_delete
-before delete on runtime_skill_bindings
-begin
-    select raise(abort, 'runtime Skill bindings are immutable');
-end
-""".strip()
-RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_update
-before update on runtime_skill_load_receipts
-begin
-    select raise(abort, 'runtime Skill load receipts are append-only');
-end
-""".strip()
-RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_delete
-before delete on runtime_skill_load_receipts
-begin
-    select raise(abort, 'runtime Skill load receipts are append-only');
-end
-""".strip()
-RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_feedback_iteration_capabilities_immutable_update
-before update on runtime_feedback_iteration_capabilities
-begin
-    select raise(abort, 'feedback iteration capability records are immutable');
-end
-""".strip()
-RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_runtime_feedback_iteration_capabilities_immutable_delete
-before delete on runtime_feedback_iteration_capabilities
-begin
-    select raise(abort, 'feedback iteration capability records are immutable');
-end
-""".strip()
-FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
-CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_update
-before update on feedback_iteration_decision_items
-begin
-    select raise(abort, 'feedback iteration decision items are append-only');
-end
-""".strip()
-FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL = """
-CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_delete
-before delete on feedback_iteration_decision_items
-begin
-    select raise(abort, 'feedback iteration decision items are append-only');
-end
-""".strip()
 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
     "schema_migration_invalid_feedback_processing_round_number"
 )
@@ -1007,91 +467,12 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
 )
 
 
-def _business_nonblank_sql(column: str) -> str:
-    """Match Python str.strip() in SQLite CHECKs without changing stored text.
-
-    SQLite's default trim only removes U+0020. These 29 codepoints include
-    Python's ASCII/C0 and Unicode whitespace. Native trim/char keep the CHECK
-    usable by independent SQLite connections without a registered Python UDF.
-    The column is a trusted schema identifier, never caller-supplied input.
-    """
-    whitespace = (
-        "char(9,10,11,12,13,28,29,30,31,32,133,160,5760,"
-        "8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,"
-        "8232,8233,8239,8287,12288)"
-    )
-    return f"trim({column}, {whitespace}) <> ''"
 
 
-BUSINESS_SOURCE_DOCUMENT_SCHEMA = (
-    f"""create table if not exists business_source_documents (
-        id integer primary key autoincrement,
-        identity_key text not null unique,
-        body text not null check({_business_nonblank_sql("body")}),
-        created_at text not null default current_timestamp
-    )""",
-    """create trigger if not exists trg_business_source_documents_immutable_update
-    before update on business_source_documents begin
-        select raise(abort, 'business source documents are immutable');
-    end""",
-    """create trigger if not exists trg_business_source_documents_immutable_delete
-    before delete on business_source_documents begin
-        select raise(abort, 'business source documents are immutable');
-    end""",
-    """create trigger if not exists trg_business_source_documents_immutable_replace
-    before insert on business_source_documents
-    when exists (
-        select 1 from business_source_documents
-        where id=new.id or identity_key=new.identity_key
-    ) begin
-        select raise(abort, 'business source documents are immutable: UNIQUE id or identity_key');
-    end""",
-)
 
 
-def _business_task_signal_table_sql(table: str) -> str:
-    # Both names are internal schema constants (live table and migration copy).
-    return f"""create table if not exists {table} (
-        id integer primary key autoincrement,
-        source_type text not null check({_business_nonblank_sql("source_type")}),
-        source_ref text not null check({_business_nonblank_sql("source_ref")}),
-        source_time text not null default '',
-        conversation_id text not null default '',
-        conversation_title text not null default '',
-        author_user_id text not null default '',
-        author_name text not null default '',
-        source_document_id integer not null,
-        context_json text not null default '{{}}'
-            check(json_valid(context_json) and json_type(context_json) = 'object'),
-        dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
-        created_at text not null default current_timestamp,
-        author_kind text not null default 'unknown'
-            check(author_kind in ('human', 'system', 'agent', 'unknown')),
-        foreign key(source_document_id) references business_source_documents(id)
-    )"""
 
 
-BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS = (
-    """create index if not exists idx_business_task_signals_source
-        on business_task_signals(source_type, source_ref, source_time, id)""",
-    """create index if not exists idx_business_signal_document
-        on business_task_signals(source_document_id)""",
-    """create trigger if not exists trg_business_task_signals_immutable_update
-    before update on business_task_signals begin
-        select raise(abort, 'business task signals are immutable');
-    end""",
-    """create trigger if not exists trg_business_task_signals_immutable_delete
-    before delete on business_task_signals begin
-        select raise(abort, 'business task signals are immutable');
-    end""",
-    """create trigger if not exists trg_business_task_signals_immutable_replace
-    before insert on business_task_signals
-    when exists (
-        select 1 from business_task_signals where id=new.id or dedupe_key=new.dedupe_key
-    ) begin
-        select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
-    end""",
-)
 
 
 def _meeting_alignment_job_span(
@@ -1157,11 +538,8 @@ def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
 _INITIALIZE_LOCK = threading.Lock()
 
 
-def _normalize_schema_sql(value: str) -> str:
-    return value.strip().removesuffix(";").rstrip()
 
 
-STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {}
 
 
 class FeedbackProcessingRoundMigrationIntegrityError(RuntimeError):
@@ -1971,7 +1349,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True, expected_action_variants=current_action_variants())
+        require_current_pair(self.path)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1979,7 +1357,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True, expected_action_variants=current_action_variants())
+                require_current_pair(self.path)
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -1992,7 +1370,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     raise FeedbackProcessingSchemaIntegrityError(
                         FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
                     )
-                self.backfill_oa_audit_metadata()
                 _INITIALIZED_STORE_PATHS.add(path_key)
 
     def _cached_initialized_path_is_healthy(self, path_key: Path) -> bool:
@@ -2072,111 +1449,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
 
 
-    @staticmethod
-    def _replace_managed_skill_revision_immutability_guards_atomically(
-        db: sqlite3.Connection,
-    ) -> None:
-        db.execute("begin immediate")
-        try:
-            db.execute(
-                "drop trigger if exists "
-                "trg_managed_skill_revisions_immutable_update"
-            )
-            db.execute(
-                "drop trigger if exists "
-                "trg_managed_skill_revisions_immutable_delete"
-            )
-            db.execute(MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL)
-            db.execute(MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL)
-        except BaseException:
-            db.execute("rollback")
-            raise
-        else:
-            db.execute("commit")
-
-    @staticmethod
-    def _replace_managed_skill_export_receipt_immutability_guards_atomically(
-        db: sqlite3.Connection,
-    ) -> None:
-        db.execute("begin immediate")
-        try:
-            db.execute(
-                "drop trigger if exists "
-                "trg_managed_skill_export_receipts_immutable_update"
-            )
-            db.execute(
-                "drop trigger if exists "
-                "trg_managed_skill_export_receipts_immutable_delete"
-            )
-            db.execute(MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL)
-            db.execute(MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL)
-        except BaseException:
-            db.execute("rollback")
-            raise
-        else:
-            db.execute("commit")
-
-    @staticmethod
-    def _replace_runtime_skill_immutability_guards_atomically(
-        db: sqlite3.Connection,
-    ) -> None:
-        names = (
-            "trg_runtime_skill_configs_immutable_update",
-            "trg_runtime_skill_configs_immutable_delete",
-            "trg_runtime_skill_bindings_immutable_update",
-            "trg_runtime_skill_bindings_immutable_delete",
-            "trg_runtime_skill_load_receipts_immutable_update",
-            "trg_runtime_skill_load_receipts_immutable_delete",
-            "trg_runtime_feedback_iteration_capabilities_immutable_update",
-            "trg_runtime_feedback_iteration_capabilities_immutable_delete",
-        )
-        definitions = (
-            RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
-            RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL,
-            RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
-            RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL,
-            RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL,
-            RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL,
-            RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL,
-            RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL,
-        )
-        db.execute("begin immediate")
-        try:
-            for name in names:
-                db.execute(f"drop trigger if exists {name}")
-            for definition in definitions:
-                db.execute(definition)
-        except BaseException:
-            db.execute("rollback")
-            raise
-        else:
-            db.execute("commit")
 
 
-    @classmethod
-    def _feedback_processing_round_guard_state_is_valid(
-        cls,
-        db: sqlite3.Connection,
-    ) -> bool:
-        if not task20_schema_is_current(db) or not task20_feedback_child_is_current(db, include_feedback=True):
-            return False
-        cls._validate_feedback_processing_round_storage(db)
-        trigger_names = tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS)
-        placeholders = ", ".join("?" for _ in trigger_names)
-        trigger_definitions = {
-            str(row["name"]): _normalize_schema_sql(str(row["sql"] or ""))
-            for row in db.execute(
-                "select name, sql from sqlite_master "
-                f"where type='trigger' and name in ({placeholders})",
-                trigger_names,
-            )
-        }
-        return all(
-            trigger_definitions.get(trigger_name) == required_sql
-            for trigger_name, required_sql in (
-                STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
-            )
-        )
+
+
 
     def _scheduled_task_run_snapshots_are_current(
         self,
@@ -2215,103 +1491,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             is None
         )
 
-    def _schema_manifest_is_current_in_connection(
-        self,
-        db: sqlite3.Connection,
-        *,
-        include_run_snapshots: bool,
-    ) -> bool:
-        present_tables = {
-            str(item["name"])
-            for item in db.execute(
-                "select name from sqlite_master where type='table'"
-            )
-        }
-        canonical_email = "emails" in present_tables
-        present_indexes = {
-            str(item["name"])
-            for item in db.execute(
-                "select name from sqlite_master where type='index'"
-            )
-        }
-        trigger_rows = db.execute(
-            "select name, sql from sqlite_master where type='trigger'"
-        ).fetchall()
-        present_triggers = {str(item["name"]) for item in trigger_rows}
-        present_trigger_definitions = {
-            str(item["name"]): _normalize_schema_sql(str(item["sql"] or ""))
-            for item in trigger_rows
-        }
-        required_trigger_definitions_present = all(
-            present_trigger_definitions.get(trigger_name) == required_sql
-            for trigger_name, required_sql in (
-                STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
-            )
-        )
-        feedback_processing_round_storage_valid = (
-            "tasks" in present_tables
-            and self._feedback_processing_round_storage_is_valid(db)
-        )
-        required_columns_present = all(
-            set(required_columns).issubset(
-                {
-                    str(item["name"])
-                    for item in db.execute(f"pragma table_xinfo({table_name})")
-                }
-            )
-            for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
-        )
-        reply_input_foreign_keys = {
-            (row["from"], row["table"], row["to"])
-            for row in db.execute("pragma foreign_key_list(tasks)")
-        }
-        reply_input_foreign_keys_present = {
-            ("current_input_id", "tasks", "id"),
-            ("claimed_input_id", "tasks", "id"),
-        }.issubset(reply_input_foreign_keys)
-        removed_columns_present = any(
-            set(removed_columns).intersection(
-                {
-                    str(item["name"])
-                    for item in db.execute(f"pragma table_info({table_name})")
-                }
-            )
-            for table_name, removed_columns in STORE_SCHEMA_REMOVED_COLUMNS.items()
-        )
-        return (
-            set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
-            and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
-            and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
-            and required_trigger_definitions_present
-            and feedback_processing_round_storage_valid
-            and required_columns_present
-            and current_run11_schema_is_current(db)
-            and provenance_schema_is_current(db)
-            and task20_schema_is_current(db)
-            and task20_feedback_child_is_current(db, include_feedback=True)
-            and current_business_schema_is_current(db)
-            and state_schema_is_current(db)
-            and any(current_configs_schema_is_current(
-                        db,
-                        action_variant=variant,
-                        include_followup_sync=True,
-                        include_business_sync=True,
-                        include_task_delivery=True,
-                        include_errors=True, include_feedback=True,
-                        include_business_actions=True,
-                        include_email_history=True,
-                        canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True, expected_action_objects=current_action_objects(variant),
-                    )
-                    for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
-            and reply_input_foreign_keys_present
-            and not removed_columns_present
-            and (
-                not include_run_snapshots
-                or self._scheduled_task_run_snapshots_are_current(db)
-            )
-            and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
-        )
+    def _schema_manifest_is_current_in_connection(self, db, *, include_run_snapshots):
+        return (schema_is_current(db)
+                and self._feedback_processing_round_storage_is_valid(db)
+                and (not include_run_snapshots or self._scheduled_task_run_snapshots_are_current(db)))
+
 
     def _schema_manifest_is_current(self) -> bool:
         try:
@@ -2558,40 +1742,19 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             connection.close()
 
     def _initialize(self) -> None:
-        fresh = self._require_supported_store_bootstrap_source()
+        if not self._require_supported_store_bootstrap_source():
+            return
         from app.current_database_schema import create_current_database_schema
         with self._connect() as db:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
-            if fresh:
-                create_current_database_schema(db)
-            else:
-                # Eligibility already limits this branch to the existing known
-                # auxiliary repairs; current rows and declarations stay intact.
-                create_current_task20_schema(db)
-                create_current_run11_schema(db)
-                for declaration in _config_target_declarations().values():
-                    for item in (*declaration["indexes"], *declaration["triggers"]):
-                        if item["sql"] is not None and db.execute(
-                            "select 1 from sqlite_schema where name=?", (item["name"],)
-                        ).fetchone() is None:
-                            db.execute(item["sql"])
-                for sql in STATE_INDEX_DDL:
-                    name = sql.split(" on state(", 1)[0].split()[-1].strip('"')
-                    if name in CURRENT_STATE_REPAIRABLE_INDEXES and db.execute(
-                        "select 1 from sqlite_schema where type='index' and name=?", (name,)
-                    ).fetchone() is None:
-                        db.execute(sql)
-                create_current_action_schema(db, reply_variant=_reply_variant_for(db))
-                install_run_child_guards(db)
-                install_current_task_child_guards(db)
+            create_current_database_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise FeedbackProcessingSchemaIntegrityError(FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR)
-            upsert_state(
-                db, "service_state",
-                {"key": STORE_SCHEMA_VERSION_KEY, "value": STORE_SCHEMA_VERSION},
-                {"value": state_json_field("value"), "updated_at": "json_quote(current_timestamp)"},
-            )
+            upsert_state(db, "service_state",
+                         {"key": STORE_SCHEMA_VERSION_KEY, "value": STORE_SCHEMA_VERSION},
+                         {"value": state_json_field("value"), "updated_at": "json_quote(current_timestamp)"})
+
 
     def prepare_meeting_alignment_message(
         self, *, delivery_key: str, body: str, original_text: str,
@@ -6342,472 +5505,29 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
 
 
-    @staticmethod
-    @contextmanager
-    def _foreign_key_rebuild(
-        db: sqlite3.Connection,
-        *,
-        migration_name: str,
-        allow_existing_foreign_key_violations: bool = False,
-    ) -> Iterator[None]:
-        """Run a table rebuild with foreign keys verifiably disabled.
-
-        Most rebuilds require a globally clean database. A narrowly scoped
-        migration may instead preserve a pre-existing set of violations, but
-        only when the exact foreign_key_check rows are unchanged afterward.
-        """
-        baseline_violations = tuple(sorted(
-            tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
-        ))
-        if baseline_violations and not allow_existing_foreign_key_violations:
-            raise sqlite3.IntegrityError(
-                f"{migration_name} migration found pre-existing foreign key violations"
-            )
-
-        def verify_foreign_keys(*, stage: str) -> None:
-            actual = tuple(sorted(
-                tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
-            ))
-            if actual != baseline_violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration changed foreign key violations {stage}"
-                )
-
-        if db.in_transaction:
-            db.commit()
-        if db.in_transaction:
-            raise sqlite3.IntegrityError(
-                f"{migration_name} migration could not finish prior transaction"
-            )
-        try:
-            db.execute("pragma foreign_keys=off")
-            if db.execute("pragma foreign_keys").fetchone()[0] != 0:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration could not disable foreign keys"
-                )
-            yield
-            if not db.in_transaction:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration transaction is missing"
-                )
-            verify_foreign_keys(stage="before commit")
-            db.commit()
-            verify_foreign_keys(stage="after commit; readback is not rollbackable")
-        except Exception:
-            if db.in_transaction:
-                db.rollback()
-            raise
-        finally:
-            if db.in_transaction:
-                db.rollback()
-            db.execute("pragma foreign_keys=on")
-            if db.execute("pragma foreign_keys").fetchone()[0] != 1:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration could not restore foreign keys"
-                )
-
-    @staticmethod
-    def _migrate_business_task_source_documents(db: sqlite3.Connection) -> None:
-        columns = {row["name"] for row in db.execute("pragma table_info(business_task_signals)")}
-        if "evidence_text" not in columns:
-            return
-        # Keep the referenced parent under its original name until every row
-        # has been copied and read back. Renaming the old parent would rewrite
-        # all existing child foreign keys to the temporary table's name.
-        with AutoReplyStore._foreign_key_rebuild(
-            db,
-            migration_name="business source documents",
-            allow_existing_foreign_key_violations=True,
-        ):
-            db.execute("begin immediate")
-            for statement in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
-                db.execute(statement)
-            db.execute(_business_task_signal_table_sql("business_task_signals_source_migration"))
-            old_count = db.execute("select count(*) from business_task_signals").fetchone()[0]
-            old_sequence = db.execute(
-                "select seq from sqlite_sequence where name='business_task_signals'"
-            ).fetchone()
-            for row in db.execute("select * from business_task_signals order by id"):
-                original = dict(row)
-                source = dict(original)
-                if "author_kind" not in source:
-                    source["author_kind"] = "unknown"
-                document_id = AutoReplyStore._business_source_document_id(db, source)
-                values = {key: value for key, value in source.items() if key != "evidence_text"}
-                values["source_document_id"] = document_id
-                db.execute(
-                    f"insert into business_task_signals_source_migration ({', '.join(values)}) "
-                    f"values ({', '.join('?' for _ in values)})", tuple(values.values()),
-                )
-                restored = db.execute(
-                    "select signal.*, document.body as evidence_text "
-                    "from business_task_signals_source_migration signal "
-                    "join business_source_documents document on document.id=signal.source_document_id "
-                    "where signal.id=?", (original["id"],),
-                ).fetchone()
-                if restored is None or {key: restored[key] for key in original} != original:
-                    raise sqlite3.IntegrityError("business source document migration changed a signal")
-            new_count = db.execute(
-                "select count(*) from business_task_signals_source_migration"
-            ).fetchone()[0]
-            if new_count != old_count:
-                raise sqlite3.IntegrityError("business source document migration changed signal count")
-            db.execute("drop table business_task_signals")
-            db.execute("alter table business_task_signals_source_migration rename to business_task_signals")
-            if old_sequence is not None:
-                db.execute(
-                    "insert into sqlite_sequence (name, seq) "
-                    "select 'business_task_signals', ? where not exists "
-                    "(select 1 from sqlite_sequence where name='business_task_signals')",
-                    (old_sequence["seq"],),
-                )
-                db.execute(
-                    "update sqlite_sequence set seq=max(seq, ?) where name='business_task_signals'",
-                    (old_sequence["seq"],),
-                )
-            for statement in BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS:
-                db.execute(statement)
-
-
-    @staticmethod
-    def _migrate_removed_runtime(db: sqlite3.Connection) -> None:
-        if db.in_transaction:
-            db.commit()
-        db.execute("begin immediate")
-        try:
-            tables = {
-                str(row["name"])
-                for row in db.execute(
-                    "select name from sqlite_master where type='table'"
-                ).fetchall()
-            }
-            if {
-                "universal_plan_executions",
-                "universal_action_executions",
-            }.issubset(tables):
-                rows = db.execute(
-                    f"""
-                    select actions.*, tasks.conversation_id, tasks.conversation_title,
-                           tasks.trigger_message_id, tasks.trigger_sender,
-                           tasks.trigger_text
-                    from universal_action_executions as actions
-                    join universal_plan_executions as plans
-                      on plans.execution_scope_id=actions.execution_scope_id
-                    join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=plans.reply_task_id
-                    left join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                      on attempts.id=actions.attempt_id
-                    where attempts.id is null
-                    order by actions.created_at, actions.execution_id
-                    """
-                ).fetchall()
-                for row in rows:
-                    legacy_status = str(row["status"] or "").strip().lower()
-                    action = str(row["action_kind"] or "agent_action").strip()
-                    result = str(row["result_json"] or "").strip()
-                    send_status, migration_error = (
-                        AutoReplyStore._removed_runtime_attempt_status(
-                            action=action,
-                            legacy_status=legacy_status,
-                            result_json=result,
-                        )
-                    )
-                    error = str(row["error"] or "").strip() or migration_error
-                    summary = (
-                        result
-                        or error
-                        or f"migrated removed runtime state: {legacy_status}"
-                    )
-                    insert_action(db, "reply_attempts", {
-                        "conversation_id": row["conversation_id"],
-                        "conversation_title": row["conversation_title"],
-                        "trigger_message_id": row["trigger_message_id"],
-                        "trigger_sender": row["trigger_sender"],
-                        "trigger_text": row["trigger_text"],
-                        "action": action, "sensitivity_kind": "general",
-                        "codex_reason": "migrated from removed runtime",
-                        "audit_summary": summary[:2000],
-                        "send_status": send_status, "send_error": error[:1000],
-                        "created_at": row["created_at"],
-                        "updated_at": row["updated_at"],
-                    })
-            db.execute("drop table if exists universal_action_executions")
-            db.execute("drop table if exists universal_plan_executions")
-            db.execute("drop index if exists idx_reply_attempts_universal_execution")
-            db.execute("delete from state where record_type='service_state' and key='dws_auth_backup'")
-        except Exception:
-            db.rollback()
-            raise
-        db.commit()
-
-    @staticmethod
-    def _removed_runtime_attempt_status(
-        *,
-        action: str,
-        legacy_status: str,
-        result_json: str,
-    ) -> tuple[str, str]:
-        if legacy_status == "failed":
-            return "failed", ""
-        if legacy_status in {"blocked", "unknown"}:
-            return "blocked", ""
-        if legacy_status == "skipped":
-            return "skipped", ""
-        if legacy_status != "succeeded":
-            return "failed", f"migrated_incomplete_status:{legacy_status}"
-
-        terminal_statuses = {
-            "no_reply": "skipped",
-            "handoff_to_human": "blocked",
-            "blocked": "blocked",
-            "stop_with_error": "failed",
-        }
-        if action in terminal_statuses:
-            return terminal_statuses[action], ""
-        try:
-            receipt = json.loads(result_json)
-        except json.JSONDecodeError:
-            receipt = None
-        if not isinstance(receipt, dict) or not receipt:
-            return "failed", "migrated_missing_execution_receipt"
-        if legacy_receipt_has_explicit_failure(receipt):
-            return "failed", "migrated_explicit_execution_failure"
-        if receipt.get("outcome") == "blocked":
-            return "blocked", "migrated_structured_execution_block"
-
-        effect_statuses = {
-            "send_reply": "sent",
-            "ask_clarifying_question": "sent",
-            "oa_approval": "completed",
-            "mail_reply": "sent",
-            "calendar_response": "calendar",
-            "dws_markdown_document_reply": "document",
-            "dws_message_reaction": "reacted",
-            "queue_okr_review": "completed",
-            "memory_write": "completed",
-        }
-        status = effect_statuses.get(action, "completed")
-        if AutoReplyStore._legacy_action_receipt_is_success(action, receipt):
-            return status, ""
-        tool_events = receipt.get("tool_events")
-        if (
-            isinstance(tool_events, list)
-            and all(isinstance(event, dict) for event in tool_events)
-            and _persisted_agent_effect_state(tool_events) == "confirmed"
-        ):
-            return status, ""
-        if _persisted_agent_receipt_ids(receipt):
-            return status, ""
-        return "failed", "migrated_unverified_execution_receipt"
-
-    @staticmethod
-    def _legacy_action_receipt_is_success(
-        action: str,
-        receipt: dict[str, object],
-    ) -> bool:
-        if action in {"send_reply", "ask_clarifying_question"}:
-            return (
-                receipt.get("action_kind") == action
-                and receipt.get("outcome")
-                in {
-                    "delivered",
-                    "delivery_salvaged_after_error",
-                    "duplicate_existing_delivery",
-                }
-            )
-        if action == "oa_approval":
-            outcome = receipt.get("outcome")
-            process_id = str(receipt.get("process_instance_id") or "").strip()
-            approval_action = str(receipt.get("action") or "").strip()
-            if not process_id or not approval_action:
-                return False
-            if outcome == "commented":
-                return True
-            task_id = str(receipt.get("task_id") or "").strip()
-            return bool(task_id) and outcome in {
-                "already_handled",
-                "applicant_notified",
-                "applied",
-                "handled_by_different_action",
-                "salvaged",
-            }
-        if action in {"mail_reply", "calendar_response"}:
-            if receipt.get("success") is True:
-                return True
-            if receipt.get("ok") is True:
-                return AutoReplyStore._legacy_receipt_has_identifier(
-                    receipt.get("result"), {"messageid", "eventid", "receipt"}
-                )
-            return any(
-                receipt.get(field) == 0 or receipt.get(field) == "0"
-                for field in ("errcode", "code")
-            )
-        if action == "dws_markdown_document_reply":
-            return (
-                bool(str(receipt.get("node_id") or "").strip())
-                and bool(str(receipt.get("url") or "").strip())
-                and AutoReplyStore._legacy_receipt_has_identifier(
-                    receipt.get("delivery"), {"messageid", "receipt"}
-                )
-            )
-        if action == "dws_message_reaction":
-            return AutoReplyStore._legacy_receipt_has_identifier(
-                receipt,
-                {"emotionid", "reactionid", "receipt"},
-            )
-        if action == "queue_okr_review":
-            return (
-                receipt.get("action_kind") == action
-                and receipt.get("outcome") == "okr_review_queued_and_acknowledged"
-            )
-        if action == "memory_write":
-            return (
-                bool(str(receipt.get("episode_uuid") or "").strip())
-                and receipt.get("processing_status") == "completed"
-            )
-        return False
-
-    @staticmethod
-    def _legacy_receipt_has_identifier(
-        value: object,
-        fields: set[str],
-    ) -> bool:
-        if isinstance(value, list):
-            return any(
-                AutoReplyStore._legacy_receipt_has_identifier(item, fields)
-                for item in value
-            )
-        if not isinstance(value, dict):
-            return False
-        for key, item in value.items():
-            normalized_key = str(key).replace("_", "").casefold()
-            if normalized_key in fields and str(item or "").strip():
-                return True
-            if isinstance(item, (dict, list)) and (
-                AutoReplyStore._legacy_receipt_has_identifier(item, fields)
-            ):
-                return True
-        return False
 
 
 
 
 
 
-    @staticmethod
-    def _migrate_oa_notification_events(db: sqlite3.Connection) -> None:
-        db.executescript(
-            """
-            create table if not exists oa_notification_events (
-                id integer primary key autoincrement,
-                event_kind text not null check(
-                    event_kind in ('system_notification', 'chat_reminder')
-                ),
-                requires_reply integer not null default 0,
-                process_instance_id text not null default '',
-                task_id text not null default '',
-                channel text not null default 'dingtalk',
-                conversation_id text not null,
-                conversation_title text not null default '',
-                trigger_message_id text not null,
-                trigger_create_time text not null default '',
-                trigger_sender text not null default '',
-                trigger_text text not null default '',
-                trigger_message_json text not null default '{}',
-                oa_url text not null default '',
-                status text not null default 'pending' check(
-                    status in ('pending', 'adopted', 'sending', 'sent', 'failed', 'ignored')
-                ),
-                claimed_attempt_id integer not null default 0,
-                result_attempt_id integer not null default 0,
-                last_error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                sent_at text not null default '',
-                unique(channel, conversation_id, trigger_message_id)
-            );
-            create index if not exists idx_oa_notification_events_case_status
-                on oa_notification_events(
-                    process_instance_id, task_id, requires_reply, status, id
-                );
-            create index if not exists idx_oa_notification_events_claim
-                on oa_notification_events(status, claimed_attempt_id, id);
-            """
-        )
+
+
+
+
+
+
 
 
 
     def _require_supported_store_bootstrap_source(self) -> bool:
-        """Allow fresh bootstrap or the existing repair path for a valid current core."""
-        db = self._open_connection()
-        try:
-            state_names = (*STATE_SOURCE_TABLES, "state", *STATE_TARGET_INDEXES)
-            if db.execute(
-                "select 1 from temp.sqlite_schema where name collate nocase in ("
-                + ",".join("?" for _ in state_names) + ") limit 1", state_names,
-            ).fetchone() is not None:
-                raise sqlite3.IntegrityError("unsupported State TEMP name collision")
-            tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
-            marker = (
-                db.execute(f"select value from ({state_projection('service_state')}) where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-                if "state" in tables else None
-            )
-            store_tables = {*STORE_SCHEMA_REQUIRED_COLUMNS, "business_source_documents", "reply_task_deferral_receipts", "state", *STATE_SOURCE_TABLES, *STATE_TARGET_INDEXES, "tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES, *REPLY_ACTION_TYPES,
-                            *SYNC_ACTION_PROJECTIONS,
-                            *CONFIG_SOURCE_TABLES, "email_training_snapshot_observations", "configs", "schedules",
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="fresh_memory_fk", include_email=True, include_followup_sync=True, include_skill_config_receipts=True, include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True)),
-                            *(obj["name"] for obj in action_schema_objects(True, include_reply=True, reply_variant="actual_no_memory_fk", include_email=True, include_followup_sync=True, include_skill_config_receipts=True, include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True)),
-                            *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES, *TASK20_NEW_KINDS,
-                            "setup_wizard_events", "email_classifier_runtime_samples", "codex_session_search_fts",
-                            *(sql.split(" on tasks(", 1)[0].split()[-1].strip('"') for sql in TASK20_INDEX_DDL),
-                            *(sql.split()[2] for sql in TASK20_TRIGGER_DDL)}
-            current_core_with_known_repairs = (
-                marker is not None
-                and marker[0] == STORE_SCHEMA_VERSION
-                and provenance_schema_is_current(db)
-                and current_run11_schema_is_current(db, allow_missing_objects=True)
-                and any(configs_current_or_known_skill_guard_repair(
-                    db, action_variant=variant, include_business_actions=True,
-                    include_email_history=True,
-                    canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True, expected_action_objects=current_action_objects(variant))
-                    for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
-                and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
-                and task20_schema_is_current(db, allow_missing_objects=True)
-                and task20_feedback_child_is_current(db, allow_missing_objects=True, include_feedback=True)
-                and any(
-                    action_schema_is_current(
-                        db, allow_missing_objects=True, include_reply=True,
-                        reply_variant=variant, include_email=True,
-                        include_skill_config_receipts=True, include_followup_sync=True,
-                        include_business_sync=True, include_task_delivery=True, include_errors=True, include_feedback=True,
-                        include_business_actions=True,
-                        include_email_history=True,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True,
-                        canonical_email="emails" in tables, expected_objects=current_action_objects(variant),
-                    ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True)
-                    for variant in ("actual_no_memory_fk", "fresh_memory_fk")
-                )
-                # The old Attempt/Memory tables cannot coexist with candidate E.
-                # Other known retired runtime tables retain their prior repair.
-                and not {"reply_task_deferral_receipts", *REPLY_ACTION_TYPES}.intersection(tables)
-                and current_business_schema_is_current(db)
-                and state_current_or_known_dispatcher_index_repair(db)
-            )
-            if current_core_with_known_repairs:
-                return False
-            collision = db.execute(
-                "select 1 from sqlite_master where name collate nocase in ("
-                + ','.join('?' for _ in store_tables) + ") limit 1",
-                tuple(store_tables),
-            ).fetchone()
-            if marker is not None or collision is not None:
-                raise sqlite3.IntegrityError(
-                    "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.11 schema"
-                )
-            return True
-        finally:
-            db.close()
+        """Only blank creation or exact-current cold open is a runtime operation."""
+        require_current_pair(self.path)
+        with self._connect() as db:
+            if db.execute("select 1 from temp.sqlite_schema limit 1").fetchone():
+                raise sqlite3.IntegrityError("unsupported Store TEMP name collision")
+            return not schema_objects(db)
+
 
     
 
@@ -14465,9 +13185,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             high = _autoincrement_high_water(db, "meeting_memory_write_events")
             if high > 2**63 - 1 - count:
                 _raise_autoincrement_full()
-            variant = _reply_variant_for(db)
-            defaults = (TASK_DELIVERY_DEFAULTS if variant == "actual_no_memory_fk"
-                        else TASK_DELIVERY_DEFAULTS_FRESH)["meeting_memory_write_events"]
+            defaults = TASK_DELIVERY_DEFAULTS["meeting_memory_write_events"]
             payload_fields = {"payload_json": "'{}'", **defaults,
                               "execution_generation": "lower(hex(randomblob(16)))"}
             payload_sql = "jsonb_array(" + ",".join(
@@ -21559,7 +20277,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         attempt_id: int,
     ) -> list[MemoryWriteEvent]:
         with self._connect() as db:
-            memory_sql = reply_action_projection("memory_write_events", _reply_variant_for(db))
+            memory_sql = current_reply_action_projection("memory_write_events")
             rows = db.execute(
                 f"""
                 select *
@@ -21600,7 +20318,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if isinstance(event, dict)
         ]
         memory_events = [event for event in memory_events if event is not None]
-        memory_sql = reply_action_projection("memory_write_events", _reply_variant_for(db))
+        memory_sql = current_reply_action_projection("memory_write_events")
         previous_ids = [row[0] for row in db.execute(
             f"select id from ({memory_sql}) as memory_write_events where attempt_id=?",
             (attempt_id,),

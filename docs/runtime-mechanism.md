@@ -2,15 +2,16 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.11`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.12`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-本轮 GPT-6 原生副本、schema 回退及实际发布状态见[发布验收](database-gpt6-release-validation.md)。
-D 九字段退休的配对发布明确接受 Store19.8／19.9／19.10 与 Email53；
-同一事务按准确来源依次使用既有 A5、C2 和字段转换原语，只在最终19.11运行构造器。
-逆迁保留当前新增事实，只有已批准九字段恢复中性默认值，不保存其旧值副本。
+本轮运行时精简采用单一 Actions 声明：保留已有四个 Attempt 元数据字段，Memory 事件只用已有 `memory_attempt_ref` 物理外键引用父 Attempt，公开查询仍返回原 Attempt ID。新写入统一采用原生产 actual 默认值。
+运行时只允许真正空库建表或准确当前声明冷启动；缺表、缺列、缺索引、缺触发器、历史声明或版本混合均在修改 journal／schema／业务行前拒绝。启动不补对象、不回填 OA 元数据。Store-first 可以暂时没有 Email 账本；Email 构造器只在这个准确状态下建立账本与首次默认配置。
+显式 Store19.11／Email53 → Store19.12／Email53 工具重建 Actions，逐值保留四字段、类型、公开／物理身份、其他业务事实与回执及分配水位；schema inverse 恢复捕获的原声明与版本时钟并保留当前数据。fresh 来源没有四字段的所有权，若迁移后新增非中性值，逆迁明确拒绝而不删除事实。生产实际来源为 actual，具有这四字段。
+历史 D 九字段退休工具仍供明确旧版本迁移与逆迁调用，已批准的九字段逆迁仍填中性默认值，原评估值不再保存。Email48→49、49→50 的必要历史 DDL／校验已移至显式 history 模块，不由正常构造器加载。Workbench 附件文件维护属于业务行为，保留。
+当前验收见[运行时声明清理验证](runtime-current-schema-validation.md)。历史 GPT-6 原生链路证据见[此前发布验收](database-gpt6-release-validation.md)。
 字段范围、逐字段映射与证据边界见[九字段映射](business-model-legacy-fields-mapping.md)及
 [验证记录](business-model-legacy-fields-validation.md)。
 B2b 观察提交、副本及原生 CLI 的独立证据见[专有动作验收](database-redesign-specialized-actions-validation.md)。
@@ -4383,15 +4384,7 @@ validation, the native output schema, and the one-correction budget are unchange
 Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current State Memory and generic publication readers select the complete current declaration.
 
 
-Final database candidate, local development only (2026-10-18): blank Store/Email
-construction now installs the final ten core tables plus the existing Email
-migration ledger directly. Cold opens validate the final integer-kind/JSONB
-Actions declaration and body-free provenance; known missing auxiliary repairs
-use the same final declaration. Historical source factories remain explicit
-migration/inverse code. The normal constructors passed on the complete physical
-control copy. The complete source-to-final paired publication and current-data
-inverse/reforward subsequently passed on an isolated copy. This candidate has
-not been deployed; remaining scope is tracked in the single final checklist.
+Current database construction (Store19.12/Email53): blank Store/Email construction installs the ten core tables plus the Email ledger directly. Cold opens require the exact current declaration. Missing auxiliaries are errors; startup never repairs schema or backfills OA metadata. Historical source factories serve explicit migration/inverse tools only. Publication requires production-copy typed-fact comparison, current-data inverse, old-code cold read, and reforward proof; evidence is recorded in runtime-current-schema-validation.md.
 
 Current Signal creation and reads retain exact source identity, locator, hash
 and byte count without an original-body table. Semantic replay/import,

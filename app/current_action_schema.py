@@ -1,0 +1,66 @@
+"""The one current Actions declaration and its source-shaped projections.
+
+The current Attempt keeps the four actual-source facts. Memory uses the
+fresh-source physical parent reference. Historical source factories remain
+unchanged for explicit release and inverse operations.
+"""
+
+from contextlib import closing
+from functools import lru_cache
+import sqlite3
+
+from app import action_storage as actions
+from app.business_legacy_fields import CURRENT_SYNC_FIELDS, retained_action_payloads
+
+
+@lru_cache(maxsize=1)
+def current_action_payloads():
+    return retained_action_payloads(actions._build_action_payloads(
+        actions._REPLY_FIELDS["reply_attempts"],
+        tuple(field for field in actions._REPLY_FIELDS["memory_write_events"]
+              if field != "attempt_id"),
+        physical_provenance=True, selection_references=True,
+        execution_owner=True, shared_lifecycle=True,
+        specialized_claims=True, postfix_owner=True,
+    ))
+
+
+@lru_cache(maxsize=1)
+def current_action_objects():
+    from app.current_database_schema import FINAL_ACTION_OPTIONS
+
+    options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
+               if key != "canonical_email"}
+    table, indexes, triggers = actions._action_definitions(
+        reply_variant="fresh_memory_fk", **options,
+        payloads=current_action_payloads(), sync_fields=CURRENT_SYNC_FIELDS,
+        canonical_attempt_fields=True,
+    )
+    table = table.replace("references email_classifications(id)",
+                          "references emails(classification_id)")
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table _allocator(id integer primary key autoincrement)")
+        db.execute("drop table _allocator")
+        for sql in (table, *indexes, *triggers):
+            db.execute(sql)
+        return actions._objects(db, "actions")
+
+
+def create_current_action_schema(db: sqlite3.Connection):
+    """Install on blank storage or require the exact existing declaration."""
+    expected = current_action_objects()
+    actual = actions._objects(db, "actions")
+    if actual:
+        if actual != expected:
+            raise ValueError("unsupported current Actions declaration")
+        return
+    actions._require_available_names(db, expected)
+    for obj in sorted(expected, key=lambda item: item["type"] != "table"):
+        db.execute(obj["sql"])
+
+
+def current_reply_action_projection(kind: str):
+    """Project all current public Attempt fields and Memory's parent ID."""
+    return actions.reply_action_projection(
+        kind, "fresh_memory_fk", canonical_attempt_fields=True,
+    )

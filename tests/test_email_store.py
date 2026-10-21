@@ -60,7 +60,6 @@ from app.email_store import (
     email_unsubscribe_effect_digest,
 )
 from app.action_storage import _encoded_native_sqlite_value
-from app.configs_definitions import config_payload_fields
 from app.email_important import ImportantSignals
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
@@ -68,14 +67,12 @@ from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AgentRole, AutoReplyStore
 from app.action_storage import (
-    ALL_ACTION_TYPES_WITH_REPLY,
     delete_email_action,
     email_action_projection,
     insert_action,
     update_action,
     update_email_action,
 )
-from app.action_email_definitions import EMAIL_TYPES_ORDER
 from app.action_email_storage import SOURCE_TABLES
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
@@ -106,11 +103,10 @@ def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
             (value, snapshot_id),
         )
     else:
-        payload_index = config_payload_fields("email_training_snapshots").index(field)
         db.execute(
             "update configs set payload_json=json_set(payload_json, ?, json(?)) "
             "where record_type='email_training_snapshots' and public_key=?",
-            (f"$[{payload_index}]", json.dumps(
+            (f"$.{field}", json.dumps(
                 _encoded_native_sqlite_value(value), ensure_ascii=False,
                 allow_nan=False, separators=(",", ":"),
             ), snapshot_id),
@@ -2817,11 +2813,12 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         action_sql = db.execute(
             "select sql from sqlite_schema where type='table' and name='actions'"
         ).fetchone()[0]
-    assert len(ALL_ACTION_TYPES_WITH_REPLY + EMAIL_TYPES_ORDER) == 29
-    assert all(
-        f"'{kind}'" in action_sql
-        for kind in ALL_ACTION_TYPES_WITH_REPLY + EMAIL_TYPES_ORDER
-    )
+    from app import action_storage
+    from app.current_action_schema import current_action_objects
+    with sqlite3.connect(database) as db:
+        assert action_storage._objects(db, "actions") == current_action_objects()
+    assert "'candidate_executions'" not in action_sql
+    assert "'native_reply_dispatches'" not in action_sql
     assert "reply_tasks" not in table_names
     assert "agent_runs" not in table_names
 

@@ -19,7 +19,7 @@ from app.configs_schema_transfer import SOURCE_TABLES
 from app.configs_storage import insert_config
 from app.email_classification_schema import create_current_email_classifications
 from app.email_current_schema import _CURRENT_INDEX_SQL, _CURRENT_TABLE_SQL
-from app.email_store import _REQUIRED_TRIGGER_SQL
+from app.email_schema_history import _REQUIRED_TRIGGER_SQL
 from app.run_storage import create_run_schema, insert_run
 from app.schedules_storage import insert_schedule
 from app.task_storage import create_task_schema

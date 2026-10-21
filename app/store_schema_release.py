@@ -125,6 +125,19 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
         prepare_action_email_schema_release, _migrate_pair,
     )
     target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
+    from app.current_schema_manifest import STORE_VERSION as CURRENT_STORE_VERSION, EMAIL_VERSION as CURRENT_EMAIL_VERSION, require_current_pair
+    if target == (CURRENT_STORE_VERSION, CURRENT_EMAIL_VERSION) and path.exists():
+        from app.current_action_schema_release import prepare_current_action_schema_release
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
+                                (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if not tables or marker == (CURRENT_STORE_VERSION,):
+            require_current_pair(path)
+            return None
+        return prepare_current_action_schema_release(root, path)
     from app.business_legacy_field_schema_release import (
         TARGET_STORE_VERSION as LEGACY_FIELD_STORE_VERSION, EMAIL_VERSION as LEGACY_FIELD_EMAIL_VERSION,
         prepare_legacy_business_field_schema_release, require_target_pair,

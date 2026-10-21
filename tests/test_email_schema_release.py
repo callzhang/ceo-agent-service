@@ -16,10 +16,10 @@ INDEX_SQL = (f"CREATE INDEX {LOOKUP_INDEX} ON email_provider_observations"
 
 
 def _migrate_schema50(_root, path):
-    from app.email_store import EmailStore
+    from app.email_schema_history import HistoricalEmailStore
 
     # Exercise the historical transition, not the latest startup migrator.
-    store = EmailStore.__new__(EmailStore)
+    store = HistoricalEmailStore.__new__(HistoricalEmailStore)
     with sqlite3.connect(path) as db:
         db.execute("create table email_unsubscribe_cancellations ("
                    "action_identity text primary key check(trim(action_identity) != ''),"
@@ -385,9 +385,9 @@ def action_plan_release(tmp_path):
 
 def reference_migration_test_store(path):
     """Use current APIs with auxiliary DDL, without advancing reference versions."""
-    from app.email_store import EmailStore
+    from app.email_schema_history import HistoricalEmailStore
 
-    store = object.__new__(EmailStore)
+    store = object.__new__(HistoricalEmailStore)
     store.path = path
     with store._connect() as db:
         versions = tuple(db.execute("select * from email_schema_migrations order by version"))

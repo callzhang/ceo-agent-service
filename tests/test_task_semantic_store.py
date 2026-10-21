@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.current_schema_manifest import schema_is_current, current_objects
 
 from datetime import datetime, timezone
 import hashlib
@@ -8,7 +9,6 @@ import sqlite3
 from pydantic import ValidationError
 import pytest
 
-from app import store as store_module
 from app import action_storage
 from app import task_semantic_models as models
 from app.business_definitions import BUSINESS_PROJECTIONS
@@ -19,9 +19,8 @@ from app.business_candidate_definitions import candidate_projection
 from app.business_candidate_storage import insert_business_candidate, update_business_candidate
 from app.store import AutoReplyStore
 from app.store import BUSINESS_ACTION_SQL
-from app.action_storage import action_schema_is_current, insert_sync_action
+from app.action_storage import insert_sync_action
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
-from app.current_database_schema import FINAL_ACTION_OPTIONS
 from app.action_business_definitions import business_action_projection
 from app.action_business_definitions import BUSINESS_ACTION_PARENT_FIELDS, business_action_column
 from app.business_candidate_definitions import CANDIDATE_REFERENCES, candidate_column
@@ -583,20 +582,14 @@ def test_schema_manifest_and_complete_record_columns(store, table):
                 )
                 physical_table = "business"
             else:
-                assert action_schema_is_current(
-                    db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS,
-                )
+                assert schema_is_current(db)
                 physical_table = "actions"
         else:
             actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected
-    if kind is not None or candidate_kind is not None:
-        assert physical_table in store_module.STORE_SCHEMA_REQUIRED_TABLES
-    elif action_kind is not None:
-        assert physical_table in store_module.STORE_SCHEMA_REQUIRED_TABLES
-    else:
-        assert table in store_module.STORE_SCHEMA_REQUIRED_TABLES
-        assert expected <= set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS[table])
+    with store._connect() as db:
+        assert schema_is_current(db)
+
 
 
 @pytest.mark.parametrize("table", ROWS)
@@ -1348,14 +1341,7 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
             row[0]
             for row in db.execute("select name from sqlite_master where type='index'")
         }
-        action_indexes = {
-            item["name"]
-            for item in action_storage._current_objects(
-                reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS
-            )
-            if item["type"] == "index"
-        }
-        required = set(store_module.STORE_SCHEMA_REQUIRED_INDEXES) | action_indexes
+        required = {obj[1] for obj in current_objects() if obj[0] == "index"}
         assert expected <= actual
         assert expected <= required
 

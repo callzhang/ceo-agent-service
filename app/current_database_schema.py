@@ -5,7 +5,8 @@ part of blank construction. Existing current declarations are the source of
 truth; source factories remain available only to explicit forward/inverse work.
 """
 
-from app.business_legacy_fields import current_business_declaration, create_current_action_schema
+from app.business_legacy_fields import current_business_declaration
+from app.current_action_schema import create_current_action_schema
 from app.business_schema_release import _create_auxiliary
 from app.configs_storage import create_configs_schema
 from app.schedules_storage import create_schedules_schema
@@ -35,7 +36,7 @@ def create_current_database_schema(db):
     create_current_run11_schema(db)
     create_provenance_schema(db)
     _create_emails(db, metadata_owner=True)
-    create_current_action_schema(db, reply_variant="fresh_memory_fk")
+    create_current_action_schema(db)
     business = current_business_declaration()
     db.execute(business["sql"])
     _create_auxiliary(db, business)

@@ -76,7 +76,8 @@ def pair(tmp_path_factory):
 import sys,json
 from pathlib import Path
 from app.store import AutoReplyStore,STORE_SCHEMA_VERSION
-from app.email_store import EmailStore,EMAIL_SCHEMA_VERSION,_REQUIRED_INDEXES,_REQUIRED_TRIGGER_TABLES
+from app.email_store import EmailStore, EMAIL_SCHEMA_VERSION
+from app.email_schema_history import _REQUIRED_INDEXES, _REQUIRED_TRIGGER_TABLES
 p=Path(sys.argv[1]);AutoReplyStore(p);EmailStore(p)
 families=set(sys.argv[2].split(','))
 print(json.dumps({'versions':[STORE_SCHEMA_VERSION,EMAIL_SCHEMA_VERSION],

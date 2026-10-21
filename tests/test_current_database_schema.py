@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
+from app.store import AutoReplyStore
 from app.email_store import EmailStore
-from app.business_legacy_field_schema_release import publication_action_schema_is_current
+from app.current_schema_manifest import schema_is_current
 
 
 @pytest.mark.parametrize("first", ("store", "email"))
@@ -17,7 +17,7 @@ def test_blank_and_cold_constructors_select_final_graph(tmp_path, first):
     store = AutoReplyStore(path)
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        assert publication_action_schema_is_current(db, STORE_SCHEMA_VERSION)
+        assert schema_is_current(db)
         assert {row[0] for row in db.execute("select name from sqlite_schema where type='table' and name not glob 'sqlite_*'")} == {
             "tasks", "runs", "actions", "business", "emails", "provenance", "configs",
             "provider_state", "schedules", "state", "email_schema_migrations"}
@@ -31,28 +31,21 @@ def test_blank_and_cold_constructors_select_final_graph(tmp_path, first):
     EmailStore(path)
     assert cold.get_business_task_signal(signal_id) == store.get_business_task_signal(signal_id)
     with sqlite3.connect(path) as db:
-        assert publication_action_schema_is_current(db, STORE_SCHEMA_VERSION)
+        assert schema_is_current(db)
         assert db.execute("select count(*) from configs").fetchone()[0] == before
         assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_known_auxiliary_repair_keeps_final_facts(tmp_path):
-    path = tmp_path / "repair.sqlite3"
-    store = AutoReplyStore(path)
-    EmailStore(path)
-    signal_id = store.create_business_task_signal(source_type="message", source_ref="original:repair",
-        evidence_text="A current source", dedupe_key="repair")
-    fact = store.get_business_task_signal(signal_id)
+def test_known_auxiliary_damage_is_rejected(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         db.execute("drop index idx_actions_candidates_task")
-        db.execute("drop trigger trg_configs_skill_revision_update")
-    repaired = AutoReplyStore(path)
-    EmailStore(path)
-    assert repaired.get_business_task_signal(signal_id) == fact
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert publication_action_schema_is_current(db, STORE_SCHEMA_VERSION)
-        assert db.execute("select 1 from sqlite_schema where name='trg_configs_skill_revision_update'").fetchone()
-        assert not db.execute("select 1 from sqlite_schema where name='business_source_documents'").fetchone()
+        assert tuple(db.iterdump()) == before
 
 
 @pytest.mark.parametrize("table", ("provenance", "business_source_documents", "business", "reply_task_deferral_receipts"))

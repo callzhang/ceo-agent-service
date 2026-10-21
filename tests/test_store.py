@@ -1998,27 +1998,17 @@ def test_current_schema_rejects_legacy_task_run_table_without_mutation(tmp_path:
     assert_store_reopen_rejected_without_mutation(path)
 
 
-def test_current_schema_repairs_missing_runtime_parent_indexes(tmp_path: Path):
-    db_path = tmp_path / "current-runtime-parent-indexes.sqlite3"
-    store = AutoReplyStore(db_path)
-    with store._connect() as db:
-        before = [tuple(row) for row in db.execute('select * from tasks order by id')]
+def test_current_schema_rejects_missing_runtime_parent_indexes(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
         db.execute("drop index idx_task20_published_13")
         db.execute("drop index idx_task20_native_17")
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    reopened = AutoReplyStore(db_path)
-    with reopened._connect() as db:
-        assert [tuple(row) for row in db.execute('select * from tasks order by id')] == before
-        for name in ('idx_task20_published_13', 'idx_task20_native_17'):
-            assert db.execute(
-                "select tbl_name from sqlite_schema where type='index' and name=?", (name,),
-            ).fetchone()['tbl_name'] == 'tasks'
-        assert not db.execute(
-            "select 1 from sqlite_schema where type='table' and name in "
-            "('weekly_okr_analysis_jobs','wechat_memory_import_jobs')"
-        ).fetchone()
-    assert reopened._schema_is_current() is True
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
@@ -4575,26 +4565,16 @@ def test_store_skips_schema_work_when_another_process_finished_it(
     AutoReplyStore(db_path)
 
 
-def test_store_repairs_missing_action_index_without_recreating_retired_table(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    store.record_error('cid', 'message', 'test', 'retained')
-    with store._connect() as db:
-        before = [tuple(row) for row in db.execute('select * from actions order by id')]
+def test_store_rejects_missing_action_index_without_recreating_retired_table(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
         db.execute("drop index idx_actions_sync_follow_up_send_attempts_0")
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    reopened = AutoReplyStore(db_path)
-    with reopened._connect() as db:
-        assert [tuple(row) for row in db.execute('select * from actions order by id')] == before
-        assert db.execute(
-            "select tbl_name from sqlite_schema where type='index' "
-            "and name='idx_actions_sync_follow_up_send_attempts_0'"
-        ).fetchone()['tbl_name'] == 'actions'
-        assert not db.execute(
-            "select 1 from sqlite_schema where type='table' and name='follow_up_send_attempts'"
-        ).fetchone()
-    assert reopened._schema_is_current() is True
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path, published_source) -> None:
@@ -10821,109 +10801,6 @@ def test_removed_runtime_tables_modules_and_apis_are_absent(tmp_path: Path) -> N
     assert importlib.util.find_spec("app.universal_plan") is None
 
 
-def test_explicit_removed_runtime_converter_preserves_existing_history(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    assert store.enqueue_reply_task(
-        conversation_id="cid-legacy",
-        conversation_title="Legacy history",
-        single_chat=False,
-        trigger_message_id="msg-legacy",
-        trigger_create_time="2026-07-20 10:00:00",
-        trigger_sender="Derek",
-        trigger_text="Handle this task",
-    )
-    task_id = store.claim_reply_tasks(limit=1)[0].id
-    existing_attempt_id = store.record_reply_attempt(
-        conversation_id="cid-legacy",
-        conversation_title="Legacy history",
-        trigger_message_id="msg-legacy",
-        trigger_sender="Derek",
-        trigger_text="Handle this task",
-        action="send_reply",
-        sensitivity_kind="general",
-        send_status="sent",
-    )
-    with store._connect() as db:
-        db.executescript(
-            """
-            create table universal_plan_executions (
-                execution_scope_id text primary key,
-                reply_task_id integer not null
-            );
-            create table universal_action_executions (
-                execution_id text primary key,
-                execution_scope_id text not null,
-                attempt_id integer,
-                action_kind text not null,
-                status text not null,
-                error text not null default '',
-                result_json text not null default '',
-                created_at text not null,
-                updated_at text not null
-            );
-            """
-        )
-        db.execute(
-            "insert into universal_plan_executions values (?, ?)",
-            ("scope-1", task_id),
-        )
-        db.executemany(
-            """
-            insert into universal_action_executions values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                (
-                    "action-existing",
-                    "scope-1",
-                    existing_attempt_id,
-                    "send_reply",
-                    "succeeded",
-                    "",
-                    '{"receipt":"existing"}',
-                    "2026-07-20 10:01:00",
-                    "2026-07-20 10:02:00",
-                ),
-                (
-                    "action-missing",
-                    "scope-1",
-                    None,
-                    "oa_approval",
-                    "failed",
-                    "legacy failure",
-                    '{"outcome":"failed"}',
-                    "2026-07-20 10:03:00",
-                    "2026-07-20 10:04:00",
-                ),
-            ),
-        )
-        insert_state(db, 'service_state', {'key': 'dws_auth_backup', 'value': '{"archive":"removed"}'}, replace=True)
-
-    with store._connect() as db:
-        AutoReplyStore._migrate_removed_runtime(db)
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    migrated = AutoReplyStore(db_path)
-
-    attempts = migrated.list_reply_attempts(limit=20)
-    assert len(attempts) == 2
-    historical = next(attempt for attempt in attempts if attempt.id != existing_attempt_id)
-    assert historical.action == "oa_approval"
-    assert historical.send_status == "failed"
-    assert historical.send_error == "legacy failure"
-    assert historical.audit_summary == '{"outcome":"failed"}'
-    with migrated._connect() as db:
-        tables = {
-            str(row[0])
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            ).fetchall()
-        }
-    assert "universal_plan_executions" not in tables
-    assert "universal_action_executions" not in tables
-    assert migrated.get_service_state("dws_auth_backup") is None
 
 
 _LEGACY_EFFECT_SUCCESS_CASES: dict[str, tuple[str, dict[str, object]]] = {
@@ -10975,205 +10852,16 @@ _LEGACY_EFFECT_SUCCESS_CASES: dict[str, tuple[str, dict[str, object]]] = {
 
 
 
-@pytest.mark.parametrize(
-    ("action", "success_receipt", "expected_status"),
-    [
-        (action, receipt, status)
-        for action, (status, receipt) in _LEGACY_EFFECT_SUCCESS_CASES.items()
-    ],
-)
-def test_removed_runtime_requires_action_specific_success_receipt(
-    action: str,
-    success_receipt: dict[str, object],
-    expected_status: str,
-) -> None:
-    success = AutoReplyStore._removed_runtime_attempt_status(
-        action=action,
-        legacy_status="succeeded",
-        result_json=json.dumps(success_receipt, ensure_ascii=False),
-    )
-    unknown = AutoReplyStore._removed_runtime_attempt_status(
-        action=action,
-        legacy_status="succeeded",
-        result_json='{"unexpected":"value"}',
-    )
-
-    assert success == (expected_status, "")
-    for error_receipt in (
-        {"error": "failed"},
-        {"error": {"code": "failed"}},
-        {"success": False},
-    ):
-        assert AutoReplyStore._removed_runtime_attempt_status(
-            action=action,
-            legacy_status="succeeded",
-            result_json=json.dumps(error_receipt),
-        ) == ("failed", "migrated_explicit_execution_failure")
-    assert unknown == ("failed", "migrated_unverified_execution_receipt")
 
 
-@pytest.mark.parametrize(
-    "receipt",
-    [
-        {
-            "tool_events": [
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "call_id": "call-1",
-                        "metadata": {"effect": "effectful"},
-                    },
-                }
-            ]
-        },
-        {
-            "receipt": {
-                "receipt_id": "receipt-1",
-                "operation_id": "operation-1",
-                "completed": True,
-                "persisted": True,
-                "safe_to_confirm": True,
-            }
-        },
-    ],
-)
-def test_removed_runtime_accepts_completed_effect_evidence(
-    receipt: dict[str, object],
-) -> None:
-    assert AutoReplyStore._removed_runtime_attempt_status(
-        action="agent_action",
-        legacy_status="succeeded",
-        result_json=json.dumps(receipt),
-    ) == ("completed", "")
 
 
-def test_removed_runtime_does_not_collapse_duplicate_effect_starts() -> None:
-    started = {
-        "type": "item.started",
-        "item": {
-            "call_id": "call-1",
-            "metadata": {"effect": "effectful"},
-        },
-    }
-    receipt = {
-        "tool_events": [
-            started,
-            started,
-            {**started, "type": "item.completed"},
-        ]
-    }
-
-    assert AutoReplyStore._removed_runtime_attempt_status(
-        action="agent_action",
-        legacy_status="succeeded",
-        result_json=json.dumps(receipt),
-    ) == ("failed", "migrated_unverified_execution_receipt")
 
 
-def test_removed_runtime_structured_block_is_not_completed() -> None:
-    assert AutoReplyStore._removed_runtime_attempt_status(
-        action="oa_approval",
-        legacy_status="succeeded",
-        result_json=json.dumps(
-            {
-                "action": "同意",
-                "outcome": "blocked",
-                "process_instance_id": "process-1",
-                "task_id": "task-1",
-            },
-            ensure_ascii=False,
-        ),
-    ) == ("blocked", "migrated_structured_execution_block")
 
 
-def test_removed_runtime_migration_starts_immediate_transaction(tmp_path: Path) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    statements: list[str] = []
-    with store._connect() as db:
-        db.set_trace_callback(statements.append)
-        AutoReplyStore._migrate_removed_runtime(db)
-
-    assert any(statement.strip().upper() == "BEGIN IMMEDIATE" for statement in statements)
 
 
-def test_removed_runtime_migration_rolls_back_every_change_on_failure(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.enqueue_reply_task(
-        conversation_id="cid-rollback",
-        conversation_title="Rollback",
-        single_chat=False,
-        trigger_message_id="msg-rollback",
-        trigger_create_time="2026-07-20 10:00:00",
-        trigger_sender="Derek",
-        trigger_text="rollback",
-    )
-    task = store.get_reply_task_for_message("cid-rollback", "msg-rollback")
-    assert task is not None
-    with store._connect() as db:
-        db.executescript(
-            """
-            create table universal_plan_executions (
-                execution_scope_id text primary key,
-                reply_task_id integer not null
-            );
-            create table universal_action_executions (
-                execution_id text primary key,
-                execution_scope_id text not null,
-                attempt_id integer,
-                action_kind text not null,
-                status text not null,
-                error text not null default '',
-                result_json text not null default '',
-                created_at text not null,
-                updated_at text not null
-            );
-            create trigger reject_auth_cleanup before delete on state
-            when old.record_type='service_state' and old.key='dws_auth_backup'
-            begin
-                select raise(abort, 'forced migration failure');
-            end;
-            """
-        )
-        db.execute(
-            "insert into universal_plan_executions values ('scope-rollback', ?)",
-            (task.id,),
-        )
-        db.execute(
-            """
-            insert into universal_action_executions values (
-                'action-rollback', 'scope-rollback', null, 'send_reply',
-                'succeeded', '', '{"receipt":{"completed":true}}',
-                '2026-07-20 10:01:00', '2026-07-20 10:02:00'
-            )
-            """
-        )
-        insert_state(db, 'service_state', {'key': 'dws_auth_backup', 'value': 'present'}, replace=True)
-
-    with sqlite3.connect(store.path) as db:
-        db.row_factory = sqlite3.Row
-        register_task8_functions(db)
-        with pytest.raises(sqlite3.IntegrityError, match="forced migration failure"):
-            AutoReplyStore._migrate_removed_runtime(db)
-        tables = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            ).fetchall()
-        }
-        attempts = db.execute(
-            f"select count(*) from ({REPLY_ATTEMPT_COMMON_SQL}) "
-            "where trigger_message_id='msg-rollback'"
-        ).fetchone()[0]
-        auth_state = db.execute(
-            f"select value from ({state_projection('service_state')}) where key='dws_auth_backup'"
-        ).fetchone()
-
-    assert "universal_plan_executions" in tables
-    assert "universal_action_executions" in tables
-    assert attempts == 0
-    assert auth_state is not None
 
 
 def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
@@ -11583,20 +11271,16 @@ def test_current_runtime_keeps_execution_shape_without_result_cache(tmp_path: Pa
 
 
 
-def test_current_schema_repairs_meeting_memory_lease_index(tmp_path: Path):
-    path = tmp_path / 'meeting-memory-index.sqlite3'
-    store = AutoReplyStore(path)
-    with store._connect() as db:
-        before = [tuple(row) for row in db.execute('select * from actions order by id')]
-        db.execute('drop index idx_actions_td_meeting_lease')
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    reopened = AutoReplyStore(path)
-    with reopened._connect() as db:
-        assert [tuple(row) for row in db.execute('select * from actions order by id')] == before
-        assert db.execute("select tbl_name from sqlite_schema where name='idx_actions_td_meeting_lease'").fetchone()[0] == 'actions'
-        assert not db.execute("select 1 from sqlite_schema where name='meeting_memory_write_events'").fetchone()
-    assert reopened._schema_is_current() is True
+def test_current_schema_rejects_meeting_memory_lease_index(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("drop index idx_actions_td_meeting_lease")
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_current_meeting_memory_event_references_delivered_job_without_payload_copy(tmp_path: Path) -> None:
@@ -12075,29 +11759,16 @@ def test_superseded_stale_weekly_okr_job_is_completed_and_can_be_reclaimed(
     assert reclaimed.job_id == stale.job_id
 
 
-def test_current_schema_reopens_and_adds_agent_run_recovery_index(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "current-version-missing-recovery-index.sqlite3"
-    store = AutoReplyStore(db_path)
-    with store._connect() as db:
+def test_current_schema_rejects_missing_agent_run_recovery_index(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
         db.execute("drop index idx_actions_reply_run_recovery")
-
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    reopened = AutoReplyStore(db_path)
-
-    with reopened._connect() as db:
-        index_names = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            )
-        }
-
-    assert "idx_actions_reply_run_recovery" in index_names
-    assert reopened._schema_is_current() is True
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_discard_unstarted_agent_run_removes_only_a_fresh_claim(tmp_path: Path):

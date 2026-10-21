@@ -416,7 +416,7 @@ def create_current_email_non_action_schema(db: sqlite3.Connection) -> None:
         "idx_email_category_folder_bindings_active_provider",
         ACTIVE_BINDING_INDEX_SQL,
     )
-    from app.email_store import _REQUIRED_TRIGGER_SQL
+    from app.email_schema_history import _REQUIRED_TRIGGER_SQL
 
     for name in _CURRENT_TRIGGER_NAMES:
         _create_missing(db, "trigger", name, _REQUIRED_TRIGGER_SQL[name])
@@ -428,7 +428,7 @@ def create_current_email_runtime_schema(db: sqlite3.Connection) -> None:
     from app.state_definitions import STATE_FIELDS
     from app.task20_definitions import TASK20_NEW_KINDS
     from app.runs11_definitions import RUN11_NEW_KINDS
-    from app.email_store import _REQUIRED_TRIGGER_SQL, _REQUIRED_TRIGGER_TABLES
+    from app.email_schema_history import _REQUIRED_TRIGGER_SQL, _REQUIRED_TRIGGER_TABLES
     from app.provider_state_storage import create_provider_state_schema
 
     retired = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, *RUN11_NEW_KINDS,

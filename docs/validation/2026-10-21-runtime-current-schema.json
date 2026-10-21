@@ -1,0 +1,77 @@
+{
+  "source_store": "2026-10-19.11",
+  "target_store": "2026-10-19.12",
+  "email": 53,
+  "before": {
+    "actions": {
+      "rows": 85868,
+      "sha256": "a48ab1c8646bde77d42b68f8992c1b14bed2fdd5964d4ebbf8ae3c070181b132"
+    },
+    "business": {
+      "rows": 5180,
+      "sha256": "aa62fb4b48ff10e4c7bd5bd52e99a8b75684ab252427869759fd752dbbe82ce8"
+    },
+    "configs": {
+      "rows": 6275,
+      "sha256": "0d8776d53f9110301adee1830a2906d32fc0289c7e32e5d0d77991669a0fcbd3"
+    },
+    "email_schema_migrations": {
+      "rows": 40,
+      "sha256": "9540042351edce86618472033486007b3a96cf8338726860418b41ff5500654c"
+    },
+    "emails": {
+      "rows": 9690,
+      "sha256": "a511c31180585cfd55582f57b6ffccb798d172dbb517326f831f1be7bfe541f5"
+    },
+    "provenance": {
+      "rows": 152,
+      "sha256": "c2b8a8bb463d40eaa58fa2c3db8b15576ec9953c81af7d91e283e86c3714aed2"
+    },
+    "provider_state": {
+      "rows": 72470,
+      "sha256": "4e23827145a5f2eccf691dd39c90cbf670f7d16c0d748fcf03721813b6be21e0"
+    },
+    "runs": {
+      "rows": 257947,
+      "sha256": "c306aa69cb71a5ddcbec5b52c2f5ecf095fa9854119ca02e72bc8cd0744b5753"
+    },
+    "schedules": {
+      "rows": 15,
+      "sha256": "b9530e0201b66c56bd21f8f8a48cac9d97952b0cf33e28f71621979ec07c0a50"
+    },
+    "state": {
+      "rows": 23835,
+      "sha256": "03509a78f3a67223604e5aea125d9584f4a65fe970a091adb075072d0facfea4"
+    },
+    "tasks": {
+      "rows": 37023,
+      "sha256": "a06256fcef8e1947336d07b5d3ec2913de61f5c85e1054a431ced23365a1cb01"
+    },
+    "reply_attempts": {
+      "rows": 15239,
+      "sha256": "52030c9b3b05fb4bf8114e3af542aeffeb0e874dc8ad283caead28973f18e5f6"
+    },
+    "memory_write_events": {
+      "rows": 476,
+      "sha256": "f9de5689f6aec41125cd3f2ea92bbb983ca7c883c7f6e19a3b1e8f675ef645bd"
+    },
+    "sqlite_sequence": {
+      "rows": 51,
+      "sha256": "72367d743b6bed0208d32da675e1ada99b049de28da17de1f61def808cef7139"
+    },
+    "fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "quick_check": "ok"
+  },
+  "forward_equal": true,
+  "current_data_inverse_equal": true,
+  "old_code_cold_read": true,
+  "reforward_equal": true,
+  "elapsed_seconds": 422.35
+}

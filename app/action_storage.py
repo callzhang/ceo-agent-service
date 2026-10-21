@@ -30,7 +30,7 @@ from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS, CURRENT_SYNC_FI
 
 from app.action_task_delivery_definitions import (
     TASK_DELIVERY_FIELDS, TASK_DELIVERY_KINDS, TASK_DELIVERY_AUTOINCREMENT,
-    TASK_DELIVERY_PARENTS, TASK_DELIVERY_DEFAULTS, TASK_DELIVERY_DEFAULTS_FRESH,
+    TASK_DELIVERY_PARENTS, TASK_DELIVERY_DEFAULTS,
     task_delivery_projection, task_delivery_schema_parts,
 )
 from app.action_error_definitions import ERROR_PAYLOAD_FIELDS, error_schema_parts
@@ -223,7 +223,26 @@ DEFAULTS.update({
 
 @lru_cache(maxsize=4)
 def action_payloads(reply_variant, *, physical_provenance=False, selection_references=False, execution_owner=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False):
-    """Exact current payload slots from real declarations, never observed rows."""
+    """Frozen historical payload slots for explicit release and inverse work."""
+    if reply_variant not in REPLY_VARIANTS:
+        raise ValueError("unsupported Actions reply variant")
+    attempt_fields = tuple(field for field in _REPLY_FIELDS["reply_attempts"]
+                           if reply_variant != "fresh_memory_fk" or field not in _ATTEMPT_HISTORICAL)
+    memory_fields = tuple(field for field in _REPLY_FIELDS["memory_write_events"]
+                          if reply_variant != "fresh_memory_fk" or field != "attempt_id")
+    return _build_action_payloads(
+        attempt_fields, memory_fields, physical_provenance=physical_provenance,
+        selection_references=selection_references, execution_owner=execution_owner,
+        shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims,
+        postfix_owner=postfix_owner,
+    )
+
+
+def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance=False,
+                           selection_references=False, execution_owner=False,
+                           shared_lifecycle=False, specialized_claims=False,
+                           postfix_owner=False):
+    """Compose the common payload layout from explicit Reply field tuples."""
     from app.action_payload import ActionPayloads
     from app.storage_payload import PayloadLayout
     from app.action_feedback_definitions import FEEDBACK_FIELDS
@@ -231,17 +250,9 @@ def action_payloads(reply_variant, *, physical_provenance=False, selection_refer
     from app.action_email_history_definitions import HISTORY_FIELDS
     from app.provenance_definitions import SIGNAL_FIELDS
 
-    if reply_variant not in REPLY_VARIANTS:
-        raise ValueError("unsupported Actions reply variant")
     fields = {kind: PAYLOAD_FIELDS[kind] for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
-    fields.update({
-        kind: tuple(field for field in names
-                    if not (kind == "reply_attempts" and reply_variant == "fresh_memory_fk"
-                            and field in _ATTEMPT_HISTORICAL)
-                    and not (kind == "memory_write_events" and reply_variant == "fresh_memory_fk"
-                             and field == "attempt_id"))
-        for kind, names in _REPLY_FIELDS.items()
-    })
+    fields.update({"reply_attempts": tuple(attempt_fields),
+                   "memory_write_events": tuple(memory_fields)})
     fields.update({kind: tuple(field for field in names if field != "id"
                                and field not in EMAIL_COMPOSITE_KEYS.get(kind, ()))
                    for kind, names in EMAIL_FIELDS.items()})
@@ -382,7 +393,7 @@ def _reply_payload_check(fields, *, kind=None, payloads=None):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, payloads=None, sync_fields=None):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, payloads=None, sync_fields=None, canonical_attempt_fields=False):
     if sent_result_references and not (compact_payload and (include_delivery or include_reply)):
         raise ValueError("Sent result references require compact delivery Actions")
     if result_references and not compact_payload:
@@ -408,6 +419,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         raise ValueError("Email action storage requires the sixteen-type reply schema")
     if include_reply and reply_variant not in REPLY_VARIANTS:
         raise ValueError("reply storage requires one global source variant")
+    if canonical_attempt_fields and (not include_reply or reply_variant != "fresh_memory_fk" or payloads is None):
+        raise ValueError("canonical Attempt fields require current payloads and physical Memory parent")
     if not include_reply and reply_variant is not None:
         raise ValueError("reply variant requires opt-in reply storage")
     include_delivery = include_delivery or include_reply
@@ -520,7 +533,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_reply:
         for kind, prefix in (("reply_attempts", "attempt_"), ("memory_write_events", "memory_")):
             for field in _REPLY_FIELDS[kind]:
-                if kind == "reply_attempts" and reply_variant == "fresh_memory_fk" and field in _ATTEMPT_HISTORICAL:
+                if kind == "reply_attempts" and reply_variant == "fresh_memory_fk" and field in _ATTEMPT_HISTORICAL and not canonical_attempt_fields:
                     continue
                 if kind == "memory_write_events" and field == "attempt_id" and reply_variant == "fresh_memory_fk":
                     continue
@@ -590,7 +603,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         table += ",check(record_type<>'sent_reply_observers' or (sent_reply_id is not null and agent_run_id is not null and reply_task_id is not null and json_extract(legacy_key,'$[1]')=agent_run_id))"
     if include_reply:
         table += ",check(record_type not in ('reply_attempts','memory_write_events') or (" + " and ".join(f"{field} is null" for field in references) + "))"
-        attempt_fields = [field for field in _REPLY_FIELDS["reply_attempts"] if reply_variant == "actual_no_memory_fk" or field not in _ATTEMPT_HISTORICAL]
+        attempt_fields = [field for field in _REPLY_FIELDS["reply_attempts"] if canonical_attempt_fields or reply_variant == "actual_no_memory_fk" or field not in _ATTEMPT_HISTORICAL]
         table += ",check(record_type<>'reply_attempts' or (" + _reply_payload_check(attempt_fields, kind="reply_attempts", payloads=payloads) + "))"
         table += ",check(record_type<>'reply_attempts' or (" + " and ".join(f"attempt_{field} is not null" for field in attempt_fields if field not in _ATTEMPT_NULLABLE) + "))"
         memory_parent = "memory_attempt_ref" if reply_variant == "fresh_memory_fk" else "memory_attempt_id"
@@ -837,15 +850,15 @@ ACTION_PROJECTIONS = {kind: _projection(kind, payloads=action_payloads("actual_n
                       for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
 
 
-def reply_action_projection(kind, reply_variant):
+def reply_action_projection(kind, reply_variant, *, canonical_attempt_fields=False):
     if kind not in REPLY_ACTION_TYPES or reply_variant not in REPLY_VARIANTS:
         raise ValueError("unsupported reply projection")
-    order = (_FRESH_ATTEMPT_ORDER if reply_variant == "fresh_memory_fk" else _ATTEMPT_ORDER) if kind == "reply_attempts" else _MEMORY_ORDER
+    order = (_FRESH_ATTEMPT_ORDER if reply_variant == "fresh_memory_fk" and not canonical_attempt_fields else _ATTEMPT_ORDER) if kind == "reply_attempts" else _MEMORY_ORDER
     fields = []
     for field in order:
         if field == "id":
             expression = "cast(a.legacy_key as integer)"
-        elif kind == "reply_attempts" and field in _ATTEMPT_HISTORICAL and reply_variant == "fresh_memory_fk":
+        elif kind == "reply_attempts" and field in _ATTEMPT_HISTORICAL and reply_variant == "fresh_memory_fk" and not canonical_attempt_fields:
             continue
         elif kind == "memory_write_events" and field == "payload_json":
             expression = "'{}'"
@@ -1253,24 +1266,23 @@ def _native_payload(values):
                       ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
-def _action_layout(kind, *, reply_variant="actual_no_memory_fk", selection_references=False, execution_owner=False):
+def _action_layout(kind, *, selection_references=False, execution_owner=False):
     from app.business_legacy_fields import retained_action_payloads
-    return retained_action_payloads(action_payloads(reply_variant, physical_provenance=True,
-                           selection_references=selection_references, execution_owner=execution_owner)).layouts[kind]
+    return retained_action_payloads(_build_action_payloads(
+        _REPLY_FIELDS["reply_attempts"],
+        tuple(field for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"),
+        physical_provenance=True, selection_references=selection_references,
+        execution_owner=execution_owner)).layouts[kind]
 
 
-def _action_path(kind, field, *, reply_variant="actual_no_memory_fk"):
-    return _action_layout(kind, reply_variant=reply_variant).path(field)
+def _action_path(kind, field):
+    return _action_layout(kind).path(field)
 
 
-def _action_payload(db, kind, values, *, reply_variant="actual_no_memory_fk", selection_references=False, execution_owner=False):
-    """Bind the final JSONB value vector, including declared nullable slots.
-
-    SQL-parts callers retain their native placeholders and cursor semantics;
-    SQLite produces its own binary representation on this same connection.
-    Historical row transfers continue to use the explicit object serializer.
-    """
-    layout = _action_layout(kind, reply_variant=reply_variant, selection_references=selection_references, execution_owner=execution_owner)
+def _action_payload(db, kind, values, *, selection_references=False, execution_owner=False, layout=None):
+    """Bind current JSONB cells using SQLite on the caller's connection."""
+    layout = layout or _action_layout(kind, selection_references=selection_references,
+                                     execution_owner=execution_owner)
     packed = layout.pack(dict.fromkeys(layout.fields) | values,
                          scalar_codec=_encoded_native_sqlite_value)
     return db.execute("select jsonb(?)", (packed,)).fetchone()[0]
@@ -1552,12 +1564,8 @@ def _sync_fields(kind, values):
         raise ValueError(f"unknown {kind} source fields")
 
 
-def _sync_variant(db):
-    return "actual" if _reply_variant_for(db) == "actual_no_memory_fk" else "fresh_candidate"
-
-
 def _sync_payload(db, kind, values):
-    defaults = SYNC_DEFAULTS[_sync_variant(db)][kind]
+    defaults = SYNC_DEFAULTS["actual"][kind]
     missing = tuple(field for field in CURRENT_SYNC_FIELDS[kind] if field in defaults and field not in values)
     evaluated = (dict(zip(missing, db.execute("select " + ",".join(defaults[field] for field in missing)).fetchone(), strict=True))
                  if missing else {})
@@ -1617,7 +1625,7 @@ def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dic
         predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
         identity_args = [kind, public_id]
         if where_sql:
-            projection = sync_action_projection(kind, source_variant=_sync_variant(db), fields=CURRENT_SYNC_FIELDS[kind])
+            projection = sync_action_projection(kind, source_variant="actual", fields=CURRENT_SYNC_FIELDS[kind])
             predicate += (" and cast(legacy_key as integer) in "
                           f"(select id from ({projection}) where id=? and ({where_sql}))")
             identity_args.extend((public_id, *parameters))
@@ -1663,8 +1671,7 @@ def _task_delivery_fields(kind, values):
 
 
 def _task_delivery_payload(db, kind, values):
-    defaults = (TASK_DELIVERY_DEFAULTS if _reply_variant_for(db) == "actual_no_memory_fk"
-                else TASK_DELIVERY_DEFAULTS_FRESH)[kind]
+    defaults = TASK_DELIVERY_DEFAULTS[kind]
     parent, _, _ = TASK_DELIVERY_PARENTS[kind]
     identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
     fields = tuple(field for field in TASK_DELIVERY_FIELDS[kind] if field not in (parent, identity))
@@ -1777,8 +1784,7 @@ def update_task_delivery_action(db: sqlite3.Connection, kind: str, public_id, va
         predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
         identity_args = [kind, public_id]
         if where_sql:
-            projection = task_delivery_projection(
-                kind, source_variant="actual" if _reply_variant_for(db) == "actual_no_memory_fk" else "fresh")
+            projection = task_delivery_projection(kind, source_variant="actual")
             predicate += (" and cast(legacy_key as integer) in "
                           f"(select {('job_id' if kind == 'meeting_alignment_delivery_claims' else 'id')} "
                           f"from ({projection}) where {('job_id' if kind == 'meeting_alignment_delivery_claims' else 'id')}=? "
@@ -1808,19 +1814,16 @@ def delete_task_delivery_action(db: sqlite3.Connection, kind: str, public_id) ->
 
 
 def _insert_reply_action(db, kind, values, *, ignore=False):
-    variant = _reply_variant_for(db)
-    if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & _ATTEMPT_HISTORICAL:
-        raise ValueError("historical attempt fields absent from fresh variant")
+    from app.current_action_schema import current_action_payloads
+
     now = db.execute("select current_timestamp").fetchone()[0]
     if kind == "reply_attempts":
         data = _ATTEMPT_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in _REPLY_FIELDS[kind]}
         data["audit_tool_events_json"] = _audit_markers(data["audit_tool_events_json"])
-        if variant == "fresh_memory_fk":
-            data = {field: value for field, value in data.items() if field not in _ATTEMPT_HISTORICAL}
     else:
         data = _MEMORY_DEFAULTS | {"created_at": now, "updated_at": now} | {field: value for field, value in values.items() if field in _REPLY_FIELDS[kind]}
-    attempt_id = data.pop("attempt_id", None) if kind == "memory_write_events" and variant == "fresh_memory_fk" else None
-    payload_json = _action_payload(db, kind, data, reply_variant=variant)
+    attempt_id = data.pop("attempt_id", None) if kind == "memory_write_events" else None
+    payload_json = _action_payload(db, kind, data, layout=current_action_payloads().layouts[kind])
     if _reply_auto_id(values):
         maximum = _autoincrement_high_water(db, kind)
         if maximum == 2**63 - 1:
@@ -1839,14 +1842,14 @@ def _insert_reply_action(db, kind, values, *, ignore=False):
         db.execute("update main.sqlite_sequence set seq=max(seq,?) where name=?", (public_id, name))
         return ActionWriteResult(None, 0)
     parent_ref = None
-    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+    if kind == "memory_write_events":
         required = (attempt_id, *(data.get(field) for field in ("event_type", "status", "attempts",
                                                           "last_error", "memory_episode_id", "created_at", "updated_at")))
         if all(not _source_bound_null(value) for value in required):
             parent_ref = _reply_parent(db, attempt_id)
     columns = ["_kind", "legacy_key", "payload_json"]
     arguments = [ACTION_RECORD_TYPES.code(kind), str(public_id), payload_json]
-    if kind == "memory_write_events" and variant == "fresh_memory_fk":
+    if kind == "memory_write_events":
         columns.append("memory_attempt_ref")
         arguments.append(parent_ref)
     cursor = db.execute(
@@ -1859,15 +1862,14 @@ def _insert_reply_action(db, kind, values, *, ignore=False):
 
 
 def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameters=()):
-    variant = _reply_variant_for(db)
-    if kind == "reply_attempts" and variant == "fresh_memory_fk" and set(values) & _ATTEMPT_HISTORICAL:
-        raise ValueError("historical attempt fields absent from fresh variant")
+    from app.current_action_schema import current_action_payloads, current_reply_action_projection
+
     if not values or kind == "memory_write_events" and set(values) == {"payload_json"}:
         raise ValueError("action update requires fields")
     predicate = _identity_predicate(kind)
     identity_arguments = list(_identity_arguments(kind, public_id))
     if where_sql:
-        projection = reply_action_projection(kind, variant)
+        projection = current_reply_action_projection(kind)
         predicate += f" and cast(legacy_key as integer) in (select id from ({projection}) where id=? and ({where_sql}))"
         identity_arguments.extend((public_id, *parameters))
     # Bind through a write statement: SQLite opens its deferred transaction,
@@ -1884,13 +1886,13 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
             value = str(_native_integer_primary_key(value, update=True))
         elif kind == "memory_write_events" and field == "payload_json":
             continue
-        elif kind == "memory_write_events" and field == "attempt_id" and variant == "fresh_memory_fk":
+        elif kind == "memory_write_events" and field == "attempt_id":
             column, value = "memory_attempt_ref", _reply_parent(db, value)
         elif kind == "reply_attempts" and field == "audit_tool_events_json":
-            paths.extend((_action_path(kind, "audit_tool_events_json", reply_variant=variant), json.dumps(_audit_markers(value))))
+            paths.extend((current_action_payloads().path(kind, "audit_tool_events_json"), json.dumps(_audit_markers(value))))
             continue
         else:
-            paths.extend((_action_path(kind, field, reply_variant=variant), json.dumps(_encoded_native_sqlite_value(value), ensure_ascii=False,
+            paths.extend((current_action_payloads().path(kind, field), json.dumps(_encoded_native_sqlite_value(value), ensure_ascii=False,
                                                    allow_nan=False, separators=(",", ":"))))
             continue
         assignments.append(column + "=?")
@@ -1917,8 +1919,7 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
         return _email_unit(db, "action_email_insert", operation)
     automatic = ((record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
                  or record_type in REPLY_ACTION_TYPES and _reply_auto_id(values))
-    locked = automatic or (record_type in REPLY_ACTION_TYPES and (ignore or record_type == "memory_write_events"
-                             and _reply_variant_for(db) == "fresh_memory_fk"))
+    locked = automatic or (record_type in REPLY_ACTION_TYPES and (ignore or record_type == "memory_write_events"))
     owned = locked and not db.in_transaction and (
         db.isolation_level is None or getattr(db, "autocommit", None) is True
     )

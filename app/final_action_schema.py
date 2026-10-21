@@ -39,7 +39,6 @@ def _declarations(variant, final):
 
 @lru_cache(maxsize=1)
 def _document_objects():
-    from app.store import BUSINESS_SOURCE_DOCUMENT_SCHEMA
     with closing(sqlite3.connect(":memory:")) as db:
         for sql in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
             db.execute(sql)
@@ -293,3 +292,44 @@ def restore_final_actions(db, metadata, *, read_body: Callable[[SourceVersionBin
             or actions._objects(db, "business_source_documents") != _document_objects()
             or foreign_keys != [tuple(row) for row in db.execute("pragma foreign_key_check")]):
         raise ValueError("final Actions inverse declaration or FK differs")
+
+
+def _business_nonblank_sql(column: str) -> str:
+    """Match Python str.strip() in SQLite CHECKs without changing stored text.
+
+    SQLite's default trim only removes U+0020. These 29 codepoints include
+    Python's ASCII/C0 and Unicode whitespace. Native trim/char keep the CHECK
+    usable by independent SQLite connections without a registered Python UDF.
+    The column is a trusted schema identifier, never caller-supplied input.
+    """
+    whitespace = (
+        "char(9,10,11,12,13,28,29,30,31,32,133,160,5760,"
+        "8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,"
+        "8232,8233,8239,8287,12288)"
+    )
+    return f"trim({column}, {whitespace}) <> ''"
+
+BUSINESS_SOURCE_DOCUMENT_SCHEMA = (
+    f"""create table if not exists business_source_documents (
+        id integer primary key autoincrement,
+        identity_key text not null unique,
+        body text not null check({_business_nonblank_sql("body")}),
+        created_at text not null default current_timestamp
+    )""",
+    """create trigger if not exists trg_business_source_documents_immutable_update
+    before update on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_delete
+    before delete on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_replace
+    before insert on business_source_documents
+    when exists (
+        select 1 from business_source_documents
+        where id=new.id or identity_key=new.identity_key
+    ) begin
+        select raise(abort, 'business source documents are immutable: UNIQUE id or identity_key');
+    end""",
+)

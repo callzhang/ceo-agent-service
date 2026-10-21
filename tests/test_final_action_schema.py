@@ -36,7 +36,7 @@ def version(binding, body, **changes):
 
 
 def source(db, binding):
-    from app.store import BUSINESS_SOURCE_DOCUMENT_SCHEMA
+    from app.final_action_schema import BUSINESS_SOURCE_DOCUMENT_SCHEMA
     db.commit()
     db.execute("pragma foreign_keys=off")
     db.execute("begin")

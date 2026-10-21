@@ -19,35 +19,14 @@ def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
 
 
-def test_current_task_execution_schema_repairs_missing_auxiliary_tables(tmp_path):
-    path = tmp_path / "task-execution-migration.sqlite3"
-    original = AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        for table in (
-            "business_task_dingtalk_links",
-            "business_task_follow_ups",
-            "business_task_follow_up_send_attempts",
-            "business_task_todo_sync_outbox",
-        ):
-            db.execute(f"drop table if exists {table}")
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    original._initialize()
-    migrated = AutoReplyStore(path)
-    assert migrated._schema_is_current()
-    with sqlite3.connect(path) as db:
-        for table in (
-            "business_task_dingtalk_links",
-            "business_task_follow_ups",
-            "business_task_follow_up_send_attempts",
-            "business_task_todo_sync_outbox",
-        ):
-            columns = {row[1] for row in db.execute(f"pragma table_info({table})")}
-            assert set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS[table]) <= columns
-        follow_up_cols = {row[1] for row in db.execute("pragma table_info(business_task_follow_ups)")}
-        assert {
-            "source_signal_id", "target_conversation_id", "target_kind",
-            "question_text", "scheduled_at", "revision", "send_result_json",
-        } <= follow_up_cols
+def test_current_task_execution_schema_has_no_legacy_auxiliary_tables(tmp_path):
+    store = _store(tmp_path)
+    from app.current_schema_manifest import schema_is_current
+    with sqlite3.connect(store.path) as db:
+        assert schema_is_current(db)
+        assert not db.execute("select 1 from sqlite_schema where name in "
+                              "('business_task_dingtalk_links','business_task_follow_ups',"
+                              "'business_task_follow_up_send_attempts','business_task_todo_sync_outbox')").fetchone()
 
 
 def test_business_task_dingtalk_links_list_filters_status_and_paginates(tmp_path):

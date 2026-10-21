@@ -1,3 +1,4 @@
+from app.current_action_schema import current_reply_action_projection
 from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
@@ -143,7 +144,7 @@ from app.feedback_events import (
 from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.email_canonical_storage import email_classification_projection
-from app.email_publication_sources import current_email_actions_available
+from app.current_publication_sources import current_email_actions_available
 from app.repository_updater import ExistingSchemaUpgradeStateStore
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
@@ -197,9 +198,7 @@ from app.action_storage import (
     CANDIDATE_SELECTION_SQL,
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
-    reply_action_projection,
     task_delivery_projection,
-    _reply_variant_for,
 )
 
 from app.shared_action_definitions import email_projection as email_action_projection
@@ -3238,7 +3237,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    source = reply_action_projection("memory_write_events", _reply_variant_for(db))
+    source = current_reply_action_projection("memory_write_events")
     rows = db.execute(
         f"select lower(coalesce(status,'')) as status,count(*) as count "
         f"from ({source}) group by lower(coalesce(status,'')) order by status"

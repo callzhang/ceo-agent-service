@@ -35,13 +35,10 @@ from app.action_storage import (
     CANDIDATE_SELECTION_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
-    reply_action_projection,
     task_delivery_projection,
-    _reply_variant_for,
-    action_schema_is_current,
 )
-from app.current_database_schema import FINAL_ACTION_OPTIONS
-from app.business_legacy_fields import current_action_objects
+from app.current_action_schema import current_action_objects, current_reply_action_projection
+from app.action_storage import _objects
 
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
@@ -867,10 +864,9 @@ def _check_external_delivery_queues(
         ),
     ):
         if source == "memory_write_events":
-            variant = _reply_variant_for(db)
-            if not action_schema_is_current(db, reply_variant=variant, **FINAL_ACTION_OPTIONS, expected_objects=current_action_objects(variant)):
+            if _objects(db, "actions") != current_action_objects():
                 raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
-            source_sql = f"({reply_action_projection('memory_write_events', variant)})"
+            source_sql = f"({current_reply_action_projection('memory_write_events')})"
         else:
             source_sql = f"({task_delivery_projection(source)})"
         failed = _count(

@@ -591,7 +591,7 @@ def test_current_reopen_and_source51_migration_do_not_seed_empty_configs_or_revi
         db.execute("delete from email_category_description_revisions")
         db.execute("delete from email_category_configs")
     # Restore the exact original retained triggers. Source maps are unchanged.
-    from app.email_store import _REQUIRED_TRIGGER_SQL
+    from app.email_schema_history import _REQUIRED_TRIGGER_SQL
 
     with closing(sqlite3.connect(source)) as db:
         for name, sql in _REQUIRED_TRIGGER_SQL.items():

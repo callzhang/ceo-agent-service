@@ -105,7 +105,7 @@ def test_retained_required_contract_and_optional_history_coverage_match_source(
           "update sqlite_schema set sql=replace(sql,'payload_json text not null','payload_json blob not null') where name='configs'"), False),
     )
     # Derive a genuine required native index name without assuming its spelling.
-    from app.email_store import _REQUIRED_INDEXES
+    from app.email_schema_history import _REQUIRED_INDEXES
 
     native_index = next(
         name

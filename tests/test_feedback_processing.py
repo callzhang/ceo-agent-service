@@ -1092,11 +1092,8 @@ def test_store_rejects_post_migration_manifest_before_marker_or_cache(
     path_key = db_path.resolve()
     store_module._INITIALIZED_STORE_PATHS.discard(path_key)
     stable_error = "schema_migration_invalid_feedback_processing_schema"
-    monkeypatch.setitem(
-        store_module.STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS,
-        "trg_feedback_processing_round_integer_v2_insert",
-        "canonical definition deliberately unavailable",
-    )
+    monkeypatch.setattr(AutoReplyStore, "_schema_manifest_is_current_in_connection",
+                        lambda self, db, **options: False)
     schema_error_type = store_module.FeedbackProcessingSchemaIntegrityError
 
     with pytest.raises(schema_error_type, match=stable_error) as error:
@@ -1106,11 +1103,8 @@ def test_store_rejects_post_migration_manifest_before_marker_or_cache(
 
     assert path_key not in store_module._INITIALIZED_STORE_PATHS
     with sqlite3.connect(db_path) as db:
-        marker = db.execute(
-            f"select value from ({store_module.state_projection('service_state')}) where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()
-    assert marker is None
+        assert not db.execute("select 1 from sqlite_schema where name='state'").fetchone()
+
 
 
 @_native_predecessor_case

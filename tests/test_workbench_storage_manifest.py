@@ -6,7 +6,6 @@ import pytest
 from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
 from app.workbench_storage import migrate_workbench_schema
 from app.task20_current_schema import task20_workbench_schema_is_current
-from tests.test_sent_delivery_source import SOURCE as SENT_SOURCE
 from tests.workbench_schema_fixtures import full_source_database, fingerprint, SOURCE
 
 
@@ -33,56 +32,22 @@ def test_source13_auxiliary_copy_preserves_fresh_business_declarations(
         assert _fingerprint(captured["children"]) == SOURCE_CHILD_FULL_HASHES["fresh"]
 
 
-def test_nonempty_canceled_confirmation_source_refuses_before_mutation(
-    tmp_path, published_source, monkeypatch,
-):
+def test_nonempty_canceled_confirmation_source_refuses_before_mutation(tmp_path, published_source):
+    # Exercise this retained historical tool against its exact source, rather
+    # than asking the current-only release to accept an obsolete source pair.
+    from app.confirmation_schema_release import capture_confirmation_source
     path = tmp_path / "source.db"
-    db = full_source_database(path, tmp_path / "auxiliary.db", published_source)
-    db.execute('begin immediate')
-    migrate_workbench_schema(db)
-    from app.action_storage import migrate_action_schema
-    migrate_action_schema(db)
-    from app.action_receipt_storage import migrate_action_receipt_schema
-    migrate_action_receipt_schema(db)
-    from app.action_postfix_storage import migrate_action_postfix_schema
-    migrate_action_postfix_schema(db)
-    for definition in SENT_SOURCE["fresh_candidate"].values():
-        db.execute(next(obj["sql"] for obj in definition["objects"] if obj["type"] == "table"))
-    for definition in SENT_SOURCE["fresh_candidate"].values():
-        for obj in definition["objects"]:
-            if obj["type"] != "table":
-                db.execute(obj["sql"])
-    db.execute("update service_state set value='2026-10-13.3' where key='store_schema_version'")
-    db.commit()
-    db.close()
-    from tests.workbench_caller_fixtures import advance_source17_to_current_store
-    import app.store_schema_release as schema_release
-
-    prepare = schema_release.prepare_database_schema_release
-    observed = {"called": False}
-
-    def fingerprinting_prepare(root, target_path, **kwargs):
-        with sqlite3.connect(target_path) as db:
-            before = fingerprint(db)
-            assert db.execute(
-                "select count(*) from workbench_confirmations"
-            ).fetchone()[0] == 1
-        try:
-            return prepare(root, target_path, **kwargs)
-        finally:
-            with sqlite3.connect(target_path) as db:
-                assert fingerprint(db) == before
-            observed["called"] = True
-
-    monkeypatch.setattr(
-        schema_release, "prepare_database_schema_release", fingerprinting_prepare
-    )
-    with pytest.raises(
-        ValueError,
-        match="canceled confirmation source is nonempty; explicit disposition required",
-    ):
-        advance_source17_to_current_store(path, published_source)
-    assert observed["called"]
+    with full_source_database(path, tmp_path / "auxiliary.db", published_source) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        migrate_workbench_schema(db)
+        db.commit()
+        before = fingerprint(db)
+        db.execute("begin immediate")
+        with pytest.raises(ValueError, match="canceled confirmation source is nonempty"):
+            capture_confirmation_source(db)
+        db.rollback()
+        assert fingerprint(db) == before
 
 
 @pytest.mark.parametrize(
@@ -121,24 +86,16 @@ def test_current_manifest_preserves_actual_literals(
         assert fingerprint(db) == before
 
 
-def test_missing_current_auxiliary_index_repairs_without_recreating_retired_tables(
-    tmp_path,
-):
-    store = AutoReplyStore(tmp_path / "current.db")
-    with sqlite3.connect(store.path) as db:
+def test_missing_current_auxiliary_index_rejects_without_recreating_retired_tables(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
         db.execute("drop index idx_workbench_events_event_type")
-        db.execute("drop trigger trg_task20_parent_workbench_artifacts_insert")
-        assert not task20_workbench_schema_is_current(db, include_feedback=True)
-        assert task20_workbench_schema_is_current(
-            db, allow_missing_objects=True, include_feedback=True
-        )
-    _INITIALIZED_STORE_PATHS.discard(store.path.resolve())
-    store = AutoReplyStore(store.path)
-    with store._connect() as db:
-        assert task20_workbench_schema_is_current(db, include_feedback=True)
-        assert not db.execute(
-            "select 1 from sqlite_master where name in ('workbench_tasks','workbench_turns','workbench_events','scheduled_task_runs')"
-        ).fetchone()
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_current_marker_with_mixed_source_is_rejected_without_mutation(tmp_path):

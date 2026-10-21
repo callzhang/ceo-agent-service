@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from app.deployment_drain import QUIET_WAIT_SECONDS, deployment_drain
 from app.task20_definitions import task20_projection
-from app.state_publication_sources import publication_dispatcher_source
-from app.business_legacy_field_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
-from app.scheduled_config_storage import publication_scheduled_source
+from app.current_publication_sources import publication_dispatcher_source
+from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+from app.current_publication_sources import publication_scheduled_source
 
 from contextlib import ExitStack, closing, nullcontext
 from dataclasses import dataclass
@@ -21,8 +21,8 @@ from urllib.request import urlopen
 
 from app.database_backup import _backup_directory_lock, create_database_backup
 from app.repository_upgrade import GitRepository
-from app.run_schema_release import publication_run_sources
-from app.task_schema_release import publication_meeting_sources, publication_task_sources
+from app.current_publication_sources import publication_run_sources
+from app.current_publication_sources import publication_meeting_sources, publication_task_sources
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
@@ -65,7 +65,7 @@ class ExistingSchemaUpgradeStateStore:
         from app.email_metadata_schema_release import (
             SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
         )
-        from app.business_legacy_field_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+        from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
         from app.state_definitions import state_projection
 
         if not self.database_path.exists():

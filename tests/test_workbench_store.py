@@ -66,60 +66,29 @@ def test_store_schema_check_rejects_missing_required_reply_attempt_column(
     assert store._schema_is_current() is False
 
 
-def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
-    db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    task = store.create_task(title="Upgrade", runtime_kind="codex")
-    with store._connect() as db:
-        for index in (
-            "idx_workbench_events_turn_id_id",
-            "idx_task20_native_18",
-            "idx_task20_published_18",
-            "idx_task20_published_14",
-            "idx_workbench_events_id_turn_id",
-            "idx_task20_native_19",
-            "idx_task20_native_22",
-            "idx_workbench_events_event_type",
-        ):
-            db.execute(f"drop index if exists {index}")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = WorkbenchStore(db_path)
-    with upgraded._connect() as db:
-        indexes = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            )
-        }
-        schema_version = db.execute(
-            f"select value from ({state_projection('service_state')}) where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()["value"]
-
-    assert schema_version == store_module.STORE_SCHEMA_VERSION
-    assert "idx_workbench_events_event_type" in indexes
-    assert "idx_workbench_events_turn_id_id" in indexes
-    assert "idx_task20_published_19" in indexes
-    snapshot = upgraded.timeline_snapshot(task.id)
-    assert snapshot[0].id == task.id
+def test_store_rejects_incomplete_point_seven_schema_with_current_indexes(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("drop index idx_task20_native_18")
+        db.execute("drop index idx_task20_published_14")
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
-def test_store_repairs_missing_required_point_nine_index(tmp_path: Path):
-    db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    with store._connect() as db:
+def test_store_rejects_missing_required_point_nine_index(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
         db.execute("drop index idx_workbench_events_event_type")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    repaired = WorkbenchStore(db_path)
-
-    with repaired._connect() as db:
-        index = db.execute(
-            """select name from sqlite_master
-               where type='index' and name='idx_workbench_events_event_type'"""
-        ).fetchone()
-    assert index is not None
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path, published_source):
