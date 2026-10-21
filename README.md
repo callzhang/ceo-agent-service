@@ -205,8 +205,8 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - `CEO_OKR_SOURCE_KIND=dingteam_web` 时，必须设置 `CEO_OKR_LIVE_SOURCE_COMMAND`。该命令接收
   `{user_id}` 和 `{period_label}` 占位符，并返回 worker 可用的实时 OKR JSON。
   本机 Dingteam Web source 命令示例：
-  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}`。
-  该命令使用 `dingtang-okr-review` skill 的专用 headless browser profile 和 token cache；登录态过期时先运行
+  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/Services/ceo-agent-service/scripts/dingteam_okr_headless_source.py --user-id {user_id} --period-label {period_label}`。
+  该入口复用 `dingtang-okr-review` Skill 的专用 browser profile 和 token cache；完整个人周期列表确认当前季度不存在时，返回可验证的成员级未建目标收据。登录态过期时先运行
   `/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
   并扫码。脚本不读取普通 Chrome cookie、localStorage 或 session 文件。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
