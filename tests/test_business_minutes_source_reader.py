@@ -72,6 +72,40 @@ def test_two_components_exact_multibyte_and_once_per_version():
     assert RequestSourceReader().resolve(binding).reason is SourceUnavailableReason.READER_UNAVAILABLE
 
 
+def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
+    other_uuid = "b46b9c39-36f6-5b8f-9f96-29110fafb882"
+    other_ref = f"{other_uuid}#todos-sha256={'b' * 64}"
+    other_meeting = {"taskUuid": other_uuid, "title": "另一场会议"}
+    first_body = _canonical_minutes_todos_payload(
+        minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[]
+    )
+    other_body = _canonical_minutes_todos_payload(
+        minutes=other_meeting, todos_payload=TODOS, transcript_excerpts=[]
+    )
+    other_signal = signal(other_body, source_type="ai_minutes", source_ref=other_ref)
+    other_binding = SourceVersionBinding.from_signal(
+        other_signal, provider_locator=minutes_provider_locator(other_signal)
+    )
+    fake = FakeDws(pages=[
+        {"items": [MEETING], "has_more": True, "next_token": "next"},
+        {"items": [other_meeting], "has_more": False, "next_token": ""},
+    ])
+    reader = RequestSourceReader(provider_reader=fake)
+
+    assert isinstance(reader.resolve(bound(first_body)), AvailableSource)
+    assert isinstance(reader.resolve(other_binding), AvailableSource)
+    assert [name for name, _ in fake.calls] == ["list", "list", "todos", "todos"]
+
+    changed = FakeDws(pages=[
+        {"items": [{**MEETING, "title": "已修改"}, other_meeting],
+         "has_more": False, "next_token": ""},
+    ])
+    assert RequestSourceReader(provider_reader=changed).resolve(
+        bound(first_body)
+    ).reason is SourceUnavailableReason.VERSION_MISMATCH
+    assert [name for name, _ in changed.calls] == ["list", "todos"]
+
+
 def test_four_components_and_changed_current_body():
     from app.minutes_todo_context import todo_transcript_excerpts
 
