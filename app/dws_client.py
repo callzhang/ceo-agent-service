@@ -361,7 +361,7 @@ class DwsClient:
         ding_robot_code: str | None = None,
         ding_robot_name: str | None = None,
         ding_receiver_user_id: str | None = None,
-        transient_retry_attempts: int = 3,
+        transient_retry_attempts: int = MAX_AUTOMATIC_RETRIES,
         transient_retry_delay_seconds: float = 1.0,
     ):
         self.dws_bin = dws_bin

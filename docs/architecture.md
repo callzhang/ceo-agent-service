@@ -1513,10 +1513,12 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 自动重试共享上限为 3 次 retry（含首次调用最多 4 次尝试），由
 `app.external_retry.MAX_AUTOMATIC_RETRIES` 和
-`MAX_AUTOMATIC_ATTEMPTS` 定义。持久化 Consumer 与 Audit 失败预算分角色记录，
+`MAX_AUTOMATIC_ATTEMPTS` 定义。DWS 瞬时调用、同路由容量重试、浏览器瞬时失败、
+普通任务和系统执行都引用该共享上限，不再各自维护相同数字。持久化 Consumer 与 Audit 失败预算分角色记录，
 每个角色最多四次失败尝试；权限申请后的材料重读采用独立节奏预算，最多三次、
 每 12 小时一次、原申请起 72 小时截止。只有可安全重试的技术失败进入自动预算；
 非重试错误直接终止，任何外部效果不确定时先对账原对象，不因次数预算自动重放。
+这些是彼此独立的预算，不合并相加；等待时间、Agent 内部模型轮数和只读轮询不是自动重试次数。
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 

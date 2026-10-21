@@ -3284,6 +3284,8 @@ Derek 明确授权解除生产循环对部署的阻塞。`python -m app.deploy -
 Derek 要求自动重试统一最多三次 retry（首次调用之外），即最多四次调用。ReplyQueueAdapter 的 handler 异常计入既有任务 attempts，
 不再退款或立即重新领取；前三次按共享指数退避延后 60/120/240 秒，第四次原任务记为 failed，
 保留原错误、业务对象、执行代和运行历史。ScheduledExecutionQueueAdapter 继承同一规则。
+共享上限由 `app.external_retry.MAX_AUTOMATIC_RETRIES` 定义；DWS 瞬时调用、同路由容量重试、
+浏览器瞬时失败及其他自动重试默认读取这一上限，配置值不得放大它。
 普通主动 release 仍是未执行业务的调度释放，不消费异常预算。Consumer 与 Audit 的已持久化
 技术失败分别使用独立的每角色、同执行代、同修订四次尝试预算（每个角色最多三次 retry），调用前检查；
 底层 code/source_code 保留，预算耗尽不伪造 needs_human 或业务完成。
