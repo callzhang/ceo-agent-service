@@ -108,3 +108,44 @@ def append_action_receipt(db: sqlite3.Connection, action_id: int, *,
     if row is None:
         raise sqlite3.IntegrityError("missing Action receipt owner")
     return row[0]
+
+
+def update_sent_receipt(db: sqlite3.Connection, action_id: int, *,
+                        receipt_id: int, expected: Mapping[str, object],
+                        changes: Mapping[str, object]) -> int | None:
+    """CAS mutable reference and initially-unknown canonical facts on Sent receipt."""
+    mutable = {"provider_receipt_id", "operation", "target", "result_digest",
+               "agent_run_id", "created_at", "updated_at"}
+    old = _mapping(expected, mutable, "expected Sent receipt")
+    new = _mapping(changes, mutable, "Sent receipt changes")
+    if not old or not new:
+        raise ValueError("Sent receipt update requires expected values and changes")
+    assignments = ",".join(f"{field}=?" for field in new)
+    predicates = " and ".join(f"{field} is ?" for field in old)
+    row = db.execute(
+        f"update action_receipts set {assignments} where id=? and action_id=? "
+        f"and execution_id is null and action_index is null and {predicates} returning id",
+        (*new.values(), receipt_id, action_id, *old.values()),
+    ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def update_action_observation(db: sqlite3.Connection, action_id: int, *,
+                              execution_id: int, action_index: int,
+                              expected: Mapping[str, object],
+                              changes: Mapping[str, object]) -> int | None:
+    """Compare-and-set mutable facts on one execution/action observation."""
+    mutable = {"status", "outcome_json", "agent_run_id", "observed_at", "updated_at",
+               "provider_receipt_id"}
+    old = _mapping(expected, mutable, "expected Action observation")
+    new = _mapping(changes, mutable, "Action observation changes")
+    if not old or not new:
+        raise ValueError("Action observation update requires expected values and changes")
+    assignments = ",".join(f"{field}=?" for field in new)
+    predicates = " and ".join(f"{field} is ?" for field in old)
+    row = db.execute(
+        f"update action_receipts set {assignments} where action_id=? and execution_id=? "
+        f"and action_index=? and {predicates} returning id",
+        (*new.values(), action_id, execution_id, action_index, *old.values()),
+    ).fetchone()
+    return None if row is None else int(row[0])

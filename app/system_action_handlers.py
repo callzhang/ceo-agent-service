@@ -142,7 +142,10 @@ class DingTalkMessageHandler:
                 return None
             result = self._verified(receipt)
             if result.status == "verified":
-                self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
+                self.store.record_outbound_postfix_receipt(
+                    "dingtalk", prepared.delivery_key, receipt,
+                    operation="send_reply_to_trigger",
+                )
             return result
         target = action.target
         conversation_id = target.get("conversation_id")
@@ -183,7 +186,10 @@ class DingTalkMessageHandler:
         result = self._verified(receipt)
         if result.status == "verified":
             if prepared is not None:
-                self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
+                self.store.record_outbound_postfix_receipt(
+                    "dingtalk", prepared.delivery_key, receipt,
+                    operation="send_message",
+                )
             return result
         verification = result.provider_result.get("verification")
         if (result.status == "failed" and isinstance(verification, dict)

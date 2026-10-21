@@ -15,7 +15,6 @@ import sqlite3
 from string import ascii_lowercase, ascii_uppercase
 
 from app.storage_payload import ACTION_RECORD_TYPES, SOURCE_ACTION_RECORD_TYPES, EXECUTION_ACTION_RECORD_TYPES
-from app.prepared_action_definitions import prepared_child_projection
 from app.execution_owner_definitions import (
     ALIAS as EXECUTION_ALIAS, EXECUTION_FIELDS, EXECUTION_REFERENCES,
     execution_schema_parts, execution_projection,
@@ -823,6 +822,9 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         triggers += tuple(ba_triggers)
     if sent_result_references:
         triggers += sent_triggers
+    if action_entity:
+        from app.action_entity_definitions import ACTION_ENTITY_PARENT_TRIGGER_DDL
+        triggers += ACTION_ENTITY_PARENT_TRIGGER_DDL
     if payloads:
         triggers = tuple((payloads.record_types if execution_owner else SOURCE_ACTION_RECORD_TYPES).trigger_sql(sql) for sql in triggers)
     return table, indexes, triggers
@@ -950,7 +952,18 @@ CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = _projection("candidate_selections", selection_references=True)
 CANDIDATE_SUPPLEMENT_SQL = ACTION_PROJECTIONS["candidate_supplements"]
 CANDIDATE_EXECUTION_SQL = execution_projection()
-CANDIDATE_ACTION_ATTEMPT_SQL = _projection("candidate_action_attempts", result_references=True, execution_owner=True)
+CANDIDATE_ACTION_ATTEMPT_SQL = """select r.id,a.id as action_owner_id,r.execution_id,r.action_index,
+       a.action_external_action_key as external_action_key,r.status,
+       coalesce(r.outcome_json,p.provider_result_json,'{}') as result_json,
+       r.agent_run_id,r.provider_receipt_id,r.target,
+       r.created_at,r.updated_at
+from action_receipts r join actions a on a.id=r.action_id
+left join action_receipts p on p.id=r.provider_receipt_id and p.action_id=r.action_id
+where a.record_type='action' and a.action_external_action_key is not null
+  and r.execution_id is not null and r.action_index is not null
+  and r.id=(select max(latest.id) from action_receipts latest
+            where latest.action_id=r.action_id and latest.execution_id=r.execution_id
+              and latest.action_index=r.action_index)"""
 
 
 class CandidateResultReferenceError(sqlite3.IntegrityError):
@@ -968,26 +981,110 @@ def candidate_action_attempt_row(row):
 
 
 def preserve_candidate_result_references(db, external_action_key, provider_result_json):
-    """Keep historical attempt meaning before an existing receipt correction.
+    """Action receipt bodies are immutable and need no denormalized copies."""
+    return None
 
-    Referenced bodies only become local facts when their owner is about to
-    change. The correction's own attempts are assigned their new result by its
-    existing writer in this same transaction.
-    """
-    path = _action_path("candidate_action_attempts", "result_json")
-    db.execute("update actions set payload_json=jsonb_set(payload_json,?,json(?)) "
-               "where record_type='candidate_action_attempts' and status='verified' "
-               "and result_json is null and external_action_key=?",
-               (path, json.dumps(provider_result_json, ensure_ascii=False), external_action_key))
+CANONICAL_PROVIDER_RECEIPT_SQL = """with recursive
+canonical_binding(action_id,binding_id,receipt_id,operation,target,result_digest,agent_run_id,created_at) as (
+    select a.id,fact.id,fact.provider_receipt_id,fact.operation,fact.target,
+           fact.result_digest,fact.agent_run_id,fact.created_at
+    from actions a join action_receipts fact on fact.id=coalesce(a.action_delivery_receipt_id,
+      (select metadata.id from action_receipts metadata where metadata.action_id=a.id
+       and metadata.provider_receipt_id is not null and metadata.provider_result_json is null
+       and metadata.execution_id is null and metadata.action_index is null
+       order by metadata.id limit 1))
+    where a.record_type='action' and fact.provider_receipt_id is not null
+), canonical_ancestors(action_id,binding_id,receipt_id,operation,target,result_digest,agent_run_id,created_at) as (
+    select b.action_id,b.binding_id,r.id,b.operation,b.target,b.result_digest,b.agent_run_id,b.created_at
+    from canonical_binding b join action_receipts r
+      on r.id=b.receipt_id and r.action_id=b.action_id and r.provider_result_json is not null
+    union all
+    select root.action_id,root.binding_id,prior.id,root.operation,root.target,
+           root.result_digest,root.agent_run_id,root.created_at
+    from canonical_ancestors root join action_receipts prior
+      on prior.id=(select r.supersedes_provider_receipt_id from action_receipts r
+                   where r.id=root.receipt_id and r.action_id=root.action_id)
+), canonical_roots(action_id,binding_id,root_id,operation,target,result_digest,agent_run_id,created_at) as (
+    select ancestor.action_id,ancestor.binding_id,ancestor.receipt_id,ancestor.operation,
+           ancestor.target,ancestor.result_digest,ancestor.agent_run_id,ancestor.created_at
+    from canonical_ancestors ancestor join action_receipts root on root.id=ancestor.receipt_id
+    where root.supersedes_provider_receipt_id is null
+), canonical_tips(action_id,binding_id,root_id,receipt_id,operation,target,result_digest,agent_run_id,created_at) as (
+    select root.action_id,root.binding_id,root.root_id,root.root_id,root.operation,
+           root.target,root.result_digest,root.agent_run_id,root.created_at
+    from canonical_roots root
+    union all
+    select tip.action_id,tip.binding_id,tip.root_id,next.id,tip.operation,tip.target,
+           tip.result_digest,tip.agent_run_id,tip.created_at
+    from canonical_tips tip join action_receipts next
+      on next.action_id=tip.action_id and next.supersedes_provider_receipt_id=tip.receipt_id
+)
+select action_id,binding_id,root_id,receipt_id,operation,target,result_digest,agent_run_id,created_at
+from canonical_tips where not exists(
+  select 1 from action_receipts successor where successor.action_id=canonical_tips.action_id
+    and successor.supersedes_provider_receipt_id=canonical_tips.receipt_id)"""
 
-EXTERNAL_ACTION_RESULT_SQL = ACTION_PROJECTIONS["external_action_results"]
+EXTERNAL_ACTION_RESULT_SQL = f"""select a.action_external_action_key as external_action_key,
+       a.action_business_object_key as business_object_key,
+       a.action_action_identity as action_identity,canonical.operation,
+       canonical.target as target_identifiers_json,r.provider_result_json,
+       coalesce(r.result_digest,canonical.result_digest) as result_digest,
+       canonical.agent_run_id as first_agent_run_id,
+       canonical.created_at,r.id as provider_receipt_id
+from actions a join action_receipts r on r.action_id=a.id
+join ({CANONICAL_PROVIDER_RECEIPT_SQL}) canonical
+  on canonical.action_id=a.id and canonical.receipt_id=r.id
+where a.record_type='action' and a.action_external_action_key is not null
+  and a.action_business_object_key is not null and a.action_action_identity is not null
+  and canonical.operation is not null
+  and canonical.target is not null
+  and coalesce(r.result_digest,canonical.result_digest) is not null
+  and canonical.agent_run_id is not null
+  and r.provider_result_json is not null"""
 AGENT_EFFECT_INTENT_SQL = ACTION_PROJECTIONS["agent_effect_intents"]
 AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
-OUTBOUND_POSTFIX_SQL = ACTION_PROJECTIONS["outbound_postfixes"]
-OUTBOUND_POSTFIX_RECEIPT_SQL = prepared_child_projection("outbound_postfix_receipts")
-NATIVE_REPLY_DISPATCH_SQL = prepared_child_projection("native_reply_dispatches")
-SENT_REPLY_SQL = _projection("sent_replies", payloads=action_payloads("actual_no_memory_fk"), sent_result_references=True)
-SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
+# Task 3 runtime projection: prepared message data and its dispatch/accepted
+# provider facts are read from the concrete Action owner and its normalized
+# receipts. Historical source factories remain separate for migration only.
+OUTBOUND_POSTFIX_SQL = """select id,action_delivery_channel as channel,
+       action_delivery_key as delivery_key,action_prepared_body as final_body,
+       action_feedback_token as feedback_token,action_postfix_version as postfix_version,
+       action_prepared_at as created_at
+from actions where record_type='action' and action_delivery_channel is not null
+  and action_delivery_key is not null"""
+OUTBOUND_POSTFIX_RECEIPT_SQL = """select a.action_delivery_channel as channel,
+       a.action_delivery_key as delivery_key,r.provider_result_json,
+       r.observed_at as created_at
+from action_receipts r join actions a on a.id=r.action_id
+where a.record_type='action' and a.action_delivery_channel is not null
+  and a.action_delivery_key is not null
+  and r.provider_result_json is not null"""
+NATIVE_REPLY_DISPATCH_SQL = """select a.action_delivery_channel as channel,
+       a.action_delivery_key as delivery_key,r.dispatched_at as created_at
+from action_receipts r join actions a on a.id=r.action_id
+where a.record_type='action' and a.action_delivery_channel is not null
+  and a.action_delivery_key is not null and r.operation='send_reply_to_trigger'
+  and r.dispatched_at is not null"""
+SENT_REPLY_SQL = """select a.id,a.action_conversation_id as conversation_id,
+       a.action_trigger_message_id as trigger_message_id,
+       coalesce(a.action_prepared_body,'') as reply_text,
+       coalesce(body.provider_result_json,'') as send_result_json,
+       coalesce(a.action_recall_key,'') as recall_key,
+       coalesce(a.action_recall_status,'') as recall_status,
+       coalesce(a.action_recall_error,'') as recall_error,a.action_recalled_at as recalled_at,
+       coalesce(a.action_feedback_token,'') as feedback_token,
+       coalesce(a.action_agent_run_id,0) as agent_run_id,
+       coalesce(a.action_external_action_key,'') as external_action_key,
+       coalesce(a.action_delivery_channel,'dingtalk') as channel,
+       fact.observed_at as sent_at
+from actions a join action_receipts fact on fact.id=a.action_delivery_receipt_id
+left join action_receipts body on body.id=fact.provider_receipt_id and body.action_id=a.id
+where a.record_type='action'
+  and a.action_conversation_id is not null and a.action_trigger_message_id is not null"""
+SENT_REPLY_OBSERVER_SQL = """select o.action_id as sent_reply_id,o.agent_run_id,o.task_id as reply_task_id
+from action_observers o join actions a on a.id=o.action_id
+where a.record_type='action' and a.action_conversation_id is not null
+  and a.action_trigger_message_id is not null"""
 
 
 def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False) -> None:

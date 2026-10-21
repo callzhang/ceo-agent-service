@@ -1841,11 +1841,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 else feedback_base_url
             ),
         )
-        shared_action_lifecycle.transition(db, "prepared", "prepare", values={
-            "channel": prepared.channel, "delivery_key": prepared.delivery_key,
-            "final_body": prepared.final_body, "feedback_token": prepared.feedback_token,
-            "postfix_version": prepared.postfix_version,
-        })
+        shared_action_lifecycle.prepare_outbound_action(
+            db, channel=prepared.channel, delivery_key=prepared.delivery_key,
+            final_body=prepared.final_body, feedback_token=prepared.feedback_token,
+            postfix_version=prepared.postfix_version,
+        )
         return prepared
 
     def get_outbound_postfix(
@@ -1893,11 +1893,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchall()
         return {outbound_body_echo_key(str(row["final_body"])) for row in rows}
 
-    def claim_native_reply_dispatch(self, channel: str, delivery_key: str) -> bool:
+    def claim_native_reply_dispatch(self, channel: str, delivery_key: str, *, operation: str) -> bool:
         """Commit the possible-effect boundary before calling the provider."""
         with self._immediate_write_transaction() as db:
-            cursor = shared_action_lifecycle.transition(
-                db, "prepared", "claim", identity=(channel, delivery_key),
+            cursor = shared_action_lifecycle.claim_outbound_action(
+                db, channel=channel, delivery_key=delivery_key, operation=operation,
             )
             return cursor.rowcount == 1
 
@@ -1924,6 +1924,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         channel: str,
         delivery_key: str,
         provider_result: object,
+        *,
+        operation: str,
     ) -> object:
         """Persist a provider result once so native replies are not replayed."""
         normalized_channel, normalized_delivery_key = normalize_outbound_postfix_inputs(
@@ -1933,10 +1935,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         serialized = json.dumps(provider_result, ensure_ascii=False, default=str)
         with self._immediate_write_transaction() as db:
-            shared_action_lifecycle.transition(
-                db, "prepared", "outcome",
-                identity=(normalized_channel, normalized_delivery_key),
-                values={"provider_result_json": serialized},
+            shared_action_lifecycle.record_outbound_action_receipt(
+                db, channel=normalized_channel, delivery_key=normalized_delivery_key,
+                provider_result_json=serialized, operation=operation,
             )
             row = db.execute(
                 f'select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL})\n                   where channel=? and delivery_key=?',
@@ -15554,14 +15555,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 else ""
             )
         with self._connect() as db:
-            insert_action(db, "sent_replies", {
-                "conversation_id": conversation_id,
-                "trigger_message_id": trigger_message_id,
-                "reply_text": reply_text,
-                "send_result_json": send_result_json,
-                "recall_key": recall_key,
-                "feedback_token": feedback_token,
-            })
+            db.execute("begin immediate")
+            shared_action_lifecycle.record_sent_action(
+                db, operation=None, target_json=None,
+                provider_json=send_result_json or None,
+                result_digest=None, external_action_key="",
+                business_object_key=None, action_identity=None,
+                channel="dingtalk", conversation_id=conversation_id,
+                trigger_message_id=trigger_message_id, reply_text=reply_text,
+                feedback_token=feedback_token, recall_key=recall_key,
+                agent_run_id=None, task_id=None,
+            )
 
     def record_completed_agent_message_delivery(
         self,
@@ -15620,45 +15624,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             if run is None or run["business_object_key"] != business_object_key:
                 raise ValueError("completed message delivery run identity mismatch")
-            insert_action(db, "external_action_results", {
-                "external_action_key": external_action_key,
-                "business_object_key": business_object_key,
-                "action_identity": action_identity, "operation": operation,
-                "target_identifiers_json": target_json, "provider_result_json": provider_json,
-                "result_digest": result_digest, "first_agent_run_id": agent_run_id,
-            }, ignore=True)
-            completed = db.execute(
-                f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
-                (external_action_key,),
-            ).fetchone()
-            if (
-                completed is None
-                or completed["business_object_key"] != business_object_key
-                or completed["action_identity"] != action_identity
-                or completed["operation"] != operation
-                or completed["target_identifiers_json"] != target_json
-            ):
-                raise ValueError("conflicting external action result")
-            insert_action(db, "sent_replies", {
-                "conversation_id": conversation_id,
-                "trigger_message_id": trigger_message_id,
-                "reply_text": reply_text,
-                "send_result_json": provider_json,
-                "feedback_token": feedback_token,
-                "agent_run_id": agent_run_id,
-                "external_action_key": external_action_key,
-            }, ignore=True)
+            common = shared_action_lifecycle.record_sent_action(
+                db, operation=operation, target_json=target_json,
+                provider_json=provider_json, result_digest=result_digest,
+                external_action_key=external_action_key,
+                business_object_key=business_object_key,
+                action_identity=action_identity, channel="dingtalk",
+                conversation_id=conversation_id,
+                trigger_message_id=trigger_message_id, reply_text=reply_text,
+                feedback_token=feedback_token, agent_run_id=agent_run_id,
+                task_id=int(run["reply_task_id"]),
+            )
             sent = db.execute(
-                f"select * from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
-                (external_action_key,),
+                f"select * from ({SENT_REPLY_SQL}) where id=?",
+                (common["action"]["id"],),
             ).fetchone()
             if sent is None or sent["reply_text"] != reply_text:
                 raise ValueError("conflicting message delivery projection")
-            insert_action(db, "sent_reply_observers", {
-                "sent_reply_id": sent["id"],
-                "agent_run_id": agent_run_id,
-                "reply_task_id": run["reply_task_id"],
-            }, ignore=True)
             return SentReply.model_validate(dict(sent))
 
     def resolve_reconciled_failed_reply_task(
@@ -15857,34 +15839,30 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             business_object_key = str(task["business_object_key"] or "").strip()
             if not business_object_key:
                 raise ValueError("reconciled task has no business object key")
-            insert_action(db, "external_action_results", {
-                "external_action_key": action_key,
-                "business_object_key": business_object_key,
-                "action_identity": action_identity, "operation": operation,
-                "target_identifiers_json": target_json, "provider_result_json": provider_json,
-                "result_digest": _canonical_json_sha256(provider_result),
-                "first_agent_run_id": send_run_id,
-            }, ignore=True)
-            insert_action(db, "sent_replies", {
-                "conversation_id": task["conversation_id"],
-                "trigger_message_id": task["trigger_message_id"],
-                "reply_text": reply_text,
-                "send_result_json": provider_json,
-                "feedback_token": feedback_token,
-                "agent_run_id": send_run_id,
-                "external_action_key": action_key,
-            }, ignore=True)
+            common = shared_action_lifecycle.record_sent_action(
+                db, operation=operation, target_json=target_json,
+                provider_json=provider_json,
+                result_digest=_canonical_json_sha256(provider_result),
+                external_action_key=action_key,
+                business_object_key=business_object_key,
+                action_identity=action_identity, channel=str(task["channel"]),
+                conversation_id=task["conversation_id"],
+                trigger_message_id=task["trigger_message_id"],
+                reply_text=reply_text, feedback_token=feedback_token,
+                agent_run_id=send_run_id, task_id=send_run.reply_task_id,
+            )
+            from app.action_entity_storage import add_action_observer
+            observed_at = db.execute("select current_timestamp").fetchone()[0]
+            add_action_observer(
+                db, common["action"]["id"], agent_run_id=readback_run_id,
+                task_id=send_run.reply_task_id, created_at=observed_at,
+            )
             sent = db.execute(
-                f"select * from ({SENT_REPLY_SQL}) where external_action_key=? and external_action_key<>''",
-                (action_key,),
+                f"select * from ({SENT_REPLY_SQL}) where id=?",
+                (common["action"]["id"],),
             ).fetchone()
             if sent is None or sent["reply_text"] != reply_text:
                 raise ValueError("conflicting reconciled message delivery")
-            insert_action(db, "sent_reply_observers", {
-                "sent_reply_id": sent["id"],
-                "agent_run_id": readback_run_id,
-                "reply_task_id": send_run.reply_task_id,
-            }, ignore=True)
             latest = db.execute(
                 f"select max(id) from ({REPLY_ATTEMPT_COMMON_SQL}) "
                 "where channel=? and conversation_id=? and trigger_message_id=?",
@@ -15960,15 +15938,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError("current reviewed operation has no verified send receipt")
             for row in matched:
                 action = expected[row["external_action_key"]]
-                insert_action(db, "external_action_results", {
-                    "external_action_key": row["external_action_key"],
-                    "business_object_key": task.business_object_key,
-                    "action_identity": action["action_identity"], "operation": action["operation"],
-                    "target_identifiers_json": _json_object_text(action["target"], field="target_identifiers"),
-                    "provider_result_json": row["send_result_json"],
-                    "result_digest": _canonical_json_sha256(json.loads(row["send_result_json"])),
-                    "first_agent_run_id": row["agent_run_id"],
-                }, ignore=True)
+                target_json = _json_object_text(action["target"], field="target_identifiers")
+                shared_action_lifecycle.adopt_verified_sent_action(
+                    db, external_action_key=row["external_action_key"],
+                    business_object_key=task.business_object_key,
+                    action_identity=action["action_identity"],
+                    operation=action["operation"], target_json=target_json,
+                    provider_json=row["send_result_json"],
+                    result_digest=_canonical_json_sha256(json.loads(row["send_result_json"])),
+                    agent_run_id=row["agent_run_id"], observed_at=row["sent_at"],
+                )
             cursor = db.execute(
                 f"""
                 update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='codex_result_invalid'
@@ -19119,13 +19098,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         recall_error: str,
     ) -> None:
         with self._connect() as db:
+            db.execute("begin immediate")
+            from app.action_entity_storage import get_action, record_action_result
+
+            sent = db.execute(
+                f"select 1 from ({SENT_REPLY_SQL}) where id=?", (sent_reply_id,),
+            ).fetchone()
+            owner = get_action(db, sent_reply_id)
+            if sent is None or owner is None:
+                raise ValueError(f"unknown sent Action {sent_reply_id}")
             values = {"recall_status": recall_status, "recall_error": recall_error}
             if recall_status == "recalled":
-                # The native UPDATE evaluated current_timestamp after acquiring
-                # the writer lock. Keep that ordering for the finite action.
-                db.execute("update sqlite_sequence set seq=seq where 0")
                 values["recalled_at"] = db.execute("select current_timestamp").fetchone()[0]
-            update_action(db, "sent_replies", sent_reply_id, values)
+            expected = {"recall_status": owner["recall_status"], "recall_error": owner["recall_error"]}
+            if record_action_result(db, sent_reply_id, expected=expected, changes=values) is None:
+                raise ValueError(f"sent Action changed during recall update {sent_reply_id}")
 
     def record_reply_attempt(
         self,
@@ -19533,18 +19520,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             shared_exclusions = f"""
                 and not exists (
                     select 1
-                    from actions as actions
-                    indexed by idx_actions_global_business
-                    where actions.record_type='external_action_results'
-                      and actions.business_object_key=tasks.business_object_key
+                    from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
+                    where actions.business_object_key=tasks.business_object_key
                       and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
                       and exists (
                           select 1
-                          from actions as replies
-                          indexed by idx_actions_sent_external_key
-                          where replies.record_type='sent_replies'
-                            and replies.external_action_key<>''
-                            and replies.external_action_key=actions.legacy_key
+                          from ({SENT_REPLY_SQL}) as replies
+                          where replies.external_action_key<>''
+                            and replies.external_action_key=actions.external_action_key
                       )
                 )
                 and not exists (
@@ -19561,18 +19544,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             native_shared_exclusions = f"""
                 and not exists (
                     select 1
-                    from actions as actions
-                    indexed by idx_actions_global_business
-                    where actions.record_type='external_action_results'
-                      and actions.business_object_key=tasks.{task20_column('reply_tasks', 'business_object_key')}
+                    from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
+                    where actions.business_object_key=tasks.{task20_column('reply_tasks', 'business_object_key')}
                       and coalesce(json_extract(actions.provider_result_json, '$.verification.state'), 'sent')='sent'
                       and exists (
                           select 1
-                          from actions as replies
-                          indexed by idx_actions_sent_external_key
-                          where replies.record_type='sent_replies'
-                            and replies.external_action_key<>''
-                            and replies.external_action_key=actions.legacy_key
+                          from ({SENT_REPLY_SQL}) as replies
+                          where replies.external_action_key<>''
+                            and replies.external_action_key=actions.external_action_key
                       )
                 )
                 and not exists (

@@ -8,12 +8,12 @@ ACTION_FIELDS = (
     "operation", "parameters_json", "status", "action_plan_id", "classification_id",
     "account_id", "external_action_key", "next_attempt_at", "started_at", "created_at",
     "updated_at", "prepared_body", "prepared_at", "delivery_channel", "delivery_key",
-    "feedback_token", "postfix_version", "conversation_id", "trigger_message_id", "recall_key",
+    "feedback_token", "postfix_version", "delivery_receipt_id", "conversation_id", "trigger_message_id", "recall_key",
     "recall_status", "recall_error", "recalled_at", "agent_run_id", "business_object_key",
     "action_identity",
 )
 ACTION_LAYOUT = PayloadLayout(ACTION_FIELDS)
-ACTION_INTEGER_FIELDS = frozenset({"classification_id", "agent_run_id"})
+ACTION_INTEGER_FIELDS = frozenset({"classification_id", "agent_run_id", "delivery_receipt_id"})
 ACTION_ALLOWED_FIELDS = frozenset(ACTION_FIELDS)
 
 RECEIPT_FIELDS = (
@@ -33,6 +33,10 @@ ACTION_GENERATED_COLUMNS = tuple(
 ACTION_INDEX_DDL = (
     "create unique index idx_actions_action_external_key on actions(action_external_action_key) "
     "where record_type='action' and action_external_action_key is not null",
+    "create unique index idx_actions_action_direct_email_plan_operation "
+    "on actions(action_action_plan_id,action_operation) where record_type='action' "
+    "and action_action_plan_id is not null and action_operation in "
+    "('archive','flag_important','mark_read','move','trash','label')",
     "create unique index idx_actions_action_delivery_key on actions(action_delivery_channel,action_delivery_key) "
     "where record_type='action' and action_delivery_channel is not null and action_delivery_key is not null",
 )
@@ -47,7 +51,7 @@ RECEIPT_SCHEMA_DDL = (
     "supersedes_provider_receipt_id integer references action_receipts(id), "
     "check(supersedes_provider_receipt_id is null or supersedes_provider_receipt_id<id))",
     "create index idx_action_receipts_action on action_receipts(action_id,id)",
-    "create index idx_action_receipts_execution_order on action_receipts(execution_id,action_index,action_id) "
+    "create unique index idx_action_receipts_execution_order on action_receipts(execution_id,action_index) "
     "where execution_id is not null",
     "create unique index idx_action_receipts_one_successor on action_receipts(supersedes_provider_receipt_id) "
     "where supersedes_provider_receipt_id is not null",
@@ -71,14 +75,37 @@ RECEIPT_SCHEMA_DDL = (
     "when new.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id and not exists("
     "select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) "
     "begin select raise(abort,'provider receipt reference must resolve within Action'); end",
+    "create trigger trg_action_delivery_receipt_owner_delete before delete on action_receipts "
+    "when exists(select 1 from actions a where a.record_type='action' and a.action_delivery_receipt_id=old.id) "
+    "begin select raise(abort,'Sent receipt is still referenced by Action'); end",
     "create trigger trg_action_receipt_identity_immutable before update of id,action_id on action_receipts "
     "when old.id is not new.id or old.action_id is not new.action_id begin "
     "select raise(abort,'receipt identity and owner are immutable'); end",
     "create trigger trg_action_receipt_lineage_immutable before update of provider_result_json,result_digest,supersedes_provider_receipt_id,provider_receipt_id on action_receipts "
-    "when old.provider_result_json is not new.provider_result_json or old.result_digest is not new.result_digest or "
+    "when old.provider_result_json is not new.provider_result_json or "
+    "(old.result_digest is not new.result_digest and not (old.result_digest is null and "
+    "exists(select 1 from actions a where a.record_type='action' and a.id=old.action_id and a.action_delivery_receipt_id=old.id))) or "
     "old.supersedes_provider_receipt_id is not new.supersedes_provider_receipt_id or "
-    "(old.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id) begin "
+    "(old.provider_receipt_id is not new.provider_receipt_id and not ("
+    "((exists(select 1 from actions a where a.record_type='action' and a.id=old.action_id and a.action_delivery_receipt_id=old.id) "
+    "or (old.provider_result_json is null and old.execution_id is null and old.action_index is null) "
+    "or (old.execution_id is not null and old.action_index is not null)) "
+    "and exists(select 1 from action_receipts next where next.id=new.provider_receipt_id and next.action_id=old.action_id) "
+    "and ((old.execution_id is not null and old.action_index is not null) or new.observed_at is old.observed_at)))) begin "
     "select raise(abort,'provider receipt versions and exact references are immutable'); end",
+)
+
+ACTION_ENTITY_PARENT_TRIGGER_DDL = (
+    "create trigger trg_action_delivery_receipt_owner_insert before insert on actions "
+    "when new.record_type='action' and new.action_delivery_receipt_id is not null and not exists("
+    "select 1 from action_receipts r where r.id=new.action_delivery_receipt_id and r.action_id=new.id) "
+    "begin select raise(abort,'Sent receipt reference must resolve within Action'); end",
+    "create trigger trg_action_delivery_receipt_owner_update before update of action_data on actions "
+    "when old.record_type='action' and new.record_type='action' "
+    "and old.action_delivery_receipt_id is not new.action_delivery_receipt_id "
+    "and new.action_delivery_receipt_id is not null and not exists("
+    "select 1 from action_receipts r where r.id=new.action_delivery_receipt_id and r.action_id=new.id) "
+    "begin select raise(abort,'Sent receipt reference must resolve within Action'); end",
 )
 
 

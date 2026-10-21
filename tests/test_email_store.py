@@ -41,6 +41,7 @@ from app.email_classifier_contracts import (
 )
 from app.email_store import (
     EMAIL_ATTEMPT_SQL,
+    DIRECT_EMAIL_ACTION_SQL,
     EMAIL_DIRECT_ACTION_LOCATOR_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_PLAN_SQL,
@@ -5683,7 +5684,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
 
     old_action = _fetchall(
         database,
-        f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
+        f"select * from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
         (original.action_plan.action_plan_id,),
     )[0]
     assert old_action["status"] == "pending"
@@ -5862,7 +5863,7 @@ def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
         results = list(pool.map(claim, stores))
 
     assert sum(result is not None for result in results) == 1
-    current = _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")[0]
+    current = _fetchall(database, f"select * from ({DIRECT_EMAIL_ACTION_SQL})")[0]
     assert current["status"] == "processing"
     assert current["attempt_count"] == 0
 
@@ -6688,7 +6689,7 @@ def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
     assert attempt["status"] == "done"
     current = _fetchall(
         database,
-        f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?",
+        f"select * from ({DIRECT_EMAIL_ACTION_SQL}) where action_id=?",
         (claimed.action_id,),
     )[0]
     assert current["status"] == "done"
@@ -6698,6 +6699,57 @@ def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
     assert (
         store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00") is None
     )
+
+
+def test_direct_email_worker_calls_provider_substitute_once_through_action_owner(
+    tmp_path: Path,
+):
+    from app.email_provider_actions import (
+        DeterministicEmailActionExecutor,
+        ProviderMessageState,
+    )
+    from app.email_worker import _run_next_direct_action
+
+    class ProviderSubstitute:
+        def __init__(self):
+            self.apply_calls = 0
+
+        def read_state(self, locator, *, action_type):
+            return ProviderMessageState(
+                revision="before", labels=frozenset(), is_read=False,
+                archived=False, folder=locator.folder, trashed=False,
+            )
+
+        def apply(self, locator, action_type, parameters, *, observed_state):
+            self.apply_calls += 1
+            return None
+
+    database = tmp_path / "direct-provider-substitute.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(
+        store,
+        classification,
+    )
+    provider = ProviderSubstitute()
+    result = _run_next_direct_action(
+        store, lambda _account_id: DeterministicEmailActionExecutor(provider),
+    )
+
+    assert result is not None and result.status == "done"
+    assert provider.apply_calls == 1
+    assert classification.action_plan is not None
+    action_id = store.direct_action_ids_for_plan(
+        classification.action_plan.action_plan_id
+    )[0]
+    current = _fetchall(
+        database,
+        f"select * from ({DIRECT_EMAIL_ACTION_SQL}) where action_id=?",
+        (action_id,),
+    )[0]
+    assert current["status"] == "done"
+    assert current["attempt_count"] == 1
+    assert len(store.list_action_attempts(action_id)) == 1
 
 
 def test_direct_action_completion_rejects_superseded_plan(tmp_path: Path):
@@ -6848,8 +6900,8 @@ def test_direct_action_completion_rolls_back_attempt_and_current_state_together(
         db.execute(
             """
             create trigger reject_email_action_attempt
-            before insert on actions
-            when new.record_type='email_action_attempts'
+            before insert on action_receipts
+            when new.attempt_number is not null
             begin
                 select raise(abort, 'injected attempt failure');
             end
@@ -6866,11 +6918,18 @@ def test_direct_action_completion_rolls_back_attempt_and_current_state_together(
             error="provider_apply_failed:TimeoutError",
             finished_at="2026-08-30T12:00:01+00:00",
         )
+    current = _fetchall(
+        database,
+        f"select * from ({DIRECT_EMAIL_ACTION_SQL}) where action_id=?",
+        (claimed.action_id,),
+    )[0]
+    assert current["status"] == "processing"
+    assert current["attempt_count"] == 0
 
     assert store.list_action_attempts(claimed.action_id) == []
     current = _fetchall(
         database,
-        f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?",
+        f"select * from ({DIRECT_EMAIL_ACTION_SQL}) where action_id=?",
         (claimed.action_id,),
     )[0]
     assert current["status"] == "processing"

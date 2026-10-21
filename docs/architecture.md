@@ -127,12 +127,7 @@ created_at 及整个原始 JSONB payload 不改写。三个 nullable TEXT 物理
 只有 prepared 父类型可持有它们。SQL NULL 表示不存在的子事实，文本 `null`／`{}`
 保留为已存在的 provider 字符串；claim 与 receipt 的时钟独立于准备时钟。
 
-Store 的 prepare／claim／record receipt 统一进入 `shared_action_lifecycle.transition`
-的 prepared 来源，get／receipt 公共返回值仍按原源字段投影。首次正文、首次 claim、
-首次回执、原输入校验与 missing-parent 错误保持；claim 仍在 provider 之前单独提交，
-接受回执仍在验证之前单独提交。未知 processQueryKey 仍重核同一回执，不重发；
-claim-only 仍走原 reconcile，echo 仍使用父正文与准备时钟。服务消息不制造 Task、
-AgentRun、全局 verified receipt 或新状态。Audit／授权／取消／重试规则不变。
+Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。普通 provider receipt 不会仅因 ID 较新而取代 canonical correction chain。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
 
 A5a 的既有配对发布只接受准确 Store19.8／Email53，发布 Store19.9／Email53；
 C1 Task 声明和所有历史 Actions 声明输出冻结。current-data inverse 用当前父值重建

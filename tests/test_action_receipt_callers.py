@@ -2,6 +2,9 @@
 
 from tests.sent_fixtures import historical_sent_delivery
 
+import hashlib
+import json
+
 import pytest
 
 from app.task8_storage import task8_set_parts
@@ -107,15 +110,25 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     ).run
     key = external_action_key(business_object_key=task.business_object_key, action_identity="send",
                               operation="send", target_identifiers=action["target"])
-    historical_sent_delivery(store,
+    raw = ' { "verification": {"state": "sent"}, "原始": [2, 1] } '
+    sent = historical_sent_delivery(store,
         agent_run_id=audit.id, external_action_key=key, conversation_id=task.conversation_id,
         trigger_message_id=task.trigger_message_id, reply_text="Delivered report",
         provider_result={"verification": {"state": "sent"}},
+        provider_result_json=raw, observed_at="provider-observed-clock",
     )
-    raw = ' { "verification": {"state": "sent"}, "原始": [2, 1] } '
     with store._connect() as db:
-        sid = db.execute(f"select id from ({SENT_REPLY_SQL}) where external_action_key=?", (key,)).fetchone()[0]
-        update_action(db, "sent_replies", sid, {"send_result_json":raw})
+        before = db.execute(
+            "select id,action_operation,action_action_identity,action_parameters_json,action_prepared_at "
+            "from actions where id=?", (sent.id,),
+        ).fetchone()
+        body = db.execute(
+            "select id,provider_result_json,observed_at,result_digest from action_receipts "
+            "where action_id=? and provider_result_json is not null", (sent.id,),
+        ).fetchone()
+    assert tuple(before[1:4]) == (None, None, None)
+    assert before[4] is None and sent.sent_at == "provider-observed-clock"
+    assert tuple(body[1:]) == (raw, "provider-observed-clock", None)
     store.fail_agent_run(audit.id, {"code": "codex_result_invalid"}, owner="audit")
     store.fail_reply_task(task.id, "codex_result_invalid", expected_execution_generation=task.execution_generation)
     monkeypatch.setattr(DingTalkSendEvidenceDriver, "audit_run_has_execution_evidence", lambda *args, **kwargs: True)
@@ -123,6 +136,29 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     assert store.get_candidate_external_action(key)["provider_result_json"] == raw
     assert store.get_candidate_external_action(key)["first_agent_run_id"] == audit.id
     assert store.get_agent_run(audit.id).status == "failed"
+    with store._connect() as db:
+        after = db.execute(
+            "select id,action_operation,action_action_identity,action_parameters_json "
+            "from actions where id=?", (sent.id,),
+        ).fetchone()
+        body_after = db.execute(
+            "select id,provider_result_json,observed_at,result_digest from action_receipts "
+            "where action_id=? and provider_result_json is not null", (sent.id,),
+        ).fetchone()
+        binding = db.execute(
+            "select provider_receipt_id,operation,target,result_digest,created_at "
+            "from action_receipts where action_id=? and provider_receipt_id is not null "
+            "and provider_result_json is null", (sent.id,),
+        ).fetchone()
+    assert after[0] == sent.id and tuple(after[1:]) == ("send", "send", None)
+    assert tuple(body_after[:3]) == tuple(body[:3])
+    assert binding[0] == body_after[0]
+    digest = hashlib.sha256(json.dumps(
+        {"verification": {"state": "sent"}, "原始": [2, 1]},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    assert tuple(binding[1:4]) == ("send", '{"user_id":"derek"}', digest)
+    assert binding[4]
 
 
 @pytest.mark.parametrize("kind", [None, "agent_effect_intents", "agent_execution_receipts"])

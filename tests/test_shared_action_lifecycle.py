@@ -1,10 +1,10 @@
 """Shared typed owners retain the real reviewed and direct-email contracts."""
 
-import json
 import sqlite3
 
 import pytest
 
+from app import email_store as email_module
 from app import shared_action_lifecycle as lifecycle
 from app import shared_action_definitions as shared
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
@@ -24,7 +24,7 @@ def _email(store, *, action=EmailAction.ARCHIVE, classification_id=11):
     return store.direct_action_ids_for_plan(value.action_plan.action_plan_id)[0]
 
 
-def test_both_origins_use_typed_shared_owners_and_claim_writer(tmp_path, monkeypatch):
+def test_reviewed_and_email_callers_write_common_action_without_origin_dispatch(tmp_path, monkeypatch):
     path = tmp_path / 'shared.sqlite3'
     store = AutoReplyStore(path)
     email = EmailStore(path)
@@ -42,16 +42,12 @@ def test_both_origins_use_typed_shared_owners_and_claim_writer(tmp_path, monkeyp
     action_id = _email(email)
     action = email.claim_direct_action(action_id=action_id, claimed_at='2026-10-19T10:00:00+00:00')
     assert action is not None
-    assert ('reviewed', 'claim') in calls
-    assert ('email', 'claim') in calls
+    assert calls == []
     with sqlite3.connect(path) as db:
-        kinds = {shared.ACTION_RECORD_TYPES.name(r[0]) for r in db.execute('select distinct _kind from actions')}
-        assert not set(shared.SOURCE_TO_TARGET).intersection(kinds)
-        assert {'plan_version_reviewed', 'plan_version_email', 'effect_step_email', 'action_attempt_reviewed'} <= kinds
-        plans = db.execute("select id,legacy_key,action_origin from actions where action_family='plan_versions' order by id").fetchall()
-        assert plans[0][0] != plans[1][0] and plans[0][1] == plans[1][1] == '1'
+        assert db.execute("select count(*) from actions where record_type='action'").fetchone()[0] == 2
+        assert db.execute("select count(*) from actions where record_type='action_attempts'").fetchone()[0] == 0
         assert db.execute('pragma foreign_key_check').fetchall() == []
-    assert not set(shared.DIRECT_DERIVED_FIELDS).intersection(shared.direct_step_layout().fields)
+    assert attempt['action_owner_id'] != attempt['id']
 
 
 def test_retry_claim_projection_does_not_reuse_previous_terminal_result(tmp_path):
@@ -66,28 +62,26 @@ def test_retry_claim_projection_does_not_reuse_previous_terminal_result(tmp_path
         error='temporary failure', finished_at='2026-10-19T10:01:00+00:00')
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
-        old = dict(db.execute(shared.email_projection('email_actions')).fetchone())
+        old = dict(db.execute(f"select * from ({email_module.DIRECT_EMAIL_ACTION_SQL}) where action_id=?", (action_id,)).fetchone())
         assert old['attempt_count'] == 1 and old['error'] == 'temporary failure'
     retry = email.claim_direct_action(action_id=action_id, claimed_at='2026-10-19T11:00:00+00:00')
     assert retry is not None and retry.attempt_number == 2
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
-        row = dict(db.execute(shared.email_projection('email_actions')).fetchone())
+        row = dict(db.execute(f"select * from ({email_module.DIRECT_EMAIL_ACTION_SQL}) where action_id=?", (action_id,)).fetchone())
         assert row['status'] == 'processing' and row['attempt_count'] == 1
         assert row['started_at'] == retry.claim_started_at
         assert all(row[field] == '' for field in shared.DIRECT_TERMINAL_FIELDS)
-        raw = db.execute("select json(payload_json) from actions where action_family='effect_steps' and action_origin='email'").fetchone()[0]
-        assert 'temporary failure' not in raw
+        assert db.execute("select count(*) from actions where id=? and record_type='action'", (action_id,)).fetchone()[0] == 1
     email.complete_direct_action_attempt(retry, status='done', provider_operation='archive',
         provider_target=retry.locator.stable_message_identity, provider_result_id='receipt-2',
         error='', finished_at='2026-10-19T11:01:00+00:00')
     EmailStore(path)
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
-        row = dict(db.execute(shared.email_projection('email_actions')).fetchone())
+        row = dict(db.execute(f"select * from ({email_module.DIRECT_EMAIL_ACTION_SQL}) where action_id=?", (action_id,)).fetchone())
         assert (row['status'], row['attempt_count'], row['provider_result_id']) == ('done', 2, 'receipt-2')
-        raw = json.loads(db.execute("select json(payload_json) from actions where action_family='effect_steps' and action_origin='email'").fetchone()[0])
-        assert 'receipt-2' not in raw
+        assert db.execute("select count(*) from actions where id=? and record_type='action'", (action_id,)).fetchone()[0] == 1
 
 
 def test_completion_rechecks_claim_after_attempt_insert_and_rolls_back(tmp_path):
@@ -98,22 +92,17 @@ def test_completion_rechecks_claim_after_attempt_insert_and_rolls_back(tmp_path)
     email.create_account(_task2_account_values('dingtalk-account', enabled=False))
     action_id = _email(email)
     claim = email.claim_direct_action(action_id=action_id, claimed_at='2026-10-19T10:00:00+00:00')
-    layout = shared.direct_step_layout()
-    assignments = layout.assignments_sql('payload_json', {
-        'status': "json_quote('pending')", 'started_at': "json_quote('')",
-    })
     with email._connect() as db:
-        db.execute(f"""create trigger fixture_claim_change after insert on actions
-            when new.record_type='email_action_attempts'
-            begin update actions set payload_json={assignments}
-            where record_type='email_actions' and email_action_id=new.email_action_id; end""")
-    with pytest.raises(EmailActionAttemptConflict, match='claim changed'):
+        db.execute("""create trigger fixture_receipt_failure before insert on action_receipts
+            when new.attempt_number is not null
+            begin select raise(abort,'fixture receipt failure'); end""")
+    with pytest.raises(sqlite3.IntegrityError, match='fixture receipt failure'):
         email.complete_direct_action_attempt(claim, status='done', provider_operation='archive',
             provider_target=claim.locator.stable_message_identity, provider_result_id='receipt',
             error='', finished_at='2026-10-19T10:01:00+00:00')
     assert email.list_action_attempts(action_id) == []
     with email._connect() as db:
-        row = db.execute(shared.email_projection('email_actions')).fetchone()
+        row = db.execute(f"select * from ({email_module.DIRECT_EMAIL_ACTION_SQL}) where action_id=?", (action_id,)).fetchone()
         assert (row['status'], row['started_at']) == ('processing', claim.claim_started_at)
 
 
@@ -161,12 +150,12 @@ def test_all_six_direct_operations_and_existing_provider_results_use_shared_atte
             finished_at='2026-10-19T10:01:00+00:00')
         assert email.list_action_attempts(action_id) == [attempt]
         with email._connect() as db:
-            row = db.execute('select * from (' + shared.email_projection('email_actions')
+            row = db.execute('select * from (' + email_module.DIRECT_EMAIL_ACTION_SQL
                 + ') where action_id=?', (action_id,)).fetchone()
             assert row['status'] == result.status and row['attempt_count'] == 1
             for field in shared.DIRECT_TERMINAL_FIELDS:
                 assert row[field] == attempt[field]
-            assert db.execute("select count(*) from actions where record_type='external_action_results'").fetchone()[0] == 0
+            assert db.execute("select count(*) from action_receipts r where r.action_id=? and r.attempt_number is not null", (action_id,)).fetchone()[0] == 1
             assert db.execute("select count(*) from runs where record_type='agent_runs'").fetchone()[0] == 0
     EmailStore(path)
 
@@ -183,8 +172,8 @@ def test_one_claim_winner_and_original_cross_table_guards_with_new_step_kind(tmp
             claimed_at='2026-10-19T10:00:00+00:00'), range(2)))
     assert sum(claim is not None for claim in claims) == 1
     with email._connect() as db:
-        row = db.execute("select _kind,record_type from actions where email_action_id=? and action_family='effect_steps'", (action_id,)).fetchone()
-        assert tuple(row) == (shared.SHARED_RECORD_TYPES.code('email_actions'), 'email_actions')
+        row = db.execute("select record_type,action_status from actions where id=?", (action_id,)).fetchone()
+        assert tuple(row) == ('action', 'processing')
         statements = (
             "update emails set class_current_action_plan_id='replacement' where classification_id=11",
             "update emails set class_status='failed' where classification_id=11",
@@ -218,8 +207,17 @@ def _read_publication(path):
 
 def test_current_publication_readers_use_shared_schema(tmp_path):
     path = tmp_path / 'publication.sqlite3'
-    EmailStore(path)
-    assert _read_publication(path) == 0
+    store, email = AutoReplyStore(path), EmailStore(path)
+    email.create_account(_task2_account_values('dingtalk-account', enabled=False))
+    action_id = _email(email)
+    claim = email.claim_direct_action(action_id=action_id, claimed_at='2026-10-19T10:00:00+00:00')
+    assert claim is not None
+    with store._connect() as db:
+        row = db.execute(
+            f"select * from ({email_module.DIRECT_EMAIL_ACTION_SQL}) where action_id=?",
+            (action_id,),
+        ).fetchone()
+        assert row['status'] == 'processing'
 
 
 def test_current_step_poll_and_latest_attempt_reads_stay_indexed(tmp_path):
@@ -241,7 +239,7 @@ def test_current_step_poll_and_latest_attempt_reads_stay_indexed(tmp_path):
         return row['action_id'], steps[0], str(plans)
 
     before, before_steps, before_plans = measure()
-    assert before == action_id and 'idx_actions_email_email_actions' in before_plans
+    assert before == action_id and 'SEARCH a USING INDEX' in before_plans
     assert 'SCAN tally' not in before_plans and 'SCAN t)' not in before_plans
     with email._connect() as db:
         for number in range(1, 3001):
@@ -249,12 +247,12 @@ def test_current_step_poll_and_latest_attempt_reads_stay_indexed(tmp_path):
                 {'action_identity': f'unrelated-{number}', 'decision_json': '{}'}, source_rowid=number)
     after, after_steps, after_plans = measure()
     assert after == before
-    assert 'idx_actions_email_email_actions' in after_plans
+    assert 'SEARCH a USING INDEX' in after_plans
     assert after_steps <= before_steps + 100, (before_steps, after_steps)
     print(f'shared direct poll VM steps: {before_steps} -> {after_steps} with 3000 unrelated actions')
 
 
-def test_history_attention_and_important_listing_read_attempt_owned_fields(tmp_path):
+def test_direct_email_owner_and_important_listing_read_current_attempt_fields(tmp_path):
     from datetime import datetime, timezone
     from app.audit_web import _queue_attention_rows, _email_action_queue_snapshot
 
@@ -266,6 +264,14 @@ def test_history_attention_and_important_listing_read_attempt_owned_fields(tmp_p
     email.complete_direct_action_attempt(claim, status='failed', provider_operation='archive',
         provider_target=claim.locator.stable_message_identity, provider_result_id='',
         error='readers failure', retryable=False, finished_at='2026-10-19T10:01:00+00:00')
+    with store._connect() as db:
+        failed = db.execute(
+            f"select * from ({email_module.DIRECT_EMAIL_ACTION_SQL}) where action_id=?",
+            (action_id,),
+        ).fetchone()
+        assert failed['status'] == 'failed'
+        assert failed['error'] == 'readers failure'
+    assert email.list_action_attempts(action_id)[0]['status'] == 'failed'
     total, rows = store.list_operation_logs_with_count(limit=10, statuses=('failed',), source_tables=('email_actions',))
     assert total == 1 and rows[0].status == 'failed'
     attention = [row for row in _queue_attention_rows(store) if row['category'] == 'Email action']

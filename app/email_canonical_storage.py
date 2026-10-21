@@ -217,8 +217,10 @@ def _create_actions(db, objects):
                 db.execute(obj["sql"])
 
 
-def _create_emails(db, *, metadata_owner: bool = False):
-    table, indexes, triggers = email_metadata_declaration(metadata_owner=metadata_owner)
+def _create_emails(db, *, metadata_owner: bool = False, action_owner: bool = False):
+    table, indexes, triggers = email_metadata_declaration(
+        metadata_owner=metadata_owner, action_owner=action_owner,
+    )
     db.execute(table)
     for sql in indexes:
         db.execute(sql)

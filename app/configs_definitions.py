@@ -501,7 +501,7 @@ def _definitions():
         "begin select raise(abort,'runtime Skill activation requires matching load receipt'); end",
     )
     blockers = (
-        ("direct", "email_actions", "processing", "email_direct_action_in_flight"),
+        ("direct", "action", "processing", "email_direct_action_in_flight"),
         ("reply", "email_reply_dispatch_claims", "dispatching",
          "email_reply_dispatch_in_flight"),
         ("unsubscribe", "email_unsubscribe_claims", "dispatching",
@@ -509,12 +509,18 @@ def _definitions():
     )
     for short, kind, status, error in blockers:
         for event in ("update", "delete"):
+            identity_column = "action_account_id" if kind == "action" else "email_account_id"
+            status_column = "action_status" if kind == "action" else "email_status"
+            operations = (
+                " and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')"
+                if kind == "action" else ""
+            )
             triggers.append(
                 f"create trigger trg_configs_{short}_account_{event} "
                 f"before {event} on configs when old.record_type='email_accounts' "
                 "and exists(select 1 from actions a "
-                f"where a.record_type='{kind}' and a.email_account_id=old.public_key "
-                f"and a.email_status='{status}') "
+                f"where a.record_type='{kind}' and a.{identity_column}=old.public_key{operations} "
+                f"and a.{status_column}='{status}') "
                 f"begin select raise(abort,'{error}'); end"
             )
     for kind in AUTOINCREMENT_KINDS:

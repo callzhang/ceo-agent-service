@@ -1,6 +1,6 @@
 {
   "contract_version": 1,
-  "scope": "first-release existing external action sources; this does not retire unrelated action writers or unsubscribe continuation/steps",
+  "scope": "partial caller retirement: covered reviewed/prepared/direct email/sent effect writers now use common Action; specialized unsubscribe and remaining shared history/UI readers stay out of scope",
   "source_snapshot": {
     "path": "/tmp/ceo-action-entity-d0ce4814/source.sqlite3",
     "mode": "read-only",
@@ -3071,6 +3071,17 @@
         ]
       },
       {
+        "name": "delivery_receipt_id",
+        "sources": [
+          "sent_replies.id",
+          "sent_replies.send_result_json",
+          "sent_replies.sent_at"
+        ],
+        "nullable": true,
+        "sqlite_type": "INTEGER",
+        "rule": "Sent fact receipt reference on the Action; keeps the original Sent observation clock and exact provider-body reference separate from canonical correction metadata."
+      },
+      {
         "name": "conversation_id",
         "sources": [
           "sent_replies.conversation_id"
@@ -3330,6 +3341,11 @@
       "reason": "true external identity maps one concrete Action; canonical conflict must be resolved before merge"
     },
     {
+      "name": "idx_actions_action_direct_email_plan_operation",
+      "decision": "add unique partial",
+      "reason": "preserve source email_actions UNIQUE(action_plan_id,action_type) while direct Actions use their physical Action ID and do not persist the inverse-mapped legacy hash."
+    },
+    {
       "name": "idx_actions_action_delivery_key",
       "decision": "add unique partial",
       "reason": "delivery key is stable prepared-message identity; bounded source copy has unique nonblank keys"
@@ -3341,8 +3357,8 @@
     },
     {
       "name": "idx_action_receipts_execution_order",
-      "decision": "add partial",
-      "reason": "execution_id/action_index order retained on execution observation receipt facts"
+      "decision": "replace with unique partial",
+      "reason": "preserve source candidate_action_attempts UNIQUE(execution_id,action_index) cardinality for one current observation per execution/action slot; ordinary provider receipt versions have NULL execution_id and remain distinct."
     },
     {
       "name": "idx_action_receipts_one_successor",

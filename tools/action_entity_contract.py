@@ -51,6 +51,7 @@ ACTION_COLUMNS = {
     "started_at": "TEXT", "created_at": "TEXT", "updated_at": "TEXT",
     "prepared_body": "TEXT", "prepared_at": "TEXT", "delivery_channel": "TEXT",
     "delivery_key": "TEXT", "feedback_token": "TEXT", "postfix_version": "TEXT",
+    "delivery_receipt_id": "INTEGER",
     "conversation_id": "TEXT", "trigger_message_id": "TEXT", "recall_key": "TEXT",
     "recall_status": "TEXT", "recall_error": "TEXT", "recalled_at": "TEXT",
     "agent_run_id": "INTEGER", "business_object_key": "TEXT", "action_identity": "TEXT",
@@ -96,22 +97,13 @@ def build_target_ddl() -> str:
         if item["type"] == "index" and item["name"] == "idx_actions_public_id":
             sql = sql.replace("where record_type<>", "where record_type<>'action' and record_type<>", 1)
         rendered.append(sql)
-    rendered.extend((
-        "create unique index idx_actions_action_external_key on actions(action_external_action_key) where record_type='action' and action_external_action_key is not null",
-        "create unique index idx_actions_action_delivery_key on actions(action_delivery_channel,action_delivery_key) where record_type='action' and action_delivery_channel is not null and action_delivery_key is not null",
-        "create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_id integer, action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id), supersedes_provider_receipt_id integer references action_receipts(id), check(supersedes_provider_receipt_id is null or supersedes_provider_receipt_id<id))",
-        "create index idx_action_receipts_action on action_receipts(action_id,id)",
-        "create index idx_action_receipts_execution_order on action_receipts(execution_id,action_index,action_id) where execution_id is not null",
-        "create unique index idx_action_receipts_one_successor on action_receipts(supersedes_provider_receipt_id) where supersedes_provider_receipt_id is not null",
-        "create table action_observers (action_id integer not null references actions(id), agent_run_id integer not null, task_id integer not null, created_at text not null, primary key(action_id,agent_run_id))",
-        "create trigger trg_action_receipt_owner_insert before insert on action_receipts when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'receipt owner must be Action'); end",
-        "create trigger trg_action_observer_owner_insert before insert on action_observers when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'observer owner must be Action'); end",
-        "create trigger trg_action_receipt_reference_owner_insert before insert on action_receipts when new.provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
-        "create trigger trg_action_receipt_supersedes_owner_insert before insert on action_receipts when new.supersedes_provider_receipt_id is not null and not exists(select 1 from action_receipts r where r.id=new.supersedes_provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'superseded provider receipt must resolve within Action'); end",
-        "create trigger trg_action_receipt_reference_owner_update before update of provider_receipt_id on action_receipts when new.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id and not exists(select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
-        "create trigger trg_action_receipt_identity_immutable before update of id,action_id on action_receipts when old.id is not new.id or old.action_id is not new.action_id begin select raise(abort,'receipt identity and owner are immutable'); end",
-        "create trigger trg_action_receipt_lineage_immutable before update of provider_result_json,result_digest,supersedes_provider_receipt_id,provider_receipt_id on action_receipts when old.provider_result_json is not new.provider_result_json or old.result_digest is not new.result_digest or old.supersedes_provider_receipt_id is not new.supersedes_provider_receipt_id or (old.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id) begin select raise(abort,'provider receipt versions and exact references are immutable'); end",
-    ))
+    from app.current_action_schema import current_action_objects
+    rendered.extend(item['sql'] for item in current_action_objects()
+                    if item['type'] == 'trigger'
+                    and item['name'].startswith('trg_action_delivery_receipt_owner_'))
+    from app.action_entity_definitions import ACTION_INDEX_DDL, RECEIPT_SCHEMA_DDL
+    rendered.extend(ACTION_INDEX_DDL)
+    rendered.extend(RECEIPT_SCHEMA_DDL)
     return ";\n".join(rendered) + ";\n"
 
 
@@ -322,8 +314,9 @@ def inspect_action_entity_source(database: Path) -> dict:
         ]
         from app.current_action_schema import current_action_objects
         target_indexes = [item['name'] for item in current_action_objects() if item['type'] == 'index']
-        new_indexes = ['idx_actions_action_external_key', 'idx_actions_action_delivery_key', 'idx_action_receipts_action', 'idx_action_receipts_execution_order']
-        index_disposition.extend({'name': name, 'disposition': 'added for common Action identity/order/owned receipt access'} for name in new_indexes)
+        new_indexes = ['idx_actions_action_external_key', 'idx_actions_action_direct_email_plan_operation', 'idx_actions_action_delivery_key', 'idx_action_receipts_action']
+        index_disposition.extend({'name': name, 'disposition': 'added for common Action identity/owned receipt access'} for name in new_indexes)
+        index_disposition.append({'name': 'idx_action_receipts_execution_order', 'disposition': 'unique execution/action slot retained from candidate_action_attempts'})
         return {
             'database_sha256': before,
             'source_rows': sum(counts.values()),
@@ -337,7 +330,7 @@ def inspect_action_entity_source(database: Path) -> dict:
             'actions_total_rows': total_rows,
             'unchanged_action_rows': unchanged_rows,
             'existing_action_index_disposition': index_disposition,
-            'target_action_index_names': target_indexes + new_indexes[:2],
+            'target_action_index_names': target_indexes + new_indexes[:3],
             'declaration_fields_by_table': {kind: len(fields) for kind, fields in declared.items()},
             'declaration_locations': {
                 'email_actions': 'app/action_email_definitions.py:EMAIL_FIELDS',

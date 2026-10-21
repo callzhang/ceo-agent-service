@@ -114,6 +114,103 @@ def test_distinct_historical_receipts_survive():
     ]
 
 
+def test_external_result_projection_uses_canonical_correction_tip():
+    from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+
+    db = entity_db()
+    action = create_action(db, values={
+        "operation": "message.send", "external_action_key": "external-key",
+        "business_object_key": "business", "action_identity": "reply",
+    })
+    from app.task8_storage import task8_insert_parts
+    from app.task8_storage import register_task8_functions
+    from app.run_storage import insert_run
+
+    task_values = {
+        "channel": "dingtalk", "conversation_id": "conversation",
+        "conversation_title": "Conversation", "single_chat": 0,
+        "trigger_message_id": "trigger", "trigger_create_time": "2026-10-21",
+        "trigger_sender": "sender", "execution_generation": "generation",
+        "business_object_key": "business",
+    }
+    task_insert = task8_insert_parts("reply_tasks", task_values, insert_sql={
+        "input_version": "1", "claimed_input_version": "0", "status": "'pending'",
+        "attempts": "0", "created_at": "current_timestamp", "updated_at": "current_timestamp",
+        "manual_rerun_revision_key": "''", "recovery_code": "''",
+    })
+    register_task8_functions(db)
+    task_id = db.execute(
+        f"insert into tasks ({task_insert.columns}) values ({task_insert.values})",
+        task_insert.parameters,
+    ).lastrowid
+    agent_run_id = insert_run(db, "agent_runs", {
+        "task_id": task_id, "execution_generation": "generation", "role": "audit",
+        "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+    }).lastrowid
+    original = append_action_receipt(db, action["id"], values={
+        "operation": "message.send", "target": '{"id":"target"}',
+        "provider_result_json": '{"receipt":"original"}', "result_digest": "original",
+        "agent_run_id": agent_run_id,
+    })
+    append_action_receipt(db, action["id"], values={
+        "operation": "message.send", "target": '{"id":"other"}',
+        "provider_result_json": '{"receipt":"independent"}', "result_digest": "independent",
+        "agent_run_id": agent_run_id,
+    })
+    correction = append_action_receipt(db, action["id"], values={
+        "operation": "message.send", "target": '{"id":"target"}',
+        "provider_result_json": '{"receipt":"corrected"}', "result_digest": "corrected",
+        "supersedes_provider_receipt_id": original,
+        "agent_run_id": agent_run_id,
+    })
+    sent_fact = append_action_receipt(db, action["id"], values={
+        "provider_receipt_id": original, "operation": "message.send",
+        "target": '{"id":"target"}', "result_digest": "original",
+        "agent_run_id": agent_run_id, "observed_at": "sent-clock",
+        "created_at": "canonical-root-clock",
+    })
+    from app.action_entity_storage import record_action_result
+    assert record_action_result(db, action["id"], expected={"delivery_receipt_id": None},
+                                changes={"delivery_receipt_id": sent_fact}) is not None
+
+    result = db.execute(
+        f"select provider_result_json,provider_receipt_id,target_identifiers_json "
+        f"from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+        ("external-key",),
+    ).fetchone()
+    assert tuple(result) == ('{"receipt":"corrected"}', correction, '{"id":"target"}')
+
+
+def test_execution_slot_has_one_current_observation_but_provider_versions_remain_distinct():
+    db = entity_db()
+    action = create_action(db, values={"operation": "send", "external_action_key": "effect"})
+    first = append_action_receipt(db, action["id"], values={
+        "status": "dispatched", "execution_id": 20, "action_index": 0,
+    })
+    second_action = create_action(
+        db, values={"operation": "send", "external_action_key": "other-effect"},
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        append_action_receipt(db, action["id"], values={
+            "status": "verified", "execution_id": 20, "action_index": 0,
+        })
+    with pytest.raises(sqlite3.IntegrityError):
+        append_action_receipt(db, second_action["id"], values={
+            "status": "verified", "execution_id": 20, "action_index": 0,
+        })
+    assert db.execute(
+        "select count(*) from action_receipts where execution_id=20 and action_index=0"
+    ).fetchone()[0] == 1
+    old_version = append_action_receipt(db, action["id"], values={
+        "provider_result_json": '{"accepted":false}', "result_digest": "old",
+    })
+    new_version = append_action_receipt(db, action["id"], values={
+        "provider_result_json": '{"accepted":true}', "result_digest": "new",
+        "supersedes_provider_receipt_id": old_version,
+    })
+    assert old_version != new_version != first
+
+
 def test_null_text_null_and_empty_json_remain_distinct():
     db = entity_db()
     action = create_action(db, values={"operation": "send", "parameters_json": "null", "status": None})

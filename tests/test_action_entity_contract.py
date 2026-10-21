@@ -267,8 +267,9 @@ def test_null_reference_stays_bound_to_original_provider_receipt_after_correctio
         assert db.execute('select provider_result_json,outcome_json from action_receipts where id=6').fetchone() == (None, 'null')
         with pytest.raises(sqlite3.IntegrityError):
             db.execute('update action_receipts set provider_result_json=? where id=1', (corrected_body,))
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute('update action_receipts set provider_receipt_id=3 where id=2')
+        assert db.execute('select provider_receipt_id from action_receipts where id=2').fetchone()[0] == 1
+        db.execute('update action_receipts set provider_receipt_id=3 where id=2')
+        assert db.execute('select provider_receipt_id from action_receipts where id=2').fetchone()[0] == 3
         with pytest.raises(sqlite3.IntegrityError):
             db.execute('update action_receipts set supersedes_provider_receipt_id=null where id=3')
         with pytest.raises(sqlite3.IntegrityError):
