@@ -1235,6 +1235,8 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 
 选择接口提交 candidate_id、review_id 和 option_key，服务从该不可变候选中读取唯一匹配的选项；选择记录只保留引用和选项键，不复制分支正文。首次选择独立记录并将原 execution_generation 唤醒；既有 generation、review、失效及最新候选校验通过后，相同选择幂等，冲突选择拒绝。较新候选不会改变历史选择绑定，但旧候选的再次选择仍按原校验拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。反馈可以同时标记一次性应用与 Skill 更新；只有明确获选的 Skill 更新才进入受控 Skill 发布流程。
 
+Attempt 详情仅在当前状态要求人工决定，或该候选已有历史选择时显示人工决策依据；未选择且已失效的旧候选保留在历史数据中，但不再向用户展示为当前待决定事项。
+
 旧长期规则问题仅通过显式单项命令 `python -m app.rule_question_retirement --attempt-id <id> --authority <confirmed-contract>` 退役，默认只读预览；应用另加 `--apply --verified-backup <path>`。资格限定为当前业务对象、当前执行代、最新 Attempt 所绑定的已完成 Consumer、done 任务、完整无技术错误的 task_class 问题，且该任务没有新候选；不批量排除旧结果。应用只原子写入 resolved_at、resolution 与包含原结果 SHA256/任务/运行/执行代/契约依据的退役回执，保留原 send_status、模型结果、任务状态和外部回执。详情、History 和队列将该已退役问题显示为 skipped 并解释依据，重试 POST 拒绝。它不是人工选择、Audit 通过或业务完成；未退役和当前无效问题继续由原质量检查报错。预览及应用均不初始化或迁移数据库。
 
 多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。Consumer wire 校验按错误方向区分第 0 阶段多余的前序审核 ID 与后续阶段缺失的 ID；原有阶段绑定校验和修正预算保持不变。
