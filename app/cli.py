@@ -1784,7 +1784,7 @@ def _process_claimed_work_summary_input(
         )
     lease = TaskAgentSessionLease.try_acquire(store)
     if lease is None:
-        store.schedule_work_summary_input_retry(
+        store.defer_work_summary_input_for_capacity(
             work_input.id, "Task Agent shared session is owned by another worker",
             available_at=_work_summary_retry_available_at(work_input.attempts),
         )
