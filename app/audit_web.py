@@ -3952,6 +3952,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     rows = [row for row in rows
             if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
     rows.extend(pending_oa_rows)
+    from app.web_api.attention import attention_record_detail_url
+
+    with store._connect() as db:
+        for row in rows:
+            if not row.get("detail_url"):
+                row["detail_url"] = attention_record_detail_url(db, row["category"], str(row["id"]))
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows if limit is None else rows[:limit]
 

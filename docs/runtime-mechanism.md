@@ -4619,3 +4619,10 @@ retains its own30-minute timeout after the claim boundary is acquired.
 更新状态读取原子仓库状态及现有部署记录，不等待发布期间持有的仓库互斥锁。页面空闲每60秒读取状态、更新中每3秒读取；重启断连显示重连，只有成功回执、目标 SHA、已安装 SHA 和实际 HEAD 一致时自动刷新。失败、回滚及需人工处理展示实际原因，结束后释放本次预约。
 
 首次安装排空锁的边界（2026-10-20）：只更新部署CLI不能暂停尚未实现领取锁的旧Worker。旧版本没有暂停入口时，首次受控切换需使用已显式授权的原有`--skip-quiet-wait`入口，经正式停止、备份和发布，再由新Worker执行既有重启恢复；这会中断旧turn，不等同于旧turn自然排空。安装完成后，后续普通部署使用admission/drain锁。生产源码差异必须先保全提交并按正式流程协调，不能绕过dirty检查。验证记录见`docs/first-deployment-bootstrap-validation.md`。
+
+Failed / Attention cards expose persisted Attempt links before the error disclosure.
+Reply failures use their original Attempt ID; failed Reply tasks and pending OA
+resolve the latest Attempt through the task's current execution generation and
+AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
+never substituted for an Attempt ID; a record without a persisted Attempt says
+so in its expanded details. Membership, terminal states and retry policy do not change.
