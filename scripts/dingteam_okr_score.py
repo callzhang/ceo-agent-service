@@ -107,6 +107,16 @@ def _page_script(request: dict, result_attribute: str) -> str:
       Math.abs(user.score - request.score) <= 1e-9 &&
       user.info === request.description && user.status === 'complete';
   }
+  function readErrorText(error) {
+    const text = String(error);
+    if (text !== '[object Object]') return text;
+    const code = Number.isSafeInteger(error?.code) ? error.code : null;
+    const message = typeof error?.msg === 'string' ? error.msg :
+      typeof error?.message === 'string' ? error.message : '';
+    if (code !== null) return 'Dingteam OKR API error ' + code + ': ' +
+      (message || 'provider request failed');
+    return message || 'Dingteam OKR provider returned an error object';
+  }
   let writeAttempted = false;
   try {
     let requireModule;
@@ -158,7 +168,7 @@ def _page_script(request: dict, result_attribute: str) -> str:
       document.documentElement.setAttribute(resultAttribute, JSON.stringify(
         request.operation === 'score_kr'
           ? {ok: true, data: {status: 'failed', reason: 'okr_score_source_unavailable'}}
-          : {ok: false, error: String(error)}
+          : {ok: false, error: readErrorText(error)}
       ));
     }
   }
@@ -211,6 +221,16 @@ def run_request(request: dict, *, timeout_seconds: float = 45) -> dict:
                                 break
                     else:
                         raise RuntimeError("Dingteam OKR page is not authenticated")
+                    def use_score_space(route):
+                        headers = dict(route.request.headers)
+                        headers["x-space-id"] = ""
+                        route.continue_(headers=headers)
+
+                    for operation in ("getScoreDetail", "makeScore"):
+                        page.route(
+                            f"https://dingokr.dingteam.com/data/okr/objective/{operation}",
+                            use_score_space,
+                        )
                     write_started = request["operation"] == "score_kr"
                     page.evaluate(page_script)
                     raw = page.evaluate(
