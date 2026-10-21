@@ -26,5 +26,20 @@ compatibility, not that the underlying business approvals were correct.
 
 The broader affected `tests/test_agent_contracts.py` and
 `tests/test_audit_agent.py` passed (137 tests). Ruff, Python compilation and
-`git diff --check` passed. Production release remains a separate gate; do not
-treat this as deployed until its version and service readback are recorded.
+`git diff --check` passed.
+
+## Production readback
+
+PR #208 merged as `58f104aa3a45ca3d847c85b6e34989f5deb7ac10`.
+The standard `python -m app.deploy` waited for in-flight work to drain, then
+advanced production from `c444162e1d585087b113a2f71e883e43b2cfac17`
+to that commit. The supervisor PID changed from 72101 to 77057.
+`/healthz` returned HTTP 200 with `ok=true`; queue, Attention and History
+APIs all returned HTTP 200. The dashboard showed one active and 22 queued
+items, Attention showed 13 existing items and History reported 36,874
+entries. Production's `app/agent_wire_contracts.py` SHA-256 matched the
+deployed source, and its working tree was clean. No new Audit turn had run
+after deployment at readback, so this is release and health evidence rather
+than a natural post-release business outcome. The PR's GitHub test job was
+still queued; the 137 focused local tests and saved-output replay above are
+the completed behavior checks.
