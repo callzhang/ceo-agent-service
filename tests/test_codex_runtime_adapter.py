@@ -339,6 +339,56 @@ def test_model_at_capacity_fails_over_and_pauses_route(adapter):
     assert failure.route_pause_required is True
 
 
+def test_structured_provider_429_enters_existing_same_session_capacity_retry(
+    adapter, config
+):
+    from types import SimpleNamespace
+
+    from app.runtime_fallback import plan_runtime_fallback
+
+    stdout = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "thread-429"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps({
+                "type": "error",
+                "message": "exceeded retry limit, last status: 429 Too Many Requests",
+            }),
+            json.dumps({"type": "turn.failed", "error": {
+                "message": "exceeded retry limit, last status: 429 Too Many Requests",
+            }}),
+        )
+    )
+    failure = adapter.classify_failure(stdout=stdout, stderr="", returncode=1)
+
+    assert failure.failure_class is RuntimeFailureClass.CAPACITY
+    assert failure.retryable_on_same_route is True
+    plan = plan_runtime_fallback(
+        route=route(config, "codex_api"),
+        failure=failure,
+        attempts=[SimpleNamespace(
+            route_name="codex_api", failure_class="capacity",
+        )],
+        select_next_route=lambda: pytest.fail("429 should retry the same route first"),
+    )
+    assert plan.retry_same_route is True
+    assert plan.fresh_session is False
+
+
+def test_tool_output_429_does_not_become_provider_capacity(adapter):
+    failure = adapter.classify_failure(
+        stdout=json.dumps({
+            "type": "response_item",
+            "item": {"type": "function_call_output", "output": json.dumps({
+                "error": {"message": "Too Many Requests", "code": 429},
+            })},
+        }),
+        stderr="",
+        returncode=1,
+    )
+    assert failure.code == "runtime_unclassified"
+
+
 @pytest.mark.parametrize("route_name", ["codex_oauth", "codex_api"])
 @pytest.mark.parametrize("session_id", [None, "session-1"])
 def test_route_commands_carry_the_service_mcp_manifest(

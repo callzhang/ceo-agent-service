@@ -27,6 +27,11 @@ in the failed runtime attempt, including for Audit. A route switch or an
 explicit fresh-session decision must not reuse that route's session. This
 keeps a retry inside one Agent run from creating a second session that the
 run's immutable session binding would reject.
+Codex provider error events that report a terminal HTTP 429 enter this
+existing bounded capacity path. A tool result that merely contains 429 is not
+a provider failure. If the failed attempt observed a Codex session, the next
+same-route command uses native `codex exec resume` with that session; the
+configured retry limit and route failover remain unchanged.
 
 When stale processing-task recovery returns a task to pending, it also releases
 that task's expired dispatcher claim in the same transaction. Otherwise a live
@@ -66,3 +71,9 @@ checks lease ownership, generation, and whether the requested retry is still
 current. A provider result identifier, when present, is carried with the same
 operation and target so the Agent can avoid duplicate work; it is not converted
 into an application-level state.
+
+On 2026-10-21, an anonymous no-tool `codex_api` cold turn returned a Codex JSONL
+provider error with `last status: 429 Too Many Requests` after `thread.started`;
+`codex exec resume` on that exact session with `continue` was accepted by the
+CLI but also returned 429. This verifies
+session resumability, not provider recovery or a completed business turn.
