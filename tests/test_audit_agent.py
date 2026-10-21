@@ -459,6 +459,44 @@ def test_completed_audit_recovery_uses_the_candidate_bound_parser(setup, monkeyp
     assert recovered.candidate_digest == context.candidate_digest
 
 
+def test_old_free_form_audit_attempt_is_not_recovered_as_native(setup, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.agent_turn_runner as turn_runner
+
+    store, task, parent, context, _config, _router = setup
+    previous = store.list_agent_runtime_attempts
+    old_attempt = SimpleNamespace(
+        status="completed", result_schema_id="old-free-form",
+        runtime_kind="codex_cli",
+    )
+    monkeypatch.setattr(
+        store, "list_agent_runtime_attempts",
+        lambda run_id: [old_attempt, *previous(run_id)],
+    )
+
+    def digest(value):
+        return SimpleNamespace(hexdigest=lambda: (
+            "new-native" if value.startswith(b"agent_turn_codex_native_result_v1\0")
+            else "old-free-form"
+        ))
+
+    monkeypatch.setattr(turn_runner, "hashlib", SimpleNamespace(sha256=digest))
+    monkeypatch.setattr(
+        turn_runner, "recover_completed_runtime_domain_result",
+        lambda *_args, **_kwargs: pytest.fail("old Audit result was recovered"),
+    )
+    executor = CapturingExecutor(_wire())
+    result = _runner(setup, executor).run(
+        task, context, turn_attempt=0, parent_agent_run_id=parent.id,
+    )
+
+    assert result.result.outcome is AuditOutcome.APPROVE
+    assert len(executor.commands) == 1
+    attempts = previous(result.run_id)
+    assert attempts[-1].result_schema_id == "new-native"
+
+
 def test_false_field_feedback_corrects_audit_without_revising_or_approving_candidate(setup):
     store, task, parent, context, _config, _router = setup
     lines = _wire(outcome="return").splitlines()

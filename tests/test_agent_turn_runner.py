@@ -1,4 +1,5 @@
 import inspect
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -18,6 +19,46 @@ from app.agent_turn_runner import (
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
+
+
+def test_codex_native_result_identity_does_not_recover_old_free_form_attempts():
+    digest = "unchanged-execution-contract"
+    old_id = hashlib.sha256(
+        ("agent_turn_claude_result_v1\0" + digest).encode("utf-8")
+    ).hexdigest()
+
+    assert agent_turn_runner._runtime_result_schema_id(
+        digest, RuntimeKind.CLAUDE_CLI, AgentRole.AUDIT,
+    ) == old_id
+    assert agent_turn_runner._runtime_result_schema_id(
+        digest, RuntimeKind.FRIDAY_RUNTIME, AgentRole.AUDIT,
+    ) == old_id
+    assert agent_turn_runner._runtime_result_schema_id(
+        digest, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+    ) != old_id
+    assert agent_turn_runner._runtime_result_schema_id(
+        digest, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER, purpose="oa",
+    ) != agent_turn_runner._runtime_result_schema_id(
+        digest, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
+    )
+
+
+def test_codex_completed_result_identity_tracks_the_submitted_schema(tmp_path, monkeypatch):
+    path = tmp_path / "native-schema.json"
+    monkeypatch.setattr(
+        agent_turn_runner, "native_output_schema_path",
+        lambda *_args, **_kwargs: path,
+    )
+    path.write_text('{"type":"object","properties":{"a":{"type":"string"}}}')
+    first = agent_turn_runner._runtime_result_schema_id(
+        "same-prompt", RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+    )
+    path.write_text('{"type":"object","properties":{"b":{"type":"string"}}}')
+    second = agent_turn_runner._runtime_result_schema_id(
+        "same-prompt", RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+    )
+
+    assert first != second
 
 
 def test_compact_prompt_is_used_only_for_its_exact_codex_session():

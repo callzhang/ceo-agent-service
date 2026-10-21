@@ -98,6 +98,27 @@ from app.store import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _runtime_result_schema_id(
+    execution_contract_digest: str,
+    runtime_kind: RuntimeKind | str,
+    role: AgentRole,
+    *,
+    purpose: str = "general",
+) -> str:
+    legacy = hashlib.sha256(
+        ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode("utf-8")
+    ).hexdigest()
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI:
+        return legacy
+    schema_bytes = native_output_schema_path(role.value, purpose=purpose).read_bytes()
+    return hashlib.sha256(
+        b"agent_turn_codex_native_result_v1\0"
+        + execution_contract_digest.encode("utf-8")
+        + b"\0" + schema_bytes
+    ).hexdigest()
+
+
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 _COMMON_RUNTIME_CAPABILITIES = frozenset(
@@ -960,12 +981,8 @@ class AgentTurnProcess(Generic[ResultT]):
 
         def parse_result_for_route(raw: str, route: RuntimeRoute) -> ResultT:
             if route.runtime_kind is RuntimeKind.CODEX_CLI:
-                purpose = (
-                    str((invocation_facts or {}).get("consumer_purpose", "general"))
-                    if run.role is AgentRole.CONSUMER else "general"
-                )
                 return parse_native_result(
-                    raw, run.role.value, purpose=purpose, parser=parse_result,
+                    raw, run.role.value, purpose=consumer_purpose, parser=parse_result,
                 )
             return parse_result(raw)
 
@@ -997,11 +1014,16 @@ class AgentTurnProcess(Generic[ResultT]):
                 execution_contract, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")
         ).hexdigest()
-        runtime_result_schema_id = hashlib.sha256(
-            ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode(
-                "utf-8"
+        consumer_purpose = (
+            str((invocation_facts or {}).get("consumer_purpose", "general"))
+            if run.role is AgentRole.CONSUMER else "general"
+        )
+
+        def result_schema_id_for(runtime_kind: RuntimeKind | str) -> str:
+            return _runtime_result_schema_id(
+                execution_contract_digest, runtime_kind, run.role,
+                purpose=consumer_purpose,
             )
-        ).hexdigest()
 
         try:
             persisted_run = self.store.get_agent_run(run.id)
@@ -1021,7 +1043,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt
                     for attempt in reversed(runtime_attempts)
                     if attempt.status == "completed"
-                    and attempt.result_schema_id == runtime_result_schema_id
+                    and attempt.result_schema_id == result_schema_id_for(
+                        attempt.runtime_kind
+                    )
                 ),
                 None,
             )
@@ -1039,7 +1063,8 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise RuntimeError("completed runtime result route mismatch")
                 try:
                     result = cast(ResultT, recover_completed_runtime_domain_result(
-                        completed_attempt, run, schema_id=runtime_result_schema_id,
+                        completed_attempt, run,
+                        schema_id=result_schema_id_for(completed_attempt.runtime_kind),
                         friday_adapter=self.friday_adapter,
                         parse_result=lambda raw: parse_result_for_route(raw, route),
                     ))
@@ -1202,10 +1227,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         image_paths=image_paths,
                         output_schema_path=native_output_schema_path(
                             run.role.value,
-                            purpose=(
-                                str((invocation_facts or {}).get("consumer_purpose", "general"))
-                                if run.role is AgentRole.CONSUMER else "general"
-                            ),
+                            purpose=consumer_purpose,
                         ),
                         use_output_schema=True,
                         approval_policy="on-failure",
@@ -1651,6 +1673,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
                 native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
                 durable_consumer_result = run.role is AgentRole.CONSUMER
+                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
                 self.store.complete_agent_runtime_attempt(
                     active_attempt.id, native_session, native_reference,
                     attempt_transcript_start, native_end,
