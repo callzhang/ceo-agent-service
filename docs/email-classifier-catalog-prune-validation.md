@@ -91,5 +91,34 @@ no speculative dependency parser is added here.
 
 The scoped review's one dependency concern is addressed by the current
 production revision check above; the independent rereview reported no
-actionable defect. Merge, standard deployment and production readback remain
-open. No live classification outcome is claimed here.
+actionable defect.
+
+## Release and production readback
+
+PR #196 merged at `231f60c796f9bb2df530c8d1766d1312ee033dae` on
+2026-10-21. The standard pinned deployment ran
+`python -m app.deploy --target-commit 231f60c796f9bb2df530c8d1766d1312ee033dae`
+without `--skip-quiet-wait` and returned `deployed 18d7d5f3 -> 231f60c7`. It waited
+for in-flight work to drain before stopping the service. The production
+checkout was clean at that exact commit. New supervisor PID `94807`, service
+worker `94817`, console `94818` and email worker `94819` started at
+2026-10-21 10:31:22 UTC. `/healthz` returned HTTP 200 with `ok: true`;
+Dashboard queues returned HTTP 200 with active `0` and queued `24` in that
+snapshot; Attention returned HTTP 200 with seven items; History returned HTTP
+200 with total `36,726` and readable recent statuses. A later in-flight count
+was six as normal scheduling resumed, so the queue snapshot is not a claim of
+permanent idleness.
+
+A post-deploy anonymous command construction used the deployed commit's
+`EmailClassifierRoutedBackend`, `CodexCommandFactory` and native CLI
+`debug prompt-input`, with an empty temporary MCP manifest and the same
+fictional work-email prompt. The factory selected `skill_names=()`; its native
+input contained five Skill paths (1,105 Skill-section characters), the full
+managed classifier Skill and current wire contract. The last native User
+message matched the service prompt SHA-256 exactly. This was a prompt-input
+readback with no model call, mailbox access or provider action.
+
+The latest natural production classifier attempt was still `389177` from
+10:02:19 UTC, before this deployment. Thus the release is verified at the
+loaded-code and native-input level; a real post-release classification
+judgment has not yet occurred and no such business outcome is claimed.
