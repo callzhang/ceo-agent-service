@@ -33,13 +33,15 @@ purpose 由服务从任务的 OA 链接、已选 Skill 或明确 OA 动作上下
 | 两者共有 | `failed`、`needs_human` | 两个对象均为空；沿用完整结果中的错误或人工决策元数据。 |
 | `oa` | `approve`、`reject` | 目标含字符串 `process_instance_id`、`task_id`；参数为 `remark`。 |
 | `oa` | `return` | 目标额外含字符串 `target_activity_id`；参数为 `remark` 和 `revert_action`。 |
-| `oa` | `comment`、`request_access` | 目标为 `process_instance_id`，参数为 `content`；使用现有 OA 评论动作。 |
+| `oa` | `comment` | 目标为 `process_instance_id`，参数为 `content`；作为普通 OA 提案进入 Audit。 |
+| `oa` | `request_access` | 目标含 `process_instance_id` 和 `file_id`，参数为 `content`；Consumer 请求该文件只读访问。 |
 | `general` | `reply`、`request_access` | 目标为 `conversation_id`、`message_id`，参数为 `content`；回复原会话消息。 |
 | `general` | `react` | 同样定位原消息，参数为 `emoji`。 |
 
 未知 action、非字符串 ID、缺失的必填参数和额外参数均不能作为合法新输出。
-服务从同一动作定义生成 schema 并校验输出，再规范化为现有内部候选，交给
-Audit 审阅。`plan` 不绕过既有动作合同和审核。
+服务从同一动作定义生成 schema 并校验输出，再规范化为现有内部候选。OA 的
+approve、reject、return、comment 和普通 plan 继续由 Audit 审阅；文件权限申请和
+权限等待 retry 是 Consumer purpose 动作，不提交给 Audit。
 
 ### OA 的 `return` 是真实退回
 
@@ -72,14 +74,12 @@ Audit 自己的 return/reject 仍属于审核反馈协议。
 ## 3. 权限申请与等待
 
 1. 先区分真实权限拒绝与下载、解析、OCR、客户端等技术读取失败。
-2. 有可用申请途径时，Consumer 形成一次 `request_access` 候选，向已核实的责任人请求访问，并设置 `continue_after_execution=false`。请求送达不是权限已恢复的证据，当前审核必须停止。
-3. 完整候选经 Audit 和执行器处理，核实原申请动作回执后，服务安排首次延后重读。
-4. 权限仍未恢复时，Consumer 可以提出 `retry`，引用同一原申请回执，交 Audit 审阅。
+2. 有可用申请途径时，Consumer 直接返回一次带准确 `file_id` 的 `request_access`。服务通过既有 OA 评论执行器向已核实责任人请求该文件的只读权限；同一任务同一文件只发一次。此权限申请不进入 Audit。请求送达不是权限已恢复的证据，当前材料审核停止。
+3. 服务核实请求回执后，写入同一 purpose 等待状态并安排首次延后重读。进程中断时只对账原请求；没有确认“未发生”之前不重复发送。
+4. 权限仍未恢复时，Consumer 可以直接提出 `retry`，引用本任务已核验的权限申请回执；retry 不进入 Audit，也不执行外部写操作，只按共享预算等待后重新读取。
 5. 到期重读后，依据新事实继续业务判断；已发送的申请不重复发送。
 
-当前 `request_access` 通过 OA 评论或原会话回复发出请求，没有直接修改文件 ACL
-的新增执行器。申请动作的 verified 回执只证明请求已送达，权限是否开通必须
-通过后续读取确认。不能把“已发送申请”写成“已获得权限”。
+OA `request_access` 复用现有 OA 评论执行器发出只读权限请求，不直接修改文件 ACL。申请动作的 verified 回执只证明请求已送达，权限是否开通必须通过后续读取确认。不能把“已发送申请”写成“已获得权限”。
 
 等待的业务核心示例：
 
@@ -112,15 +112,14 @@ action identity，且旧候选只有一个对应评论动作。普通旧评论�
 | 时间起点 | 从已核实原申请的持久化 dispatch 记录时间起算，保守地固定 72 小时期限。 |
 | 退避间隔 | 首次 5 分钟，之后按已预留次数指数增长，单次最多 12 小时；下一次时间不晚于期限。 |
 | 停止条件 | 次数或时间先到任何一项即停止；到达期限时不再开始新读取或新 Consumer。 |
-| 持久化范围 | 绑定业务对象和 purpose；没有业务键时绑定 reply task。session、revision、generation、重启和普通 attempt 退款不清零。 |
+| 持久化范围 | 所有文件的权限申请共用同一业务对象和 purpose 预算；没有业务键时绑定 reply task。session、revision、generation、重启和普通 attempt 退款不清零。 |
 | 幂等与恢复 | 同一预约重复检查不重复扣数；更换申请回执不能重置预算。 |
 
 次数预留使用现有 SQLite 短事务。模型不能指定重试次数、间隔、申请时间或期限。
 Worker、定时任务和 Email 的等待分支遵守延后时间，不消耗普通任务 attempt 预算；
 权限等待自己的十次预算仍独立生效。
 
-达到限制后返回 `failed_terminal`，错误码为 `consumer_purpose_retry_exhausted`。
-它不会自动退回、拒绝或发送消息，也不能据此认定材料业务不合格。
+达到限制后停止自动重读并返回预算耗尽，不自动退回或拒绝，也不能据此认定材料业务不合格；之后若需 OA 业务决定，仍由 Consumer 形成新候选并交 Audit。
 业务动作完成或经审核 `no_action` 后关闭活动等待；原计数和期限保留。
 72 小时边界控制新读取的启动，不表示强制中断已经开始的调用。
 

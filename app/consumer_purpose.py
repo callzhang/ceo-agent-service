@@ -29,6 +29,10 @@ class OAProcess(_Strict):
     process_instance_id: str = Field(min_length=1)
 
 
+class OAMaterialTarget(OAProcess):
+    file_id: str = Field(min_length=1)
+
+
 class Remark(_Strict):
     remark: str = Field(min_length=1)
 
@@ -67,7 +71,7 @@ def action_contracts(purpose: str):
             'reject': (OATask, Remark, 'dingtalk-oa', 'reject'),
             'return': (OAReturnTarget, ReturnPayload, 'dingtalk-oa', 'revert_task'),
             'comment': (OAProcess, Content, 'dingtalk-oa', 'comment'),
-            'request_access': (OAProcess, Content, 'dingtalk-oa', 'comment'),
+            'request_access': (OAMaterialTarget, Content, 'dingtalk-oa', 'comment'),
         }
     if purpose == 'general':
         return {**common,

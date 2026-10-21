@@ -137,6 +137,82 @@ class SystemExecutor:
                 task.conversation_id, task.trigger_message_id,
             )
 
+    def execute_consumer_permission_request(
+        self, task: object, candidate_id: int, consumer_result: ConsumerAgentResult,
+        *, permission_budget: object, now: object,
+    ) -> SystemExecutionResult:
+        """Execute the narrowly typed Consumer request_access purpose action.
+
+        This is not an OA approval proposal: it only requests read access to a
+        named file. It uses the Consumer candidate and existing OA comment
+        handler, while the purpose budget stores the request's idempotency and
+        provider readback state. OA approve/reject/return still use execute().
+        """
+        output = consumer_result.purpose_output or {}
+        if output.get("purpose") != "oa" or output.get("action") != "request_access":
+            return self._failure("permission_request_contract_invalid", "Consumer did not return an OA access request")
+        target = output.get("target") or {}
+        file_id = target.get("file_id")
+        process_id = target.get("process_instance_id")
+        if not isinstance(file_id, str) or not file_id.strip() or not isinstance(process_id, str) or not process_id.strip():
+            return self._failure("permission_request_target_invalid", "Permission request needs an exact process and file")
+        row = self.store.get_review_candidate(candidate_id)
+        if (row is None or row["task_id"] != task.id
+                or row["execution_generation"] != task.execution_generation
+                or row["consumer_run_id"] is None):
+            return self._failure("permission_request_candidate_invalid", "Permission request candidate is stale")
+        candidate = parse_persisted_consumer_result(row["candidate_json"])
+        if candidate.purpose_output != consumer_result.purpose_output or candidate.proposal is None or len(candidate.proposal.actions) != 1:
+            return self._failure("permission_request_candidate_mismatch", "Permission request differs from the persisted Consumer result")
+        action = candidate.proposal.actions[0]
+        if (action.capability != "dingtalk-oa" or action.operation != "comment"
+                or action.target.get("process_instance_id") != process_id
+                or action.target.get("file_id") != file_id):
+            return self._failure("permission_request_action_invalid", "Only a file-scoped OA access comment can use this path")
+        handler = self.handlers.get(("dingtalk-oa", "comment"))
+        if handler is None:
+            return self._failure("permission_request_handler_unavailable", "OA comment handler is unavailable")
+        identity = expected_external_action(action, action_index=0,
+                                           business_object_key=(task.business_object_key
+                                               or f"reply-task:{task.id}"))
+        action_key = str(identity["external_action_key"])
+        try:
+            request, created = permission_budget.begin_access_request(
+                file_id=file_id, action_key=action_key, candidate_id=candidate_id, now=now,
+            )
+        except ValueError as exc:
+            return self._failure("permission_request_duplicate", str(exc))
+        if request["status"] == "verified":
+            return SystemExecutionResult(outcome="executed", summary="Read-only file access request was already verified",
+                completed_action_keys=(action_key,))
+        if request["status"] == "failed":
+            return self._failure("permission_request_previously_failed", "The exact permission request already failed")
+        attempt = {"status": "uncertain", "external_action_key": action_key,
+                   "created_at": request["created_at"]}
+        try:
+            if created:
+                outcome = handler.dispatch(action, action_key=action_key,
+                    candidate={**row, "action_attempt": attempt})
+            else:
+                outcome = handler.reconcile(action, action_key=action_key,
+                    candidate={**row, "action_attempt": attempt})
+                if outcome is None:
+                    outcome = ActionOutcome("uncertain", {"reason": "permission_request_readback_inconclusive"})
+        except Exception as exc:
+            outcome = ActionOutcome("uncertain", {"reason": "permission_request_provider_exception",
+                "exception_type": type(exc).__name__})
+        state = outcome.status
+        permission_budget.finish_access_request(
+            file_id=file_id, action_key=action_key,
+            status="verified" if state == "verified" else "failed" if state == "failed" else "uncertain",
+            result=outcome.provider_result, now=now,
+        )
+        if state != "verified":
+            return self._failure("permission_request_" + state,
+                "Read-only access request was not verified", retryable=state == "uncertain")
+        return SystemExecutionResult(outcome="executed", summary="Read-only file access request verified",
+            completed_action_keys=(action_key,))
+
     def _check_reviewed_sources(
         self, candidate: ConsumerAgentResult, context: object | None,
         plan: ConsumerProposal, execution_id: int, candidate_id: int,

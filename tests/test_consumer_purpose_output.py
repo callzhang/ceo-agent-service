@@ -53,6 +53,32 @@ def test_retry_has_no_business_proposal_and_requires_evidence():
         model.model_validate(value)
 
 
+def test_oa_access_request_is_scoped_to_one_file_and_identity():
+    model = purpose_output_model('oa')
+    first = model.model_validate({
+        'action': 'request_access', 'reason': 'Need to read this supporting file',
+        'target': {'process_instance_id': 'p', 'file_id': 'file-a'},
+        'payload': {'content': 'Please grant read-only access to file A'},
+        'evidence_refs': ['file:file-a'],
+    })
+    second = first.model_copy(update={
+        'target': {'process_instance_id': 'p', 'file_id': 'file-b'},
+    })
+
+    first_action = first.to_proposal().actions[0]
+    second_action = second.to_proposal().actions[0]
+    assert first_action.action_identity != second_action.action_identity
+    assert first_action.target['file_id'] == 'file-a'
+    assert second_action.target['file_id'] == 'file-b'
+    with pytest.raises(ValidationError):
+        model.model_validate({
+            'action': 'request_access', 'reason': 'Need access',
+            'target': {'process_instance_id': 'p'},
+            'payload': {'content': 'Please grant read access'},
+            'evidence_refs': ['file:file-a'],
+        })
+
+
 def test_historical_candidate_serialization_does_not_add_new_metadata():
     from test_agent_orchestrator import candidate
     from app.agent_contracts import parse_persisted_consumer_result
