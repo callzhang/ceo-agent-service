@@ -572,6 +572,13 @@ and reconstructed absolute read path of every authorized source are retained,
 including distinct paths sharing a name. The response includes its path joining
 and table quoting instructions. Named/path reads, source authorization and
 ambiguity checks are unchanged; no output budget or role policy is changed.
+When an Agent needs another Skill, the Task points to
+`agent_cli.read_skill(query=...)`. This returns the same complete metadata
+fields for entries whose name or description contains every supplied topic
+term, in any order and without case sensitivity, without returning bodies. An
+empty query is rejected;
+`read_skill()` still returns the full catalog when the topic is unknown.
+The Agent selects an exact name or path for the subsequent full Skill read.
 
 Email unsubscribe page judgement explicitly selects an empty task Skill catalog
 through the existing native per-path Skill configuration. Unspecified standard

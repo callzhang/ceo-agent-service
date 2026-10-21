@@ -532,7 +532,7 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
         "path": str(skill_path.resolve()),
     }]
     assert "EXACT BODY" not in json.dumps(discovered)
-    assert set(descriptor.inputSchema["properties"]) == {"path", "name"}
+    assert set(descriptor.inputSchema["properties"]) == {"path", "name", "query"}
     assert "required" not in descriptor.inputSchema
     by_name = tool(name="business-review")
     by_path = tool(path=str(skill_path))
@@ -544,6 +544,56 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
         tool(path=str(skill_path), name="business-review")
     with pytest.raises(ValueError, match="unknown"):
         tool(name="missing")
+
+
+def test_read_skill_query_finds_full_metadata_without_returning_unrelated_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from tests.test_skill_discovery_transport import decode_catalog
+
+    roots = (tmp_path / "root-a", tmp_path / "root-b")
+    sources = (
+        (roots[0], "okr-review", "Score OKR records", "OKR BODY"),
+        (roots[0], "dingtalk-doc", "读取文档", "DOCUMENT BODY"),
+        (roots[0], "shared-review", "Review projects", "FIRST BODY"),
+        (roots[1], "shared-review", "Review contracts", "SECOND BODY"),
+    )
+    for root, name, description, body in sources:
+        path = root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n\n{body}\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", roots)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("read_skill").fn
+
+    full = decode_catalog(tool())
+    okr = decode_catalog(tool(query="OKR"))
+    natural_query = decode_catalog(tool(query="OKR score review"))
+    document = decode_catalog(tool(query="文档"))
+    duplicates = decode_catalog(tool(query="shared-review"))
+    assert len(full) == 4
+    assert [(item["name"], item["description"]) for item in okr] == [
+        ("okr-review", "Score OKR records")
+    ]
+    assert natural_query == okr
+    assert [item["name"] for item in document] == ["dingtalk-doc"]
+    assert decode_catalog(tool(query="not-present")) == []
+    assert len(duplicates) == 2
+    assert {item["path"] for item in duplicates} == {
+        str((root / "shared-review" / "SKILL.md").resolve()) for root in roots
+    }
+    assert "BODY" not in tool(query="OKR")["catalog"]
+    assert tool(name="okr-review")["content"].endswith("OKR BODY\n")
+    assert tool(name="dingtalk-doc")["content"].endswith("DOCUMENT BODY\n")
+    assert tool(path=duplicates[1]["path"])["content"].endswith("SECOND BODY\n")
+    with pytest.raises(ValueError, match="ambiguous"):
+        tool(name="shared-review")
+    with pytest.raises(ValueError, match="query"):
+        tool(query="  ")
+    with pytest.raises(ValueError, match="only one"):
+        tool(name="okr-review", query="OKR")
 
 
 def test_read_skill_tool_rejects_ambiguous_installed_name(

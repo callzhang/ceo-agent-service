@@ -528,14 +528,17 @@ def render_task_skill_discovery(
                 "Task-frozen reads: `agent_cli.read_task_skill(name)`."
             )
         instructions.append(
-            "Other Skill reads: `agent_cli.read_skill(name=...)`."
+            "Other Skill reads: `agent_cli.read_skill(name=...)`. "
+            "Find another Skill by topic: `agent_cli.read_skill(query=...)`."
         )
         read_instruction = " ".join(instructions)
     else:
         entries = tuple((entry.name, entry) for entry in dict.fromkeys(catalog))
         heading = "## Skill Discovery"
         read_instruction = (
-            "No task Skill was selected. Discover with `agent_cli.read_skill()`."
+            "No task Skill was selected. Search by topic with "
+            "`agent_cli.read_skill(query=...)`; use `agent_cli.read_skill()` "
+            "when the topic is unknown."
         )
     lines = [heading]
     for name, entry in entries:

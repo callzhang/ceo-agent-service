@@ -744,6 +744,12 @@ and reconstructed absolute read path of every authorized source are retained,
 including distinct paths sharing a name. The response includes its path joining
 and table quoting instructions. Named/path reads, source authorization and
 ambiguity checks are unchanged; no output budget or role policy is changed.
+Task discovery now offers `agent_cli.read_skill(query=...)` for an additional
+Skill. It filters the installed metadata by case-insensitive topic terms that
+may appear in any order across name and description, and retains complete
+metadata and exact source paths for
+matches; it does not return Skill bodies. Blank queries fail. The no-argument full
+directory and exact name/path reads keep their existing behavior.
 
 Email unsubscribe page judgement explicitly selects an empty task Skill catalog
 through the existing native per-path Skill configuration. Unspecified standard

@@ -1296,17 +1296,17 @@ async def unsubscribe_email_tool(task_id: int) -> dict[str, object]:
     ),
 )
 def read_skill_tool(
-    path: str | None = None, name: str | None = None
+    path: str | None = None, name: str | None = None,
+    query: str | None = None,
 ) -> dict[str, object]:
     """Read an installed Agent skill or its referenced Markdown safely.
 
-    With no source, return body-free name/use/path TSV with exact root aliases. Otherwise
-    pass exactly one source. `path` identifies a Markdown file inside an
-    installed Skill directory. `name` resolves one exact installed Skill's
-    metadata name and reads its SKILL.md through the same path authorization.
+    With no argument, return the complete body-free metadata catalog. `query`
+    returns entries whose name/description contains every query term. `path` identifies
+    Markdown inside an installed Skill; `name` reads one exact SKILL.md.
     """
-    if path is not None and name is not None:
-        raise ValueError("read_skill accepts only one of path or name")
+    if sum(value is not None for value in (path, name, query)) > 1:
+        raise ValueError("read_skill accepts only one of path, name or query")
     from app import agent_skill_usage
     from app.business_skills import (
         installed_skill_catalog,
@@ -1315,10 +1315,21 @@ def read_skill_tool(
     )
 
     if path is None and name is None:
-        return {
-            "catalog": render_skill_catalog_metadata(
-                installed_skill_catalog(roots=agent_skill_usage.AGENT_SKILL_ROOTS)
+        if query is not None:
+            terms = query.casefold().split()
+            if not terms:
+                raise ValueError("read_skill query must not be empty")
+        catalog = installed_skill_catalog(roots=agent_skill_usage.AGENT_SKILL_ROOTS)
+        if query is not None:
+            catalog = tuple(
+                entry for entry in catalog
+                if all(
+                    term in f"{entry.name} {entry.description}".casefold()
+                    for term in terms
+                )
             )
+        return {
+            "catalog": render_skill_catalog_metadata(catalog)
         }
     if name is not None:
         path = str(
