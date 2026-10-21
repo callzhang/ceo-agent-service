@@ -40,4 +40,12 @@
 
 页占用比较仅表示完整19.8→19.11组合迁移：主文件仍486,514,688字节；空闲页从11增至1,103，可复用约4.27MiB。未执行VACUUM，不能把它描述为主文件已变小，亦不能将组合节省全归于九字段退休。
 
-**尚未部署。** 标准部署将创建新进程，生产文件中已保存但该OAuth通道不支持的 `gpt-6-luna` 可能生效。目前等待Derek确认是否同步使用已验收的 `gpt-6-astra/high`；没有擅自切型号、回写旧设置、触发重启或修改生产DB。完成该选择后，按标准 `python -m app.deploy --target-commit <已推送的完整main SHA>` 发布，并核对新PID、healthz、队列、Attention、History及实际schema；这些上线结果不能由本次副本PASS推断。
+## CLI 升级后的 Luna 发布候选
+
+Derek 拒绝因成本切生产 Astra，并升级原生CLI到0.163.0。重新读取实时 model/list 后GPT-6 Luna已列入ChatGPT通道，原生可用性探针成功。已有生产保存设置在本轮读取时已被其他动作对齐至5.6-luna；根任务没有覆盖该并发改动，待新版Luna完整验收后才将唯一主型号设置为gpt-6-luna/high，全部备用路线及配置逐键保持不变。旧0.154的型号访问400不代表升级后的可用性。
+
+同一固定case在0.163使用真实gpt-6-luna/high重跑通过：Consumer首次输出多出outcome/proposal字段，既有wire schema校验在同一session要求修正，第二次返回通过；Audit读取同一完整原文后批准。随后公开选择、真实SystemExecutor/Worker、单次内存替身发送和核验、业务终态done及canonical回执引用检查全部通过。完整tag、3和100均正确，既有11张普通表原行不变；没有新增核对工具、审查规则、shell调用或真实测试发送。
+
+同步upstream7d00e82e2的WorkSummary与Email重试修复，并将其新增历史Run fixture改为当前logical接口；81项相关检查通过。迁移DDL和转换模块与此前完整inverse／实际旧代码冷读／reforward验证字节不变，本次只针对新增运行代码和升级后的Luna调用补验，没有重复原schema实验或将Astra的旧通过改记成Luna结果。脚本增加显式--model选择及实际CLI版本记录，仍逐次核对原生turn_context中的型号和high；独立增量审查通过。
+
+**尚未部署。** 型号选择已解决，现按标准quiet deploy发布，再核对新PID、healthz、队列、Attention、History、Store19.11／Email53和有效Luna设置。此处副本通过不代表线上已部署。

@@ -416,12 +416,12 @@
     "production_deployment_not_approved_by_this_review": true
   },
   "deployment": {
-    "status": "pending_production_model_choice",
+    "status": "ready_for_standard_deploy",
     "database_release_authorized": true,
-    "production_setting_mutated": false,
+    "production_setting_mutated": true,
     "production_database_mutated": false,
     "production_restarted": false,
-    "reason": "Current effective process uses5.6-luna/high, persisted production.env uses6-luna. Fresh launch reads persisted model; OAuth rejects6-luna. User has been asked whether to select tested6-astra/high or retain configuration. No answer inferred."
+    "note": "CLI0.163 native Luna complete case passes; no Astra production upgrade. Earlier schema inverse/actual-old-cold/reforward applies to unchanged migration sources."
   },
   "external_actions": {
     "real_sends": 0,
@@ -599,5 +599,186 @@
     "model_change_authorization": "pending",
     "model_source": "Filtered live /api/console/settings/agent-runtime versus production .env. No secret fields retained.",
     "restart_risk": "Fresh process reads persisted gpt-6-luna; actual current OAuth accepts GPT-6 Astra, not Luna. Model choice is unresolved; no setting mutated."
+  },
+  "cli_upgrade_luna": {
+    "runtime": {
+      "cli_version": "codex-cli 0.163.0",
+      "routes": [
+        "codex_oauth"
+      ],
+      "model": "gpt-6-luna",
+      "reasoning_effort": "high"
+    },
+    "task_id": 4690418784685846,
+    "generation": "initial",
+    "verification_tag": "NATIVE_SELECTION_9178ab3793",
+    "fixture_sha256": "05e4c0adc3de8ba57bcc613783fc8490458805a5f90117e3847157cc9f81ae13",
+    "prepared": {
+      "task_status": "needs_human",
+      "provider_calls": 0,
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "candidate_digest": "845e32322a3dabe0d95994c460d8c74cded71dce1d2f265e57608777983b505f",
+      "attempt_id": 15800
+    },
+    "native_evidence": {
+      "runs": [
+        {
+          "id": 388536,
+          "role": "consumer",
+          "status": "failed",
+          "attempts": [
+            {
+              "attempt_id": 388537,
+              "session_id": "01a15cb5-a40f-7160-9aed-6969273e0776",
+              "start": 0,
+              "end": 38,
+              "status": "failed",
+              "tools": [
+                "read_task_artifact",
+                "read_system_action_contract"
+              ],
+              "command_count": 0,
+              "event_count": 4,
+              "native_path": "/Users/derek/.codex/sessions/2026/10/20/rollout-2026-10-20T21-26-10-01a15cb5-a40f-7160-9aed-6969273e0776.jsonl",
+              "actual_native_turns": [
+                {
+                  "line": 7,
+                  "model": "gpt-6-luna",
+                  "effort": "high"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 388538,
+          "role": "consumer",
+          "status": "completed",
+          "attempts": [
+            {
+              "attempt_id": 388539,
+              "session_id": "01a15cb5-a40f-7160-9aed-6969273e0776",
+              "start": 38,
+              "end": 51,
+              "status": "completed",
+              "tools": [],
+              "command_count": 0,
+              "event_count": 1,
+              "native_path": "/Users/derek/.codex/sessions/2026/10/20/rollout-2026-10-20T21-26-10-01a15cb5-a40f-7160-9aed-6969273e0776.jsonl",
+              "actual_native_turns": [
+                {
+                  "line": 41,
+                  "model": "gpt-6-luna",
+                  "effort": "high"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 388540,
+          "role": "audit",
+          "status": "completed",
+          "attempts": [
+            {
+              "attempt_id": 388541,
+              "session_id": "01a15cb6-782b-71e3-94da-d029f890d489",
+              "start": 0,
+              "end": 38,
+              "status": "completed",
+              "tools": [
+                "read_task_artifact",
+                "read_system_action_contract"
+              ],
+              "command_count": 0,
+              "event_count": 4,
+              "native_path": "/Users/derek/.codex/sessions/2026/10/20/rollout-2026-10-20T21-27-05-01a15cb6-782b-71e3-94da-d029f890d489.jsonl",
+              "actual_native_turns": [
+                {
+                  "line": 7,
+                  "model": "gpt-6-luna",
+                  "effort": "high"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "attempt_id": 15800,
+      "original_tables_unchanged": 11
+    },
+    "fixture_native_reads": [
+      {
+        "session_id": "01a15cb5-a40f-7160-9aed-6969273e0776",
+        "start": 0,
+        "end": 38,
+        "tool_call_id": "call_61a78ee666934d10866d82215a1de7eb",
+        "name": "case-input.json",
+        "sha256": "05e4c0adc3de8ba57bcc613783fc8490458805a5f90117e3847157cc9f81ae13"
+      },
+      {
+        "session_id": "01a15cb6-782b-71e3-94da-d029f890d489",
+        "start": 0,
+        "end": 38,
+        "tool_call_id": "call_e9944cece75c49e5adcf29f4170fe8cd",
+        "name": "case-input.json",
+        "sha256": "05e4c0adc3de8ba57bcc613783fc8490458805a5f90117e3847157cc9f81ae13"
+      }
+    ],
+    "selected": {
+      "http_status": 303,
+      "selection_id": 1,
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "candidate_digest": "845e32322a3dabe0d95994c460d8c74cded71dce1d2f265e57608777983b505f",
+      "option_key": "execute",
+      "location": "/attempts/15800"
+    },
+    "completed": {
+      "task_status": "done",
+      "execution_id": 373,
+      "provider_calls": 1,
+      "provider_verifications": 1,
+      "verified_attempts": 1,
+      "external_receipts": 1,
+      "sent_result_is_reference": true,
+      "sent_public_result_exact": true,
+      "no_additional_native_turn": true,
+      "original_tables_unchanged": 11,
+      "old_tag_sum_assertion": true,
+      "new_source_count_assertion": true,
+      "synthetic_sent_sha256": "f93685eb5a3a6c1158cfec312164c132235f67750427a556f919e5efd707175f"
+    },
+    "existing_wire_schema_correction": {
+      "first_result_extra_fields": [
+        "outcome",
+        "proposal"
+      ],
+      "same_session_correction": true,
+      "consumer_calls": 2,
+      "audit_calls": 1,
+      "business_test_assertions_unchanged": true
+    }
+  },
+  "resume_integration": {
+    "upstream": "7d00e82e2f2860dd16d01004643c40ba239245a9",
+    "merge": "489c56bb0",
+    "scoped_tests_passed": 81,
+    "ddl_and_migration_sources_unchanged_since_verified_roundtrip": true,
+    "review": "PASS bounded source/model-option review"
+  },
+  "production_model_decision": {
+    "decision": "User declines Astra cost and upgrades CLI; use successfully validated GPT6 Luna",
+    "cli_version": "0.163.0",
+    "before_saved_model": "gpt-5.6-luna",
+    "target_model": "gpt-6-luna",
+    "reasoning_effort": "high",
+    "changed_keys": [
+      "CEO_CODEX_MODEL"
+    ],
+    "fallback_settings_unchanged": true
   }
 }

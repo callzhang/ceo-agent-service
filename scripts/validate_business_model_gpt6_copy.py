@@ -24,10 +24,12 @@ WT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WT))
 ROOT = DB = META = WORKSPACE = BASELINE = None
 harness = None
+MODEL = "gpt-6-luna"
 
 
 def initialize(args):
-    global ROOT, DB, META, WORKSPACE, BASELINE, harness
+    global ROOT, DB, META, WORKSPACE, BASELINE, harness, MODEL
+    MODEL = args.model
     ROOT = Path(args.owned_temp_root)
     assert ROOT.is_absolute() and ROOT.is_dir() and ROOT.parent == Path("/tmp")
     assert ROOT.name.startswith("ceo-gpt6-db-release.")
@@ -81,9 +83,7 @@ def native_model_records(path, start, end):
                     }
                 )
     assert records, "No native turn_context metadata in runtime attempt line bounds"
-    assert all(
-        r["model"] == "gpt-6-astra" and r["effort"] == "high" for r in records
-    ), records
+    assert all(r["model"] == MODEL and r["effort"] == "high" for r in records), records
     return records
 
 
@@ -173,8 +173,11 @@ def prepare():
             ["git", "rev-parse", "HEAD"], cwd=WT, text=True
         ).strip(),
         "runtime": {
+            "cli_version": subprocess.check_output(
+                ["codex", "--version"], text=True
+            ).strip(),
             "routes": ["codex_oauth"],
-            "model": "gpt-6-astra",
+            "model": MODEL,
             "reasoning_effort": "high",
         },
         "validation_limit": "Real Store claim, Consumer/Audit, public human selection, SystemExecutor and Worker on migrated copy; only outbound provider is in memory. Existing postfix permitted. Source-count assertion is new coverage beyond the old tag/sum assertion.",
@@ -229,7 +232,7 @@ def prepare():
     task = store.claim_reply_task(task.id)
     context = context_for(task, instruction, source_file)
     config = load_runtime_config(
-        {"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth", "CEO_CODEX_MODEL": "gpt-6-astra"}
+        {"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth", "CEO_CODEX_MODEL": MODEL}
     )
     native = harness.NativeExecutor(WORKSPACE, DB)
     provider = harness.InMemoryProvider(store, key)
@@ -607,6 +610,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--phase", required=True, choices=("prepare", "select", "finish")
+    )
+    parser.add_argument(
+        "--model",
+        default="gpt-6-luna",
+        help="Pinned native model, verified from actual turn metadata",
     )
     parser.add_argument("--owned-temp-root", required=True)
     parser.add_argument(
