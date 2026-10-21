@@ -3859,8 +3859,9 @@ classification before the Agent runs.
 
 The shared account connector passes the same 90-second read timeout as the
 readonly adapter, rather than inheriting the deterministic provider constructor's
-20-second default. Native connection reuse and account credential selection are
-unchanged. FETCH framing reconstructs IMAP literals by their declared byte lengths;
+20-second default. Classification owner-example reads use the existing shared account connector
+through the supplied source reader, avoiding a separate connection registry.
+Account credential selection is unchanged. FETCH framing reconstructs IMAP literals by their declared byte lengths;
 BODYSTRUCTURE literal filename values are decoded as data, and single-message UID
 validation shares the existing complete-record parser. Literal body bytes cannot
 supply a UID attribute. This supports real multipart filename literals and UID

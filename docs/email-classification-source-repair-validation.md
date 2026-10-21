@@ -34,7 +34,13 @@ not copied into this document.
    confirmed 20.0; the repaired factory's native socket readback confirmed 90.0.
    Historical timeout and DNS errors are retained; current connections to both
    accounts succeeded. No persistent DNS configuration fault was reproduced.
-3. Three current DingTalk messages (UIDs 33274, 33276 and 33281) have multipart
+3. The classifier did not pass the existing shared source reader into its owner
+   example build. The default reader constructed a separate connector registry,
+   defeating the established one-connector-per-account process wiring. The
+   classifier now passes the existing HIGH-priority source factory through the
+   example index. A source-reader forwarding regression failed before wiring
+   and passed after it.
+4. Three current DingTalk messages (UIDs 33274, 33276 and 33281) have multipart
    BODYSTRUCTURE attachment filename values returned as multiple IMAP literals.
    The existing parser examined incomplete tuple prefixes as standalone lists,
    raising FETCH metadata is invalid / unterminated IMAP list, or returning the
@@ -72,9 +78,9 @@ header normalization, not another UID failure.
 
 The original source-eligibility and shared-timeout regressions failed before the
 repair. Filename-literal and post-literal UID regressions also failed before the
-parser change. Final 123 source/protocol tests passed, including all eight new
-source-failure cases and the prior identity, generation, unsolicited-response,
-literal-UID and source-change tests. The 19 selected classification-worker and
+parser change. Final 150 source/protocol, model-input lifecycle and similarity tests passed,
+including all nine new source-failure cases and the prior identity, generation,
+unsolicited-response, literal-UID and source-change tests. The 19 selected classification-worker and
 connector tests passed; the one expected-kwargs test was updated solely for the
 explicit 90-second argument. Before the literal extension, 29 source-failure,
 model-input lifecycle and similarity tests passed. Ruff and diff checks passed.

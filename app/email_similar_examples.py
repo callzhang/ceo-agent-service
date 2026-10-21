@@ -34,7 +34,7 @@ def _document(sender: str, subject: str, text: str) -> str:
     return f"{sender}\n{subject}\n{text[:QUERY_CHARS]}"
 
 
-def _index(store: object) -> _Index | None:
+def _index(store: object, *, source_reader=None) -> _Index | None:
     key = Path(getattr(store, "path"))
     with _LOCK:
         cached = _INDEXES.get(key)
@@ -42,7 +42,7 @@ def _index(store: object) -> _Index | None:
     # Rebuild only when the examples change; input retirement preserves the stamp.
     if cached is not None and cached.stamp == store.owner_labelled_stamp():  # type: ignore[attr-defined]
         return cached
-    examples, stamp = store.owner_labelled_examples()  # type: ignore[attr-defined]
+    examples, stamp = store.owner_labelled_examples(source_reader=source_reader)  # type: ignore[attr-defined]
     if not examples:
         return None
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -72,6 +72,7 @@ def similar_owner_examples(
     text: str,
     allowed_category_keys: Sequence[str],
     count: int = EXAMPLE_COUNT,
+    source_reader=None,
 ) -> list[dict[str, str]]:
     """The owner-labelled messages most like this one, most similar first.
 
@@ -79,7 +80,7 @@ def similar_owner_examples(
     exist are offered.
     """
 
-    index = _index(store)
+    index = _index(store, source_reader=source_reader)
     if index is None:
         return []
     scores = (

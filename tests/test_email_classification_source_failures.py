@@ -81,6 +81,22 @@ def test_shared_connector_preserves_readonly_timeout_for_slow_mail(monkeypatch):
         current.logout()
 
 
+def test_owner_context_uses_the_supplied_shared_source_reader(body_store):
+    from app.email_similar_examples import clear_cache, similar_owner_examples
+
+    store = body_store
+    message, _ = _model_fixture(store)
+    assert store.compact_email_inputs(101, source_reader=_reader(message))
+    clear_cache()
+    examples = similar_owner_examples(
+        store, stable_message_identity="another-message", sender="sender@example.test",
+        subject="complete body", text="complete body", allowed_category_keys=("work",),
+        source_reader=_reader(message),
+    )
+    assert [item["category"] for item in examples] == ["work"]
+    clear_cache()
+
+
 @pytest.mark.parametrize("mode", ["single", "scan", "batch"])
 def test_bodystructure_literal_filename_keeps_full_body_and_uid_binding(mode):
     adapter, session = source()

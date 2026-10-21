@@ -723,6 +723,7 @@ def run_email_classification_task_once(
     ],
     action_task_producer: object,
     retire_original: Callable[[int], object] | None = None,
+    owner_example_source_reader=None,
 ) -> Mapping[str, object] | None:
     """Run one dedicated classifier task and persist its non-action decision."""
 
@@ -871,6 +872,7 @@ def run_email_classification_task_once(
             subject=prompt_message["subject"],
             text=body_text,
             allowed_category_keys=payload["allowed_category_keys"],
+            source_reader=owner_example_source_reader,
         )
         result = agent.classify(
             task,
@@ -3977,6 +3979,9 @@ def build_email_worker_dependencies(
                 email_store,
                 owner=f"email-classifier:{os.getpid()}",
                 provider_readback=read_current_classification_message,
+                owner_example_source_reader=EmailSourceReader(
+                    email_store, source_factory=source_factory,
+                ),
                 action_task_producer=action_task_producer,
                 retire_original=retire_original,
             ),
