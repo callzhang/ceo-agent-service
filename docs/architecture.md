@@ -735,8 +735,10 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 
 OKR 评审的实时数据读取由业务 Skill 选择当前可用的 provider 能力完成。服务提供的
 `app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>`，该入口调用
-`CEO_OKR_LIVE_SOURCE_COMMAND`（当前为 Dingteam headless source），并返回包含
-`processed.objectives` 与 `processed.okrRows` 的实时载荷，是一种可用实现而非应用层命令契约。
+`CEO_OKR_LIVE_SOURCE_COMMAND`（应指向服务 checkout 中的 `scripts/dingteam_okr_headless_source.py`；
+旧 Skill 浏览器入口不会把完整个人季度缺席转成成员级收据），并返回包含
+`processed.objectives`、`processed.okrRows` 的实时载荷，或经完整个人周期列表验证的
+`availability.status=goals_not_established` 收据；它是一种可用实现而非应用层命令契约。
 
 即时叮当 OKR 评分与定时周报分析是两种任务。普通 Consumer 可用
 `read_okr_member` 和 `read_dingtang_okr_score_detail` 取得实时目标、当前评分批次、
