@@ -391,6 +391,8 @@ def _calendar_slots(content: str, zone: ZoneInfo) -> list[tuple[datetime, dateti
     normalized = (content.replace("月", "/").replace("日", " ")
                   .replace("–", "-").replace("—", "-")
                   .replace("：", " ")
+                  .replace("（", " ").replace("）", " ")
+                  .replace("(", " ").replace(")", " ")
                   .replace("；", "\n").replace(";", "\n"))
     year = datetime.fromisoformat(FIXED_TIME).year
     slots = []
