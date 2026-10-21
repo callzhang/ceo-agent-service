@@ -32,10 +32,16 @@ the scheduler reads from its installed file for each execution. Other files,
 task fields, operation Skill references, and unrelated runtime bindings remain
 as they were.
 
-After restart, the deploy checks that the new active configuration and a live
-worker's load receipt contain the six target Skill digests. It also reads back
-the nine files and each affected task's complete scheduled reference tuple,
-including source, name, order, and each referenced managed revision ID. Removed or
+After restart and the health check, the deploy waits up to 15 minutes for the
+published runtime configuration to become active and for a live worker to
+write a load receipt for that active configuration. The wait is only for those
+two startup events; it does not turn mismatched content into a retryable
+condition. Once both are present, the existing checks run immediately: the
+active managed revisions and load receipt must contain the expected Skill
+digests, the nine installed files must match, and each affected task must have
+the exact scheduled reference tuple. A digest, file, or task-reference mismatch
+fails at once and uses the existing deploy rollback path. Scheduled reference
+readback includes source, name, order, and each referenced managed revision ID. Removed or
 replaced references fail this readback. Only then is the release
 receipt marked verified. The exact previous texts remain in that release's
 receipt for rollback review. A live receipt PID alone does not prove that it
