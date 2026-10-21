@@ -429,7 +429,7 @@ def test_loaded_readback_requires_the_new_config_and_exact_files(tmp_path: Path)
     )
     receipt.publish()
     with pytest.raises(ValueError, match="did not activate"):
-        receipt.verify_loaded()
+        receipt.verify_loaded(wait_timeout_seconds=0)
     config = store.get_pending_or_active_runtime_skill_config()
     store.record_runtime_skill_load(
         config.id, pid=os.getpid(),
