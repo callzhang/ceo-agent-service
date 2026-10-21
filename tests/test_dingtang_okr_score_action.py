@@ -251,7 +251,7 @@ def test_score_action_is_registered_and_discoverable():
     assert ("dingtang-okr", "score_kr") in native_dws_handlers(object(), object())
 
 
-def _run_page_script(request, *, batch="batch-1", evaluator="evaluator-1", principal="evaluator-1", batch_name="2026年1季度", detail_period="period-1", score_type=1, is_current=True, runtime_available=True, module_error=False, after_score=0.8, already=False, write_error=False, read_error=False):
+def _run_page_script(request, *, batch="batch-1", evaluator="evaluator-1", principal="evaluator-1", batch_name="2026年1季度", detail_period="period-1", score_type=1, is_current=True, runtime_available=True, module_error=False, after_score=0.8, already=False, write_error=False, read_error=False, object_detail_error=False):
     from scripts.dingteam_okr_score import _page_script
 
     source = _page_script(request, "result")
@@ -276,6 +276,9 @@ global.webpackChunkallinone = {push: ([, , callback]) => callback(id => {
       calls.push({path: '/data/okr/objective/' + method, body});
       if (method === 'getObjectiveScoreBatch' && config.read_error) throw new Error('read unavailable');
       if (method === 'makeScore' && config.write_error) throw new Error('lost response');
+      if (method === 'getScoreDetail' && config.object_detail_error) {
+        throw {code: 7, msg: '目标不存在或已被删除', traceId: 'opaque-provider-trace'};
+      }
       if (method === 'getObjectiveScoreBatch') return {cells: [{batchId: config.batch, name: config.batch_name, isCurrent: config.is_current}]};
       if (method === 'findScoreInfos') return {scoreType: config.score_type};
       if (method === 'getScoreDetail') {
@@ -303,6 +306,7 @@ setTimeout(() => console.log(JSON.stringify({calls, result: JSON.parse(result)})
         "runtime_available": runtime_available, "module_error": module_error,
         "after_score": after_score,
         "already": already, "write_error": write_error, "read_error": read_error,
+        "object_detail_error": object_detail_error,
     }))
     completed = subprocess.run(
         ["node", "-e", harness], capture_output=True, text=True, check=True
@@ -326,6 +330,33 @@ def test_browser_read_injection_only_calls_current_batch_and_detail():
         "objectiveId": "objective-1", "batchId": "batch-1"
     }
     assert result["result"]["data"]["batch_id"] == "batch-1"
+
+
+def test_browser_read_preserves_bounded_provider_object_error():
+    from scripts.dingteam_okr_headless_source import _safe_source_error_detail
+
+    result = _run_page_script({
+        "operation": "read_score_detail",
+        "period_id": "period-1",
+        "objective_id": "objective-1",
+    }, object_detail_error=True)
+
+    assert result["result"] == {
+        "ok": False,
+        "error": "Dingteam OKR API error 7: 目标不存在或已被删除",
+    }
+    assert _safe_source_error_detail(result["result"]["error"]) == result["result"]["error"]
+    assert "opaque-provider-trace" not in json.dumps(result, ensure_ascii=False)
+
+
+def test_browser_read_preserves_ordinary_error_text():
+    result = _run_page_script({
+        "operation": "read_score_detail",
+        "period_id": "period-1",
+        "objective_id": "objective-1",
+    }, read_error=True)
+
+    assert result["result"] == {"ok": False, "error": "Error: read unavailable"}
 
 
 def test_browser_write_injection_uses_one_exact_reviewed_record():
@@ -411,15 +442,21 @@ def test_browser_read_failure_before_write_is_final_without_a_write():
 
 def test_browser_request_uses_existing_headless_service_context(monkeypatch):
     from contextlib import nullcontext
+    from types import SimpleNamespace
     from scripts import dingteam_okr_score as source
 
     calls = []
+    routes = {}
 
     class Page:
         url = "https://dingokr.dingteam.com/web/okr/pc/index.html"
 
         def set_default_timeout(self, timeout):
             calls.append(("timeout", timeout))
+
+        def route(self, url, handler):
+            routes[url] = handler
+            calls.append(("route", url))
 
         def goto(self, url, **kwargs):
             calls.append(("goto", url))
@@ -447,8 +484,26 @@ def test_browser_request_uses_existing_headless_service_context(monkeypatch):
         "objective_id": "objective-1",
     })
     assert payload["batch_id"] == "batch-1"
+    assert set(routes) == {
+        "https://dingokr.dingteam.com/data/okr/objective/getScoreDetail",
+        "https://dingokr.dingteam.com/data/okr/objective/makeScore",
+    }
+    for handler in routes.values():
+        request = SimpleNamespace(headers={
+            "authorization": "Bearer fixture", "x-space-id": "1", "x-other": "stable",
+        })
+        received = []
+        route = SimpleNamespace(
+            request=request,
+            continue_=lambda *, headers: received.append(headers),
+        )
+        handler(route)
+        assert received == [{
+            "authorization": "Bearer fixture", "x-space-id": "", "x-other": "stable",
+        }]
+        assert request.headers["x-space-id"] == "1"
     assert [call[0] for call in calls] == [
-        "timeout", "goto", "wait", "wait", "evaluate", "evaluate", "evaluate"
+        "timeout", "goto", "wait", "wait", "evaluate", "route", "route", "evaluate", "evaluate"
     ]
 
 

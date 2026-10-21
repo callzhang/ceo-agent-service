@@ -739,6 +739,10 @@ KR 与正式评价人 ID；评分动作只以 `dingtang-okr/score_kr` 的精确�
 执行前须核对登录用户就是候选评价人、周期名称与唯一当前批次相符、该周期使用 KR 评分，
 且评分详情中的周期、目标、KR 与评价人均对应候选。执行后重新读取
 `getScoreDetail`，只有同一评价人的分数、原评语和 `complete` 状态全部相符才记为已完成。
+评分页面的 `getScoreDetail` 与 `makeScore` 请求沿用页面认证头，但把该接口所需的
+`X-Space-Id` 置空；周期、批次等其他读取仍保持页面原请求。只读评分详情若收到
+提供方对象错误，服务只传出数值 code 和消息，经既有脱敏后报告失败，不传 traceId。
+页面目标读取成功只证明目标可评分，不代表已提交或完成评分。
 写入结果不明时只做读取核对，不对已发出的评分自动重发；Consumer/Audit 不直接写分。
 
 逐 KR 评审的 `StructuredCodexRunner` 通过专用 `app/schemas/okr_review.schema.json`
