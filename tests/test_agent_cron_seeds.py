@@ -992,8 +992,8 @@ def test_every_fixed_discovery_check_is_a_service_command(
         }
     )
     assert daily_report.command == "" and daily_report.runtime_id
-    assert daily_report.cron_expression == "0 0 21 * * *"
-    assert daily_report.timezone_name == "Asia/Shanghai"
+    assert daily_report.cron_expression == "0 0 6 * * *"
+    assert daily_report.timezone_name == "America/Los_Angeles"
     assert daily_report.enabled is False
     assert [ref.skill_name for ref in daily_report.skill_refs] == [
         "ceo-daily-report",
@@ -1324,7 +1324,8 @@ def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
     assert (task.name, task.description) == READABLE_BUILTIN_COPY[
         "weekly-okr-report-sunday-v1"
     ]
-    assert task.cron_expression == "0 0 18 * * 0"
+    assert task.cron_expression == "0 0 3 * * 0"
+    assert task.timezone_name == "America/Los_Angeles"
     assert task.command == ""
     assert "$ceo-weekly-okr-report" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
@@ -1336,6 +1337,124 @@ def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
     ]
     assert task.runtime_id == "codex_oauth"
     assert task.enabled is False
+
+
+@pytest.mark.parametrize(
+    ("migration_key", "old_cron", "old_timezone", "new_cron"),
+    [
+        (
+            "ceo-daily-report-daily-v1",
+            "0 0 21 * * *",
+            "Asia/Shanghai",
+            "0 0 6 * * *",
+        ),
+        (
+            "weekly-okr-report-sunday-v1",
+            "0 0 18 * * 0",
+            "Asia/Shanghai",
+            "0 0 3 * * 0",
+        ),
+    ],
+)
+def test_seed_migrates_only_exact_report_schedule_preserving_task_and_run(
+    tmp_path: Path,
+    migration_key: str,
+    old_cron: str,
+    old_timezone: str,
+    new_cron: str,
+) -> None:
+    from app.agent_cron import seeds
+
+    store = AutoReplyStore(tmp_path / f"{migration_key}.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    default = next(
+        item for item in seeds.SCHEDULED_TASK_DEFAULTS if item.migration_key == migration_key
+    )
+    copy = seeds.SCHEDULED_TASK_DEFAULT_COPY[migration_key]
+    original = store.create_scheduled_task(
+        migration_key=migration_key,
+        name=copy.name,
+        description=copy.description,
+        prompt="my saved report instructions",
+        cron_expression=old_cron,
+        timezone_name=old_timezone,
+        runtime_id="codex_oauth",
+        skill_refs=seeds._consumer_skill_refs(
+            options, managed=default.managed, operation=default.operation
+        ),
+        enabled=True,
+        now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        original.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        migration_key,
+    )
+
+    assert migrated.id == original.id
+    assert migrated.version == original.version + 1
+    assert migrated.cron_expression == new_cron
+    assert migrated.timezone_name == "America/Los_Angeles"
+    assert migrated.enabled is True
+    assert migrated.prompt == original.prompt
+    assert migrated.skill_refs == original.skill_refs
+    assert store.get_scheduled_task_run(run.id) == run
+    assert _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        migration_key,
+    ) == migrated
+
+
+@pytest.mark.parametrize(
+    ("migration_key", "custom_cron", "timezone_name"),
+    [
+        ("ceo-daily-report-daily-v1", "0 30 21 * * *", "Asia/Shanghai"),
+        ("weekly-okr-report-sunday-v1", "0 30 18 * * 0", "Asia/Shanghai"),
+        ("ceo-daily-report-daily-v1", "0 0 21 * * *", "America/Los_Angeles"),
+        ("weekly-okr-report-sunday-v1", "0 0 18 * * 0", "UTC"),
+    ],
+)
+def test_seed_preserves_custom_report_schedule(
+    tmp_path: Path, migration_key: str, custom_cron: str, timezone_name: str
+) -> None:
+    from app.agent_cron import seeds
+
+    store = AutoReplyStore(tmp_path / f"custom-{migration_key}.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    default = next(
+        item for item in seeds.SCHEDULED_TASK_DEFAULTS if item.migration_key == migration_key
+    )
+    copy = seeds.SCHEDULED_TASK_DEFAULT_COPY[migration_key]
+    original = store.create_scheduled_task(
+        migration_key=migration_key,
+        name=copy.name,
+        description=copy.description,
+        prompt="my saved report instructions",
+        cron_expression=custom_cron,
+        timezone_name=timezone_name,
+        runtime_id="codex_oauth",
+        skill_refs=seeds._consumer_skill_refs(
+            options, managed=default.managed, operation=default.operation
+        ),
+        enabled=True,
+        now=NOW,
+    )
+
+    seeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        migration_key,
+    )
+
+    assert seeded == original
 
 
 def test_proactive_seeds_do_not_include_lark_default(tmp_path: Path) -> None:

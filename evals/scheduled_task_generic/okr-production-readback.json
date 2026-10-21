@@ -189,6 +189,64 @@
     "system_execution_id": 324,
     "sent_status": "SUCCESS"
   },
+  "new_natural_runs": [
+    {
+      "observed_at": "2026-10-21T14:04:34Z",
+      "scope": "Post-deploy natural CEO daily report; no manual replay",
+      "production_commit": "effc38f936b418f3e4957542123590f00ef0e1ef",
+      "production_pid": 63212,
+      "healthz_ok": true,
+      "scheduled_task_id": 14,
+      "scheduled_task_run_id": 389818,
+      "attempt_id": 15859,
+      "reply_task_id": 416660,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-21T13:00:00Z",
+      "dispatch_status": "dispatched",
+      "terminal_status": "done",
+      "task_config_version": 40,
+      "task_cron_expression": "0 0 21 * * *",
+      "task_timezone_name": "Asia/Shanghai",
+      "managed_skill": "ceo-daily-report",
+      "managed_skill_revision_id": 203,
+      "consumer_run_id": 389822,
+      "consumer_status": "completed",
+      "audit_run_id": 389848,
+      "audit_status": "completed_approve",
+      "revision_count": 0,
+      "document": {
+        "provider_node_id": "AR4GpnMqJzEZb75aibjmGQyBVKe0xjE3",
+        "title": "CEO 每日总结 2026-10-21",
+        "final_revision": 1,
+        "final_report_chars": 3310,
+        "final_report_sha256": "a6f83ad0fd28b33f2263dfd6a0e79e105a3fd9177a927580b9120a53e6933406",
+        "post_write_provider_readback": "complete_markdown",
+        "provider_readback_chars": 3311,
+        "provider_readback_sha256": "b4d785ed79742bf0ccb0dc0828204d4ecc11e62b2c5683b3aa013c0366e97998",
+        "only_difference": "provider terminal newline",
+        "equal_after_terminal_newline_normalization": true,
+        "complete_jsonml_readback_before_final_update": true
+      },
+      "notification": {
+        "system_execution_id": 410,
+        "action_count": 1,
+        "verified_action_count": 1,
+        "persistent_receipt_state": "sent",
+        "provider_status_query": "SUCCESS",
+        "provider_message_identity_returned": true
+      },
+      "trajectory": {
+        "consumer_native_session_id": "01a15e8d-5c40-7783-aefa-69d770d91aa8",
+        "audit_native_session_id": "01a15e93-11e1-7021-9982-e783c1b97634",
+        "consumer_event_count": 267,
+        "audit_event_count": 77,
+        "full_consumer_and_audit_trajectories_read": true,
+        "transient_unknown_activity_source_error_retried_with_supported_sources": true
+      },
+      "catchup_branch_exercised": false,
+      "report_body_or_message_receipt_token_included": false
+    }
+  ],
   "okr_real_children": {
     "parent_node_id": "m9bN7RYPWdbednwAiRewoykjJZd1wyK0",
     "count": 18,
