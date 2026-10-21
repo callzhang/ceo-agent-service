@@ -251,7 +251,7 @@ def test_score_action_is_registered_and_discoverable():
     assert ("dingtang-okr", "score_kr") in native_dws_handlers(object(), object())
 
 
-def _run_page_script(request, *, batch="batch-1", evaluator="evaluator-1", principal="evaluator-1", batch_name="2026年1季度", detail_period="period-1", score_type=1, is_current=True, after_score=0.8, already=False, write_error=False, read_error=False):
+def _run_page_script(request, *, batch="batch-1", evaluator="evaluator-1", principal="evaluator-1", batch_name="2026年1季度", detail_period="period-1", score_type=1, is_current=True, runtime_available=True, module_error=False, after_score=0.8, already=False, write_error=False, read_error=False):
     from scripts.dingteam_okr_score import _page_script
 
     source = _page_script(request, "result")
@@ -263,6 +263,7 @@ const config = __CONFIG__;
 global.window = global;
 global.document = {documentElement: {setAttribute: (_key, value) => {result = value;}}};
 global.webpackChunkallinone = {push: ([, , callback]) => callback(id => {
+  if (config.module_error) throw new Error('page module changed');
   if (id === 86036) return {A: {userId: config.principal}};
   if (id === 1872) return {A: {
     person: {period: {list: async body => {
@@ -292,12 +293,14 @@ global.webpackChunkallinone = {push: ([, , callback]) => callback(id => {
   }};
   throw new Error('unexpected page module');
 })};
+if (!config.runtime_available) global.webpackChunkallinone = undefined;
 __SOURCE__
 setTimeout(() => console.log(JSON.stringify({calls, result: JSON.parse(result)})), 0);
 """.replace("__SOURCE__", source).replace("__CONFIG__", json.dumps({
         "batch": batch, "evaluator": evaluator, "principal": principal,
         "batch_name": batch_name, "detail_period": detail_period,
         "score_type": score_type, "is_current": is_current,
+        "runtime_available": runtime_available, "module_error": module_error,
         "after_score": after_score,
         "already": already, "write_error": write_error, "read_error": read_error,
     }))
@@ -355,6 +358,8 @@ def test_browser_write_injection_uses_one_exact_reviewed_record():
     {"detail_period": "another-period"},
     {"score_type": 2},
     {"is_current": False},
+    {"runtime_available": False},
+    {"module_error": True},
 ])
 def test_browser_refuses_changed_target_before_write(changed):
     request = {

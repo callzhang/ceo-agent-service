@@ -52,14 +52,8 @@ def _page_script(request: dict, result_attribute: str) -> str:
 (async function() {
   const resultAttribute = __RESULT_ATTRIBUTE__;
   const request = __REQUEST__;
-  let requireModule;
-  if (window.webpackChunkallinone) {
-    window.webpackChunkallinone.push([
-      ['__ceo_okr_score_' + Date.now()], {}, function(require) { requireModule = require; }
-    ]);
-  }
-  const account = requireModule && requireModule(86036).A;
-  const api = requireModule && requireModule(1872).A;
+  let account;
+  let api;
   function currentPrincipal() {
     if (!account || !account.userId) throw new Error('OKR page principal is unavailable');
     return String(account.userId);
@@ -115,6 +109,14 @@ def _page_script(request: dict, result_attribute: str) -> str:
   }
   let writeAttempted = false;
   try {
+    let requireModule;
+    if (window.webpackChunkallinone) {
+      window.webpackChunkallinone.push([
+        ['__ceo_okr_score_' + Date.now()], {}, function(require) { requireModule = require; }
+      ]);
+    }
+    account = requireModule && requireModule(86036).A;
+    api = requireModule && requireModule(1872).A;
     let data;
     if (request.operation === 'read_score_detail') {
       data = await readCurrent();
