@@ -275,7 +275,9 @@ class CodexRuntimeAdapter:
                 failover_permitted=True,
                 route_pause_required=True,
             )
-        if process_code == CODEX_PROVIDER_OVERLOADED:
+        if process_code == CODEX_PROVIDER_OVERLOADED or (
+            _is_structured_provider_rate_limited(structured_messages)
+        ):
             # A model at capacity is a transient provider condition: let the
             # router move this turn to the configured fallback route and keep
             # new work off the overloaded route until the probe sees it healthy.
@@ -434,6 +436,16 @@ def _is_codex_context_window_exceeded(detail: str) -> bool:
 def _is_structured_invalid_api_key(messages: list[str]) -> bool:
     detail = "\n".join(messages).casefold()
     return "incorrect api key provided" in detail and "invalid_api_key" in detail
+
+
+def _is_structured_provider_rate_limited(messages: list[str]) -> bool:
+    for message in messages:
+        # Codex's JSONL error for a Responses API 429 carries this terminal
+        # status string rather than a numeric JSON error code.
+        _, separator, status = message.casefold().partition("last status: ")
+        if separator and status.split(maxsplit=1)[0] == "429":
+            return True
+    return False
 
 
 def _is_invalid_output_schema(detail: str, messages: list[str]) -> bool:
