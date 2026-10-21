@@ -30,4 +30,15 @@ The existing no-worker Console copy script traversed 15 API paths, including His
 
 ## Review and production
 
-Independent SPEC approved with the paired-version fix, and QUALITY approved commits through20d4a9f32. Main was reconciled normally through366dd8241; no schema factory changed upstream. The final54-case current/schema/inverse/publication/seed/Workbench batch passed, and the84-case updater/paired/bootstrap/explicit-Email batch passed. Five Workbench current/missing/schema cases also passed. Standard deployment and live readback remain pending. Tests use outbound substitutes only. This document does not claim deployment or external business outcomes yet.
+Independent SPEC approved with the paired-version fix, and QUALITY approved commits through20d4a9f32. Main was reconciled normally through366dd8241; no schema factory changed upstream. The final54-case current/schema/inverse/publication/seed/Workbench batch passed, and the84-case updater/paired/bootstrap/explicit-Email batch passed. Five Workbench current/missing/schema cases also passed. Standard deployment and live readback subsequently passed as recorded below. Tests use outbound substitutes only. This document does not claim deployment or external business outcomes yet.
+
+
+## Production acceptance
+
+Standard deploy completed at2026-10-21 10:09:42 UTC (03:09 Pacific), operation `deploy-e848b330-a0a2-43fb-82a5-e0313260f3c0`, from366dd8241 to `18d7d5f38ba3b17dc938cbcada27d8b54d38ca64`. The service drained naturally; no skip-quiet or manual stop/kill was used. Launchd supervisor PID82482 was read back. Production declarations exactly match Store19.12/Email53, with ten core tables plus the existing Email ledger. The pre-existing run190042/task FK finding remains unchanged.
+
+Live healthz, Dashboard queues, Attention and History returned200. The six sampled migrated task families (Reply, Summary, Meeting, OKR, Email classification and Workbench) had no new failed IDs against the predeploy snapshot. One Reply was processing normally after restart; this is a point-in-time readback, not a claim that all business work has completed.
+
+The deployment receipt's verified source19.11 recovery copy was retained while the new daily19.12 backup was built and validated. Final backup readback found exactly one complete file, `auto-reply-2026-10-21.sqlite3`,487784448bytes, Store19.12/Email53, independent integrity_check `ok`, SHA256 `3c73db6782511ffab4463e29959ba1b3091dc26dbb7d399a039b8b7c84c5ad78`, and zero staging files. The former source recovery file was retired only after this new verified copy existed. Exact live evidence: `validation/2026-10-21-runtime-current-live.json`.
+
+Production source checkout was clean after deployment. The final documentation-only acceptance commit follows the installed runtime commit; it does not change runtime behavior.

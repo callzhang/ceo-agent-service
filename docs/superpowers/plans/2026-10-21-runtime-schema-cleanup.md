@@ -45,8 +45,8 @@ Files: docs/architecture.md, docs/runtime-mechanism.md, concise validation evide
 
 - [x] SQLite backup production into task temporary directory. Forward; compare all typed semantic facts, references, allocator waters and unaffected rows. Inverse current data; old code cold read; reforward. Preserve baseline FK findings.
 - [x] Exercise affected task/review/business result/receipt writes with fake outbound providers. Never trigger real test sending.
-- [ ] Update behavior documents, perform spec review then quality review, normal merge upstream increments and rerun affected checks.
-- [ ] Commit/push; deploy via app.deploy after copy/inverse checks pass. Read live PID/version/schema, health, queues, Attention, History and verified newest backup. Remove own claim and temporary artifacts.
+- [x] Update behavior documents, perform spec review then quality review, normal merge upstream increments and rerun affected checks.
+- [x] Commit/push; deploy via app.deploy after copy/inverse checks pass. Read live PID/version/schema, health, queues, Attention, History and verified newest backup. Remove own claim and temporary artifacts.
 
 Acceptance: one current declaration for blank and migrated databases; no current-schema startup repair; exact-current opens do not rewrite facts; malformed current opens reject without mutation; explicit forward/inverse is transactional and proven on production copy before deployment.
 
