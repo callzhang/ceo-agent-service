@@ -256,9 +256,9 @@
     "node_set_sha256": "7dd1d817f87f4d2caae013b98ed3f691b6a45d090dd5b0d5f64b6af02848da64"
   },
   "timezone_schedule_readback": {
-    "observed_at": "2026-10-21T21:04:25Z",
-    "production_commit": "ecfd18721eee5f7f9d586426340a9e780ac74dfc",
-    "service_pid": 63131,
+    "observed_at": "2026-10-21T21:05:24Z",
+    "production_commit": "17da0fe46520d738c724b09bfd3d0a72c8c88e74",
+    "service_pid": 64005,
     "healthz_ok": true,
     "scheduled_task_count": 14,
     "tasks": [
@@ -306,6 +306,7 @@
       "history_endpoint_page_size": 100,
       "history_endpoint_reported_total": 1334
     },
-    "body_or_message_receipt_token_included": false
+    "body_or_message_receipt_token_included": false,
+    "supervisor_pid": 64002
   }
 }
