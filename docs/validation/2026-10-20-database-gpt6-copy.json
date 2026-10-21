@@ -416,17 +416,324 @@
     "production_deployment_not_approved_by_this_review": true
   },
   "deployment": {
-    "status": "ready_for_standard_deploy",
-    "database_release_authorized": true,
+    "status": "succeeded",
+    "target_commit": "a79d8e279c3b40b15590d8cf34aa156090c67236",
     "production_setting_mutated": true,
-    "production_database_mutated": false,
-    "production_restarted": false,
-    "note": "CLI0.163 native Luna complete case passes; no Astra production upgrade. Earlier schema inverse/actual-old-cold/reforward applies to unchanged migration sources."
+    "production_database_migrated": true,
+    "production_restarted": true,
+    "readback": {
+      "at": "2026-10-21T04:58:19.382156+00:00",
+      "production_head": "a79d8e279c3b40b15590d8cf34aa156090c67236",
+      "clean_checkout": true,
+      "endpoints": {
+        "/healthz": {
+          "http": 200,
+          "health": {
+            "ok": true,
+            "status": "ok"
+          }
+        },
+        "/api/console/status": {
+          "http": 200,
+          "summary": {
+            "queue_count": 12,
+            "pending": 14,
+            "processing": 0,
+            "failed": 21,
+            "retryable": 1,
+            "attention": 11
+          }
+        },
+        "/api/console/attention": {
+          "http": 200,
+          "items_count": 11
+        },
+        "/api/console/history": {
+          "http": 200,
+          "items_count": 20
+        },
+        "/api/console/settings/agent-runtime": {
+          "http": 200,
+          "effective_fields": {
+            "CEO_CODEX_MODEL": "gpt-6-luna",
+            "CEO_CODEX_MODEL_REASONING_EFFORT": "high",
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,qwen_gpu4,claude_oauth",
+            "CEO_RUNTIME_CODEX_API_MODEL": "gpt-5.6-luna"
+          }
+        },
+        "/api/repository-upgrade/status": {
+          "http": 200,
+          "progress": {
+            "operation_id": "deploy-50fc3d71-7745-4907-92ff-1932c5338cd6",
+            "status": "succeeded",
+            "target_commit": "a79d8e279c3b40b15590d8cf34aa156090c67236",
+            "installed_commit": "a79d8e279c3b40b15590d8cf34aa156090c67236",
+            "error": "",
+            "updated_at": "2026-10-21T04:58:01.104153+00:00"
+          }
+        }
+      },
+      "schema_pair": [
+        "2026-10-19.11",
+        53
+      ],
+      "ordinary_tables": [
+        "actions",
+        "business",
+        "configs",
+        "email_schema_migrations",
+        "emails",
+        "provenance",
+        "provider_state",
+        "runs",
+        "schedules",
+        "state",
+        "tasks"
+      ],
+      "fk_findings": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "backup": {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-20.sqlite3",
+        "schema_pair": [
+          "2026-10-19.11",
+          53
+        ],
+        "complete": true,
+        "bytes": 487153664,
+        "sha256": "97a398855312fe9a13c95d4ba0acf1fb62a67d547d87cc7d85386e5be349dfae",
+        "reused_deploy_backup_schema": [
+          "2026-10-19.7",
+          53
+        ],
+        "verified_before_old_cleanup": true
+      },
+      "main_file_bytes": 487153664,
+      "page_size": 4096,
+      "free_pages": 1125,
+      "integrity": [
+        "ok"
+      ],
+      "launchd_pid": 30806,
+      "cli_version": "codex-cli 0.163.0"
+    },
+    "reused_deploy_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-20.sqlite3",
+      "complete": true,
+      "bytes": 479956992,
+      "schema_pair": [
+        "2026-10-19.7",
+        53
+      ]
+    },
+    "latest_backup_refreshed": true,
+    "obsolete_backup_absent": true,
+    "schema_inverse_source_receipt": {
+      "original_version": [
+        "2026-10-19.8",
+        "2026-10-20T09:05:43.454914+00:00"
+      ],
+      "email_versions": [
+        [
+          11,
+          "2026-08-30T20:36:14+00:00"
+        ],
+        [
+          15,
+          "2026-09-01T17:50:22+00:00"
+        ],
+        [
+          16,
+          "2026-09-04T02:35:04+00:00"
+        ],
+        [
+          17,
+          "2026-09-04T02:35:04+00:00"
+        ],
+        [
+          18,
+          "2026-09-05T23:35:32+00:00"
+        ],
+        [
+          19,
+          "2026-09-08T20:27:23+00:00"
+        ],
+        [
+          20,
+          "2026-09-08T20:27:23+00:00"
+        ],
+        [
+          21,
+          "2026-09-08T20:27:23+00:00"
+        ],
+        [
+          22,
+          "2026-09-08T20:27:23+00:00"
+        ],
+        [
+          23,
+          "2026-09-08T20:27:23+00:00"
+        ],
+        [
+          24,
+          "2026-09-08T20:27:23+00:00"
+        ],
+        [
+          25,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          26,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          27,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          28,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          29,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          30,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          31,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          32,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          33,
+          "2026-09-08T20:27:25+00:00"
+        ],
+        [
+          34,
+          "2026-09-09T03:30:48+00:00"
+        ],
+        [
+          35,
+          "2026-09-09T21:10:35+00:00"
+        ],
+        [
+          36,
+          "2026-09-10T02:12:45+00:00"
+        ],
+        [
+          37,
+          "2026-09-12T07:41:23+00:00"
+        ],
+        [
+          38,
+          "2026-09-15T09:16:58+00:00"
+        ],
+        [
+          39,
+          "2026-09-16 00:22:46"
+        ],
+        [
+          40,
+          "2026-09-16T08:04:07+00:00"
+        ],
+        [
+          41,
+          "2026-09-16T08:28:15+00:00"
+        ],
+        [
+          42,
+          "2026-09-17T05:11:23+00:00"
+        ],
+        [
+          43,
+          "2026-09-21T09:29:46+00:00"
+        ],
+        [
+          44,
+          "2026-10-09T04:54:29+00:00"
+        ],
+        [
+          45,
+          "2026-10-09T05:19:56+00:00"
+        ],
+        [
+          46,
+          "2026-10-10T02:01:01+00:00"
+        ],
+        [
+          47,
+          "2026-10-11T06:38:38+00:00"
+        ],
+        [
+          48,
+          "2026-10-11T07:19:00+00:00"
+        ],
+        [
+          49,
+          "2026-10-11T10:13:42+00:00"
+        ],
+        [
+          50,
+          "2026-10-11T14:11:22+00:00"
+        ],
+        [
+          51,
+          "2026-10-12T09:44:56+00:00"
+        ],
+        [
+          52,
+          "2026-10-19T20:15:49.459182+00:00"
+        ],
+        [
+          53,
+          "2026-10-20T01:16:18.144829+00:00"
+        ]
+      ],
+      "source_schema": {
+        "reply_variant": "actual_no_memory_fk"
+      },
+      "source_fk": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ]
+    },
+    "inverse_receipt_origin": "Exact existing release dataclass metadata from verified Store19.8 source snapshot; original schema/marker clock unchanged by the upstream runtime-only commits. No retired control values or business rows archived.",
+    "read_only_retired_field_check": true,
+    "follow_up_queue_summary": {
+      "queue_count": 12,
+      "pending": 13,
+      "processing": 1,
+      "failed": 21,
+      "retryable": 1,
+      "attention": 12
+    },
+    "baseline_failed_count": 21,
+    "follow_up_failed_count": 21,
+    "no_new_failed_queue_items_in_readback_window": true,
+    "deploy_log_sha256": "cc88aadc6426d378ee6f579b27cc361528b7b4636deab318bfdc92c6df189162",
+    "real_test_sends": 0,
+    "note": "Production codeclean and normal admission resumed; copy tests use fake providers. Existing failed items and the pre-existing FK finding are retained, not claimed repaired. The standard updater reused an older19.7 backup; it was replaced by a newly verified19.11 backup before removing the obsolete file. Backup reuse policy code was not changed."
   },
   "external_actions": {
+    "scope": "This release validation: pre-upgrade Astra case and post-upgrade Luna case",
     "real_sends": 0,
-    "fake_sends": 1,
-    "fake_verifications": 1
+    "fake_sends": 2,
+    "fake_verifications": 2
   },
   "capacity_copy": {
     "source": {
