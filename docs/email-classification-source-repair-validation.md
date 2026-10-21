@@ -117,5 +117,73 @@ path, not merely queue acceptance. Total first-task time was about 999 seconds,
 most of it before the model call; shared-account waits and the cold historical
 context remain slow. At 06:15 UTC the exact remaining seven identities were
 explicitly restored through the same adapter, following the successful small
-batch. Their final outcomes are pending. No manual classification result or
+batch. At that point their final outcomes were pending. No manual classification result or
 direct provider mutation was used to impersonate a successful Agent run.
+
+
+A second serialized deployment of reviewed main cf501b377 (PR 187, four-line
+Task retrieval bound) acquired global admission while the second Email task was
+running. That task completed at 06:21:36 UTC, attempt 1, processed/work/certain,
+canonical classification 5106363250407065488 with Agent provenance. The remaining
+six could not be claimed while this deployment waited on processing Work Summary
+416322. Its 17,678-byte input was still persisted and uncompacted; no active
+Agent runtime or processing Email provider action was present at inspection.
+
+Using Derek's existing controlled-restart authorization, the still-waiting deploy
+command was cancelled before it changed production, then the same reviewed target
+was deployed through app.deploy --skip-quiet-wait. The 36 focused Task retrieval
+tests passed in this worktree; app/ and tests/ bytes matched cf501b377 exactly.
+The deployment succeeded at 06:28:59 UTC. New supervisor PID 15144 and children
+15147/15148/15149 were running, healthz was ok, and queues/Attention/History
+returned HTTP 200. The first two classification results remained done; the third
+was claimed by the new worker at 06:28:59, attempt 1. The process restart requires
+another cold owner-context build; this remains a latency limitation, not a source
+read failure. No original task identity was changed and no source input was
+manually rewritten.
+
+
+## Final recovery readback
+
+At 2026-10-21 06:34 UTC all eight exact selected tasks were done, attempt 1,
+with empty errors. Every result was processed/certain. All eight canonical
+classifications had classification_source=agent and a durable Agent result;
+eight matching native runtime attempts completed on codex_oauth / gpt-6-luna
+with empty failure codes. No selected task was skipped or manually classified.
+The table maps the preserved physical task identity and original accumulated
+attempt count to its actual classification and native runtime receipt.
+
+| Task | Previous attempts | Category | Canonical classification | Native runtime |
+| --- | ---: | --- | --- | --- |
+| 416045 | 59 | work | 5068306659856539788 | 388696 |
+| 416046 | 54 | work | 5106363250407065488 | 388703 |
+| 416064 | 48 | work | 977754965576637427 | 388713 |
+| 416241 | 29 | finance | 2575611978828962025 | 388716 |
+| 416257 | 23 | finance | 8739988752211911919 | 388717 |
+| 416276 | 19 | junk | 8916896817743474338 | 388718 |
+| 416277 | 14 | finance | 2766812481075349635 | 388720 |
+| 416284 | 11 | junk | 5173796388236209575 | 388724 |
+
+Work Summary 416319 remained done, attempts 1, empty error. The interrupted
+416322 was recovered by normal startup to pending, attempts 0, with its complete
+input preserved and empty error at 06:29:55 UTC. Its old owner process was dead
+and lease expired; the dispatcher reported it due, waiting for the existing two
+execution slots. This is restored queue eligibility, not a claim that its
+business projection has completed. No manual Task status mutation was needed.
+
+Final scope: the source failures and all eight classification tasks are resolved.
+Historical context and shared-account waits can still make cold processing slow;
+first-task end-to-end time was about 998 seconds, including about 988 seconds
+before the native model call. After the second restart, the next cold task took
+about 155 seconds, and the following four DingTalk tasks completed sequentially
+within about 67 seconds. These observed timings are not a latency guarantee.
+
+
+Final console readback at 06:36 UTC: Email worker status ready; classifier,
+provider-action, Agent-consumer and training component health all ready with zero
+reported failures. Email classification queue: done 1391, pending 0, running 0,
+failed 0. Provider actions continue normally in their separate queue (pending 29,
+processing 1, failed 0 at this snapshot); classification completion does not assert
+that every downstream mailbox action has completed. healthz, Attention and History
+were HTTP 200. Production cf501b377 was clean. Runtime code was unchanged after
+this readback; the remaining publication consists only of validation/docs and
+claim cleanup, so it requires no additional restart.
