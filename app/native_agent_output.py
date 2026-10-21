@@ -76,7 +76,37 @@ def native_output_schema(role: str, *, purpose: str = "general") -> dict:
     canonical = _model(role, purpose).model_json_schema()
     root = copy.deepcopy(_resolve(canonical, canonical["$defs"]))
     root["$defs"] = canonical["$defs"]
-    return _project(root)
+    projected = _project(root)
+    if role != "consumer":
+        return projected
+    for name in ("action", "target", "payload"):
+        projected["properties"].pop(name)
+    decision_branches = []
+    for branch in _consumer_action_branches(root):
+        shape = _project({
+            "type": "object", "properties": branch["properties"],
+            "required": ["action", "target", "payload"],
+            "additionalProperties": False,
+        })
+        shape["properties"]["action"] = {
+            "type": "string", "enum": [branch["properties"]["action"]["const"]],
+        }
+        decision_branches.append(shape)
+    projected["properties"]["decision"] = {"anyOf": decision_branches}
+    projected["required"] = list(projected["properties"])
+    return projected
+
+
+def _consumer_action_branches(root: dict) -> list[dict]:
+    for clause in root.get("allOf", []):
+        branches = clause.get("oneOf", [])
+        if branches and all(
+            set(branch.get("properties", {})) >= {"action", "target", "payload"}
+            and "const" in branch["properties"]["action"]
+            for branch in branches
+        ):
+            return branches
+    raise ValueError("consumer action branch schema missing")
 
 
 def native_output_schema_path(role: str, *, purpose: str = "general") -> Path:
@@ -149,7 +179,28 @@ def parse_native_output(raw: str, role: str, *, purpose: str = "general") -> str
         raise
     try:
         native = _NativeObject.model_validate_json(candidate).root
-        restored = _decode(native, schema, schema["$defs"])
+        if role == "consumer":
+            decision = native.pop("decision", None)
+            if (not isinstance(decision, dict)
+                    or set(decision) != {"action", "target", "payload"}
+                    or any(name in native for name in ("action", "target", "payload"))):
+                raise ValueError("native consumer decision is invalid")
+            action = decision["action"]
+            root = _resolve(schema, schema["$defs"])
+            branch = next((item for item in _consumer_action_branches(root)
+                           if item["properties"]["action"]["const"] == action), None)
+            if branch is None:
+                raise ValueError("native consumer action is unknown")
+            restored = _decode(native, root, schema["$defs"])
+            restored.update({
+                "action": action,
+                "target": _decode(decision["target"], branch["properties"]["target"],
+                                  schema["$defs"]),
+                "payload": _decode(decision["payload"], branch["properties"]["payload"],
+                                   schema["$defs"]),
+            })
+        else:
+            restored = _decode(native, schema, schema["$defs"])
         result = json.dumps(restored, ensure_ascii=False)
         model.model_validate_json(result)
     except (ValueError, ValidationError, TypeError) as exc:

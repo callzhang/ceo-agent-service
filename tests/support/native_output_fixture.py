@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from app.agent_wire_contracts import AuditAgentWireResult, consumer_wire_model
 from app.native_agent_output import (
     _JSON_VALUE_SCHEMA,
+    _consumer_action_branches,
     _matches,
     _resolve,
     native_output_schema,
@@ -66,8 +67,23 @@ def native_stream_for_command(stdout: str, command: list[str]) -> str:
                 value = json.loads(item["text"])
                 if isinstance(value, dict) and not validator.is_valid(value):
                     model.model_validate(value)
-                    item["text"] = json.dumps(_encode(value, schema, schema["$defs"]),
-                                              ensure_ascii=False)
+                    if role == "consumer":
+                        root = _resolve(schema, schema["$defs"])
+                        branch = next(part for part in _consumer_action_branches(root)
+                                      if part["properties"]["action"]["const"] == value["action"])
+                        encoded = {key: _encode(item, root["properties"][key], schema["$defs"])
+                                   for key, item in value.items()
+                                   if key not in {"action", "target", "payload"}}
+                        encoded["decision"] = {
+                            "action": value["action"],
+                            "target": _encode(value["target"], branch["properties"]["target"],
+                                              schema["$defs"]),
+                            "payload": _encode(value["payload"], branch["properties"]["payload"],
+                                               schema["$defs"]),
+                        }
+                    else:
+                        encoded = _encode(value, schema, schema["$defs"])
+                    item["text"] = json.dumps(encoded, ensure_ascii=False)
                     line = json.dumps(event, ensure_ascii=False)
         except (ValueError, TypeError, KeyError, AttributeError):
             pass

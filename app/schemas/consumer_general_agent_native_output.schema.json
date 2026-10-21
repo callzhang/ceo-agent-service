@@ -1,81 +1,9 @@
 {
   "additionalProperties": false,
   "properties": {
-    "action": {
-      "minLength": 1,
-      "type": "string",
-      "enum": [
-        "plan",
-        "no_action",
-        "retry",
-        "failed",
-        "needs_human",
-        "reply",
-        "react",
-        "request_access"
-      ]
-    },
     "reason": {
       "minLength": 1,
       "type": "string"
-    },
-    "target": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "key": {
-                "type": "string"
-              },
-              "value": {
-                "$ref": "#/$defs/JsonValue"
-              }
-            },
-            "required": [
-              "key",
-              "value"
-            ],
-            "additionalProperties": false
-          }
-        }
-      },
-      "required": [
-        "entries"
-      ],
-      "additionalProperties": false,
-      "description": "Lossless JSON object: entries holds each original key and value."
-    },
-    "payload": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "key": {
-                "type": "string"
-              },
-              "value": {
-                "$ref": "#/$defs/JsonValue"
-              }
-            },
-            "required": [
-              "key",
-              "value"
-            ],
-            "additionalProperties": false
-          }
-        }
-      },
-      "required": [
-        "entries"
-      ],
-      "additionalProperties": false,
-      "description": "Lossless JSON object: entries holds each original key and value."
     },
     "evidence_refs": {
       "items": {
@@ -183,13 +111,333 @@
     },
     "continue_after_execution": {
       "type": "boolean"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "plan"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "objective": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "actions": {
+                  "items": {
+                    "$ref": "#/$defs/ProposedAction"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "sourced_facts": {
+                  "items": {
+                    "$ref": "#/$defs/ProposalFact"
+                  },
+                  "type": "array"
+                },
+                "authored_judgment": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "objective",
+                "actions",
+                "sourced_facts",
+                "authored_judgment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "no_action"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "retry"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "evidence_refs": {
+              "minItems": 1
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload",
+            "evidence_refs"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "failed"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "needs_human"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "reply"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "conversation_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "message_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id",
+                "message_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "react"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "conversation_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "message_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id",
+                "message_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "emoji": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "emoji"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "request_access"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "conversation_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "message_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id",
+                "message_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "required": [
-    "action",
     "reason",
-    "target",
-    "payload",
     "evidence_refs",
     "summary",
     "error_code",
@@ -206,7 +454,8 @@
     "decision_basis",
     "stage_index",
     "predecessor_review_id",
-    "continue_after_execution"
+    "continue_after_execution",
+    "decision"
   ],
   "type": "object",
   "$defs": {

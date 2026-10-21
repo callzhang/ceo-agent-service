@@ -35,10 +35,7 @@ def _consumer(action="no_action", *, purpose="general", target=None, payload=Non
         "rule_coverage": 1.0, "information_completeness": 1.0,
         "durable_memories": [],
     }).model_dump(mode="json")
-    for name in ("target", "payload"):
-        wire[name] = {"entries": [
-            {"key": key, "value": value} for key, value in wire[name].items()
-        ]}
+    wire["decision"] = {name: wire.pop(name) for name in ("action", "target", "payload")}
     return wire
 
 
@@ -47,9 +44,11 @@ def test_native_consumer_schema_tracks_both_current_purposes():
     oa = native_output_schema("consumer", purpose="oa")
     Draft202012Validator.check_schema(general)
     Draft202012Validator.check_schema(oa)
-    assert set(oa["properties"]["action"]["enum"]) - set(
-        general["properties"]["action"]["enum"]
-    ) == {"approve", "reject", "return", "comment"}
+    def actions(schema):
+        return {branch["properties"]["action"]["enum"][0]
+                for branch in schema["properties"]["decision"]["anyOf"]}
+
+    assert actions(oa) - actions(general) == {"approve", "reject", "return", "comment"}
 
 
 @pytest.mark.parametrize("role,purpose", [
@@ -72,6 +71,45 @@ def test_native_oa_return_restores_target_and_payload_with_original_values():
     assert result.proposal.actions[0].payload == payload
     with pytest.raises(ResultParseError):
         parse_native_output(_event(native), "consumer", purpose="general")
+
+
+def test_native_consumer_decision_keeps_action_specific_target_and_payload():
+    target = {"process_instance_id": "p", "task_id": "001", "target_activity_id": "a"}
+    payload = {"remark": "请补充材料", "revert_action": "REVERT_FOR_RESUBMIT"}
+    native = _consumer("return", purpose="oa", target=target, payload=payload)
+    schema = native_output_schema("consumer", purpose="oa")
+    validator = Draft202012Validator(schema)
+    assert validator.is_valid(native)
+    restored = json.loads(parse_native_output(_event(native), "consumer", purpose="oa"))
+    assert restored["action"] == "return"
+    assert restored["target"] == target
+    assert restored["payload"] == payload
+    invalid = copy.deepcopy(native)
+    invalid["decision"]["action"] = "plan"
+    assert not validator.is_valid(invalid)
+
+
+def test_native_consumer_plan_restores_nested_dynamic_json():
+    target = {"conversation_id": "c", "message_id": "m"}
+    payload = {"content": "草稿", "a/~b": [None, True, 1.5]}
+    proposal = {
+        "objective": "交付草稿", "actions": [{
+            "description": "交付草稿", "action_identity": "draft-1",
+            "capability": "dingtalk-chat", "operation": "reply_to_message",
+            "target": target, "payload": payload, "effect": "external",
+        }],
+        "sourced_facts": [], "authored_judgment": "已核实来源",
+    }
+    native = _consumer("plan", payload=proposal)
+    action = native["decision"]["payload"]["actions"][0]
+    for name in ("target", "payload"):
+        action[name] = {"entries": [{"key": key, "value": value}
+                                    for key, value in action[name].items()]}
+    assert Draft202012Validator(native_output_schema("consumer")).is_valid(native)
+    restored = json.loads(parse_native_output(_event(native), "consumer"))
+    action = restored["payload"]["actions"][0]
+    assert action["target"] == target
+    assert action["payload"] == payload
 
 
 def test_native_result_keeps_the_existing_purpose_parser():

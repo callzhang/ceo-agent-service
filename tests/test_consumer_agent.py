@@ -914,8 +914,8 @@ def test_consumer_codex_turn_uses_current_native_schema_and_parser(store, task, 
         "outcome": "no_action", "summary": "Already handled", "proposal": None,
         "error": {"code": "", "retryable": False, "authorization_required": False},
     })).model_dump(mode="json")
-    wire["target"] = {"entries": []}
-    wire["payload"] = {"entries": []}
+    wire["decision"] = {name: wire.pop(name)
+                        for name in ("action", "target", "payload")}
     stream = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": "native-consumer"}),
         json.dumps({"type": "item.completed", "item": {
