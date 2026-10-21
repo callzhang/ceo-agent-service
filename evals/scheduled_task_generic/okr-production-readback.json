@@ -254,5 +254,58 @@
     "has_more": false,
     "exact_linked_appendix_set": true,
     "node_set_sha256": "7dd1d817f87f4d2caae013b98ed3f691b6a45d090dd5b0d5f64b6af02848da64"
+  },
+  "timezone_schedule_readback": {
+    "observed_at": "2026-10-21T21:04:25Z",
+    "production_commit": "ecfd18721eee5f7f9d586426340a9e780ac74dfc",
+    "service_pid": 63131,
+    "healthz_ok": true,
+    "scheduled_task_count": 14,
+    "tasks": [
+      {
+        "id": 14,
+        "migration_key": "ceo-daily-report-daily-v1",
+        "version": 41,
+        "enabled": true,
+        "cron_expression": "0 0 6 * * *",
+        "timezone_name": "America/Los_Angeles",
+        "next_run_at": "2026-10-22T13:00:00Z",
+        "latest_run_id": 389818,
+        "latest_run_snapshot_version": 40
+      },
+      {
+        "id": 13,
+        "migration_key": "ceo-weekly-report-saturday-v1",
+        "version": 35,
+        "enabled": true,
+        "cron_expression": "0 0 12 * * 6",
+        "timezone_name": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "latest_run_id": 379485,
+        "latest_run_snapshot_version": 25
+      },
+      {
+        "id": 6,
+        "migration_key": "weekly-okr-report-sunday-v1",
+        "version": 13,
+        "enabled": true,
+        "cron_expression": "0 0 3 * * 0",
+        "timezone_name": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 379123,
+        "latest_run_snapshot_version": 5
+      }
+    ],
+    "reseed_preserved_ids_and_enabled_state": true,
+    "historical_latest_run_snapshots_unchanged": true,
+    "no_report_replayed_or_created_by_timezone_change": true,
+    "console_readback": {
+      "pending_or_processing_queue_items": 1,
+      "attention_groups": 12,
+      "attention_records_total": 13,
+      "history_endpoint_page_size": 100,
+      "history_endpoint_reported_total": 1334
+    },
+    "body_or_message_receipt_token_included": false
   }
 }
