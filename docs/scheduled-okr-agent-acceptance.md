@@ -305,3 +305,28 @@ got there first”，不能当成 Skill 发布成功。随后正式发布操作
 不能提前标记通过；本线程心跳继续核查。当前历史报告结果仍分别为日报真实
 文档与通知成功、管理周报实际写入但事项skipped、旧OKR服务主报告及18附录
 完整读回并发送SUCCESS。未重放或补发任何历史报告。
+
+## 用户授权的手动报告核查（2026-10-21）
+
+用户授权通过正式调度入口手动运行三份报告。以下均为 **manual**，与上方自然调度结果分开；它们不替代下一次正常触发，也不证明主机睡眠恢复补跑分支。
+
+### CEO 日报 task14
+
+- 手动运行391245，快照配置v41、`ceo-daily-report` managed Skill revision203；reply task416689最终`done`。
+- 完整流程：Consumer 391247 → Audit 391256退回 → Consumer修订391261 → Audit 391265批准。原生轨迹分别为`01a16059-e3e2-70d0-872d-f7e27516e525`、`01a1605c-4362-7c43-848f-9f8cab646e73`、`01a1605d-beb1-7c20-bfea-cbb23f177afe`。首轮审核指出决策事项和推进事项混在一起；修订后分开表述并通过审核，属于实际内容问题，不是评测误判。
+- 文档完整读回成功，Markdown 6565字符，SHA-256 `4071d1489afbccf4550f1ad313e69b84559825411e1c43d65cb2c70dd606c040`。文档节点为`EpGBa2Lm8a7NA9YlUReYRy6RVgN7R35y`。系统持久通知回执为`sent`，provider核验成功，查询状态`SUCCESS`。
+- 手动触发在洛杉矶10月21日下午，报告标题日期为10月22日，故比10月22日自然触发提前生成。自然运行不得被该手动结果冒充；之后若自然日报更新同日期文档，需核验其自己的快照与回执。
+
+### CEO 管理周报 task13
+
+- 手动运行391278，快照配置v35、`ceo-weekly-report` managed Skill revision202；reply task416693最终`done`。
+- 完整流程：Consumer 391289 → Audit 391300退回（会议材料覆盖不足）→ Consumer修订391303 → Audit 391308退回（报告和指标日期误写为未来的10月22日）→ Consumer修订391310 → Audit 391312批准`no_action`。Consumer原生会话为`01a1606d-6074-75e2-beda-789778f3d884`；三轮Audit会话为`01a1606e-92e6-7e61-b1a9-864d1a6815b6`、`01a16075-06b8-71a0-bdfd-f99cf7005d18`、`01a16076-7e57-77d3-b2c5-0785bea01855`。两次退回均由实际轨迹中的来源核查不足和日期错误触发；没有放宽审核标准。
+- 最终管理周会文档由Consumer更新后，Audit从provider完整读回并独立确认日期为10月21日、12项指标日期一致、10月23日仅作为未来检查点；无证据的实际指标仍标为“无数据”，原跟踪事项和参与者内容保留。最终完整JSONML读回285690字符，SHA-256 `af0fba213fe44210f145a85b2d404ad5afab229b86725df26b1c1f18c70cd6ef`；文档节点`NZQYprEoWoEOXajDiXEyNdeyJ1waOeDk`。本任务发布对象是周会文档，没有配置群通知动作，因此不要求也未产生消息回执。
+
+### OKR 管理周报 task6
+
+- 手动运行391284，冻结快照配置v13、`ceo-weekly-okr-report` managed Skill revision209；reply task416696于22:22:31Z终态为`failed`（`dependency_read_unavailable`），四轮已结束。
+- Consumer共失败四轮：391291/391305/391314/391356，原生会话依次为`01a1606d-b700-7b02-817d-1d8dde70a512`、`01a1606f-da10-70e0-aa96-d159d248d4d4`、`01a1607b-d015-7a50-8222-29932eabdba3`、`01a16085-3b74-7932-860c-992894a9315c`。四轮虽反复遇到相同的 2026 Q4 缺失，但 Agent 报错码不一致：`source_failed`、`okr_period_not_found`、`MissingOkrPeriod`、`dependency_read_unavailable`；最后一个被服务判为可重试，导致整条 reply task 最终`failed`。第3轮18人中14人成功，4人返回共享来源缺少当前季度。四轮都没有Audit批准、报告、文档写入、群消息或发布回执。
+- 根因已定位到生产配置仍使用旧版 OKR 浏览器来源：它把来源明确报告的`MissingOkrPeriod`当作共享来源失败抛给Agent；四轮Agent又分别映射成`source_failed`、`okr_period_not_found`、`MissingOkrPeriod`、`dependency_read_unavailable`，造成重复重试。仓库已有测试过的无头来源会对“完整个人周期列表中没有当前季度”返回`goals_not_established`的成员级事实，让Skill保留未评分章节并继续覆盖其他成员；真正的共享技术故障仍保留失败状态。PR #218 正在切换默认来源入口；该修复的单成员缺周期与有效周期真实只读探测及66项定向测试已通过，但CI仍排队、尚未合入或部署。当前启动脚本导出旧 browser fallback，Codex 子进程环境白名单又丢弃`CEO_OKR_LIVE_SOURCE_COMMAND`，所以子进程回读 `.env` 中同一旧来源。已合并的PR #219修复子进程环境继承；PR #218将父进程默认值改为缺期可识别的 headless 来源。两项都要进入部署提交，部署后读回有效子进程来源。只改重试码的PR #214已关闭，因为它没有修复来源路由根因。2026-10-21 22:22:31Z线上回查确认原reply task416696终态`failed`、没有在途重试。修复部署并读回生产配置后，再手动跑一份新报告，通过审核、完整文档读回和真实群消息回执核验；不得改用旧季度或把缺失成员评分补零。
+
+本次观察时服务短暂结束后由现有supervisor自动重新启动；健康检查恢复为`ok`，未手动重启服务。sleep-resume补跑仍未观察。下一步分别核验后续自然日报（task14）、自然管理周报（task13）和自然OKR周报（task6）的不可变快照、全量Consumer/Audit轨迹、最终provider文档读回及适用的持久通知回执；OKR来源周期未补齐前不得将其失败记录写成通过。

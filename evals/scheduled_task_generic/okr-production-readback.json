@@ -308,5 +308,211 @@
     },
     "body_or_message_receipt_token_included": false,
     "supervisor_pid": 64002
+  },
+  "manual_agent_runs": {
+    "observed_at": "2026-10-21T22:00:39.488781+00:00",
+    "scope": "User-authorized manual official scheduler triggers. These are real business runs, separate from natural scheduled acceptance.",
+    "task14_daily": {
+      "scheduled_task_run_id": 391245,
+      "trigger_kind": "manual",
+      "scheduled_for": "2026-10-21T21:23:58Z",
+      "task_version": 41,
+      "managed_skill_revision_id": 203,
+      "reply_task_id": 416689,
+      "reply_status": "done",
+      "agent_runs": [
+        {
+          "id": 391247,
+          "role": "consumer",
+          "revision": 0,
+          "status": "completed",
+          "session_id": "01a16059-e3e2-70d0-872d-f7e27516e525"
+        },
+        {
+          "id": 391256,
+          "role": "audit",
+          "revision": 0,
+          "status": "completed",
+          "session_id": "01a1605c-4362-7c43-848f-9f8cab646e73",
+          "outcome": "return"
+        },
+        {
+          "id": 391261,
+          "role": "consumer",
+          "revision": 1,
+          "status": "completed"
+        },
+        {
+          "id": 391265,
+          "role": "audit",
+          "revision": 1,
+          "status": "completed",
+          "session_id": "01a1605d-beb1-7c20-bfea-cbb23f177afe",
+          "outcome": "approve"
+        }
+      ],
+      "final_document_readback": {
+        "complete": true,
+        "node_id": "EpGBa2Lm8a7NA9YlUReYRy6RVgN7R35y",
+        "format": "Markdown",
+        "chars": 6565,
+        "sha256": "4071d1489afbccf4550f1ad313e69b84559825411e1c43d65cb2c70dd606c040"
+      },
+      "notification_receipt": {
+        "state": "sent",
+        "provider_verification_success": true,
+        "provider_send_status": "SUCCESS",
+        "provider_query_confirmed": true
+      },
+      "note": "Manual afternoon run produced the 2026-10-22 dated report before that date natural trigger. Do not count it as natural acceptance."
+    },
+    "task13_management_weekly": {
+      "scheduled_task_run_id": 391278,
+      "trigger_kind": "manual",
+      "scheduled_for": "2026-10-21T21:34:05Z",
+      "task_version": 35,
+      "managed_skill_revision_id": 202,
+      "reply_task_id": 416693,
+      "reply_status": "done",
+      "agent_runs": [
+        {
+          "id": 391289,
+          "role": "consumer",
+          "revision": 0,
+          "status": "completed",
+          "session_id": "01a1606d-6074-75e2-beda-789778f3d884"
+        },
+        {
+          "id": 391300,
+          "role": "audit",
+          "revision": 0,
+          "status": "completed",
+          "session_id": "01a1606e-92e6-7e61-b1a9-864d1a6815b6",
+          "outcome": "return",
+          "reason_class": "source coverage incomplete"
+        },
+        {
+          "id": 391303,
+          "role": "consumer",
+          "revision": 1,
+          "status": "completed",
+          "session_id": "01a1606d-6074-75e2-beda-789778f3d884"
+        },
+        {
+          "id": 391308,
+          "role": "audit",
+          "revision": 1,
+          "status": "completed",
+          "session_id": "01a16075-06b8-71a0-bdfd-f99cf7005d18",
+          "outcome": "return",
+          "reason_class": "future report/data date unsupported by evidence window"
+        },
+        {
+          "id": 391310,
+          "role": "consumer",
+          "revision": 2,
+          "status": "completed",
+          "session_id": "01a1606d-6074-75e2-beda-789778f3d884"
+        },
+        {
+          "id": 391312,
+          "role": "audit",
+          "revision": 2,
+          "status": "completed",
+          "session_id": "01a16076-7e57-77d3-b2c5-0785bea01855",
+          "outcome": "approve"
+        }
+      ],
+      "final_document_readback": {
+        "complete": true,
+        "node_id": "NZQYprEoWoEOXajDiXEyNdeyJ1waOeDk",
+        "format": "JSONML",
+        "chars": 285690,
+        "sha256": "af0fba213fe44210f145a85b2d404ad5afab229b86725df26b1c1f18c70cd6ef",
+        "independently_read_by_final_audit": true
+      },
+      "notification_receipt_required": false,
+      "note": "Publishes to the target management meeting document. Audit confirmed report/data date 2026-10-21, missing actuals retained as 无数据, and 2026-10-23 labeled as a future checkpoint. No group notification action is part of this task."
+    },
+    "task6_okr_weekly": {
+      "scheduled_task_run_id": 391284,
+      "trigger_kind": "manual",
+      "scheduled_for": "2026-10-21T21:41:01Z",
+      "task_version": 13,
+      "managed_skill_revision_id": 209,
+      "reply_task_id": 416696,
+      "reply_status": "failed",
+      "agent_runs": [
+        {
+          "id": 391291,
+          "role": "consumer",
+          "revision": 0,
+          "turn_attempt": 0,
+          "status": "failed",
+          "session_id": "01a1606d-b700-7b02-817d-1d8dde70a512",
+          "failure_code": "source_failed",
+          "source_error": "MissingOkrPeriod: 2026 Q4"
+        },
+        {
+          "id": 391305,
+          "role": "consumer",
+          "revision": 0,
+          "turn_attempt": 1,
+          "status": "failed",
+          "session_id": "01a1606f-da10-70e0-aa96-d159d248d4d4",
+          "failure_code": "okr_period_not_found",
+          "source_error": "MissingOkrPeriod: 2026 Q4"
+        },
+        {
+          "id": 391314,
+          "role": "consumer",
+          "revision": 0,
+          "turn_attempt": 2,
+          "status": "failed",
+          "session_id": "01a1607b-d015-7a50-8222-29932eabdba3",
+          "failure_code": "MissingOkrPeriod",
+          "source_error": "MissingOkrPeriod: 2026 Q4; 14/18 member reads succeeded, 4 shared-source failures"
+        },
+        {
+          "id": 391356,
+          "role": "consumer",
+          "revision": 0,
+          "turn_attempt": 3,
+          "status": "failed",
+          "session_id": "01a16085-3b74-7932-860c-992894a9315c",
+          "failure_code": "dependency_read_unavailable",
+          "source_error": "MissingOkrPeriod: 2026 Q4; source reported scope=shared"
+        }
+      ],
+      "publication": {
+        "report_created": false,
+        "document_written": false,
+        "group_message_sent": false,
+        "audit_approved": false
+      },
+      "root_cause": "Production uses the legacy OKR browser source. Its confirmed MissingOkrPeriod exception is surfaced to the Agent as a shared source failure, and four Consumer turns inconsistently relabeled that same permanent member-period absence, causing retries. The already tested headless source returns a complete-period-list receipt with availability.status=goals_not_established for this member-level absence; PR #218 switches the configured/default entrypoint to that source while retaining true technical failures. Its local authenticity probes covered one missing and one valid member, but the production setting has not yet changed and no post-deployment report evidence exists. The startup script currently exports the legacy browser fallback. The Codex child-environment allowlist also omitted CEO_OKR_LIVE_SOURCE_COMMAND, so the child fell back to the legacy command in .env. PR #219 fixes inheritance and is merged to main; PR #218 changes the parent fallback to the absence-aware headless source. Both must be present in the deployed commit, then the effective source must be read back. A separate retry-code-only PR was closed as it did not fix this source routing root cause.",
+      "next_action": "Integrate PR #218 with the latest main containing merged PR #219, rerun focused tests and complete CI/review, merge and deploy through python -m app.deploy. Read back the new PID, health, and effective child source. Then manually run a new OKR report and verify member-level goals_not_established receipts, complete Consumer/Audit trajectory, full document readback, and the real group-message receipt.",
+      "observed_at": "2026-10-21T22:22:31.850803+00:00",
+      "reply_error": "dependency_read_unavailable",
+      "terminal_evidence": "Reply-task readback returned status=failed after four failed Consumer turns; no Agent turn remains in flight.",
+      "production_configuration_readback": {
+        "launch_agent_env_override": false,
+        "service_env_file": "/Users/derek/Services/ceo-agent-service/.env",
+        "service_env_file_value": "legacy_browser fallback",
+        "current_production_flow": "run-local-service.sh exports the legacy browser default; pre-PR-219 Codex child-environment filtering drops CEO_OKR_LIVE_SOURCE_COMMAND, so the child falls back to the same legacy .env value",
+        "fixes_required_for_effective_headless_source": [
+          "PR #218 switches the startup fallback to the absence-aware headless source",
+          "PR #219 passes CEO_OKR_LIVE_SOURCE_COMMAND through the reviewed Codex child environment"
+        ],
+        "effective_source_after_both_are_deployed": "headless source passed from service parent to Codex child; confirm by post-deploy readback"
+      }
+    },
+    "service_observation": {
+      "transient_shutdown_observed": true,
+      "recovered_by_existing_supervisor": true,
+      "healthz_after_recovery": "ok",
+      "manual_restart_performed": false
+    },
+    "sleep_resume_catchup_observed": false
   }
 }
