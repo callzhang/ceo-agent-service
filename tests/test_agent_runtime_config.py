@@ -105,6 +105,7 @@ def test_added_route_carries_its_own_provider_and_repeats_a_kind():
             "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
             "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
             "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+            "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT": "medium",
             "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
             "CEO_RUNTIME_QWEN_SPARE_KIND": "codex_api",
             "CEO_RUNTIME_QWEN_SPARE_BASE_URL": "https://api.example.com/v1",
@@ -122,6 +123,8 @@ def test_added_route_carries_its_own_provider_and_repeats_a_kind():
     assert added["qwen_gpu4"].base_url == "http://100.93.145.69:8900/v1"
     assert added["qwen_spare"].base_url == "https://api.example.com/v1"
     assert added["qwen_gpu4"].model == "qwen3.8-27b"
+    assert added["qwen_gpu4"].reasoning_effort == "medium"
+    assert added["qwen_spare"].reasoning_effort == ""
     assert config.secret_for("qwen_gpu4").get_secret_value() == "gateway-key"
     assert config.secret_for("qwen_spare").get_secret_value() == "spare-key"
 
@@ -136,6 +139,18 @@ def test_added_route_requires_a_model_and_key():
         load_runtime_config(base)
     with pytest.raises(ValueError, match="CEO_RUNTIME_QWEN_GPU4_API_KEY"):
         load_runtime_config({**base, "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b"})
+
+
+def test_added_codex_route_rejects_an_unsupported_reasoning_effort():
+    with pytest.raises(ValueError, match="CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT"):
+        load_runtime_config({
+            "CEO_AGENT_RUNTIME_ROUTES": "qwen_gpu4",
+            "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
+            "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "https://qwen.example.com/v1",
+            "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+            "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
+            "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT": "ultra",
+        })
 
 
 def test_route_order_is_the_failover_order():

@@ -152,6 +152,7 @@ describe("SettingsPage", () => {
       CEO_RUNTIME_CLAUDE_API_MODEL: "claude-opus-5",
       CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
       CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
+      CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT: "medium",
     }));
     renderSettings("/settings?tab=agent-runtime");
 
@@ -169,6 +170,7 @@ describe("SettingsPage", () => {
     // An added route's model is free text.
     expect(screen.getByLabelText("codex_api 模型")).toHaveValue("MiniMax-M3");
     expect(screen.getByLabelText("claude_api 模型")).toHaveValue("claude-opus-5");
+    expect(screen.getByLabelText("qwen_gpu4 Thinking strength")).toHaveValue("medium");
   });
 
   it("numbers the cards in failover order and marks the ones switched off", async () => {
@@ -239,6 +241,7 @@ describe("SettingsPage", () => {
     await user.type(screen.getByLabelText("新增 runtime 模型"), "qwen3.8-27b");
     await user.type(screen.getByLabelText("新增 runtime API Token"), "gateway-key");
     await user.click(screen.getByRole("button", { name: "添加" }));
+    await user.selectOptions(screen.getByLabelText("qwen_gpu4 Thinking strength"), "medium");
 
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
@@ -246,6 +249,7 @@ describe("SettingsPage", () => {
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
       CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
       CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
+      CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT: "medium",
     }), {});
   });
 
@@ -292,6 +296,7 @@ describe("SettingsPage", () => {
       CEO_RUNTIME_CODEX_API_KIND: "codex_api",
       CEO_RUNTIME_CODEX_API_BASE_URL: "https://api.kksj.org/v1",
       CEO_RUNTIME_CODEX_API_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_CODEX_API_REASONING_EFFORT: "medium",
       CEO_RUNTIME_CODEX_API_API_KEY: "gateway-key",
     }));
     renameRuntimeRoute.mockResolvedValueOnce({ ok: true, message: "已改名，重启主服务后生效", meta: { updated_at: "2026-09-24T00:00:00Z" } });
@@ -312,9 +317,11 @@ describe("SettingsPage", () => {
     expect(fields).toEqual(expect.objectContaining({
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,kksj",
       CEO_RUNTIME_KKSJ_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_KKSJ_REASONING_EFFORT: "medium",
       CEO_RUNTIME_KKSJ_API_KEY: "gateway-key",
     }));
     expect(fields).not.toHaveProperty("CEO_RUNTIME_CODEX_API_MODEL");
+    expect(fields).not.toHaveProperty("CEO_RUNTIME_CODEX_API_REASONING_EFFORT");
   });
 
   it("keeps the old name when the service refuses a rename", async () => {

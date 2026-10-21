@@ -2142,6 +2142,7 @@ def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
                 "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
                 "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
                 "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+                "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT": "medium",
                 "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
             }},
         )
@@ -2151,8 +2152,10 @@ def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
     env_text = env_path.read_text(encoding="utf-8")
     assert "CEO_AGENT_RUNTIME_ROUTES=qwen_gpu4,codex_oauth" in env_text
     assert "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b" in env_text
+    assert "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT=medium" in env_text
     assert "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1" in env_text
     fields = reloaded.json()["item"]["fields"]
+    assert fields["CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT"] == "medium"
     assert fields["CEO_RUNTIME_QWEN_GPU4_API_KEY"] == "****"
     assert "gateway-key" not in response.text
     assert "CEO_RUNTIME_QWEN_GPU4_API_KEY" in reloaded.json()["item"]["secrets"]
@@ -2167,6 +2170,7 @@ def test_console_agent_runtime_removing_an_added_runtime_clears_its_settings(
         "CEO_RUNTIME_QWEN_GPU4_KIND=codex_api\n"
         "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1\n"
         "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b\n"
+        "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT=medium\n"
         "CEO_RUNTIME_QWEN_GPU4_API_KEY=gateway-key\n"
         "CEO_CLAUDE_MODEL=sonnet\n"
         "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
@@ -2192,6 +2196,7 @@ def test_console_agent_runtime_removing_an_added_runtime_clears_its_settings(
     assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n" in env_text
     assert 'CEO_RUNTIME_QWEN_GPU4_API_KEY=""' in env_text
     assert 'CEO_RUNTIME_QWEN_GPU4_MODEL=""' in env_text
+    assert 'CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT=""' in env_text
 
 
 def test_console_agent_runtime_refuses_an_added_runtime_without_a_token(
