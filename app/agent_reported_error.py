@@ -84,6 +84,9 @@ def _reportable_policies() -> dict[str, ErrorPolicy]:
         # provider suppresses it again. Duplicate suppression is the provider
         # saying the effect exists, so retrying can only repeat the loop.
         "provider_duplicate_no_readback": _FINAL,
+        # A turn cannot gain a missing declared operation by repeating the
+        # same task against the same runtime capabilities.
+        "operation_unavailable": _FINAL,
         # A dependency that was not there this turn may be there the next.
         "dependency_read_unavailable": _RECOVERS_BY_ITSELF,
         "xiaoqing_interview_mcp_not_injected": _RECOVERS_BY_ITSELF,

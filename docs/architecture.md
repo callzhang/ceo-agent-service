@@ -2162,7 +2162,7 @@ Friday 会把它当成自己的结构化信封解析，找不到回复正文时�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 按普通连续六次技术失败上限处理；权限申请后的等待由经审核的 purpose `retry` 动作表示。`agent_context_refresh_failed` 仍是服务侧来源刷新等待，沿用持久化 run 计数和 60、120、240 秒、最长 15 分钟的退避，不形成业务结论。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
+角色同一 revision 每个 pass 最多两个技术 turn；普通连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。`dependency_read_unavailable` 按普通连续六次技术失败上限处理；本轮缺少所需的已声明工具或可执行的选定 Skill 脚本时，Consumer/Audit 报告 `operation_unavailable`，服务直接终止该次失败，不重复运行相同能力集合，也不把技术缺口变成人工授权请求。权限申请后的等待由经审核的 purpose `retry` 动作表示。`agent_context_refresh_failed` 仍是服务侧来源刷新等待，沿用持久化 run 计数和 60、120、240 秒、最长 15 分钟的退避，不形成业务结论。成功读取但无匹配数据或业务证据仍缺失不属于依赖错误。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
 
 ## 统一外发消息后缀
 
