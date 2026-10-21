@@ -77,3 +77,11 @@ The higher failed counts expose the stopped technical failures and are not
 business-success claims. Source UID availability, timeouts and DNS failures
 were retained for diagnosis or explicit repair; this task did not pretend the
 original email classifications or Work Summary business work had succeeded.
+
+
+A subsequent concurrent readback at 2026-10-21 04:25:46 UTC found Work Summary
+416319 pending at attempt 0 with the exact existing explicit-repair marker
+`retry_after_reviewed_root_cause_fix`. This session did not invoke that repair
+command. Thus the nine old over-limit cycles were stopped, and this one input
+was subsequently reopened through the established repair entry point; the eight
+Email inputs remain failed. The final active-attempts >=10 count remained zero.
