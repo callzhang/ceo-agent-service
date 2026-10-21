@@ -16,10 +16,14 @@ from tests.runtime_route_env import codex_api_env
 def test_classifier_preserves_managed_skill_and_suppresses_only_native_copy(
     tmp_path, monkeypatch, session_id, route_name
 ):
-    def no_catalog_scan(**kwargs):
-        raise AssertionError("Native name selectors do not require a filesystem scan")
-
-    monkeypatch.setattr("app.business_skills.codex_skill_roots", no_catalog_scan)
+    skill_root = tmp_path / "skills"
+    unrelated = skill_root / "unrelated" / "SKILL.md"
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_text("---\nname: unrelated\ndescription: Unrelated skill\n---\n")
+    monkeypatch.setattr(
+        "app.business_skills.codex_skill_roots",
+        lambda **kwargs: (skill_root, tmp_path / "home-skills", tmp_path / "plugins"),
+    )
     manifest = tmp_path / "mcp.json"
     manifest.write_text('{"servers":{}}')
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
@@ -72,7 +76,10 @@ def test_classifier_preserves_managed_skill_and_suppresses_only_native_copy(
     overrides = [value for value in command if value.startswith("skills.config=")]
     assert len(overrides) == 1
     entries = tomllib.loads(overrides[0])["skills"]["config"]
-    assert entries == [{"name": "ceo-email-classifier", "enabled": False}]
+    assert entries == [
+        {"path": str(unrelated), "enabled": False},
+        {"name": "ceo-email-classifier", "enabled": False},
+    ]
     assert recorded["prompt"] == prompt
     assert recorded["conversation_id"] is None
     assert "approval_policy=never" not in command

@@ -1474,6 +1474,10 @@ Runtime Router 的 Agent 轮次（`EmailClassifierRoutedBackend`），与其他 
 分类器 Codex 调用设置原生 `project_doc_max_bytes=0`，因此不会把仓库 `AGENTS.md`
 项目说明重复加入这一封邮件的判断输入；服务仍提交冻结分类 Skill、当前邮件、允许类别及退订候选，
 结果仍按严格结构校验，并只用候选索引绑定本轮原 URL。其他任务的原生项目文档设置不变。
+同一 Codex 命令使用既有 `skills.config` 目录选择器排除与分类无关的原生 Skills，
+并继续排除已内联的 `ceo-email-classifier` 原生副本；默认常驻插件入口可保留。
+目录选择在命令构建时读取原生 Skill 根，服务不复制或维护另一套静态清单。
+Claude/Friday 路线、完整冻结 Skill 正文和分类结果合同不变。
 分类请求允许正常的模型响应时间；临时网络、超时和租约中断在同一任务的三次尝试预算内按共享
 指数退避重试，重试间隔最多 15 分钟；第三次失败进入 `failed` 并保留实际错误。输入、契约或
 持久化冲突等不可重试错误直接进入 `failed`。修复根因后的显式重试重置当前预算并保留任务身份。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
