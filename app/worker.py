@@ -57,6 +57,7 @@ from app.config import (
     single_chat_read_recovery_window,
 )
 from app.corpus import MEDIA_OR_LINK_PATTERN, count_information_units
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.outbound_postfix import outbound_body_echo_key
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import (
@@ -193,7 +194,7 @@ DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 # feedback or provider loop in processing indefinitely either.
 STALE_PROCESSING_TASK_SECONDS = 10 * 60
 MAX_PROCESSING_TASK_SECONDS = 60 * 60
-MAX_REPLY_TASK_ATTEMPTS = 3
+MAX_REPLY_TASK_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 ACTIVE_RECOVERY_RETRY_DELAY_SECONDS = 5
 REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
@@ -572,7 +573,7 @@ class DingTalkAutoReplyWorker:
         self.style_records = style_records or []
         self.style_example_limit = style_example_limit
         self.send_attempts = send_attempts
-        self.max_task_attempts = max_task_attempts
+        self.max_task_attempts = min(max_task_attempts, MAX_AUTOMATIC_ATTEMPTS)
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.channel_gates = channel_gates or default_channel_gates(

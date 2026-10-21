@@ -36,6 +36,36 @@ def test_run_external_retries_then_returns_value():
     assert "transient 1" in failures[0].error
 
 
+def test_run_external_default_allows_three_retries():
+    calls = []
+
+    def operation():
+        calls.append("call")
+        if len(calls) < 4:
+            raise RuntimeError("temporary")
+        return "ok"
+
+    assert run_external(
+        "dws okr fetch", operation, delay_seconds=0, sleep=lambda _seconds: None,
+    ) == "ok"
+    assert len(calls) == 4
+
+
+def test_run_external_caps_configured_attempts_at_three_retries():
+    calls = []
+
+    def operation():
+        calls.append("call")
+        raise RuntimeError("temporary")
+
+    with pytest.raises(ExternalDependencyError):
+        run_external(
+            "dws okr fetch", operation, max_attempts=100, delay_seconds=0,
+            sleep=lambda _seconds: None,
+        )
+    assert len(calls) == 4
+
+
 def test_run_external_preserves_external_dependency_after_max_attempts():
     failures: list[ExternalAttempt] = []
 

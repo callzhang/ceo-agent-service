@@ -308,8 +308,21 @@ def test_outbox_delivery_retry_preserves_backoff_and_attempt_limit(
         third, owner="worker-3", now=third_attempt_time,
         status="failed", error="temporary failure",
     )
+    after_third = getattr(store, get_row)(outbox_id)
+    assert after_third["attempt_count"] == 3
+    assert after_third["next_attempt_at"] == "2026-10-17 12:06:00"
+
+    fourth_attempt_time = NOW + timedelta(minutes=6)
+    fourth = adapter.claim(
+        fourth_attempt_time, owner="worker-4", owner_pid=44, lease=timedelta(minutes=5)
+    )
+    assert fourth is not None and fourth.attempt == 4
+    adapter.finish_delivery(
+        fourth, owner="worker-4", now=fourth_attempt_time,
+        status="failed", error="temporary failure",
+    )
     exhausted = getattr(store, get_row)(outbox_id)
-    assert exhausted["attempt_count"] == 3
+    assert exhausted["attempt_count"] == 4
     assert exhausted["next_attempt_at"] == ""
     assert exhausted["error"] == error_prefix + "temporary failure"
 

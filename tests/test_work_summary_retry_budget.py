@@ -85,14 +85,14 @@ def test_pre_agent_dispatch_failure_is_bounded_and_delayed(tmp_path):
 def test_explicit_retry_after_root_cause_fix_gets_a_new_budget(tmp_path):
     store = AutoReplyStore(tmp_path / "manual.sqlite3")
     input_id = store.enqueue_work_summary_input("ai_minutes", "meeting", "{}")
-    for _ in range(3):
+    for _ in range(cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS):
         store.claim_work_summary_inputs(limit=1)
         run_id = store.claim_logical_run("task_agent_runs", input_id)
         store.finish_logical_run("task_agent_runs", run_id, status="failed", error="processing failure")
         store.mark_work_summary_input_failed(input_id, "processing failure")
-        if _ < 2:
+        if _ < cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS - 1:
             store.schedule_work_summary_input_retry(input_id, "processing failure", available_at="")
-    assert store.get_work_summary_input(input_id).attempts == 3
+    assert store.get_work_summary_input(input_id).attempts == cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
     assert store.requeue_failed_work_summary_input(input_id, "root cause fixed")
     claimed = store.claim_work_summary_inputs(limit=1)[0]
     assert claimed.attempts == 1
@@ -101,4 +101,4 @@ def test_explicit_retry_after_root_cause_fix_gets_a_new_budget(tmp_path):
             f"select status,error from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?",
             (input_id,),
         ).fetchall()
-    assert [tuple(row) for row in history] == [("failed", "processing failure")] * 3
+    assert [tuple(row) for row in history] == [("failed", "processing failure")] * cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS

@@ -21,6 +21,7 @@ from app.dispatcher.models import (
     DispatchEnvelope,
     QueueMetrics,
 )
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.store import AutoReplyStore
 
 
@@ -778,11 +779,11 @@ class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
         with self.store._connect() as db:
             pending = db.execute(
                 f"select count(*) from {BUSINESS_TASK_TODO_OUTBOX_PROJECTION} "
-                "where status='queued' or (status='failed' and attempt_count<3)"
+                f"where status='queued' or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS})"
             ).fetchone()[0]
             due = db.execute(
                 f"select count(*) from {BUSINESS_TASK_TODO_OUTBOX_PROJECTION} "
-                "where status='queued' or (status='failed' and attempt_count<3 "
+                f"where status='queued' or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} "
                 "and next_attempt_at<=?)", (now_text,),
             ).fetchone()[0]
             running = db.execute(
@@ -790,7 +791,7 @@ class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             oldest = db.execute(
                 f"select min(created_at) from {BUSINESS_TASK_TODO_OUTBOX_PROJECTION} "
-                "where status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)",
+                f"where status='queued' or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} and next_attempt_at<=?)",
                 (now_text,),
             ).fetchone()[0]
         return QueueMetrics(
@@ -807,7 +808,7 @@ class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
         with self.store._connect() as db:
             needs_write = db.execute(
                 f"select 1 from {BUSINESS_TASK_TODO_OUTBOX_PROJECTION} "
-                "where status='queued' or (status='failed' and attempt_count<3 "
+                f"where status='queued' or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} "
                 "and next_attempt_at<=?) or (status='running' and lease_expires_at<=?) "
                 "limit 1", (now_text, now_text),
             ).fetchone()
@@ -838,7 +839,7 @@ class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
                 )
             row = db.execute(
                 f"select * from {BUSINESS_TASK_TODO_OUTBOX_PROJECTION} where (status='queued' or "
-                "(status='failed' and attempt_count<3 and next_attempt_at<=?)) order by id limit 1",
+                f"(status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} and next_attempt_at<=?)) order by id limit 1",
                 (now_text,),
             ).fetchone()
             if row is None:

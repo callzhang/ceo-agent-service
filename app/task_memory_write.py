@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
 
-from app.external_retry import retry_delay_seconds
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, retry_delay_seconds
 from app.memory_connector_client import MemoryConnectorError, write_memory
 from app.memory_text import memory_body
 from app.store import AutoReplyStore, ReplyTask, TaskMemoryWriteEvent
@@ -23,9 +23,9 @@ from app.store import AutoReplyStore, ReplyTask, TaskMemoryWriteEvent
 
 TASK_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 TASK_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
-# About five hours of retrying at the delay ceiling before the row becomes a
-# visible `failed` entry, the same bound the meeting writes use.
-TASK_MEMORY_WRITE_MAX_ATTEMPTS = 20
+# A bounded four-call budget keeps dependency failures visible instead of
+# indefinitely delaying this delivery row.
+TASK_MEMORY_WRITE_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 
 
 def memory_write_arguments(
