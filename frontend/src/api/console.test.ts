@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, listHistoryTypes, renameRuntimeRoute } from "./console";
+import { ConsoleApiError, listAttention, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, listHistoryTypes, renameRuntimeRoute } from "./console";
 
 function statusEnvelope() {
   return {
@@ -524,3 +524,19 @@ describe("console API helpers", () => {
     }
   });
 });
+
+ it("labels grouped Failed links with each actual Attempt identity", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({items: [{category: "Reply task", records: [
+      {category: "Reply task", id: "4100", detail_url: "/attempts/12"},
+      {category: "Meeting", id: "4200", detail_url: "/meeting-attempts/35"},
+      {category: "Reply task", id: "4300", detail_url: ""},
+    ]}], meta: {total: 3}}), {status: 200});
+    try {
+      const page = await listAttention();
+      expect(page.items[0].links).toEqual([
+        {label: "查看 Attempt #12", href: "/attempts/12"},
+        {label: "查看 Meeting Attempt #35", href: "/meeting-attempts/35"},
+      ]);
+    } finally { globalThis.fetch = originalFetch; }
+  });

@@ -1240,7 +1240,11 @@ export function listAttention(signal?: AbortSignal) {
         const item = asRecord(record);
         const detailUrl = typeof item.detail_url === "string" ? item.detail_url.trim() : "";
         if (!detailUrl) return null;
-        const label = displayValue(item.category) === "Service error" ? "查看错误详情" : "查看详情";
+        const label = detailUrl.startsWith("/attempts/")
+          ? `查看 Attempt #${detailUrl.split("/").pop()}`
+          : detailUrl.startsWith("/meeting-attempts/")
+            ? `查看 Meeting Attempt #${detailUrl.split("/").pop()}`
+            : displayValue(item.category) === "Service error" ? "查看错误详情" : "查看详情";
         return { label, href: detailUrl };
       }).filter((link): link is { label: string; href: string } => Boolean(link));
       return { statuses: [...new Set(records.map((record) => displayValue(asRecord(record).status)))], id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, detail_label: displayValue(row.detail_label || "状态"), detail: row.detail ?? row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
