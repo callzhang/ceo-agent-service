@@ -1063,11 +1063,14 @@ class ConsumerAgentRunner:
 def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
     from app.reviewed_sources import capture_candidate_sources
     if (parsed.purpose_output or {}).get("action") == "request_access":
-        from app.consumer_purpose_retry import PurposeRetryBudget
-        budget = PurposeRetryBudget(store, task.business_object_key or f"reply-task:{task.id}",
-                                    purpose_for_context(context, task)).state()
-        if budget:
-            raise ResultParseError("An access request already has a verified receipt. Reuse that receipt for retry; do not request access again.")
+        from app.consumer_purpose_retry import verified_access_request_for_file
+        file_id = (parsed.purpose_output or {}).get("target", {}).get("file_id")
+        try:
+            prior_request = verified_access_request_for_file(store, task, file_id)
+        except ValueError as exc:
+            raise ResultParseError(str(exc)) from exc
+        if prior_request:
+            raise ResultParseError("This file already has a verified access request. Reuse its receipt for retry.")
     if parsed.outcome is ConsumerOutcome.RETRY:
         from app.consumer_purpose_retry import verified_access_request
         try:

@@ -37,8 +37,8 @@ Consumer 使用当前 purpose schema 的 `action`、`reason`、`target`、`paylo
 真实文件访问权限拒绝按以下顺序处理；下载、解析、OCR 或客户端失败按技术规则处理，绝不能归责申请人。
 
 1. 先使用当前流程适用的准确只读接口，确认是该材料对审批账号的实际访问拒绝。不能因一个通用下载入口失败便认定所有入口都无权读取。
-2. 有可用且已授权的权限申请渠道时，使用 `action=request_access` 提议一次明确的只读申请，写明准确材料、审批账号和请求对象；经 Audit 和执行器确认回执。OA purpose 的此动作通过审批评论请求责任人处理权限。相同请求不重复发出。
-3. 服务在成功请求后安排等待。后续仍未授权时返回 `action=retry`、`reason=access requested`；`target`、`payload` 为空对象，`evidence_refs` 引用服务提供的原权限请求回执。已送达请求不表示权限已批准。不要伪报 `failed/dependency_read_unavailable` 来取得无限重试。
+2. 有可用且已授权的权限申请渠道时，Consumer 对每个准确文件用 `action=request_access` 发起一次只读申请，明确材料、审批账号和目标文件。OA purpose 通过审批评论请求责任人处理权限；同一任务同一文件去重，不同文件可分别申请。权限申请是普通 Consumer purpose 动作，不进入 Audit；服务核实原评论回执，进程恢复时只对账原请求，不重复留言。
+3. 服务在成功请求后安排等待。后续仍未授权时返回 `action=retry`、`reason=access requested`；`target`、`payload` 为空对象，`evidence_refs` 引用服务提供的本任务已核验权限请求回执。`retry` 不进入 Audit、不产生外部写入，只按共享预算安排 Consumer 重读。已送达请求不表示权限已批准。不要伪报 `failed/dependency_read_unavailable` 来取得无限重试。
 4. 服务从原成功请求时刻计算最长 72 小时，指数退避从 5 分钟开始、单次最长 12 小时，最多启动 10 次后续 Consumer 重读。次数、期限不因换 session、内容修订、worker attempt 退款或进程重启重置。到第 10 次仍未获得可读材料时，按实际已核实情况形成补正退回；不继续输出 retry。若仍要求 retry，服务记录预算耗尽并停止自动重读，不自动生成退回。
 5. 已核实访问拒绝且确实无法申请权限时，返回 `action=return`、`reason=access denied, unable to request`，目标使用当前可用退回路径；退回意见只要求提供审批账号可访问的材料或调整权限，准确说明阻塞，不声称文件缺失或业务不合格。该退回照常经 Audit、执行器和节点读回。它不计入“三次实质缺口后拒绝”的次数。无可用退回路径时按现有规则处理，不编造节点。
 6. 权限恢复后重新读取当前材料，独立作出业务判断。其他业务条件仍逐项核实，不能凭权限申请回执批准审批。

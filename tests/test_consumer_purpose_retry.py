@@ -8,6 +8,7 @@ from app.consumer_purpose_retry import (
     PurposeRetryBudget,
     RetryBudgetExhausted,
     verified_access_request,
+    verified_access_request_for_file,
 )
 from app.store import AutoReplyStore
 
@@ -50,6 +51,61 @@ def test_new_receipt_cannot_reset_existing_budget(tmp_path):
     with pytest.raises(ValueError, match='receipt'):
         budget.schedule('different-receipt', NOW + timedelta(days=1), 'review-2', first)
     assert budget.state()['count'] == 1
+    assert budget.state()['deadline'] == (NOW + timedelta(days=3)).isoformat()
+
+
+def test_distinct_file_receipts_share_the_original_retry_budget(tmp_path):
+    budget = PurposeRetryBudget(AutoReplyStore(tmp_path / 'state.db'), 'oa:x', 'oa')
+    first = budget.schedule('receipt-file-a', NOW, 'file-a-review', NOW)
+    budget.reserve('turn-1', first)
+
+    second_request_time = NOW + timedelta(minutes=8)
+    second = budget.schedule(
+        'receipt-file-b', second_request_time, 'file-b-review', second_request_time,
+    )
+
+    state = budget.state()
+    assert second == second_request_time + timedelta(minutes=10)
+    assert state['count'] == 1
+    assert state['deadline'] == (NOW + timedelta(days=3)).isoformat()
+    assert {item['receipt'] for item in state['receipts']} == {
+        'receipt-file-a', 'receipt-file-b',
+    }
+
+
+def test_consumer_permission_requests_are_file_scoped_and_audit_free_budget_is_shared(tmp_path):
+    store = AutoReplyStore(tmp_path / 'state.db')
+    task = SimpleNamespace(id=42, business_object_key='oa:process:task')
+    budget = PurposeRetryBudget(store, task.business_object_key, 'oa')
+    budget.begin_access_request(file_id='file-a', action_key='request-a', candidate_id=1, now=NOW)
+    budget.finish_access_request(file_id='file-a', action_key='request-a', status='verified',
+                                 result={'comment_id': 'comment-a'}, now=NOW)
+    first = budget.schedule('request-a', NOW, 'consumer:1', NOW)
+    with pytest.raises(ValueError, match='already exists'):
+        budget.begin_access_request(file_id='file-a', action_key='request-a2', candidate_id=2, now=NOW)
+
+    second_time = NOW + timedelta(hours=1)
+    budget.begin_access_request(file_id='file-b', action_key='request-b', candidate_id=2, now=second_time)
+    budget.finish_access_request(file_id='file-b', action_key='request-b', status='verified',
+                                 result={'comment_id': 'comment-b'}, now=second_time)
+    second = budget.schedule('request-b', second_time, 'consumer:2', second_time)
+
+    state = budget.state()
+    assert first == NOW + timedelta(seconds=300)
+    assert second == second_time + timedelta(seconds=300)
+    assert state['count'] == 0
+    assert state['deadline'] == (NOW + timedelta(days=3)).isoformat()
+    assert {row['receipt'] for row in state['receipts']} == {'request-a', 'request-b'}
+    assert {row['file_id'] for row in state['access_requests']} == {'file-a', 'file-b'}
+
+
+def test_readding_same_file_receipt_does_not_duplicate_or_extend_budget(tmp_path):
+    budget = PurposeRetryBudget(AutoReplyStore(tmp_path / 'state.db'), 'oa:x', 'oa')
+    next_at = budget.schedule('receipt-file-a', NOW, 'file-a-review', NOW)
+    repeated = budget.schedule('receipt-file-a', NOW, 'file-a-review', NOW + timedelta(minutes=1))
+
+    assert repeated == next_at
+    assert len(budget.state()['receipts']) == 1
     assert budget.state()['deadline'] == (NOW + timedelta(days=3)).isoformat()
 
 
@@ -203,3 +259,29 @@ def test_retry_does_not_fuzzily_strip_receipt_reference():
             Store(), SimpleNamespace(id=42),
             ['receipt:receipt:11b23bef911e60d1048d41d02cfc0bab'],
         )
+
+
+def test_verified_file_request_lookup_distinguishes_files():
+    class Store:
+        def list_verified_candidate_actions(self, _task_id):
+            return [
+                {'external_action_key': 'receipt-a', 'candidate_id': 'candidate-a',
+                 'created_at': NOW.isoformat()},
+                {'external_action_key': 'receipt-b', 'candidate_id': 'candidate-b',
+                 'created_at': (NOW + timedelta(minutes=8)).isoformat()},
+            ]
+
+        def get_review_candidate(self, candidate_id):
+            file_id = {'candidate-a': 'file-a', 'candidate-b': 'file-b'}[candidate_id]
+            return {'candidate_json': json.dumps({'purpose_output': {
+                'action': 'request_access', 'target': {'file_id': file_id},
+            }})}
+
+    store = Store()
+    assert verified_access_request_for_file(store, SimpleNamespace(id=42), 'file-a') == (
+        'receipt-a', NOW,
+    )
+    assert verified_access_request_for_file(store, SimpleNamespace(id=42), 'file-b') == (
+        'receipt-b', NOW + timedelta(minutes=8),
+    )
+    assert verified_access_request_for_file(store, SimpleNamespace(id=42), 'file-c') is None

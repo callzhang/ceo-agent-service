@@ -29,7 +29,7 @@ def test_request_wait_retry_and_business_return_without_replaying_request(tmp_pa
     store, task, context = task_and_context(tmp_path)
     context = replace(context, skill_names=('dingtalk-oa-approval',))
     clock = [datetime.now(timezone.utc) + timedelta(minutes=5)]
-    target = {'process_instance_id': 'p'}
+    target = {'process_instance_id': 'p', 'file_id': 'file-a'}
     request = output('request_access', target=target, payload={'content': 'Please grant read access'})
 
     def still_waiting(fresh):
@@ -39,7 +39,8 @@ def test_request_wait_retry_and_business_return_without_replaying_request(tmp_pa
                                          'predecessor_review_id': fresh.predecessor_review_id})
 
     def give_back(fresh):
-        result = output('return', target={**target, 'task_id': 't', 'target_activity_id': 'owner'},
+        result = output('return', target={'process_instance_id': target['process_instance_id'],
+                                         'task_id': 't', 'target_activity_id': 'owner'},
                         payload={'remark': 'Access denied and request could not be completed',
                                  'revert_action': 'REVERT_FOR_RESUBMIT'}, refs=['current-read:denied'])
         return result.model_copy(update={'stage_index': fresh.stage_index,
@@ -58,7 +59,7 @@ def test_request_wait_retry_and_business_return_without_replaying_request(tmp_pa
     budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'oa')
     initial = budget.state()
     assert initial['count'] == 0
-    with pytest.raises(ResultParseError, match='do not request access again'):
+    with pytest.raises(ResultParseError, match='already has a verified access request'):
         _prepare_reviewable_candidate(request, store=store, task=task, context=context,
                                        proposal_revision=1, source_client=None)
     with pytest.raises(ResultParseError, match='exactly one verified'):
@@ -78,7 +79,31 @@ def test_request_wait_retry_and_business_return_without_replaying_request(tmp_pa
     assert budget.state()['count'] == 2
     assert len(consumer.calls) == 3
     assert len(handler.calls) == 2  # One permission request and one real OA return.
+    assert len(audit.calls) == 1  # Only the actual OA return is audited.
     assert budget.state()['closed'] is True
+
+
+def test_permission_request_and_retry_do_not_invoke_audit(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    context = replace(context, skill_names=('dingtalk-oa-approval',))
+    now = datetime.now(timezone.utc) + timedelta(minutes=5)
+    target = {'process_instance_id': 'p', 'file_id': 'file-a'}
+    request = output('request_access', target=target,
+                     payload={'content': 'Please grant read access'})
+    consumer = ScriptedConsumer(store, request)
+    audit = ScriptedAudit(store, 'approve')
+    handler = VerifiedHandler()
+    runtime = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {
+            ('dingtalk-oa', 'comment'): handler,
+        }), now=lambda: now)
+
+    result = runtime.process(task, context, refresh_context=lambda: context)
+
+    assert result.error.code == RETRY_REQUESTED
+    assert len(consumer.calls) == 1
+    assert audit.calls == []
+    assert len(handler.calls) == 1
 
 
 def test_expired_budget_blocks_source_refresh_and_consumer_call(tmp_path):
