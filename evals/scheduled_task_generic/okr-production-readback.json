@@ -490,11 +490,17 @@
         "group_message_sent": false,
         "audit_approved": false
       },
-      "root_cause": "Production uses the legacy OKR browser source. Its confirmed MissingOkrPeriod exception is surfaced to the Agent as a shared source failure, and four Consumer turns inconsistently relabeled that same permanent member-period absence, causing retries. The already tested headless source returns a complete-period-list receipt with availability.status=goals_not_established for this member-level absence; PR #218 switches the configured/default entrypoint to that source while retaining true technical failures. Its local authenticity probes covered one missing and one valid member, but the production setting has not yet changed and no post-deployment report evidence exists. A separate retry-code-only PR was closed as it did not fix this source routing root cause.",
-      "next_action": "Complete PR #218 checks and review, deploy the production source setting through the approved deployment path, and read back the effective setting. Then manually run the new OKR report through the official scheduler and verify all member identities/source outcomes, unscored coverage for verified absent periods, full Consumer/Audit trajectory, complete document readback, and real group-message receipt. Do not treat local source probes as report acceptance.",
+      "root_cause": "Production uses the legacy OKR browser source. Its confirmed MissingOkrPeriod exception is surfaced to the Agent as a shared source failure, and four Consumer turns inconsistently relabeled that same permanent member-period absence, causing retries. The already tested headless source returns a complete-period-list receipt with availability.status=goals_not_established for this member-level absence; PR #218 switches the configured/default entrypoint to that source while retaining true technical failures. Its local authenticity probes covered one missing and one valid member, but the production setting has not yet changed and no post-deployment report evidence exists. The production .env currently explicitly sets the legacy browser command, so the commit changes only the fallback and is not sufficient until that setting is updated. A separate retry-code-only PR was closed as it did not fix this source routing root cause.",
+      "next_action": "Update the existing production CEO_OKR_LIVE_SOURCE_COMMAND setting to the service checkout headless script using the approved settings/deploy mechanism, then deploy/restart only after PR #218 is merged. Read back the effective source setting and process health. After that, manually run a new OKR report and verify member-level goals_not_established receipts, complete Consumer/Audit trajectory, complete document readback, and real group-message receipt. Do not treat local source probes as report acceptance.",
       "observed_at": "2026-10-21T22:22:31.850803+00:00",
       "reply_error": "dependency_read_unavailable",
-      "terminal_evidence": "Reply-task readback returned status=failed after four failed Consumer turns; no Agent turn remains in flight."
+      "terminal_evidence": "Reply-task readback returned status=failed after four failed Consumer turns; no Agent turn remains in flight.",
+      "production_configuration_readback": {
+        "launch_agent_env_override": false,
+        "service_env_file": "/Users/derek/Services/ceo-agent-service/.env",
+        "effective_override": "legacy_browser",
+        "implication": "The current production .env explicitly sets CEO_OKR_LIVE_SOURCE_COMMAND to the legacy browser source, so changing only scripts/run-local-service.sh fallback will not change the effective source."
+      }
     },
     "service_observation": {
       "transient_shutdown_observed": true,
