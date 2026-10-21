@@ -1329,6 +1329,8 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 原失败运行；外部消息仍只能由原 Meeting 审查与投递流程产生。
 独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力。Codex 路线在本轮有冻结的托管会议 Skill 时，提交本轮定时任务提示和该托管 Skill 的完整规则，省去已由服务完成的操作 Skill 正文，并用原生 Skill 目录配置阻止重复加载；其他路线仍提交全部冻结 Skill 正文。没有托管会议 Skill 或冻结材料时，沿用完整原输入及旧自定义 inline 约定。结果模型、受众核验与投递流程不变。
 
+Meeting Codex 命令设置原生 `project_doc_max_bytes=0`，不再额外注入工作区 `AGENTS.md`。会议来源、工作人格和本轮冻结的托管 Skill 仍由服务提交；全局原生指令、Schema 和独立会话保持原样。
+
 Meeting 群候选的受众核验要求在非空候选列表前完整提交一次，不再在每个候选项里重复；
 候选的群身份、完整成员名单、近期讨论与读取状态仍逐项保留。空候选列表保持原输入。
 
