@@ -4,10 +4,11 @@ import os
 import subprocess
 import json
 import sqlite3
+import threading
 
 import pytest
 
-from app.database_backup import backup_is_complete, create_database_backup
+from app.database_backup import backup_database_if_due, backup_is_complete, create_database_backup
 from app.repository_updater import (
     UpgradeFailed,
     RepositoryUpdater,
@@ -322,7 +323,7 @@ def test_persisted_operation_can_be_loaded_by_id():
     )
 
 
-def test_upgrade_reuses_its_recent_complete_backup(tmp_path: Path):
+def test_upgrade_takes_current_snapshot_for_each_operation(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
@@ -331,17 +332,21 @@ def test_upgrade_reuses_its_recent_complete_backup(tmp_path: Path):
         db.commit()
     updater = RepositoryUpdater(local, StateStore(), database_path=db_path)
     first = updater._backup(operation(local))
+    with sqlite3.connect(db_path) as db:
+        db.execute("update state set value = 'current'")
     second_operation = operation(local).__class__(
         **{**operation(local).__dict__, "operation_id": "op-2"}
     )
     second = updater._backup(second_operation)
 
     snapshots = sorted((tmp_path / "backups").glob("*.sqlite3"))
-    assert first == second
-    assert snapshots == [first]
+    assert first != second
+    assert snapshots == [second]
+    with sqlite3.connect(second) as backup:
+        assert backup.execute("select value from state").fetchone() == ("current",)
 
 
-def test_upgrade_reuses_recent_verified_daily_backup(tmp_path: Path):
+def test_upgrade_replaces_recent_daily_backup_with_current_snapshot(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     op = operation(local)
     db_path = tmp_path / "worker.sqlite3"
@@ -365,13 +370,82 @@ def test_upgrade_reuses_recent_verified_daily_backup(tmp_path: Path):
     result = updater.execute(op)
 
     assert result.status == "succeeded"
-    assert result.backup_path == str(daily)
-    assert backup_is_complete(daily)
-    with sqlite3.connect(daily) as backup:
-        assert backup.execute("select value from state").fetchone() == ("before",)
-    assert list(daily.parent.glob("*.sqlite3")) == [daily]
+    fresh = Path(result.backup_path)
+    assert fresh != daily
+    assert backup_is_complete(fresh)
+    with sqlite3.connect(fresh) as backup:
+        assert backup.execute("select value from state").fetchone() == ("after",)
+    assert list(daily.parent.glob("*.sqlite3")) == [fresh]
     assert calls == ["stop", "restart"]
     assert git(local, "rev-parse", "HEAD") == op.target_commit
+
+
+def test_daily_backup_waits_until_failed_deploy_rollback_uses_snapshot(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table state (value text)")
+        db.execute("insert into state values ('before')")
+
+    daily_started = threading.Event()
+    daily_finished = threading.Event()
+    completed_during_verify: list[bool] = []
+    rollback_values: list[str] = []
+    daily_errors: list[BaseException] = []
+    worker: threading.Thread | None = None
+
+    def publication(backup_path: Path | None):
+        assert backup_path is not None
+
+        class Release:
+            def publish(self):
+                with sqlite3.connect(db_path) as db:
+                    db.execute("update state set value = 'migrated'")
+
+            def verify_loaded(self):
+                nonlocal worker
+
+                def daily_backup():
+                    daily_started.set()
+                    try:
+                        backup_database_if_due(db_path)
+                    except BaseException as exc:
+                        daily_errors.append(exc)
+                    finally:
+                        daily_finished.set()
+
+                worker = threading.Thread(target=daily_backup)
+                worker.start()
+                assert daily_started.wait(2)
+                completed_during_verify.append(daily_finished.wait(0.2))
+                raise RuntimeError("installed database verification failed")
+
+            def rollback(self):
+                with sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True) as db:
+                    rollback_values.append(db.execute("select value from state").fetchone()[0])
+
+            def finalize(self):
+                pass
+
+        return Release()
+
+    store = StateStore()
+    updater = RepositoryUpdater(
+        local, store, database_path=db_path, database_publication=publication,
+        restart=lambda: None, health=lambda: True,
+    )
+
+    with pytest.raises(UpgradeFailed, match="verification"):
+        updater.execute(op)
+
+    assert worker is not None
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert not daily_errors
+    assert completed_during_verify == [False]
+    assert rollback_values == ["before"]
+    assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
 
 
 @pytest.mark.parametrize("existing", ["missing", "stale", "incomplete", "future"])
@@ -417,7 +491,7 @@ def test_upgrade_creates_backup_when_none_qualifies(tmp_path: Path, existing: st
     assert git(local, "rev-parse", "HEAD") == op.target_commit
 
 
-def test_backup_selects_newest_complete_snapshot_for_its_database(tmp_path: Path):
+def test_backup_replaces_existing_snapshots_for_its_database(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
@@ -436,8 +510,10 @@ def test_backup_selects_newest_complete_snapshot_for_its_database(tmp_path: Path
         db.execute("create table state (value text)")
     updater = RepositoryUpdater(local, StateStore(), database_path=db_path)
 
-    assert updater._backup(operation(local)) == newer
-    assert backup_is_complete(newer)
+    fresh = updater._backup(operation(local))
+    assert fresh != newer
+    assert backup_is_complete(fresh)
+    assert list((tmp_path / "backups").glob("*.sqlite3")) == [fresh]
     assert not backup_is_complete(incomplete)
 
 

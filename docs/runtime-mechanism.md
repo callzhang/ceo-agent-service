@@ -2736,19 +2736,33 @@ boundaries. The deployer first waits for the persisted work leases to drain.
 This includes valid dispatcher leases before an Agent runtime exists, meeting
 preparation, and already-claimed meeting deliveries. Expired or terminal claims
 and unclaimed ready-to-send work do not count as active execution.
-It then bootstraps no new claims by stopping the launchd service before selecting
-a database backup or changing the production checkout. Under the existing backup
-directory lock it selects the newest complete backup for the same database from
-the preceding 24 hours, including a daily or earlier deployment backup. The
-completion marker proves the existing integrity-checked backup process finished;
-stale, incomplete and future-dated copies are not reused. If none qualifies, it
-creates and verifies a fresh backup through the existing backup process. Backup
-creation failure enters the existing rollback path before checkout changes and
-restarts the original service. A reused backup retains its original recovery
-time, up to 24 hours before deployment. It starts the service
-again with launchd `bootstrap` after verification, then performs the normal
-health and queue readback. This prevents the deployment process and worker
-process from writing the same SQLite database concurrently.
+It stops the launchd service before creating a database backup or changing the
+production checkout. Every deployment takes a fresh SQLite snapshot of that
+stopped current database under its operation ID; a complete daily or earlier
+deployment file is not reused merely because it is less than 24 hours old.
+Under the existing backup-directory flock, abandoned `.ceo-backup-stage-*.tmp`
+files and sidecars are removed before a new candidate is allocated; unrelated
+hidden temporary files and the verified backup are preserved. One candidate is copied,
+converted to DELETE journal, integrity-checked, stamped complete, committed and
+closed. Its completion marker is read back before atomic destination replacement.
+Only afterward are older backups and abandoned candidates removed. Copy or
+verification failure preserves the previous verified file byte-for-byte; failure
+before checkout changes follows the existing service recovery path. A cleanup
+failure after publication leaves the new verified file in place and reports the
+error. Old and new copies coexist during validation; success retains only the
+newest. No explicit fsync or sudden-power-loss guarantee is added.
+After creating the stopped-service snapshot, the updater holds the same directory
+lock through restart, health/loaded verification, finalization or failure rollback.
+The daily backup runs in a separate component thread and waits for this lock, so
+it cannot retire a recovery source before deployment has settled; API startup is
+independent of that wait. The lock releases on both success and failure.
+The hourly daily workflow still backs up once per day. If a deployment replaced
+the daily file, its next tick can create a newer daily snapshot and retire the
+pre-deployment one only after verification. Existing 24-hour pruning of database-
+adjacent pre-deployment snapshots is unchanged. Backup retention is current-state
+recovery, not a permanent archive of old schemas. It starts the service again
+with launchd bootstrap after verification and performs normal health and queue
+readback. See `docs/database-migration-closeout-validation.md` for copy proof.
 After a successful launchd `bootout`, the updater waits until `launchctl print`
 confirms that the service label is absent before checkout or a later bootstrap;
 an inactive-but-still-removing label is not treated as stopped.

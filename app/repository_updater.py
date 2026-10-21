@@ -6,9 +6,9 @@ from app.state_publication_sources import publication_dispatcher_source
 from app.business_legacy_field_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 from app.scheduled_config_storage import publication_scheduled_source
 
-from contextlib import closing, nullcontext
+from contextlib import ExitStack, closing, nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -19,12 +19,7 @@ import time
 from typing import Callable, Protocol
 from urllib.request import urlopen
 
-from app.database_backup import (
-    _backup_directory_lock,
-    backup_is_complete,
-    create_database_backup,
-    prune_database_backups,
-)
+from app.database_backup import _backup_directory_lock, create_database_backup
 from app.repository_upgrade import GitRepository
 from app.run_schema_release import publication_run_sources
 from app.task_schema_release import publication_meeting_sources, publication_task_sources
@@ -33,7 +28,6 @@ from app.task_schema_release import publication_meeting_sources, publication_tas
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
 UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
 UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
-DEPLOY_BACKUP_MAX_AGE = timedelta(hours=24)
 LAUNCHD_STOP_TIMEOUT_SECONDS = 10.0
 LAUNCHD_STOP_POLL_SECONDS = 0.1
 
@@ -593,7 +587,7 @@ class RepositoryUpdater:
     ) -> UpgradeResult:
         lock = nullcontext() if already_locked else self.repository.mutex()
         drain = deployment_drain(self.database_path) if self.database_path is not None else nullcontext()
-        with lock, drain:
+        with lock, drain, ExitStack() as backup_hold:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
             self.wait_for_quiet()
@@ -604,6 +598,10 @@ class RepositoryUpdater:
             replacement_started = False
             try:
                 backup_path = self._backup(operation)
+                if backup_path is not None:
+                    # The restarted daily loop may otherwise prune the
+                    # pre-deployment recovery source before verification ends.
+                    backup_hold.enter_context(_backup_directory_lock(backup_path.parent))
                 self._persist(operation, "updating", backup_path=backup_path)
                 if self.pre_checkout_cleanup is not None:
                     self.pre_checkout_cleanup()
@@ -794,28 +792,11 @@ class RepositoryUpdater:
         if self.database_path is None or not self.database_path.exists():
             return None
         backup_dir = self.database_path.parent / "backups"
-        now = datetime.now(timezone.utc).timestamp()
-        oldest_allowed = now - DEPLOY_BACKUP_MAX_AGE.total_seconds()
-        with _backup_directory_lock(backup_dir):
-            recent = [
-                path
-                for path in backup_dir.glob(f"{self.database_path.stem}-*.sqlite3")
-                if oldest_allowed <= path.stat().st_mtime <= now
-                and backup_is_complete(path)
-            ]
-            if recent:
-                return max(recent, key=lambda path: path.stat().st_mtime)
         destination = (
             backup_dir
             / f"{self.database_path.stem}-before-upgrade-{operation.operation_id}.sqlite3"
         )
-        backup_path = create_database_backup(self.database_path, destination)
-        prune_database_backups(
-            destination.parent,
-            today=datetime.now(timezone.utc).date(),
-            keep_path=backup_path,
-        )
-        return backup_path
+        return create_database_backup(self.database_path, destination)
 
     def _persist(
         self,
