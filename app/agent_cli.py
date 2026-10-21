@@ -1877,7 +1877,10 @@ def build_role_server(
         """
         return _read_bound_task_skill(db_path, task_id, artifact_generation, name)
 
-    bound.add_tool(read_task_skill, name="read_task_skill", annotations=read)
+    bound.add_tool(
+        read_task_skill, name="read_task_skill", annotations=read,
+        structured_output=False,
+    )
 
     def read_task_artifact(
         name: str, offset: int = 0, max_chars: int = 20000
