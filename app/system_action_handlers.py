@@ -857,7 +857,10 @@ class TextEmotionCreateHandler:
 
 
 def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], object]:
+    from app.dingtang_okr_action import DingtangOkrScoreHandler
+
     handlers: dict[tuple[str, str], object] = native_dingtalk_message_handlers(store, dws)
+    handlers[("dingtang-okr", "score_kr")] = DingtangOkrScoreHandler()
     handlers[("dingtalk-calendar", "respond_calendar_event")] = CalendarResponseHandler(dws)
     oa = OaDecisionHandler(dws)
     handlers[("dingtalk-oa", "approve")] = oa

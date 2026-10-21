@@ -82,6 +82,7 @@ AGENT_CLI_READ_TOOLS = (
     "read_meeting_archive",
     "read_okr_roster",
     "read_okr_member",
+    "read_dingtang_okr_score_detail",
     "read_task_artifact",
     "list_task_artifacts",
 )

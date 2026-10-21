@@ -59,6 +59,7 @@ def test_catalog_is_generated_from_every_canonical_capability_and_operation() ->
         ("dingtalk-oa", "comment"),
         ("dingtalk-doc", "create_document"),
         ("dingtalk-doc", "create_doc_comment"),
+        ("dingtang-okr", "score_kr"),
     ]
     assert len(catalog) < len(document) // 2
     for entry in entries:

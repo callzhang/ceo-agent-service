@@ -1301,6 +1301,13 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
 授权缺失或历史拒绝不可重放的处理。
 
+`dingtang-okr/score_kr` 同样走现有候选、Audit 和 SystemExecutor 执行记录；服务通过
+已同步登录态的无头 Chrome 页面调用页面原生 API。只读入口返回周期、当前批次、目标、
+评价人及登录用户的评分详情；写入前核对周期列表与批次名称、详情中的周期和目标、
+KR 评分配置，以及登录用户与候选评价人一致。页面的 `makeScore` 只接收目标和 KR 记录，
+按登录用户写入当前批次；写入后逐项回读同一周期、批次、KR、评价人、分数、评语和完成状态。
+不确定回执只允许只读 reconcile；不能因进程恢复重新提交 `makeScore`。
+
 候选分为普通动作计划和任务类别规则问题。`needs_human` 只能针对可复用规则缺口，包含来源上下文、具体原因、证据及 2–4 个互斥规则选项，每项明确 `applies_to=task_class` 并说明后果；选项绑定在所选规则下继续当前事项的完整方案，停止选项写明 skipped 和原因。不能用 `requested_input` 将当前事实、偏好或业务决定转给 Derek；应由 Agent 先基于现有规则形成安全、有限承诺的普通回复，或向有该事实的来源人提出一个具体问题。不能混合立即执行的动作与尚未选择的条件分支。
 
 启动恢复只会保留满足当前 Consumer 结果合同的待选决策。旧式 `requested_input` 或缺少可复用规则选项的候选仍可在 History 只读查看；若它仍占据当前、经 Audit 批准且未选择的投影，`reconcile_invalid_needs_human_projections` 会把当前 Attempt/Task 投影转为 `failed`、清空可执行选项，并保留原候选、Audit 与 run 原文。之后须由正常 Consumer/Audit 闭环生成普通回复或向来源人追问；该对账不发送消息、不执行当前分支，也不把失败伪装成完成。有效的 task-class 规则问题保持 `needs_human`。
