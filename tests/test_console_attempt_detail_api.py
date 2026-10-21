@@ -256,6 +256,7 @@ def test_oa_access_wait_projects_verified_request_and_current_retry_state():
     )
 
     assert projected is not None
+    assert projected["current_status"] == "pending"
     assert projected["current_error"] == RETRY_REQUESTED
     assert projected["historical_error"] == "external_action_uncertain"
     assert projected["operation_time"] == "2026-10-20T21:21:24Z"

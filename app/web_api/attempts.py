@@ -780,6 +780,7 @@ def _oa_permission_wait_projection(
         if note else "此前 Audit 说明针对执行前候选。"
     )
     return {
+        "current_status": str(getattr(task, "status", "") or ""),
         "current_error": RETRY_REQUESTED,
         "historical_error": str(historical_error or "").strip(),
         "operation_time": operation_time,
@@ -1046,6 +1047,14 @@ def build_attempt_detail(
     if oa_permission_wait is not None:
         status_message = oa_permission_wait["status_message"]
         audit_explanation = oa_permission_wait["audit_explanation"]
+        # The immutable Attempt row may still say "running" or carry the
+        # executor's earlier uncertainty. Project the current task wait state
+        # for this detail response, while retaining the original error below.
+        attempt = attempt.model_copy(update={
+            "send_status": oa_permission_wait["current_status"],
+            "send_error": oa_permission_wait["current_error"],
+            "audit_summary": oa_permission_wait["audit_explanation"],
+        })
     stop_reason = stopped_because(current_agent_runs)
     if reply_task is not None and reply_task.status in {"done", "skipped"}:
         stop_reason = {"kind": "none", "code": "", "sentence": ""}
