@@ -528,9 +528,12 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
 
     assert decode_catalog(discovered) == [{
         "name": "business-review",
-        "description": "Review business material: with evidence.",
+        "description": "",
         "path": str(skill_path.resolve()),
     }]
+    assert decode_catalog(tool(query="business evidence"))[0]["description"] == (
+        "Review business material: with evidence."
+    )
     assert "EXACT BODY" not in json.dumps(discovered)
     assert set(descriptor.inputSchema["properties"]) == {"path", "name", "query"}
     assert "required" not in descriptor.inputSchema
@@ -574,6 +577,7 @@ def test_read_skill_query_finds_full_metadata_without_returning_unrelated_bodies
     document = decode_catalog(tool(query="文档"))
     duplicates = decode_catalog(tool(query="shared-review"))
     assert len(full) == 4
+    assert all(item["description"] == "" for item in full)
     assert [(item["name"], item["description"]) for item in okr] == [
         ("okr-review", "Score OKR records")
     ]
