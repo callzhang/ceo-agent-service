@@ -109,4 +109,4 @@ The independently reproduced first execution and first sent-reference failures s
 - Blank schema creation installs the full parent and children; pre-existing incomplete target declarations are rejected rather than repaired.
 - Task 3 caller conversion and the complete paired migration remain necessary before publishing this candidate. The prescribed old-owner tests retain their existing assertions and require targeted fixture/caller adaptation in their owning tasks.
 
-Commit SHA: `64c59d46e6efa720fc8530cd36709e219d597642` (`refactor(actions): introduce single action entity owner`).
+Implementation commit SHA: `4f9a58288d9487fe8e1ecc8444346ca2c126fb41` (`refactor(actions): introduce single action entity owner`).
