@@ -11,6 +11,7 @@ import sqlite3
 
 from app import action_storage as actions
 from app.business_legacy_fields import CURRENT_SYNC_FIELDS, retained_action_payloads
+from app.action_entity_definitions import RECEIPT_SCHEMA_DDL
 
 
 @lru_cache(maxsize=1)
@@ -21,7 +22,7 @@ def current_action_payloads():
               if field != "attempt_id"),
         physical_provenance=True, selection_references=True,
         execution_owner=True, shared_lifecycle=True,
-        specialized_claims=True, postfix_owner=True,
+        specialized_claims=True, postfix_owner=True, action_entity=True,
     ))
 
 
@@ -31,6 +32,20 @@ def current_action_objects():
 
     options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
                if key != "canonical_email"}
+    return _build_action_objects(options)
+
+
+@lru_cache(maxsize=1)
+def source_current_action_objects():
+    """Explicit pre-entity Actions declaration for migration and inverse tooling."""
+    from app.current_database_schema import FINAL_ACTION_OPTIONS
+
+    options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
+               if key not in {"canonical_email", "action_entity"}}
+    return _build_action_objects(options)
+
+
+def _build_action_objects(options):
     table, indexes, triggers = actions._action_definitions(
         reply_variant="fresh_memory_fk", **options,
         payloads=current_action_payloads(), sync_fields=CURRENT_SYNC_FIELDS,
@@ -49,14 +64,28 @@ def current_action_objects():
 def create_current_action_schema(db: sqlite3.Connection):
     """Install on blank storage or require the exact existing declaration."""
     expected = current_action_objects()
+    expected_children = _action_entity_objects()
     actual = actions._objects(db, "actions")
     if actual:
         if actual != expected:
             raise ValueError("unsupported current Actions declaration")
+        actual_children = actions._objects(db, "action_receipts") + actions._objects(db, "action_observers")
+        if actual_children != expected_children:
+            raise ValueError("unsupported current Action receipt/observer declaration")
         return
-    actions._require_available_names(db, expected)
+    actions._require_available_names(db, (*expected, *expected_children))
     for obj in sorted(expected, key=lambda item: item["type"] != "table"):
         db.execute(obj["sql"])
+    for obj in sorted(expected_children, key=lambda item: item["type"] != "table"):
+        db.execute(obj["sql"])
+
+
+def _action_entity_objects():
+    with sqlite3.connect(":memory:") as db:
+        db.execute("create table actions(id integer primary key,_kind integer,record_type text)")
+        for sql in RECEIPT_SCHEMA_DDL:
+            db.execute(sql)
+        return actions._objects(db, "action_receipts") + actions._objects(db, "action_observers")
 
 
 def current_reply_action_projection(kind: str):

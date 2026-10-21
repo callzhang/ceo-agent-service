@@ -182,7 +182,7 @@ EXECUTION_ACTION_RECORD_TYPES = RecordTypes((*SOURCE_ACTION_RECORD_TYPES.names, 
 ACTION_RECORD_TYPES = RecordTypes((*EXECUTION_ACTION_RECORD_TYPES.names,
     'plan_version_reviewed', 'plan_version_email', 'effect_step_email',
     'action_attempt_reviewed', 'action_attempt_email',
-    'effect_step_email_reply', 'effect_step_email_unsubscribe'))
+    'effect_step_email_reply', 'effect_step_email_unsubscribe', 'action'))
 
 
 TASK_RECORD_TYPES = RecordTypes((

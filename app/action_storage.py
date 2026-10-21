@@ -222,7 +222,7 @@ DEFAULTS.update({
 
 
 @lru_cache(maxsize=4)
-def action_payloads(reply_variant, *, physical_provenance=False, selection_references=False, execution_owner=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False):
+def action_payloads(reply_variant, *, physical_provenance=False, selection_references=False, execution_owner=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, action_entity=False):
     """Frozen historical payload slots for explicit release and inverse work."""
     if reply_variant not in REPLY_VARIANTS:
         raise ValueError("unsupported Actions reply variant")
@@ -234,14 +234,14 @@ def action_payloads(reply_variant, *, physical_provenance=False, selection_refer
         attempt_fields, memory_fields, physical_provenance=physical_provenance,
         selection_references=selection_references, execution_owner=execution_owner,
         shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims,
-        postfix_owner=postfix_owner,
+        postfix_owner=postfix_owner, action_entity=action_entity,
     )
 
 
 def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance=False,
                            selection_references=False, execution_owner=False,
                            shared_lifecycle=False, specialized_claims=False,
-                           postfix_owner=False):
+                           postfix_owner=False, action_entity=False):
     """Compose the common payload layout from explicit Reply field tuples."""
     from app.action_payload import ActionPayloads
     from app.storage_payload import PayloadLayout
@@ -294,6 +294,10 @@ def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance
     if postfix_owner:
         from app.prepared_action_definitions import CHILDREN
         fields = {kind: names for kind, names in fields.items() if kind not in CHILDREN}
+    if action_entity:
+        from app.action_entity_definitions import ACTION_FIELDS, ActionEntityRecordTypes
+        fields["action"] = ACTION_FIELDS
+        record_types = ActionEntityRecordTypes(record_types)
     return ActionPayloads({kind: PayloadLayout(tuple(names)) for kind, names in fields.items()}, record_types)
 
 
@@ -393,14 +397,14 @@ def _reply_payload_check(fields, *, kind=None, payloads=None):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, payloads=None, sync_fields=None, canonical_attempt_fields=False):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, action_entity=False, payloads=None, sync_fields=None, canonical_attempt_fields=False):
     if sent_result_references and not (compact_payload and (include_delivery or include_reply)):
         raise ValueError("Sent result references require compact delivery Actions")
     if result_references and not compact_payload:
         raise ValueError("result references require compact Actions payloads")
     if selection_references and not compact_payload:
         raise ValueError("selection references require compact Actions payloads")
-    payloads = payloads if payloads is not None else action_payloads(reply_variant or "actual_no_memory_fk", physical_provenance=physical_provenance, selection_references=selection_references, execution_owner=execution_owner, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner) if compact_payload else None
+    payloads = payloads if payloads is not None else action_payloads(reply_variant or "actual_no_memory_fk", physical_provenance=physical_provenance, selection_references=selection_references, execution_owner=execution_owner, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, action_entity=action_entity) if compact_payload else None
     if include_skill_config_receipts and not include_email:
         raise ValueError("Skill receipts require current Email action scaffold")
     if include_followup_sync and not include_email:
@@ -438,6 +442,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         kinds = tuple(kind for kind in kinds if kind not in CHILDREN)
         prepared_columns, prepared_checks = prepared_schema_parts()
     old_kinds = kinds
+    if action_entity:
+        if not compact_payload:
+            raise ValueError("Action entity requires current compact Actions payloads")
+        kinds = ("action", *kinds)
+    payload_kinds = tuple(kind for kind in kinds if kind != "action")
     if include_email:
         kinds += EMAIL_TYPES_ORDER
         email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(
@@ -458,6 +467,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_email_history:
         kinds += HISTORY_KINDS
         history_generated, history_checks, history_indexes = history_schema_parts(payloads=payloads)
+    payload_kinds = tuple(kind for kind in kinds if kind != "action")
     references = _references_for(old_kinds, execution_owner=execution_owner)
     if include_followup_sync:
         sync_generated, sync_checks, sync_fks, sync_indexes, sync_triggers = sync_schema_parts(
@@ -502,7 +512,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     payload_fields = dict.fromkeys(c for kind in old_kinds if kind not in REPLY_ACTION_TYPES for c in (payloads.layouts[kind].fields if payloads else PAYLOAD_FIELDS[kind]) if c not in references and not (include_delivery and c == "channel"))
     generated = []
     for column in payload_fields:
-        expression = (payloads.field_value(column, kinds) if payloads else f"json_extract(payload_json,'$.{column}')")
+        expression = (payloads.field_value(column, payload_kinds) if payloads else f"json_extract(payload_json,'$.{column}')")
         if not payloads and include_errors and column == "created_at":
             expression = ("case when record_type='errors' then "
                           + _encoded_value("payload_json", "$.created_at")
@@ -564,13 +574,19 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_email:
         email_composites = ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS)
         key_check = f"case when record_type in ({email_composites}) then json_valid(legacy_key) else ({key_check}) end"
+    if action_entity:
+        key_check = f"record_type='action' and legacy_key is null or ({key_check})"
     if payloads:
         kind_declarations = ",".join(payloads.record_types.declarations(kinds))
     else:
         kind_declarations = "record_type text not null check(record_type in (" + ",".join(repr(k) for k in kinds) + "))"
+    action_generated = ()
+    if action_entity:
+        from app.action_entity_definitions import ACTION_GENERATED_COLUMNS
+        action_generated = ACTION_GENERATED_COLUMNS
     table = (
         "create table actions (id integer primary key," + " " + kind_declarations
-        + f",legacy_key text not null check({key_check}),"
+        + (f",legacy_key text check({key_check})," if action_entity else f",legacy_key text not null check({key_check}),")
         + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in references.items())
         + ("," + ",".join(reply_columns) if reply_columns else "")
         + ("," + ",".join(email_generated) if include_email else "")
@@ -582,8 +598,10 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         + ("," + ",".join(ba_generated) if include_business_actions else "")
         + ("," + ",".join(history_generated) if include_email_history else "")
         + ("," + ",".join(prepared_columns) if postfix_owner else "")
+        + (",action_data blob" if action_entity else "")
         + (",payload_json blob not null," if payloads else ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),")
         + ",".join(generated)
+        + (("," + ",".join(action_generated)) if action_entity else "")
         + "," + ",".join(_payload_check(kind, references, payloads, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references) for kind in old_kinds if kind not in REPLY_ACTION_TYPES)
         + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))"
                           for kind, (field, options) in ENUMS.items() if kind in kinds)
@@ -640,8 +658,14 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             table += ",check(record_type<>'candidate_execution_alias' or memory_attempt_ref is null)"
     if sent_result_references:
         table += "," + ",".join(sent_checks)
+    if action_entity:
+        table += ",check(record_type<>'action' or (legacy_key is null and typeof(action_data)='blob' and json_valid(action_data,8) and json_type(action_data)='object'))"
+        table += ",check(record_type='action' or action_data is null)"
+        table += ",check(record_type<>'action' or action_status is null or action_status in ('pending','processing','done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain'))"
     table += ")"
-    numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
+    numeric_scope = (" where record_type<>'action'" if action_entity else "")
+    if include_receipts:
+        numeric_scope += (" and " if numeric_scope else " where ") + "record_type<>'external_action_results'"
     if include_postfix:
         numeric_scope += f" and record_type not in ({_POSTFIX_TYPES_SQL})"
     if include_delivery:
@@ -714,6 +738,9 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         indexes += history_indexes
     if sent_result_references:
         indexes += sent_indexes
+    if action_entity:
+        from app.action_entity_definitions import ACTION_INDEX_DDL
+        indexes += ACTION_INDEX_DDL
     triggers = (
         "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
         "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",

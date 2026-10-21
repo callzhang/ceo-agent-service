@@ -66,9 +66,9 @@ def source_identity(source_table: str, source_id: object) -> tuple[str, str, str
 
 def build_target_ddl() -> str:
     """Rebuild the current Actions declaration with one shared Action kind."""
-    from app.current_action_schema import current_action_objects
+    from app.current_action_schema import source_current_action_objects
 
-    objects = current_action_objects()
+    objects = source_current_action_objects()
     table = next(item["sql"] for item in objects if item["type"] == "table")
     table = table.replace("_kind in (", f"_kind in ({ACTION_KIND},", 1)
     table = table.replace("case _kind when ", f"case _kind when {ACTION_KIND} then 'action' when ", 1)

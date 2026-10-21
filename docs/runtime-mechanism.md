@@ -20,6 +20,12 @@ C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validati
 当前 C1／C2、A5 及 D 的范围见[业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，
 不能据此前阶段结案推断本轮全部完成或容量已通过。
 
+Action 实体统一目前仍是未发布候选：候选空库声明在同一 `actions` 表中增加 `_kind=70` 的共同 Action，
+并以 `action_receipts` 保存逐次 provider/execution 事实、`action_observers` 保存多个 Run 的观察关系。
+共同 owner 的创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。
+本候选尚未配对旧数据迁移、调用方切换或上线；当前运行服务仍按已选定声明运行。
+字段与约束以 `docs/action-entity-field-map.json`、`docs/action-entity-target.sql` 为候选合同。
+
 Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
 `payload_json` 只保存当前 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 的业务值数组。
 `_kind` 是唯一存储的类型，`record_type` 是只读生成名称；原公开字段、过滤、

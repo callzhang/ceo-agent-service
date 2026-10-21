@@ -16,6 +16,8 @@ from app.current_action_schema import (
 def db():
     connection = sqlite3.connect(":memory:")
     create_current_database_schema(connection)
+    connection.execute("drop table action_observers")
+    connection.execute("drop table action_receipts")
     connection.execute("drop table actions")
     create_current_action_schema(connection)
     connection.execute("pragma foreign_keys=on")
