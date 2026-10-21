@@ -7,7 +7,8 @@
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-本候选尚未部署。D 九字段退休的配对发布明确接受 Store19.8／19.9／19.10 与 Email53；
+本轮 GPT-6 原生副本、schema 回退及实际发布状态见[发布验收](database-gpt6-release-validation.md)。
+D 九字段退休的配对发布明确接受 Store19.8／19.9／19.10 与 Email53；
 同一事务按准确来源依次使用既有 A5、C2 和字段转换原语，只在最终19.11运行构造器。
 逆迁保留当前新增事实，只有已批准九字段恢复中性默认值，不保存其旧值副本。
 字段范围、逐字段映射与证据边界见[九字段映射](business-model-legacy-fields-mapping.md)及

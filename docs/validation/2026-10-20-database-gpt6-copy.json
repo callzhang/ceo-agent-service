@@ -1,0 +1,603 @@
+{
+  "validation_id": "database-gpt6-copy-2026-10-20",
+  "schema": {
+    "source_store": "2026-10-19.8",
+    "target_store": "2026-10-19.11",
+    "email": 53
+  },
+  "source": {
+    "production_head_at_start": "2cb011cc8f54af4bff127179fde731aa719ab4a3",
+    "production_head_after": "2cb011cc8f54af4bff127179fde731aa719ab4a3",
+    "source_store": "2026-10-19.8",
+    "source_email": 53,
+    "source_bytes": 486514688,
+    "source_sha256": "3a450d4797ee97ea4d8b50b7ceb482b53a63d30cd8840c39d9876df5c790a8ab",
+    "integrity": "ok",
+    "fk": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "production_modified": false,
+    "source_open": "SQLite read-only backup, no production Store/worker constructor"
+  },
+  "forward": {
+    "passed": true,
+    "target": [
+      "2026-10-19.11",
+      53
+    ],
+    "retained_facts_exact": true,
+    "source_immutable": true,
+    "production_modified": false,
+    "elapsed_seconds": 259.84448954099935
+  },
+  "native": {
+    "case": "business-model-gpt6-selection-copy.v1",
+    "runtime": {
+      "routes": [
+        "codex_oauth"
+      ],
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high"
+    },
+    "task_id": 5568887099571194,
+    "generation": "initial",
+    "verification_tag": "NATIVE_SELECTION_9178ab3793",
+    "fixture_sha256": "05e4c0adc3de8ba57bcc613783fc8490458805a5f90117e3847157cc9f81ae13",
+    "prepared": {
+      "task_status": "needs_human",
+      "provider_calls": 0,
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "candidate_digest": "9881bdd1c4072fd577947e40c5e7e6cc24581f0a1748314dabbc6d133882890a",
+      "attempt_id": 15800
+    },
+    "native_evidence": {
+      "runs": [
+        {
+          "id": 388536,
+          "role": "consumer",
+          "status": "completed",
+          "attempts": [
+            {
+              "attempt_id": 388537,
+              "session_id": "01a15c9b-035e-7f51-9f88-7316cf3b0d36",
+              "start": 0,
+              "end": 29,
+              "status": "completed",
+              "tools": [
+                "read_system_action_contract",
+                "read_task_artifact"
+              ],
+              "command_count": 0,
+              "event_count": 4,
+              "native_path": "/Users/derek/.codex/sessions/2026/10/20/rollout-2026-10-20T20-57-05-01a15c9b-035e-7f51-9f88-7316cf3b0d36.jsonl",
+              "actual_native_turns": [
+                {
+                  "line": 7,
+                  "model": "gpt-6-astra",
+                  "effort": "high"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 388538,
+          "role": "audit",
+          "status": "completed",
+          "attempts": [
+            {
+              "attempt_id": 388539,
+              "session_id": "01a15c9c-551e-7641-b9fc-6bc98f150758",
+              "start": 0,
+              "end": 29,
+              "status": "completed",
+              "tools": [
+                "read_system_action_contract",
+                "read_task_artifact"
+              ],
+              "command_count": 0,
+              "event_count": 4,
+              "native_path": "/Users/derek/.codex/sessions/2026/10/20/rollout-2026-10-20T20-58-31-01a15c9c-551e-7641-b9fc-6bc98f150758.jsonl",
+              "actual_native_turns": [
+                {
+                  "line": 7,
+                  "model": "gpt-6-astra",
+                  "effort": "high"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "attempt_id": 15800,
+      "original_tables_unchanged": 11
+    },
+    "fixture_native_reads": [
+      {
+        "session_id": "01a15c9b-035e-7f51-9f88-7316cf3b0d36",
+        "start": 0,
+        "end": 29,
+        "tool_call_id": "call_7103f248923f48f38dd934b773b1a3d3",
+        "name": "case-input.json",
+        "sha256": "05e4c0adc3de8ba57bcc613783fc8490458805a5f90117e3847157cc9f81ae13"
+      },
+      {
+        "session_id": "01a15c9c-551e-7641-b9fc-6bc98f150758",
+        "start": 0,
+        "end": 29,
+        "tool_call_id": "call_83383c59a57641288869c993e80669cf",
+        "name": "case-input.json",
+        "sha256": "05e4c0adc3de8ba57bcc613783fc8490458805a5f90117e3847157cc9f81ae13"
+      }
+    ],
+    "selected": {
+      "http_status": 303,
+      "selection_id": 1,
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "candidate_digest": "9881bdd1c4072fd577947e40c5e7e6cc24581f0a1748314dabbc6d133882890a",
+      "option_key": "execute",
+      "location": "/attempts/15800"
+    },
+    "completed": {
+      "task_status": "done",
+      "execution_id": 373,
+      "provider_calls": 1,
+      "provider_verifications": 1,
+      "verified_attempts": 1,
+      "external_receipts": 1,
+      "sent_result_is_reference": true,
+      "sent_public_result_exact": true,
+      "no_additional_native_turn": true,
+      "original_tables_unchanged": 11,
+      "old_tag_sum_assertion": true,
+      "new_source_count_assertion": true,
+      "synthetic_sent_sha256": "770b4f0cd898285507ab972f9b1b550d3601b2631017bf30951b32d309f9a31a"
+    },
+    "metadata_recovery": {
+      "reason": "Normal needs_human artifact cleanup preceded old harness hash read; metadata recovered from same persisted real runs and original native tool return. No model re-execution or artifact restoration.",
+      "original_native_log": "native-astra-prepare.log",
+      "tested_app_freeze": "native-source-freeze.json",
+      "fixture_sha_source": "original native read_task_artifact structuredContent"
+    }
+  },
+  "source_freeze": {
+    "tested_manifest": "4b59ce40c64ad2e4e6e070435ad4428329645899611c84b6cfc18be220afc9b4",
+    "final_manifest": "ade3e757960e4f7e0906711958ef679635cac49e0a258ad77718a67ebd9f717b",
+    "runtime_sources_unchanged": true,
+    "harness_sha256": "208a4da730f7eba9ca0d4651fa16a40a1ef36cfa96c4025f806f8084f7fc3785"
+  },
+  "tests": {
+    "backend_initial_pass": 118,
+    "backend_initial_failure": "incoming Meeting fixture used retired begin_meeting_alignment_run",
+    "meeting_regression_red": "current fixture returned blank detail_url before projection correction",
+    "meeting_links_green": 6,
+    "overlap_not_summed": true,
+    "frontend_files": 4,
+    "frontend_tests": 107,
+    "frontend_build": true,
+    "ruff": true,
+    "spec_review": {
+      "status": "pass",
+      "harness_sha256": "208a4da730f7eba9ca0d4651fa16a40a1ef36cfa96c4025f806f8084f7fc3785",
+      "scope": "Current logical Run Attention reader and fixture; actual GPT-6 model evidence, metadata-only recovery after normal artifact cleanup, unchanged original assertions and canonical receipt references."
+    }
+  },
+  "roundtrip": {
+    "passed": true,
+    "source_version": "2026-10-19.8",
+    "target_version": "2026-10-19.11",
+    "email_version": 53,
+    "current_native_facts_exact": true,
+    "actual_source_sql_marker_clock_exact": true,
+    "retired_nine_controls_neutral_only": true,
+    "actual_production_code": "2cb011cc8f54af4bff127179fde731aa719ab4a3",
+    "old_cold_public_readback_exact": true,
+    "reforward_exact": true,
+    "source_immutable": true,
+    "source_fk_multiset_preserved": true,
+    "native_complete_chain_passed": true,
+    "native_gate": "passed_gpt6_astra",
+    "real_external_sends": 0,
+    "production_modified": false,
+    "elapsed_seconds": 494.8478188750014,
+    "public_new_result_readback": {
+      "task_id": 5568887099571194,
+      "task_status": "done",
+      "candidate_id": 1163,
+      "review_id": 1153,
+      "selection_id": 1,
+      "option_key": "execute",
+      "execution_id": 373,
+      "execution_status": "done",
+      "action_attempt_id": 363,
+      "action_status": "verified",
+      "external_action_key": "270b195e89bbf6b159a048a66c92d469067850c1e0769851ac088bfef454675a",
+      "receipt_sha256": "79d7e5d15cfd847a4e5b3982b80eea14bc83ffdcfbd8b3a18d81000c8ef591f0",
+      "sent_id": 2492,
+      "runs": [
+        {
+          "id": 388536,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 388538,
+          "role": "audit",
+          "status": "completed"
+        }
+      ],
+      "legacy_counts": [
+        975,
+        3327,
+        5468
+      ]
+    },
+    "oracle_artifact_hashes": {
+      "gpt6-current-canonical.json": "e156590fb463ff062fb67bce6dbe2678e0cb0ac9ae4d69d8487513480e29ef70",
+      "gpt6-inverse-canonical.json": "e156590fb463ff062fb67bce6dbe2678e0cb0ac9ae4d69d8487513480e29ef70",
+      "gpt6-after-cold-canonical.json": "e156590fb463ff062fb67bce6dbe2678e0cb0ac9ae4d69d8487513480e29ef70",
+      "gpt6-reforward-canonical.json": "e156590fb463ff062fb67bce6dbe2678e0cb0ac9ae4d69d8487513480e29ef70",
+      "gpt6-source-manifest.json": "9ff5ece46544dd3a3a56dc62bc4222cc2126e8ee5c8d61ac644b4fd9f306326e",
+      "gpt6-inverse-manifest.json": "9ff5ece46544dd3a3a56dc62bc4222cc2126e8ee5c8d61ac644b4fd9f306326e",
+      "gpt6-reforward-manifest.json": "f7df2ed8a32153f72769ec69f3b0872ffb8374778faa34cc09ac51460f9ae824",
+      "gpt6-inverse-neutral.json": "4559cb47bf7bbd01b03c7449c681a052a0ec814306abfd1897bc9abca56ae5a6"
+    },
+    "current_canonical_facts": {
+      "tables": {
+        "actions": {
+          "count": 95606,
+          "sha256": "1b6451de6e65e00344d26bc5f2cd6bec3823f6f07dd24f4734753f1c8f1203cf"
+        },
+        "actions:affected_stable_physical": {
+          "count": 5468,
+          "sha256": "a3f33bb0988423df58b44e1aff66b5762491a8528dc6b9a2b34108b491e6010b"
+        },
+        "business": {
+          "count": 869,
+          "sha256": "932114db9b1e7289f5caeebbc9218a579b487628ac9e2a581634d7f6c3574e52"
+        },
+        "business:affected_stable_physical": {
+          "count": 4302,
+          "sha256": "7160ea8d46116a45484752abad459ee3b5dba895831e1a087115be1e2561a748"
+        },
+        "configs": {
+          "count": 6211,
+          "sha256": "c1e2dc470eec1d0ea98691989e058b9d20ad68be2cf11a3eb48ce8c4ff16a862"
+        },
+        "email_schema_migrations": {
+          "count": 40,
+          "sha256": "8b6df07045442527c25f7fea2d0c5e89ba3a2fbc09b514ed589f0ebc506bf301"
+        },
+        "emails": {
+          "count": 9642,
+          "sha256": "5525a0b50036cd39b7a1a22854d3cce39928d966a526bc30465c60a264b2c687"
+        },
+        "provenance": {
+          "count": 148,
+          "sha256": "feea4954ff61502a4bfde88a9da7716dd1f463856825351ed3f81ac5c5981973"
+        },
+        "provider_state": {
+          "count": 72440,
+          "sha256": "2417ed016d2ea0d6aa15e3a3a909c95a20a49ad4a4fac0957104b0926f3ae37a"
+        },
+        "runs": {
+          "count": 257385,
+          "sha256": "8c079b6030c2f629de52bfcc1c989a3dd4e9dcaf3cf4114e901f6a84f3dd7d73"
+        },
+        "schedules": {
+          "count": 15,
+          "sha256": "5a529f7acec27311d6e58559e32cf62410e5a622dbc34cdc39bd5954409ed80e"
+        },
+        "sqlite_sequence": {
+          "count": 51,
+          "sha256": "4f3e81fe80961fb2c1ca57630ca324e22d35cb71a01040b6a3ca18da4a3762ab"
+        },
+        "state": {
+          "count": 23801,
+          "sha256": "8357158dcb7dcacd3ef3d287d7cc5d3a266861f9e9d6bb04abeb848e21c600fa"
+        },
+        "tasks": {
+          "count": 36914,
+          "sha256": "a6d2c7aa8f01d19cf4b9ffeb82135f303122a7d2de2348bdd46808b04a3942d0"
+        }
+      },
+      "legacy_retained_fields": {
+        "work_project": {
+          "fields": [
+            "id",
+            "title",
+            "category",
+            "tags_json",
+            "status",
+            "owner_user_id",
+            "owner_name",
+            "related_people_json",
+            "goal",
+            "background",
+            "facts_json",
+            "current_state",
+            "blocker",
+            "next_step",
+            "source_conversations_json",
+            "created_at",
+            "updated_at",
+            "last_activity_at",
+            "owner_evidence_json"
+          ],
+          "digest": {
+            "count": 975,
+            "sha256": "85b01eda20a624f878ba266742cd7b0fc6ad8a7b27e0f3d931121245c0b7d7ec"
+          }
+        },
+        "work_todo": {
+          "fields": [
+            "id",
+            "project_id",
+            "title",
+            "owner_user_id",
+            "owner_name",
+            "status",
+            "deadline_at",
+            "follow_up_question",
+            "blocker",
+            "completion_evidence_json",
+            "created_from_update_id",
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "description",
+            "owner_evidence_json",
+            "import_task_id"
+          ],
+          "digest": {
+            "count": 3327,
+            "sha256": "137606dc3898850ba51cead9c3c8c98594b0ee1bc00ae6d921593be37e36f3cb"
+          }
+        },
+        "work_updates": {
+          "fields": [
+            "id",
+            "project_id",
+            "source_type",
+            "source_ref",
+            "summary",
+            "changes_json",
+            "created_at"
+          ],
+          "digest": {
+            "count": 5468,
+            "sha256": "69b223a7dc4db72e7edc82159de13a5912a7f7d8e414ea7e716c437055b6c637"
+          }
+        }
+      },
+      "fk": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ],
+      "email": 53,
+      "prepared_public": {
+        "parent": {
+          "count": 1404,
+          "sha256": "668bde46bb5063e76100c125ceab712fc29a938ac3daa11cf3aa3c5b5de90e2b"
+        },
+        "receipt": {
+          "count": 824,
+          "sha256": "c631c2a7f76becc5b97ed90b91ad1e2e68f0efbad892f6bd9a9cb65b716251b0"
+        },
+        "claim": {
+          "count": 177,
+          "sha256": "82557567ebd77de24da06cab8d012242114c8a0b75fcb354e6e2ac028d28558b"
+        }
+      }
+    }
+  },
+  "quality_review": {
+    "status": "pass_database_source_and_copy",
+    "independent_model": "gpt-6-astra",
+    "reasoning_effort": "max",
+    "recomputed_source_hash": true,
+    "actual_native_models_and_tools_readback": true,
+    "all_current_fact_and_public_result_digests_exact": true,
+    "retired_nine_controls_neutral": true,
+    "current_sequences_and_original_fk_multiset_preserved": true,
+    "production_deployment_not_approved_by_this_review": true
+  },
+  "deployment": {
+    "status": "pending_production_model_choice",
+    "database_release_authorized": true,
+    "production_setting_mutated": false,
+    "production_database_mutated": false,
+    "production_restarted": false,
+    "reason": "Current effective process uses5.6-luna/high, persisted production.env uses6-luna. Fresh launch reads persisted model; OAuth rejects6-luna. User has been asked whether to select tested6-astra/high or retain configuration. No answer inferred."
+  },
+  "external_actions": {
+    "real_sends": 0,
+    "fake_sends": 1,
+    "fake_verifications": 1
+  },
+  "capacity_copy": {
+    "source": {
+      "main_file_bytes": 486514688,
+      "page_size": 4096,
+      "page_count": 118778,
+      "freelist_count": 11,
+      "tables": {
+        "email_schema_migrations": {
+          "table_bytes": 4096,
+          "index_bytes": 0,
+          "payload_bytes": 1128,
+          "unused_bytes": 2788
+        },
+        "provider_state": {
+          "table_bytes": 14393344,
+          "index_bytes": 11599872,
+          "payload_bytes": 24170961,
+          "unused_bytes": 713239
+        },
+        "schedules": {
+          "table_bytes": 16384,
+          "index_bytes": 8192,
+          "payload_bytes": 9060,
+          "unused_bytes": 15213
+        },
+        "sqlite_sequence": {
+          "table_bytes": 4096,
+          "index_bytes": 0,
+          "payload_bytes": 1491,
+          "unused_bytes": 2381
+        },
+        "configs": {
+          "table_bytes": 7974912,
+          "index_bytes": 1519616,
+          "payload_bytes": 8619141,
+          "unused_bytes": 671298
+        },
+        "state": {
+          "table_bytes": 6705152,
+          "index_bytes": 2527232,
+          "payload_bytes": 8313546,
+          "unused_bytes": 505359
+        },
+        "runs": {
+          "table_bytes": 88915968,
+          "index_bytes": 49586176,
+          "payload_bytes": 126385979,
+          "unused_bytes": 5444871
+        },
+        "business": {
+          "table_bytes": 10530816,
+          "index_bytes": 1220608,
+          "payload_bytes": 10004939,
+          "unused_bytes": 1427529
+        },
+        "provenance": {
+          "table_bytes": 98304,
+          "index_bytes": 49152,
+          "payload_bytes": 118386,
+          "unused_bytes": 26352
+        },
+        "emails": {
+          "table_bytes": 52453376,
+          "index_bytes": 4419584,
+          "payload_bytes": 46515667,
+          "unused_bytes": 9625907
+        },
+        "actions": {
+          "table_bytes": 138178560,
+          "index_bytes": 37105664,
+          "payload_bytes": 146786206,
+          "unused_bytes": 23422952
+        },
+        "tasks": {
+          "table_bytes": 45051904,
+          "index_bytes": 11988992,
+          "payload_bytes": 50386874,
+          "unused_bytes": 4896771
+        }
+      }
+    },
+    "target": {
+      "main_file_bytes": 486514688,
+      "page_size": 4096,
+      "page_count": 118778,
+      "freelist_count": 1103,
+      "tables": {
+        "email_schema_migrations": {
+          "table_bytes": 4096,
+          "index_bytes": 0,
+          "payload_bytes": 1128,
+          "unused_bytes": 2788
+        },
+        "provider_state": {
+          "table_bytes": 14393344,
+          "index_bytes": 11599872,
+          "payload_bytes": 24170961,
+          "unused_bytes": 713239
+        },
+        "schedules": {
+          "table_bytes": 16384,
+          "index_bytes": 8192,
+          "payload_bytes": 9060,
+          "unused_bytes": 15213
+        },
+        "sqlite_sequence": {
+          "table_bytes": 4096,
+          "index_bytes": 0,
+          "payload_bytes": 1491,
+          "unused_bytes": 2381
+        },
+        "configs": {
+          "table_bytes": 7974912,
+          "index_bytes": 1519616,
+          "payload_bytes": 8619141,
+          "unused_bytes": 671298
+        },
+        "state": {
+          "table_bytes": 6705152,
+          "index_bytes": 2527232,
+          "payload_bytes": 8313547,
+          "unused_bytes": 505358
+        },
+        "provenance": {
+          "table_bytes": 98304,
+          "index_bytes": 49152,
+          "payload_bytes": 118386,
+          "unused_bytes": 26352
+        },
+        "emails": {
+          "table_bytes": 52453376,
+          "index_bytes": 4419584,
+          "payload_bytes": 46515667,
+          "unused_bytes": 9625907
+        },
+        "tasks": {
+          "table_bytes": 45051904,
+          "index_bytes": 11988992,
+          "payload_bytes": 50386874,
+          "unused_bytes": 4896771
+        },
+        "runs": {
+          "table_bytes": 88809472,
+          "index_bytes": 49946624,
+          "payload_bytes": 128059038,
+          "unused_bytes": 3911478
+        },
+        "business": {
+          "table_bytes": 10145792,
+          "index_bytes": 1048576,
+          "payload_bytes": 9533496,
+          "unused_bytes": 1358082
+        },
+        "actions": {
+          "table_bytes": 136310784,
+          "index_bytes": 34816000,
+          "payload_bytes": 145324945,
+          "unused_bytes": 20780084
+        }
+      }
+    },
+    "vacuum_performed": false,
+    "note": "Composite Store19.8 to19.11 page accounting. Main file does not shrink without compaction; freed pages can be reused. This is not a claimed standalone nine-field saving."
+  },
+  "production_model_before": {
+    "current_process_model": "gpt-5.6-luna",
+    "current_process_effort": "high",
+    "env_file_model": "gpt-6-luna",
+    "model_change_authorization": "pending",
+    "model_source": "Filtered live /api/console/settings/agent-runtime versus production .env. No secret fields retained.",
+    "restart_risk": "Fresh process reads persisted gpt-6-luna; actual current OAuth accepts GPT-6 Astra, not Luna. Model choice is unresolved; no setting mutated."
+  }
+}
