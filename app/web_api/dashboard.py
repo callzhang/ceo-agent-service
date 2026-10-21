@@ -16,6 +16,8 @@ from app.action_storage import (
     task_delivery_projection,
     SYNC_ACTION_PROJECTIONS,
 )
+from app.configs_definitions import config_projection
+from app.state_definitions import state_projection
 from app.email_canonical_storage import email_classification_projection
 from app.shared_action_definitions import email_projection as email_action_projection
 from app.storage_payload import TASK_RECORD_TYPES
@@ -293,13 +295,22 @@ def _append_auxiliary_queues(db, queues, now_text):
         (
             "scheduled_task_runs",
             "定时任务",
-            f"""select id,
-        case when lease_owner<>'' and datetime(lease_expires_at)>datetime('{now_text}')
+            f"""select run.id,
+        case when run.lease_owner<>'' and datetime(run.lease_expires_at)>datetime('{now_text}')
              then 'running' else 'pending' end as status,
-        null as attempts,created_at,created_at as updated_at,scheduled_for as available_at,
-        skip_or_error_reason as error,'' as started_at,lease_owner as owner,lease_expires_at,
-        '定时触发 #'||scheduled_task_id as title,'/scheduled-tasks?id='||scheduled_task_id as detail_url
-        from ({SCHEDULED_RUN_SQL}) where dispatch_status='pending'""",
+        null as attempts,run.created_at,
+        coalesce(claim.updated_at,run.created_at) as updated_at,run.scheduled_for as available_at,
+        run.skip_or_error_reason as error,coalesce(claim.created_at,'') as started_at,
+        run.lease_owner as owner,run.lease_expires_at,
+        json_extract(config.snapshot_json,'$.name') as title,
+        json_extract(config.snapshot_json,'$.command') as command,
+        '/scheduled-tasks?id='||run.scheduled_task_id as detail_url
+        from ({SCHEDULED_RUN_SQL}) run
+        join ({config_projection('scheduled_task_config_versions')}) config on config.id=run.snapshot_id
+        left join ({state_projection('dispatcher_claim_leases')}) claim
+          on claim.adapter_name='scheduled' and claim.source_id=cast(run.id as text)
+          and claim.owner=run.lease_owner and claim.terminal_at=''
+        where run.dispatch_status='pending'""",
         )
     )
     actions = email_action_projection("email_actions")
@@ -355,10 +366,16 @@ def _append_auxiliary_queues(db, queues, now_text):
                             )
                         ),
                     ),
-                    "agent": "",
-                    "runtime_kind": "",
+                    "agent": "调度器" if kind == "scheduled_task_runs" else "",
+                    "runtime_kind": (
+                        ("内置命令" if row["command"] else "任务派发")
+                        if kind == "scheduled_task_runs" else ""
+                    ),
                     "model": "",
-                    "stage": row["status"],
+                    "stage": (
+                        "dispatching" if kind == "scheduled_task_runs" and state == "active"
+                        else row["status"]
+                    ),
                     "started_at": _time(row["started_at"]),
                     "updated_at": _time(row["updated_at"]),
                     "created_at": _time(row["created_at"]),
