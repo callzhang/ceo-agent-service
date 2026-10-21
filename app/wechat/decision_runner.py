@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from app.codex_decision import CodexDecisionRunner
+from app.agent_runtime_contracts import ROLE_BOUND_AGENT_TOOLS
+from app.wechat.codex_safety import make_model_only_agent_command
 
 WECHAT_DECISION_DEVELOPER_INSTRUCTIONS = """You are a WeChat reply decision worker.
 
@@ -18,8 +20,9 @@ class WechatDecisionRunner(CodexDecisionRunner):
     """A replay-safe decision step before the persisted WeChat delivery stage."""
 
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault("approval_policy", "on-failure")
-        kwargs.setdefault("use_approval_bypass", False)
+        kwargs["approval_policy"] = "never"
+        kwargs["use_approval_bypass"] = False
+        kwargs["command_mutator"] = make_model_only_agent_command
         kwargs.setdefault(
             "developer_instructions", WECHAT_DECISION_DEVELOPER_INSTRUCTIONS
         )
@@ -31,4 +34,8 @@ class WechatDecisionRunner(CodexDecisionRunner):
         return CodexCommandFactory.standard(
             developer_instructions=WECHAT_DECISION_DEVELOPER_INSTRUCTIONS,
             image_paths=image_paths,
+            model_only=True,
         )
+
+    def _required_capabilities(self) -> frozenset[str]:
+        return super()._required_capabilities() | {ROLE_BOUND_AGENT_TOOLS}

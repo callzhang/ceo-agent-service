@@ -1883,6 +1883,7 @@ Consumer 可以直接使用普通工作工具，写入并读回本任务本代�
 完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
 
 上述新审核执行契约适用于实际使用 AgentOrchestrator 的业务候选。已授权微信会话的 task3 保留原有 WechatReplyConsumer / WechatDecisionRunner 决策与持久化 delivery，随后由独立 Sender 循环发送；它没有独立 Audit 回合，本次未迁移到 candidate/review/SystemExecutor。微信结果中的 audit_summary 不是独立审核回执。系统任务对应表不代表新增该任务的审核流程。
+微信决策 Agent 在 Codex 和 Claude 路线仅接收模型输入并返回结构化结果：Codex 禁用原生命令、浏览器、插件及全部 MCP server，使用只读 sandbox；Claude 关闭全部工具；不具备角色工具边界的 Friday 路线不参与该决策。该环境限制只阻止 Agent 自己调用对人动作，不改变独立 Sender 既有的自动或人工确认模式，也不把 Consumer 的自述视为独立审核。
 WechatDecisionRunner 的首轮 Developer 指令提供一个简短且有效的 `AgentEnvelope` 不回复示例，以及回复时须填写的字段；完整 Pydantic 校验、同 session 格式修正和独立发送阶段保持原有契约。该示例只进入微信决策入口，不注入通用 Consumer/Audit。
 
 发布可达性使用独立的显式单任务调度暂缓入口 `app.reply_task_deferral`，默认只读；本次操作
