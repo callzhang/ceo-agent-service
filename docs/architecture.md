@@ -730,6 +730,16 @@ OKR 评审的实时数据读取由业务 Skill 选择当前可用的 provider �
 `CEO_OKR_LIVE_SOURCE_COMMAND`（当前为 Dingteam headless source），并返回包含
 `processed.objectives` 与 `processed.okrRows` 的实时载荷，是一种可用实现而非应用层命令契约。
 
+即时叮当 OKR 评分与定时周报分析是两种任务。普通 Consumer 可用
+`read_okr_member` 和 `read_dingtang_okr_score_detail` 取得实时目标、当前评分批次、
+KR 与正式评价人 ID；评分动作只以 `dingtang-okr/score_kr` 的精确目标、0–1 分数和评语
+提交候选。Audit 审核后 SystemExecutor 才在服务的无头 Chrome 页面内注入 JS 调用
+页面原生 `makeScore`。该接口由登录用户决定评分归属，提交体没有评价人或批次字段；
+执行前须核对登录用户就是候选评价人、周期名称与唯一当前批次相符、该周期使用 KR 评分，
+且评分详情中的周期、目标、KR 与评价人均对应候选。执行后重新读取
+`getScoreDetail`，只有同一评价人的分数、原评语和 `complete` 状态全部相符才记为已完成。
+写入结果不明时只做读取核对，不对已发出的评分自动重发；Consumer/Audit 不直接写分。
+
 逐 KR 评审的 `StructuredCodexRunner` 通过专用 `app/schemas/okr_review.schema.json`
 向原生 CLI 声明输出结构。该快照保留通用 AgentEnvelope 的外围契约，并将
 `domain_payload` 固定为现有 `OkrReviewPayload`、`OkrReviewItem`、`OkrEvidence`

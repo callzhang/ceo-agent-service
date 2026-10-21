@@ -48,6 +48,7 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-oa` | `comment` | `process_instance_id` | `content` | Provider comment ID; otherwise uncertain |
 | `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
 | `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
+| `dingtang-okr` | `score_kr` | `period_id`, `objective_id`, current `batch_id`, `kr_id`, `evaluator_user_id` from the live score detail; evaluator must equal the logged-in page user | `score` on the 0-1 API scale, `score_description` with evidence | Exact period, objective, current batch, KR, evaluator, score, description and `complete` status in a fresh `getScoreDetail` readback |
 
 For these registered OA operations, `process_instance_id`, `task_id`,
 `target_activity_id` and `to_actioner_id`, where required above, are exact

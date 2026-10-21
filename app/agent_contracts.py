@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 from typing import Literal
 
 from pydantic import (
@@ -231,6 +232,27 @@ class ProposedAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_dingtalk_message_target(self) -> "ProposedAction":
+        if self.capability == "dingtang-okr" and self.operation == "score_kr":
+            required_target = {
+                "period_id", "objective_id", "batch_id", "kr_id", "evaluator_user_id"
+            }
+            if set(self.target) != required_target or any(
+                not isinstance(self.target[key], str) or not self.target[key].strip()
+                for key in required_target
+            ):
+                raise ValueError("dingtang-okr score_kr needs exact provider target IDs")
+            score = self.payload.get("score")
+            description = self.payload.get("score_description")
+            if (
+                set(self.payload) != {"score", "score_description"}
+                or type(score) not in (int, float)
+                or not isfinite(score)
+                or not 0 <= score <= 1
+                or not isinstance(description, str)
+                or not description.strip()
+                or self.effect != "external"
+            ):
+                raise ValueError("dingtang-okr score_kr needs a 0-1 score and description")
         if self.capability == "dingtalk-oa":
             for field in _OA_ACTION_TARGET_FIELDS.get(self.operation, ()):
                 value = self.target.get(field)

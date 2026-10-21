@@ -2332,6 +2332,27 @@ def build_role_server(
             "source_outcome": payload.get("sourceOutcome"),
         }
 
+    def read_dingtang_okr_score_detail(
+        period_id: str, objective_id: str
+    ) -> dict[str, object]:
+        """Read the current score batch and evaluator details from Dingteam OKR."""
+        from app.dingtang_okr_action import DingtangOkrBrowserClient
+
+        payload = DingtangOkrBrowserClient().read_score_detail(
+            period_id=period_id, objective_id=objective_id
+        )
+        filename = (
+            "okr-score-detail-"
+            + hashlib.sha256((period_id + ":" + objective_id).encode()).hexdigest()
+            + ".json"
+        )
+        return {
+            **_source_artifact(filename, payload),
+            "period_id": period_id,
+            "objective_id": objective_id,
+            "batch_id": payload.get("batch_id"),
+        }
+
     def read_meeting_archive(meeting_id: str) -> dict[str, str]:
         """Read the archive attached to a discovered meeting's stable source ID."""
         from app.config import workspace_path
@@ -2394,6 +2415,7 @@ def build_role_server(
         ("read_scheduled_context", read_scheduled_context),
         ("read_okr_roster", read_okr_roster),
         ("read_okr_member", read_okr_member),
+        ("read_dingtang_okr_score_detail", read_dingtang_okr_score_detail),
         ("read_service_activity", read_service_activity),
         ("read_meeting_archive", read_meeting_archive),
     ):
