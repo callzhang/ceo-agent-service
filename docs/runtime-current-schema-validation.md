@@ -24,6 +24,10 @@ Explicit migration tests cover both19.11 physical sources, new current writes su
 
 Two broader Email tests were independently rerun against untouched baseline `b6baf4ee5` and also fail there: training snapshot parent tamper readback and the old assertion that all29 historical Action types remain declared. The stale tamper fixture has now been corrected to address the existing object key, and the DDL assertion now checks the exact current manifest and retired-kind absence. Both tests exercise existing behavior; no new fact-check or safety policy was introduced. An obsolete confirmation fixture likewise failed on baseline because it attempted to migrate13.5 directly through current19.11; its existing historical nonempty-source guard is now tested directly against its exact mapped source rather than widening the current19.12 release.
 
+Current acceptance batches: 139 publication/quality/updater/maintenance tests passed; 128 business/schema/meeting-memory cases passed with one obsolete confirmation fixture then corrected and rerun; seven exact confirmation/snapshot/fresh-schema cases passed; 19 semantic/frozen-record/schema cases passed; final five paired-reader cases passed after adding mixed-Email-version rejection. Canonical/current bootstrap suite had 11 passes. Necessary explicit Email release and runtime tests had 25 passes, with two additional fresh-seed cases.
+
+The existing no-worker Console copy script traversed 15 API paths, including History pages, Attention, queues, Tasks, legacy Project/Todos/Updates, Meeting public/physical IDs, Email preview list and unavailable-original502. All persisted SQL values/types remained unchanged. Network connects were blocked, application lifespan was not started, the Email source read used a substitute, and real sends were zero. See `validation/2026-10-21-runtime-current-api.json`.
+
 ## Review and production
 
 Pending focused business regression completion, independent spec/quality review, upstream reconciliation, standard deployment, and live readback. Tests use outbound substitutes only. This document does not claim deployment or external business outcomes yet.

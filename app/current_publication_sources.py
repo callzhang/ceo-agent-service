@@ -14,6 +14,9 @@ def _version(db):
     marker = db.execute(f"select value from ({state_projection('service_state')}) "
                         "where key='store_schema_version'").fetchone()
     version = marker[0] if marker else None
+    ledger = db.execute("select 1 from sqlite_schema where type='table' and name='email_schema_migrations'").fetchone()
+    if ledger and db.execute('select max(version) from email_schema_migrations').fetchone()[0] != TARGET_EMAIL_VERSION:
+        raise ValueError('unsupported mixed Email publication version')
     if version == TARGET_STORE_VERSION and schema_is_current(db):
         return version
     if version == PREVIOUS_STORE_VERSIONS[0]:
@@ -26,13 +29,9 @@ def _version(db):
 
 
 def current_email_actions_available(db):
-    if not schema_is_current(db):
-        raise ValueError('unsupported current Email declaration')
-    row = db.execute("select 1 from sqlite_schema where type='table' and name='email_schema_migrations'").fetchone()
-    if row is None:
-        return False
-    version = db.execute('select max(version) from email_schema_migrations').fetchone()[0]
-    return version == TARGET_EMAIL_VERSION
+    if _version(db) != TARGET_STORE_VERSION:
+        raise ValueError('unsupported current Email publication declaration')
+    return db.execute("select 1 from sqlite_schema where type='table' and name='email_schema_migrations'").fetchone() is not None
 
 
 def publication_run_sources(db):

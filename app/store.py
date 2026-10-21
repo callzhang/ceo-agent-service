@@ -426,19 +426,6 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-10-19.12"
-# One row per finished task execution: the durable memories its Consumer
-# result named, and which of them are already in Memory. Built in the
-# initialization migration so the table can be rebuilt from its earlier,
-# never-written shape (one row per task, a single memory_id).
-
-# Fresh Store bootstraps the exact retired source declarations inside its
-# existing publication transaction, then immediately converts them to Actions.
-# Current Store opens never create these tables.
-
-
-
-
-
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
