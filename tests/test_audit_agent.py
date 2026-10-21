@@ -18,6 +18,7 @@ from app.agent_cron.commands import (
 )
 from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
 from app.agent_result import ResultParseError
+from app.agent_wire_contracts import AuditAgentWireResult
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -27,6 +28,8 @@ from app.audit_agent import (
     validate_audit_candidate_fields,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.native_agent_output import native_output_schema_path, parse_native_result
+from tests.support.native_output_fixture import native_stream_for_command
 from app.process_runner import ProcessRunResult
 from app.reviewed_candidates import candidate_digest
 from app.store import AgentRole, AutoReplyStore
@@ -162,9 +165,10 @@ class CapturingExecutor:
         self.commands.append(command)
         self.prompts.append(kwargs["prompt"])
         self.environments.append(dict(kwargs["env"]))
-        for line in self.stdout.splitlines():
+        stdout = native_stream_for_command(self.stdout, command)
+        for line in stdout.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, self.stdout, "")
+        return ProcessRunResult(0, stdout, "")
 
 
 @pytest.fixture
@@ -363,6 +367,28 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     assert snapshot["invocation_facts"]["skill_names"] == []
 
 
+def test_audit_codex_turn_uses_current_native_schema_and_binding(setup):
+    _store, task, parent, context, _config, _router = setup
+    original = json.loads(json.loads(_wire().splitlines()[1])["item"]["text"])
+    native = AuditAgentWireResult.model_validate(original).model_dump(mode="json")
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "native-audit"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(native),
+        }}),
+    ))
+    executor = CapturingExecutor(stream)
+    result = _runner(setup, executor).run(
+        task, context, turn_attempt=0, parent_agent_run_id=parent.id,
+    )
+    command = executor.commands[0]
+    assert command[command.index("--output-schema") + 1] == str(
+        native_output_schema_path("audit")
+    )
+    assert result.result.candidate_digest == context.candidate_digest
+    assert result.result.proposal_revision == context.proposal_revision
+
+
 @pytest.mark.parametrize("outcome", ["return", "reject"])
 def test_audit_feedback_is_business_review_without_external_result(setup, outcome):
     _store, task, parent, context, _config, _router = setup
@@ -412,13 +438,20 @@ def test_completed_audit_recovery_uses_the_candidate_bound_parser(setup, monkeyp
         session_id="audit-session", transcript_start=0, transcript_end=1,
     )
     run = SimpleNamespace(role=AgentRole.AUDIT, proposal_revision=context.proposal_revision)
-    monkeypatch.setattr(turn_runner, "read_native_result_stream", lambda *_args: _wire())
+    native_stream = native_stream_for_command(
+        _wire(), ["--output-schema", str(native_output_schema_path("audit"))],
+    )
+    monkeypatch.setattr(
+        turn_runner, "read_native_result_stream", lambda *_args: native_stream,
+    )
 
     recovered = turn_runner.recover_completed_runtime_domain_result(
         attempt, run, schema_id="audit-schema",
-        parse_result=lambda raw: parse_audit_agent_wire_result(
-            raw, proposal_revision=context.proposal_revision,
-            candidate_digest=context.candidate_digest,
+        parse_result=lambda raw: parse_native_result(
+            raw, "audit", parser=lambda restored: parse_audit_agent_wire_result(
+                restored, proposal_revision=context.proposal_revision,
+                candidate_digest=context.candidate_digest,
+            ),
         ),
     )
 

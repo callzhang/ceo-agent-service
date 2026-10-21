@@ -15,12 +15,13 @@ Consumer 运行 389361、389061 的完整 trajectory 在嵌套 `payload` 后多�
 
 ## 当前尚缺
 
-Qwen 的六文件 custom-tool 传输修复仅在离线副本及 CPU 语法检查通过，未发布到共享提供商，不能算 Qwen 原生全角色验证。`codex_api` 的无工具当前 schema 冷启动已有一次有效结果，但带只读 MCP 的 Consumer/Audit 冷启动均遇提供商 429，完整路线验收仍缺；较早的无输出超时原因没有查实。Codex OAuth 的局部合同与工具传输检查也不能替代完整业务案例。上述缺口未闭合前，CEO 服务保持原生 schema 关闭，PR #31 保持草稿状态。
+Qwen 的六文件 custom-tool 传输修复仅在离线副本及 CPU 语法检查通过，未发布到共享提供商，不能算 Qwen 原生全角色验证。`codex_api` 的无工具当前 schema 冷启动已有一次有效结果，但带只读 MCP 的 Consumer/Audit 冷启动均遇提供商 429，完整路线验收仍缺；较早的无输出超时原因没有查实。Codex OAuth 的局部合同与工具传输检查也不能替代完整业务案例。当前隔离分支已经接通 Codex 命令及解析路径，但上述缺口未闭合前不合并或部署；生产 CEO 服务保持原生 schema 关闭，PR #31 保持草稿状态。
 
-## 本轮局部证据（未启用运行时）
+## 本轮局部证据（隔离分支，未合并部署）
 
 - 失败回归先报 `ModuleNotFoundError: app.native_agent_output`；加入当前合同的投影和还原器后，两个尾随非法字符回归又先 RED，确认旧解析器误接受多余 `}` 与零宽字符。原生路径改为严格解析最后一条完整 JSON 后，原生 codec、Consumer purpose 及 OA 编排定向测试 **27 passed**，Ruff 和 `git diff --check` 通过。测试覆盖普通 `no_action`、OA 四种专属动作、Audit `approve/return`、动态 JSON 的嵌套特殊键、空值和重复键拒绝。三份生成 schema 与提交快照逐值一致。
-- 本地增加原生还原结果到现有角色解析器的最小适配函数：Consumer 的 purpose 转换、Audit 的 revision/digest 绑定及解析器拒绝继续走原业务回调，不另写一套业务判断。新增测试先因函数缺失 RED；完成后原生模块 **15 passed**、Ruff 与 diff 检查通过。此时 `AgentTurnProcess` 仍关闭原生 schema，适配函数尚未进入生产调用路径。
+- 本地增加原生还原结果到现有角色解析器的最小适配函数：Consumer 的 purpose 转换、Audit 的 revision/digest 绑定及解析器拒绝继续走原业务回调，不另写一套业务判断。新增测试先因函数缺失 RED；完成后原生模块 **15 passed**、Ruff 与 diff 检查通过。随后 `AgentTurnProcess` 接通按角色/purpose 的 Codex schema 文件，正常结果、同 session 结果以及已完成 attempt 恢复共用原生还原及现有角色解析器；Claude/Friday 路径未改。Consumer/Audit 两项路径回归先 RED 后 GREEN。定向测试已验证缺失最终结果仍归类 `codex_result_missing`、无效旧形状仍拒绝、有效嵌套对象还原、Audit 候选绑定不丢失。隔离分支代码尚未合并部署。
+- 受影响的 Consumer、Audit、AgentTurnProcess 测试从既有失败点之后继续跑 **145 passed, 2 skipped**；之前的局部段 **86 passed, 2 skipped**，原生模块另有 **15 passed**。其中两项既有失败单列：`test_consumer_summary_is_not_an_execution_receipt` 在数据库投影查询报 `no such column: a.lease_owner`；`test_consumer_capability_section_keeps_tool_contract_without_repeating_common_rules` 的已存在长度断言为 3556，实际为 4211。这两项均未进入本次原生解析路径的失败条件，也未顺手修改。Ruff 与 diff 检查通过。
 - 本机 Codex CLI `0.163.0`、`gpt-6-luna`，匿名只读 `--output-schema` 冷启动：普通 Consumer `no_action`、OA Consumer `return`、Audit `return` 均有完成输出，当前 Pydantic 还原校验通过。这三次无工具冒烟仅证明 CLI 可接受结构。
 - 使用同一虚构 `read_case` MCP（只读，返回 nonce）后，普通 Consumer、OA Consumer、Audit 各完成冷启动及同 session 续会话。六轮每轮精确读取对应的新 case 一次，没有错误调用；续会话的 session ID 与冷启动相同，最终结果引用新 nonce 且通过当前完整 wire model。原始匿名 JSONL 和 MCP trace 核对后已从本任务 `/tmp` 目录清理；未纳入仓库或业务记录。
 - GPU4 的 vLLM 0.29 **候选** custom-tool 代码经只读 SSH stdin 在内存中加载；当前三份 schema 分别有 21／21／11 个顶层字段，Qwen 结构语法均接受完整最终 JSON 和 custom `exec` 调用分支。此检查没有模型推理、已安装包替换或 slot 重载，不能算共享提供商修复与原生全角色运行通过。

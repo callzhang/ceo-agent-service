@@ -69,6 +69,7 @@ from app.codex_history import (
 )
 from app.codex_runner import _codex_home
 from app.native_trajectory import count_claude_session_lines, read_native_result_stream
+from app.native_agent_output import native_output_schema_path, parse_native_result
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.service_codex_config import service_mcp_tool_approval_modes_for_agent_role
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
@@ -957,6 +958,17 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             )
 
+        def parse_result_for_route(raw: str, route: RuntimeRoute) -> ResultT:
+            if route.runtime_kind is RuntimeKind.CODEX_CLI:
+                purpose = (
+                    str((invocation_facts or {}).get("consumer_purpose", "general"))
+                    if run.role is AgentRole.CONSUMER else "general"
+                )
+                return parse_native_result(
+                    raw, run.role.value, purpose=purpose, parser=parse_result,
+                )
+            return parse_result(raw)
+
         required_capabilities = _required_runtime_capabilities(
             run=run,
             expected_actions=expected_actions,
@@ -1029,7 +1041,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     result = cast(ResultT, recover_completed_runtime_domain_result(
                         completed_attempt, run, schema_id=runtime_result_schema_id,
                         friday_adapter=self.friday_adapter,
-                        parse_result=parse_result,
+                        parse_result=lambda raw: parse_result_for_route(raw, route),
                     ))
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
@@ -1188,8 +1200,14 @@ class AgentTurnProcess(Generic[ResultT]):
                         prompt=prompt,
                         session_id=route_session_id,
                         image_paths=image_paths,
-                        output_schema_path=None,
-                        use_output_schema=False,
+                        output_schema_path=native_output_schema_path(
+                            run.role.value,
+                            purpose=(
+                                str((invocation_facts or {}).get("consumer_purpose", "general"))
+                                if run.role is AgentRole.CONSUMER else "general"
+                            ),
+                        ),
+                        use_output_schema=True,
                         approval_policy="on-failure",
                         developer_instructions=developer_instructions,
                         use_approval_bypass=True,
@@ -1329,7 +1347,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         pending_claude_session_id = trusted_session_id
                     else:
                         try:
-                            result = parse_result(process.stdout)
+                            result = parse_result_for_route(process.stdout, route)
                         except ResultParseError:
                             session_id_for_result = (
                                 observed_session_id or route_session_id
@@ -1348,7 +1366,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             )
                             if not session_result:
                                 raise
-                            result = parse_result(session_result)
+                            result = parse_result_for_route(session_result, route)
                     break
                 if friday_failure is not None:
                     failure = friday_failure

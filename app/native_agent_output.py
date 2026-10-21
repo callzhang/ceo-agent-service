@@ -139,7 +139,14 @@ def parse_native_output(raw: str, role: str, *, purpose: str = "general") -> str
     """Restore ordinary JSON objects, then enforce the complete current contract."""
     model = _model(role, purpose)
     schema = model.model_json_schema()
-    candidate = parse_agent_text_result(raw)
+    try:
+        candidate = parse_agent_text_result(raw)
+    except ResultParseError as exc:
+        if str(exc) == "no agent text result found in Codex JSONL":
+            raise ResultParseError(
+                "no valid typed result JSON found in Codex JSONL"
+            ) from exc
+        raise
     try:
         native = _NativeObject.model_validate_json(candidate).root
         restored = _decode(native, schema, schema["$defs"])
