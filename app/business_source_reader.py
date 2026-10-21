@@ -318,7 +318,7 @@ class RequestSourceReader:
 
     def __init__(self, *, provider_reader: Any = None, console_lookup: ConsoleLookup | None = None) -> None:
         self._readings: dict[str, tuple[SourceVersionBinding, SourceReadResult]] = {}
-        self._minutes_page_cache: dict[str, dict[str, Any]] = {}
+        self._minutes_page_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._provider_reader = provider_reader
         self._console_lookup = console_lookup
 
