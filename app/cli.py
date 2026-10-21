@@ -66,7 +66,11 @@ from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_links,
 )
-from app.external_retry import is_external_dependency_error
+from app.external_retry import (
+    MAX_AUTOMATIC_ATTEMPTS,
+    MAX_AUTOMATIC_RETRIES,
+    is_external_dependency_error,
+)
 from app.message_split import split_dingtalk_text
 from app.service_heartbeat import run_service_heartbeat_loop
 from app.service_message_sender import ServiceMessageSender
@@ -148,7 +152,7 @@ def run_consumer_dispatcher_loop(
     dispatcher.run(stop_event=stop_event)
 
 
-WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
+WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # The router raises this when another worker already holds the workload's
 # runtime attempt. It says nothing about the work item.
 RUNTIME_ATTEMPT_ACTIVE_CODE = "runtime_attempt_active"
@@ -244,6 +248,13 @@ class WorkerSettings(BaseModel):
     repository_upgrade_enabled: bool = repository_upgrade_enabled()
     repository_upgrade_remote: str = repository_upgrade_remote()
     repository_upgrade_branch: str = repository_upgrade_branch()
+
+    @field_validator("dws_transient_retry_attempts", mode="before")
+    @classmethod
+    def cap_dws_transient_retries(cls, value: object) -> object:
+        if value is None:
+            return value
+        return min(int(value), MAX_AUTOMATIC_RETRIES)
     repository_upgrade_check_interval_seconds: PositiveInt = repository_upgrade_check_interval_seconds()
 
     @field_validator("meeting_memory_workers")
@@ -1898,7 +1909,7 @@ def skip_stale_wechat_delivery_command(
     delivery_id: int,
     inactive_before: str,
     reason: str,
-    max_retries: int = 2,
+    max_retries: int = MAX_AUTOMATIC_RETRIES,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     delivery = store.get_wechat_delivery_by_id(delivery_id)

@@ -1927,7 +1927,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert prepared.final_body == sent_reply.reply_text
     assert calls == [
         ("runner", "RoutedCodexExecution", "okr_review"),
-        ("dws", 4),
+        ("dws", 3),
         ("process", request_id, "帮我审核 OKR", "FakeStructuredRunner", True),
         (
             "send",
@@ -3707,7 +3707,7 @@ def test_process_work_items_command_passes_dws_client_to_task_agent(
         "ding_robot_code": "robot-code",
         "ding_robot_name": "Friday",
         "ding_receiver_user_id": "derek-id",
-        "transient_retry_attempts": 4,
+        "transient_retry_attempts": 3,
         "transient_retry_delay_seconds": 0.25,
     }
 
@@ -5039,7 +5039,7 @@ def test_parser_supports_dws_transient_retry_options():
     )
     settings = settings_from_args(args)
 
-    assert settings.dws_transient_retry_attempts == 5
+    assert settings.dws_transient_retry_attempts == 3
     assert settings.dws_transient_retry_delay_seconds == 0.25
 
 

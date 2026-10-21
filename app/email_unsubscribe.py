@@ -418,7 +418,7 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
 )
 # A transient browser failure receives this many exact-action retries; the
 # worker applies its existing exponential backoff between attempts.
-TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = 4
+TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = 3
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 _STABLE_TEXT_MS = 1_000

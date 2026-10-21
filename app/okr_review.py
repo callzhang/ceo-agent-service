@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
 
-from app.external_retry import run_external
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, run_external
 from app.okr_models import OkrReviewPayload
 
 
@@ -49,7 +49,7 @@ class DwsLiveOkrSource:
         *,
         dws,
         command_template: list[str],
-        max_attempts: int = 3,
+        max_attempts: int = MAX_AUTOMATIC_ATTEMPTS,
         timeout_seconds: int = 120,
     ):
         if not command_template:
@@ -100,7 +100,7 @@ class DwsAgoalApiOkrSource:
         dws,
         objective_rule_id: str | None = None,
         page_size: int = 100,
-        max_attempts: int = 3,
+        max_attempts: int = MAX_AUTOMATIC_ATTEMPTS,
     ):
         self.dws = dws
         self.objective_rule_id = (objective_rule_id or "").strip()

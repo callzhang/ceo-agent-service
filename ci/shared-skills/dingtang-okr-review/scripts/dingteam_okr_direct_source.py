@@ -29,6 +29,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 BASE = "https://dingokr.dingteam.com"
+MAX_TRANSIENT_RETRIES = 3
 
 APPLESCRIPT = """
 on run argv
@@ -157,7 +158,7 @@ def _post(path: str, body: dict, headers: dict[str, str]) -> dict:
     req_headers = dict(headers)
     req_headers["Content-Type"] = "application/json"
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    for attempt in range(3):
+    for attempt in range(MAX_TRANSIENT_RETRIES + 1):
         request = Request(BASE + path, data=data, method="POST", headers=req_headers)
         try:
             with urlopen(request, timeout=30) as response:
@@ -166,8 +167,10 @@ def _post(path: str, body: dict, headers: dict[str, str]) -> dict:
             detail = exc.read().decode("utf-8", errors="replace")[:300]
             raise RuntimeError(f"Dingteam API {path} failed: HTTP {exc.code} {detail}") from exc
         except (TimeoutError, URLError) as exc:
-            if attempt == 2:
-                raise RuntimeError(f"Dingteam API {path} failed after 3 attempts: {exc}") from exc
+            if attempt >= MAX_TRANSIENT_RETRIES:
+                raise RuntimeError(
+                    f"Dingteam API {path} failed after {attempt + 1} attempts: {exc}"
+                ) from exc
             time.sleep(1.5 * (attempt + 1))
     raise AssertionError("unreachable")
 

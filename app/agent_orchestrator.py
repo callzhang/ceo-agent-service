@@ -22,6 +22,7 @@ from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
 from app.external_retry import DEFAULT_MAX_RETRY_DELAY_SECONDS, retry_delay_seconds
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.reviewed_candidates import rejected_content_changed
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
@@ -34,7 +35,7 @@ from app.consumer_purpose_retry import (
 MAX_TURNS_PER_PROCESS = 32
 MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
-MAX_CONSECUTIVE_FAILED_TURNS = MAX_ROLE_ATTEMPTS_PER_PROCESS * 3
+MAX_CONSECUTIVE_FAILED_TURNS = MAX_AUTOMATIC_ATTEMPTS
 EXTERNAL_DEPENDENCY_WAIT_ERRORS = frozenset(
     {"agent_context_refresh_failed", RETRY_REQUESTED}
 )
@@ -1081,6 +1082,24 @@ class AgentOrchestrator:
         error = _run_error(run)
         if error.code == "provider_risk_rejected" or error.source_code == "provider_risk_rejected":
             return self._run_terminal(run, "failed_terminal", error.model_copy(update={"retryable":False}), cycles)
+        if error.retryable and not error.authorization_required:
+            runs = self.store.list_agent_runs_for_task_generation(
+                task.id,
+                task.execution_generation,
+                load_events=False,
+            )
+            failed_turns = _consecutive_failed_turns([
+                prior
+                for prior in runs
+                if prior.role is run.role
+                and prior.proposal_revision == run.proposal_revision
+            ])
+            if failed_turns >= MAX_CONSECUTIVE_FAILED_TURNS:
+                return self._retry_exhausted_result(
+                    task,
+                    role=run.role,
+                    proposal_revision=run.proposal_revision,
+                )
         if error.code in EXTERNAL_DEPENDENCY_WAIT_ERRORS and error.retryable:
             retry_after = self._dependency_retry_after_seconds(task, run, error.code)
             if task.error != error.code:
@@ -1099,16 +1118,6 @@ class AgentOrchestrator:
                 cycles,
                 retry_after_seconds=retry_after,
             )
-        if error.retryable and not error.authorization_required:
-            runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation, load_events=False)
-            failed_turns = _consecutive_failed_turns([
-                prior for prior in runs
-                if prior.role is run.role and prior.proposal_revision == run.proposal_revision
-            ])
-            if failed_turns >= MAX_CONSECUTIVE_FAILED_TURNS:
-                return self._retry_exhausted_result(
-                    task, role=run.role, proposal_revision=run.proposal_revision,
-                )
         if (
             error.retryable
             and _is_waiting_failure(error)
@@ -1445,10 +1454,7 @@ def _consecutive_failed_turns(role_runs: list[AgentRun]) -> int:
         role_runs, key=lambda item: (item.turn_attempt, item.id), reverse=True
     )
     for run in newest_first:
-        if (
-            run.status != "failed"
-            or _run_error(run).code in EXTERNAL_DEPENDENCY_WAIT_ERRORS
-        ):
+        if run.status != "failed":
             break
         count += 1
     return count

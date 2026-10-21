@@ -22,7 +22,7 @@ from robust_json import extract_all
 
 from app.config import chat_bot_names, read_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
-from app.external_retry import retry_delay_seconds
+from app.external_retry import MAX_AUTOMATIC_RETRIES, retry_delay_seconds
 from app.message_split import split_dingtalk_text
 
 TITLE_INFORMATION_UNIT_LIMIT = 20
@@ -373,7 +373,9 @@ class DwsClient:
         )
         self.ding_robot_name = ding_robot_name
         self.ding_receiver_user_id = ding_receiver_user_id
-        self.transient_retry_attempts = transient_retry_attempts
+        self.transient_retry_attempts = min(
+            max(transient_retry_attempts, 0), MAX_AUTOMATIC_RETRIES
+        )
         self.transient_retry_delay_seconds = transient_retry_delay_seconds
         self._bot_open_dingtalk_ids_by_name: dict[str, set[str]] = {}
 
@@ -2670,7 +2672,7 @@ class DwsClient:
         endpoint: str,
         config_path: str | None,
     ) -> bytes:
-        attempts = max(self.transient_retry_attempts, 1)
+        attempts = self.transient_retry_attempts + 1
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:

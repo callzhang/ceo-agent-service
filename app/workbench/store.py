@@ -18,6 +18,7 @@ from app.task_storage import task_physical_id, task_id_expression
 from app.task8_storage import task8_insert_parts, task8_set_parts
 from app.task12_storage import insert_task12, task12_projection
 from app.task20_definitions import task20_column, task20_projection
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.run_storage import WORKBENCH_EVENT_SQL, insert_run
 from app.workbench.native_events import (
     AGENT_EVENTS,
@@ -64,9 +65,11 @@ class WorkbenchConflictError(ValueError):
 
 
 def _begin_immediate_with_retry(
-    db: sqlite3.Connection, *, attempts: int = 6, delay_seconds: float = 0.25
+    db: sqlite3.Connection, *, attempts: int = MAX_AUTOMATIC_ATTEMPTS,
+    delay_seconds: float = 0.25,
 ) -> None:
     """Serialize startup recovery with the worker's SQLite writer."""
+    attempts = min(max(1, attempts), MAX_AUTOMATIC_ATTEMPTS)
     for attempt in range(attempts):
         try:
             db.execute("begin immediate")

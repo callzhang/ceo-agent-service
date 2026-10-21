@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.deployment_drain import claim_connection
 from app.task20_definitions import task20_projection
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 
 from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore
 
@@ -164,7 +165,7 @@ EMAIL_MESSAGE_SQL = _canonical_messages()
 MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
 _RUNTIME_LATENCY_FALLBACK_SAMPLES = 200
 HISTORICAL_DEFER_RETRY_SECONDS = 60
-DIRECT_ACTION_MAX_ATTEMPTS = 3
+DIRECT_ACTION_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 DIRECT_ACTION_EXHAUSTED_TRANSIENT_RETRY_SECONDS = 300
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
