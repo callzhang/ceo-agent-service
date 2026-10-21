@@ -8947,6 +8947,7 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
             "imap-secret-a",
             {
                 "port": 993,
+                "timeout": 90.0,
                 "account_id": "account-a",
                 "move_mode": "copy_as_move",
             },
@@ -8955,7 +8956,7 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
             "imap-b.example.com",
             "b@example.com",
             "imap-secret-b",
-            {"port": 1993, "account_id": "account-b", "move_mode": "move"},
+            {"port": 1993, "timeout": 90.0, "account_id": "account-b", "move_mode": "move"},
         ),
         (
             "imap-a.example.com",
@@ -8963,6 +8964,7 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
             "imap-secret-a",
             {
                 "port": 993,
+                "timeout": 90.0,
                 "account_id": "account-a",
                 "move_mode": "copy_as_move",
             },

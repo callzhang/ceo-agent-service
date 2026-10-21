@@ -4107,6 +4107,7 @@ def _build_email_connector_registry(
 
     from app.email_account_connector import EmailConnectorRegistry
     from app.email_connector_config import resolve_secret
+    from app.email_imap_readonly import IMAP_READ_TIMEOUT_SECONDS
     from app.email_provider_actions import ImapDeterministicProvider
 
     def connect_fn_factory(account_id: str):
@@ -4128,6 +4129,7 @@ def _build_email_connector_registry(
                 str(account["imap_username"]),
                 secret,
                 port=int(account["imap_port"]),
+                timeout=IMAP_READ_TIMEOUT_SECONDS,
                 account_id=account_id,
                 move_mode=str(account.get("imap_move_mode") or "move"),
             )

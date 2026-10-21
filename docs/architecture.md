@@ -3839,3 +3839,25 @@ available. Active unexpired claims and done tasks are not closed by this sweep.
 The existing explicit selected-task repair resets attempts and keeps task
 identity; discovery does not automatically reopen failed records. See
 `docs/email-classification-retry-budget-validation.md` for evidence.
+
+
+### Classification source-read failure repair
+
+Owner-labelled context excludes only provider-only model inputs whose current
+provider observation explicitly says unavailable. Inline and native originals
+remain eligible regardless of mailbox observation; unknown provider observations
+still use the existing exact read. Labels and source references are retained.
+The example stamp follows this eligible set, so an observation becoming available
+restores that example. Similarity scoring and exact-original hash checks are
+unchanged. One known-unavailable historical example no longer aborts every new
+classification before the Agent runs.
+
+The shared account connector passes the same 90-second read timeout as the
+readonly adapter, rather than inheriting the deterministic provider constructor's
+20-second default. Native connection reuse and account credential selection are
+unchanged. FETCH framing reconstructs IMAP literals by their declared byte lengths;
+BODYSTRUCTURE literal filename values are decoded as data, and single-message UID
+validation shares the existing complete-record parser. Literal body bytes cannot
+supply a UID attribute. This supports real multipart filename literals and UID
+attributes after a literal without changing account, generation or message
+identity checks. See `docs/email-classification-source-repair-validation.md`.

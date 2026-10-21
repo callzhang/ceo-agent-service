@@ -42,6 +42,7 @@ _HEADER_FETCH = (
     "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
 )
 _MAX_TEXT_FETCH_BYTES = 64 * 1024
+IMAP_READ_TIMEOUT_SECONDS = 90.0
 
 
 @dataclass(frozen=True)
@@ -317,7 +318,7 @@ class ImapReadonlyAdapter:
         # caught and continued on the same session (the read desyncs from
         # the server's still-pending response), so widening the ceiling is
         # the safe fix here, not a catch-and-skip.
-        timeout: float | None = 90.0,
+        timeout: float | None = IMAP_READ_TIMEOUT_SECONDS,
         account_id: str,
         mailbox_address: str = "",
         trusted_authserv_domain: str = "",
@@ -1002,7 +1003,7 @@ def _imap_important_signals_by_uid(data: object) -> dict[int, ImportantSignals]:
 
 
 def _parse_bodystructure(data: object) -> _BodyPart:
-    metadata = _fetch_metadata(data)
+    metadata = _fetch_metadata(data, literals=True)
     match = re.search(rb"\bBODYSTRUCTURE\b", metadata, flags=re.IGNORECASE)
     if match is None:
         raise ConnectionError("IMAP BODYSTRUCTURE fetch returned invalid data")
@@ -1014,7 +1015,7 @@ def _parse_bodystructure(data: object) -> _BodyPart:
         raise ConnectionError("IMAP BODYSTRUCTURE fetch returned invalid data") from exc
 
 
-def _fetch_metadata(data: object) -> bytes:
+def _fetch_metadata(data: object, *, literals: bool = False) -> bytes:
     if not isinstance(data, (list, tuple)):
         raise ConnectionError("IMAP FETCH returned invalid data")
     parts: list[bytes] = []
@@ -1022,7 +1023,12 @@ def _fetch_metadata(data: object) -> bytes:
         if isinstance(item, bytes):
             parts.append(item)
         elif isinstance(item, tuple) and item and isinstance(item[0], bytes):
-            parts.append(item[0])
+            if literals:
+                if len(item) != 2 or not isinstance(item[1], bytes):
+                    raise ConnectionError("IMAP FETCH returned invalid literal data")
+                parts.append(item[0] + b"\r\n" + item[1])
+            else:
+                parts.append(item[0])
     return b" ".join(parts)
 
 
@@ -1058,6 +1064,16 @@ def _parse_imap_value(data: bytes, index: int) -> tuple[object, int]:
                 index += 1
             value.append(character)
         raise ValueError("unterminated IMAP quoted string")
+    if data[index] == ord("{"):
+        end = data.find(b"}", index + 1)
+        length = data[index + 1:end]
+        if end < 0 or not length.isdigit() or data[end + 1:end + 3] != b"\r\n":
+            raise ValueError("invalid IMAP literal")
+        start = end + 3
+        end = start + int(length)
+        if end > len(data):
+            raise ValueError("truncated IMAP literal")
+        return data[start:end], end
     end = index
     while (
         end < len(data)
@@ -1133,6 +1149,8 @@ def _body_part(value: object, *, section: str) -> _BodyPart:
 
 
 def _body_string(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
     return "" if value is None else str(value)
 
 
@@ -1560,7 +1578,7 @@ def _split_exact_fetch_records(data, requested):
         if not isinstance(metadata, bytes):
             raise LookupError("email source batch metadata is invalid")
         record.append(item)
-        metadata_parts.append(metadata)
+        metadata_parts.append(_fetch_metadata([item], literals=True))
         metadata = b' '.join(metadata_parts)
         sequence, separator, attributes = metadata.partition(b' ')
         if not separator or not sequence.isdigit() or not attributes.startswith(b'('):
@@ -1588,25 +1606,8 @@ def _require_exact_fetch_uid(data: object, expected: bytes) -> None:
     # FETCH literal bodies are never interpreted as response metadata.
     if not isinstance(data, (list, tuple)):
         raise LookupError("email source UID is unavailable")
-    observed = []
-    for item in data:
-        metadata = item[0] if isinstance(item, tuple) and item else item
-        if not isinstance(metadata, bytes):
-            continue
-        start = metadata.find(b"(")
-        if start < 0:
-            continue
-        try:
-            # Literal metadata ends before its closing parenthesis. The body
-            # bytes themselves are never parsed; each record binds its own UID.
-            attributes, _ = _parse_imap_value(metadata+b")", start)
-        except (IndexError, ValueError) as exc:
-            raise LookupError("email source FETCH metadata is invalid") from exc
-        uids = [attributes[index+1] for index, token in enumerate(attributes[:-1])
-                if isinstance(token, str) and token.upper() == "UID"]
-        observed.append(uids)
-    if not observed or any(uids != [int(expected)] for uids in observed):
-        raise LookupError("email source UID is missing or mismatched")
+    if not _split_exact_fetch_records(data, {int(expected)}):
+        raise LookupError("email source UID is unavailable")
 
 
 def _fetch_payload(data: object) -> bytes:

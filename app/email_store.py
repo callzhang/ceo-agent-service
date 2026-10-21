@@ -13477,6 +13477,17 @@ class EmailStore:
                 from emails
                 where classification_id is not null and class_classification_source='user'
                   and coalesce(class_confirmed_category, '') != ''
+                  and not (
+                    class_model_text=''
+                    and coalesce(json_extract(message_source_reference_json,'$.model_input.kind'),'')='provider'
+                    and exists (
+                      select 1 from provider_state observation
+                      where observation.record_type='observation'
+                        and observation.account_id=emails.account_id
+                        and observation.stable_message_identity=emails.stable_message_identity
+                        and observation.state='unavailable'
+                    )
+                  )
                 order by classification_id
                 """
             ).fetchall()
