@@ -175,6 +175,15 @@ candidate_action_attempts:
 
 ## 6. 单元 D：退出旧业务系统
 
+2026-10-20 九字段子单元：用户已明确批准永久删除 WorkProject 五项、WorkTodo 两项、
+WorkUpdate 两项（包含 merge_reason），不复制旧值；逆迁仅恢复声明与中性默认值。
+[完整51→42映射](../../business-model-legacy-fields-mapping.md)绑定 fresh19.8 来源 SHA 与
+9,770 个历史身份处置，保留 follow_up_question、changes_json、全部业务事实和回执。
+实现提供明确19.8/19.9/19.10→19.11事务链，仅最终构造器加载新声明；源支持的条件性
+正式导入保留，manifest升为4。历史 reader/URL 继续有确定结果，不将同号/同标题身份晋升。
+有界测试、真实旧代码中性逆迁和前端构建证据见[验证记录](../../business-model-legacy-fields-validation.md)。
+这不表示完整D、独立全量副本、原生验收或正式发布完成；此前A5原生失败仍保持失败，待根任务新证据。
+
 2026-10-20 用户确认的旧 provider Todo 处置：540 条 recorded-active 旧链接没有可核验的
 current Task 身份，仅按原身份保留来源、业务事实和执行回执；不自动晋升、取消、完成或
 重发真实外部 Todo。D1b 退休旧 provider 执行代码及 dispatcher adapter 队列，保留物理事实和历史 reader；

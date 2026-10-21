@@ -634,8 +634,6 @@ def test_check_dry_run_ignores_legacy_follow_up_drafts(tmp_path: Path):
         title="宝马项目周末攻坚与客户Demo推进",
         category="sales",
         status="active",
-        priority="P0",
-        risk_level="high",
     )
     store.create_follow_up_draft(
         project_id=project_id,

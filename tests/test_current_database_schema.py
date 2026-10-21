@@ -6,7 +6,7 @@ import pytest
 
 from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
 from app.email_store import EmailStore
-from app.selection_schema_release import publication_action_schema_is_current
+from app.business_legacy_field_schema_release import publication_action_schema_is_current
 
 
 @pytest.mark.parametrize("first", ("store", "email"))

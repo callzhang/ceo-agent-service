@@ -11,7 +11,7 @@ from app.action_postfix_storage import (
     capture_action_postfix_schema,
     restore_action_postfix_schema,
 )
-from app.logical_run_schema_release import (
+from app.business_legacy_field_schema_release import (
     TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
@@ -43,7 +43,7 @@ def publication_postfix_sources(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
-    if version == TARGET_STORE_VERSION and publication_action_schema_is_current(db, version):
+    if version in ("2026-10-19.9", "2026-10-19.10", TARGET_STORE_VERSION) and publication_action_schema_is_current(db, version):
         from app.prepared_action_definitions import CHILDREN, prepared_child_projection
         return {kind: prepared_child_projection(kind) if kind in CHILDREN else ACTION_PROJECTIONS[kind]
                 for kind in POSTFIX_ACTION_TYPES}

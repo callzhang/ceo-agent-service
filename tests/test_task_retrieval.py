@@ -790,8 +790,6 @@ def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
         category="sales",
         tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="复用售前材料和来源链接。",
         facts_json=json.dumps(
             [{"description": "材料放在 business/售前知识库", "source": "memory"}],
@@ -804,8 +802,6 @@ def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
         category="recruiting",
         tags_json=json.dumps(["招聘"], ensure_ascii=False),
         status="active",
-        priority="P2",
-        risk_level="low",
         background="候选人流程复盘。",
     )
 
@@ -827,8 +823,6 @@ def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path)
         title="实际项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="与文本检索词不相似。",
     )
     for index in range(5):
@@ -836,8 +830,6 @@ def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path)
             title=f"项目闭环 {index}",
             category="projects",
             status="active",
-            priority="P2",
-            risk_level="low",
             background="项目闭环相关的文本候选。",
         )
 
@@ -866,8 +858,6 @@ def test_render_candidate_prompt_uses_persisted_project_facts_only(tmp_path):
         category="sales",
         tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Alex",
         goal="沉淀可复用售前材料",
         background="复用售前材料和来源链接。",
@@ -902,8 +892,6 @@ def test_retrieve_project_candidates_excludes_archived_and_done_projects(tmp_pat
         category="sales",
         tags_json=json.dumps(["售前"], ensure_ascii=False),
         status="archived",
-        priority="P1",
-        risk_level="low",
         background="归档项目。",
     )
     seed_legacy_work_project(store,
@@ -911,8 +899,6 @@ def test_retrieve_project_candidates_excludes_archived_and_done_projects(tmp_pat
         category="sales",
         tags_json=json.dumps(["售前"], ensure_ascii=False),
         status="done",
-        priority="P1",
-        risk_level="low",
         background="完成项目。",
     )
 
@@ -958,8 +944,6 @@ def test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_project
         category="sales",
         tags_json=json.dumps(["售前"], ensure_ascii=False),
         status="active",
-        priority="P1",
-        risk_level="low",
         background="复用售前材料。",
     )
 
@@ -1020,8 +1004,6 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         title="技术部招聘",
         category="recruiting",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_user_id="hr-owner",
         owner_name="Avery",
         goal="招聘关键技术岗位",
@@ -1039,9 +1021,7 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         description="确认技术面、售前方案能力、薪资预期和下一轮安排。",
         owner_user_id="hr-owner",
         owner_name="Avery",
-        priority="P1",
         deadline_at="2026-07-25 18:00:00",
-        next_follow_up_at="2026-07-24 15:00:00",
         follow_up_question="Colin 的复试结论和下一步安排定了吗？",
     )
     follow_up_id = store.create_follow_up_draft(
@@ -1060,7 +1040,6 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         source_ref="123",
         summary="新增 Colin 候选人评估 TODO",
         changes_json=json.dumps({"todo_id": todo_id}, ensure_ascii=False),
-        confidence=0.91,
     )
 
     details = retrieve_project_task_details(
@@ -1086,20 +1065,16 @@ def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
         title="批量读取 follow-up",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_one = seed_legacy_work_todo(store,
         project_id=project_id,
         title="TODO A",
         status="open",
-        priority="P1",
     )
     todo_two = seed_legacy_work_todo(store,
         project_id=project_id,
         title="TODO B",
         status="open",
-        priority="P1",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -1146,8 +1121,6 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
         source_conversations_json=json.dumps(
             [{"id": "cid-delivery", "title": "客户交付群"}],
             ensure_ascii=False,
@@ -1159,7 +1132,6 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
         owner_user_id="owner-1",
         owner_name="Avery",
         status="open",
-        priority="P1",
     )
 
     details = retrieve_project_task_details(

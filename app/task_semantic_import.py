@@ -8,10 +8,10 @@ an old Project title or an Agent-created DingTalk TODO mirror.
 
 from __future__ import annotations
 from app.provenance_storage import signal_projection
-from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
 from app.business_legacy_owner_storage import read_import_task, assign_import_task
 from app.task20_definitions import task20_projection
-from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS, sync_action_projection
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS, current_sync_projection as sync_action_projection
 from app.action_business_definitions import business_action_projection
 
 import hashlib
@@ -35,7 +35,7 @@ from app.task_semantic_service import (
 WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
-MANIFEST_VERSION = 3
+MANIFEST_VERSION = 4
 LEGACY_TABLES = ("work_projects", "work_todos", "work_updates")
 LegacyKind = Literal["work_projects", "work_todos", "work_updates"]
 Disposition = Literal["formal_task", "history_only"]
@@ -128,9 +128,7 @@ def _source_row(db: sqlite3.Connection, table: LegacyKind, row_id: int) -> dict[
     }
     if table not in projections:
         raise ValueError("unsupported import source table")
-    # The source WorkUpdate projection's ordered scan materializes generated
-    # REAL values with their JSON storage class. Keep that exact digest shape
-    # after the indexed point predicate by using the same SQLite sort path.
+    # Match the ordered corpus scan when digesting a source point lookup.
     ordering = "(select 1)" if table == "work_updates" else "id"
     row = db.execute(
         f"select * from ({projections[table]}) where id=? order by {ordering}",

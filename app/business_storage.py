@@ -9,10 +9,16 @@ from app.action_storage import (
     _source_bound_null,
 )
 from app.business_definitions import (
-    BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_FIELDS, BUSINESS_INDEX_DDL,
-    BUSINESS_PROJECTIONS, BUSINESS_REFERENCES, BUSINESS_TABLE_DDL,
-    BUSINESS_TRIGGER_DDL, business_payload_fields,
+    BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_INDEX_DDL,
+    BUSINESS_REFERENCES, BUSINESS_TABLE_DDL,
+    BUSINESS_TRIGGER_DDL,
     _definitions,
+)
+
+from app.business_legacy_fields import (
+    CURRENT_BUSINESS_FIELDS as BUSINESS_FIELDS,
+    CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS,
+    current_business_payload_fields as business_payload_fields,
 )
 
 

@@ -120,14 +120,13 @@ from app.state_definitions import STATE_INDEX_DDL, state_projection
 from app.state_schema_release import SOURCE_TABLES as STATE_SOURCE_TABLES, TARGET_INDEXES as STATE_TARGET_INDEXES, state_schema_is_current
 from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
 from app.business_definitions import (
-    BUSINESS_PROJECTIONS, BUSINESS_TASK_LIST_PROJECTION,
+    BUSINESS_TASK_LIST_PROJECTION,
 )
 from app.business_storage import (
     insert_business, update_business,
 )
-from app.business_schema_release import (
-    business_schema_is_current, business_schema_parent_is_current,
-)
+from app.business_legacy_fields import (CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS, current_business_schema_is_current, current_action_objects, current_action_variants, create_current_action_schema)
+
 from app.business_candidate_definitions import candidate_projection
 from app.business_candidate_storage import (
     insert_business_candidate, update_business_candidate,
@@ -268,7 +267,6 @@ from app.action_storage import (
     email_action_auxiliary_objects_are_current,
     ACTION_TYPES, DELIVERY_ACTION_TYPES, REPLY_ACTION_TYPES,
     POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
-    create_action_schema,
     RECEIPT_ACTION_TYPES,
     action_schema_is_current,
     insert_action,
@@ -457,7 +455,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-19.10"
+STORE_SCHEMA_VERSION = "2026-10-19.11"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -591,9 +589,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_work_cluster_public_id",
     "idx_business_work_project_public_id",
     "idx_business_work_todo_public_id",
-    "idx_business_work_project_status_priority",
     "idx_business_work_todo_project_status",
-    "idx_business_work_todo_follow_up",
     "idx_business_todo_evidence_dedupe_key",
     "idx_business_todo_evidence_todo",
     "idx_business_todo_evidence_status",
@@ -1266,14 +1262,10 @@ class RecentFollowUpCandidate(BaseModel):
     project_id: int
     project_title: str = ""
     project_status: str = ""
-    project_priority: str = ""
-    project_risk_level: str = ""
     todo_id: int = 0
     todo_title: str = ""
     todo_status: str = ""
-    todo_priority: str = ""
     todo_deadline_at: str = ""
-    todo_next_follow_up_at: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
     target_conversation_id: str = ""
@@ -1979,7 +1971,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True)
+        require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True, expected_action_variants=current_action_variants())
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
@@ -1987,7 +1979,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True)
+                require_current_email_pair(self.path, store_version=STORE_SCHEMA_VERSION, email_version=TARGET_EMAIL_VERSION, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, metadata_owner=True, task_lifecycle=True, logical_owner=True, expected_action_variants=current_action_variants())
                 if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2297,8 +2289,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             and provenance_schema_is_current(db)
             and task20_schema_is_current(db)
             and task20_feedback_child_is_current(db, include_feedback=True)
-            and business_schema_is_current(db, include_followup_sync=True, include_candidates=True,
-                                           include_business_actions=True, inline_legacy_owner=True)
+            and current_business_schema_is_current(db)
             and state_schema_is_current(db)
             and any(current_configs_schema_is_current(
                         db,
@@ -2310,7 +2301,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         canonical_email=canonical_email,
-                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True,
+                        inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True, expected_action_objects=current_action_objects(variant),
                     )
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
             and reply_input_foreign_keys_present
@@ -2568,7 +2559,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         fresh = self._require_supported_store_bootstrap_source()
-        from app.current_database_schema import create_current_database_schema, FINAL_ACTION_OPTIONS
+        from app.current_database_schema import create_current_database_schema
         with self._connect() as db:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -2591,7 +2582,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         "select 1 from sqlite_schema where type='index' and name=?", (name,)
                     ).fetchone() is None:
                         db.execute(sql)
-                create_action_schema(db, reply_variant=_reply_variant_for(db), **FINAL_ACTION_OPTIONS)
+                create_current_action_schema(db, reply_variant=_reply_variant_for(db))
                 install_run_child_guards(db)
                 install_current_task_child_guards(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
@@ -6778,7 +6769,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     db, action_variant=variant, include_business_actions=True,
                     include_email_history=True,
                     canonical_email="emails" in tables,
-                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True)
+                    inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True, expected_action_objects=current_action_objects(variant))
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk"))
                 and not set((*CONFIG_SOURCE_TABLES, "email_training_snapshot_observations")).intersection(tables)
                 and task20_schema_is_current(db, allow_missing_objects=True)
@@ -6792,16 +6783,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         include_business_actions=True,
                         include_email_history=True,
                         inline_legacy_owner=True, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True,
-                        canonical_email="emails" in tables,
+                        canonical_email="emails" in tables, expected_objects=current_action_objects(variant),
                     ) and email_action_auxiliary_objects_are_current(db, reply_variant=variant, physical_provenance=True, compact_payload=True, selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True)
                     for variant in ("actual_no_memory_fk", "fresh_memory_fk")
                 )
                 # The old Attempt/Memory tables cannot coexist with candidate E.
                 # Other known retired runtime tables retain their prior repair.
                 and not {"reply_task_deferral_receipts", *REPLY_ACTION_TYPES}.intersection(tables)
-                and business_schema_parent_is_current(db, include_candidates=True,
-                                                     include_business_actions=True,
-                                                     inline_legacy_owner=True)
+                and current_business_schema_is_current(db)
                 and state_current_or_known_dispatcher_index_repair(db)
             )
             if current_core_with_known_repairs:
@@ -6814,7 +6803,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "or the current 2026-10-19.10 schema"
+                    "or the current 2026-10-19.11 schema"
                 )
             return True
         finally:
@@ -22846,7 +22835,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     projects.background || ' ' || projects.current_state || ' ' ||
                     projects.next_step || ' ' || updates.source_type || ' ' ||
                     updates.source_ref || ' ' || updates.summary || ' ' ||
-                    updates.changes_json || ' ' || updates.merge_reason
+                    updates.changes_json
                     , '') as search_text
                 from ({SYNC_ACTION_PROJECTIONS['work_updates']}) as updates
                 join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=updates.project_id
@@ -24133,7 +24122,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         *,
         project_id: int | None = None,
         statuses: tuple[str, ...] | None = None,
-        due_before: str | None = None,
     ) -> list[WorkTodo]:
         query = f"select * from ({BUSINESS_PROJECTIONS['work_todo']})"
         clauses: list[str] = []
@@ -24144,9 +24132,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if statuses:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)
-        if due_before is not None:
-            clauses.append("next_follow_up_at != '' and next_follow_up_at <= ?")
-            args.append(due_before)
         if clauses:
             query = f"{query} where {' and '.join(clauses)}"
         query = f"{query} order by id"
@@ -25838,14 +25823,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     f.project_id,
                     coalesce(p.title, '') as project_title,
                     coalesce(p.status, '') as project_status,
-                    coalesce(p.priority, '') as project_priority,
-                    coalesce(p.risk_level, '') as project_risk_level,
                     f.todo_id,
                     coalesce(t.title, '') as todo_title,
                     coalesce(t.status, '') as todo_status,
-                    coalesce(t.priority, '') as todo_priority,
                     coalesce(t.deadline_at, '') as todo_deadline_at,
-                    coalesce(t.next_follow_up_at, '') as todo_next_follow_up_at,
                     {owner_expr} as owner_user_id,
                     {owner_name_expr} as owner_name,
                     f.target_conversation_id,
@@ -26047,7 +26028,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         coalesce(todos.description, '') as todo_description,
                         coalesce(nullif(links.title_snapshot, ''), todos.title, '') as original_text,
                         coalesce(nullif(links.deadline_at_snapshot, ''), todos.deadline_at, '') as deadline_at,
-                        coalesce(nullif(links.priority_snapshot, ''), todos.priority, '') as priority,
+                        coalesce(links.priority_snapshot, '') as priority,
                         coalesce(projects.tags_json, '[]') as tags_json,
                         coalesce(projects.related_people_json, '[]') as participants_json,
                         '[]' as files_json,
@@ -26077,7 +26058,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         coalesce(todos.description, '') as todo_description,
                         drafts.question_text as original_text,
                         coalesce(todos.deadline_at, '') as deadline_at,
-                        coalesce(nullif(drafts.priority, ''), todos.priority, '') as priority,
+                        coalesce(drafts.priority, '') as priority,
                         coalesce(nullif(drafts.tags_json, ''), projects.tags_json, '[]') as tags_json,
                         coalesce(nullif(drafts.participants_json, ''), projects.related_people_json, '[]') as participants_json,
                         coalesce(nullif(drafts.files_json, ''), '[]') as files_json,

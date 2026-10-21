@@ -1,7 +1,7 @@
 """Explicit maintenance for authorized, effect-free interrupted reply work."""
 from __future__ import annotations
 from app.state_publication_sources import publication_dispatcher_source
-from app.logical_run_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+from app.business_legacy_field_schema_release import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 from app.scheduled_config_storage import publication_scheduled_source
 
 from dataclasses import dataclass

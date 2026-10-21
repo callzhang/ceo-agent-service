@@ -87,7 +87,7 @@ function query(params: Record<string, string | number | undefined>) {
   return search.size ? `?${search.toString()}` : "";
 }
 
-export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
+export interface TaskSummary { id: string; title: string; status: string; category: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
 export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects" | "projects_by_customer";
 export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
 export interface BusinessAttentionSummary {
@@ -260,7 +260,7 @@ export interface BusinessProjectDetail {
 }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
+export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
@@ -835,7 +835,6 @@ function mapTaskSummary(value: unknown): TaskSummary {
   return {
     id: String(row.id ?? ""), title: displayValue(row.title),
     status: displayValue(row.status), category: displayValue(row.category),
-    priority: displayValue(row.priority), risk: displayValue(row.risk_level),
     owner: resolveOwnerDisplay(row),
     progress: `${done}/${total}（${Number(row.progress_ratio || 0)}%）`,
     todo_count: Number(row.todo_count || 0),
@@ -856,8 +855,7 @@ function mapTaskDetail(value: unknown): TaskDetail {
   return {
     ...mapTaskSummary({
       id: project.id, title: project.title, status: project.status,
-      category: project.category, priority: project.priority,
-      risk_level: project.risk_level,
+      category: project.category,
       owner: resolveOwnerDisplay(project, todos),
       progress_count: progress.done,
       progress_total: progress.total,
@@ -867,7 +865,7 @@ function mapTaskDetail(value: unknown): TaskDetail {
     }),
     description: displayValue(project.goal || project.description),
     background: displayValue(project.background), blocker: displayValue(project.blocker),
-    follow_up_mode: displayValue(project.follow_up_mode), tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
+    tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
     facts: facts.map((fact, index) => { const item = asRecord(fact); return { id: String(item.id ?? index), description: item.description, source: item.source, created: displayValue(item.created || item.created_at), updated: displayValue(item.updated || item.updated_at) }; }),
     todos,
     updates: Array.isArray(payload.updates) ? payload.updates.map(asRecord) : [],

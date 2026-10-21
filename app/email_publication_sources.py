@@ -8,7 +8,7 @@ from app.action_email_schema_release import (
     SOURCE_STORE_VERSION,
 )
 from app.action_storage import email_action_projection
-from app.logical_run_schema_release import (
+from app.business_legacy_field_schema_release import (
     TARGET_STORE_VERSION, TARGET_EMAIL_VERSION, PREVIOUS_STORE_VERSIONS, PREVIOUS_EMAIL_PAIRS,
 )
 
@@ -37,7 +37,7 @@ def publication_email_action_source(db: sqlite3.Connection) -> str:
     pair = _markers(db)
     if pair == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
         return "select status from email_actions"
-    if pair in ((TARGET_STORE_VERSION, TARGET_EMAIL_VERSION), ('2026-10-19.9', 53), ('2026-10-19.8', 53), ('2026-10-19.7', 53), ('2026-10-19.6', 53)):
+    if pair in ((TARGET_STORE_VERSION, TARGET_EMAIL_VERSION), ('2026-10-19.10', 53), ('2026-10-19.9', 53), ('2026-10-19.8', 53), ('2026-10-19.7', 53), ('2026-10-19.6', 53)):
         from app.shared_action_definitions import email_projection
         return email_projection('email_actions')
     if pair in PREVIOUS_EMAIL_PAIRS:

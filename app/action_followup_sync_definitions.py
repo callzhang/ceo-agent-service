@@ -714,15 +714,18 @@ SYNC_EXTERNAL_FKS.update({"task_id": "business_tasks", "signal_id": "business_ta
 SYNC_TYPES_ORDER = tuple(SYNC_FIELDS)
 
 def sync_schema_parts(existing_references, reply_variant, *, business_public_ids=False,
-                      business_action_signals=False, inline_legacy_owner=False, payloads=None):
+                      business_action_signals=False, inline_legacy_owner=False, payloads=None, fields=None):
     """Return generated columns, checks, FKs, indexes and triggers for sync actions."""
+    fields = SYNC_FIELDS if fields is None else fields
     generated = []
     for field, affinity in SYNC_TYPES.items():
         if field == "draft_id":
             kinds = ("follow_up_send_attempts",)
         else:
-            kinds = tuple(kind for kind, fields in SYNC_FIELDS.items()
-                          if field in fields and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id"))
+            kinds = tuple(kind for kind, names in fields.items()
+                          if field in names and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id"))
+        if not kinds:
+            continue
         scope = ",".join(repr(kind) for kind in kinds)
         generated.append(
             f"sync_{field} {affinity} generated always as "
@@ -731,14 +734,14 @@ def sync_schema_parts(existing_references, reply_variant, *, business_public_ids
         )
     generated.append("sync_draft_action_id integer references actions(id)")
     checks = []
-    for kind, fields in SYNC_FIELDS.items():
-        stored = tuple(field for field in fields if field != "id" and
+    for kind, names in fields.items():
+        stored = tuple(field for field in names if field != "id" and
                        not (kind == "business_task_follow_up_send_attempts" and field == "draft_id"))
         paths = ",".join(repr("$." + field) for field in stored)
         parts = [payloads.check(kind, field) if payloads else _encoded_value_check("payload_json", "$." + field) for field in stored]
         parts += [payloads.shape(kind) if payloads else f"json_remove(payload_json,{paths})='{{}}'"]
         parts += [f"sync_{field} is not null" for field in SYNC_REQUIRED[kind]
-                  if not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")]
+                  if field in names and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")]
         if kind == "business_task_follow_up_send_attempts":
             parts += ["sync_draft_action_id is not null"]
         for expression in SYNC_SOURCE_CHECKS[kind]:
@@ -804,13 +807,13 @@ def sync_schema_parts(existing_references, reply_variant, *, business_public_ids
     return generated, checks, fks, indexes, triggers
 
 
-def sync_action_projection(kind, *, source_variant="actual", indexed_public_id=False):
+def sync_action_projection(kind, *, source_variant="actual", indexed_public_id=False, fields=None):
     if kind not in SYNC_FIELDS:
         raise ValueError(f"unsupported follow-up/Todo kind: {kind}")
     if source_variant not in ("actual", "fresh_candidate"):
         raise ValueError("unsupported follow-up/Todo source variant")
     columns = []
-    fields = SYNC_FRESH_FIELDS.get(kind, SYNC_FIELDS[kind]) if source_variant == "fresh_candidate" else SYNC_FIELDS[kind]
+    fields = fields if fields is not None else (SYNC_FRESH_FIELDS.get(kind, SYNC_FIELDS[kind]) if source_variant == "fresh_candidate" else SYNC_FIELDS[kind])
     for field in fields:
         expression = ("cast(a.legacy_key as integer)" if field == "id" else
                       "cast(p.legacy_key as integer)" if kind == "business_task_follow_up_send_attempts" and field == "draft_id" else

@@ -10,7 +10,7 @@ import pytest
 import app.task_semantic_import as semantic_import
 from app.provenance_storage import signal_projection
 from app.action_business_definitions import business_action_projection
-from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
 from app.business_storage import update_business
 from app.action_storage import update_sync_action
 from app.store import AutoReplyStore
@@ -453,9 +453,8 @@ def test_apply_rechecks_each_source_by_point_lookup_after_preflight(tmp_path, mo
             assert point == corpus
             assert semantic_import._digest(point) == semantic_import._digest(corpus)
             if item.legacy_kind == "work_updates":
-                # The full source projection returns JSON integer 0 here,
-                # although an unsorted indexed generated-REAL point read is 0.0.
-                assert type(point["confidence"]) is int
+                # Retained native SQLite values have the same digest shape.
+                assert type(point["project_id"]) is int
         assert len(statements) == len(manifest.items)
         for item, statement in zip(manifest.items, statements, strict=True):
             steps = [row[3] for row in db.execute("explain query plan " + statement)]
@@ -466,11 +465,11 @@ def test_apply_rechecks_each_source_by_point_lookup_after_preflight(tmp_path, mo
                 assert any("<expr>=?" in step for step in steps), steps
                 assert any("USE TEMP B-TREE FOR ORDER BY" in step for step in steps), steps
         db.execute("begin immediate")
-        update_sync_action(db, "work_updates", 1, {"confidence": 0.375})
+        update_sync_action(db, "work_updates", 1, {"project_id": 0.375})
         db.commit()
         point = semantic_import._source_row(db, "work_updates", 1)
         corpus = original(db, "work_updates")[0]
-        assert type(point["confidence"]) is float
+        assert type(point["project_id"]) is float
         assert point == corpus
         assert semantic_import._digest(point) == semantic_import._digest(corpus)
 

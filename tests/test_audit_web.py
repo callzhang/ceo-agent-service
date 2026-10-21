@@ -1976,8 +1976,6 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     project_id = seed_legacy_work_project(store,
         title="AI 待办推进",
         category="product",
-        priority="P1",
-        risk_level="medium",
         owner_name="Avery",
     )
     todo_id = seed_legacy_work_todo(store,
@@ -2023,8 +2021,6 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     project_id = seed_legacy_work_project(store,
         title="宝马项目周末攻坚与客户Demo推进",
         category="sales",
-        priority="P0",
-        risk_level="high",
         owner_name="Casey Huang",
     )
     follow_up_id = store.create_follow_up_draft(
@@ -2560,8 +2556,6 @@ def test_history_chart_waits_for_future_follow_up_schedule(tmp_path: Path):
     project_id = seed_legacy_work_project(store,
         title="Future follow-up",
         category="product",
-        priority="P1",
-        risk_level="low",
         owner_name="Derek",
     )
     store.create_follow_up_draft(
@@ -4160,8 +4154,6 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="销售支持项目。",
         current_state="整理中",
         next_step="补齐来源链接",
@@ -4170,14 +4162,12 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
         project_id=project_id,
         title="补齐来源链接",
         status="open",
-        priority="P1",
         deadline_at="2099-06-20 18:00:00",
     )
     seed_legacy_work_todo(store,
         project_id=project_id,
         title="整理销售材料",
         status="done",
-        priority="P2",
         deadline_at="2026-06-11 18:00:00",
     )
     store.create_follow_up_draft(
@@ -4222,8 +4212,8 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert row["title"] == "售前知识库建设"
     assert row["status"] == "in progress"
     assert row["category"] == "sales"
-    assert row["priority"] == "P1"
-    assert row["riskLevel"] == "medium"
+    assert "priority" not in row
+    assert "riskLevel" not in row
     assert row["progressSummary"] == "1/2 (50%)"
     assert row["detailUrl"] == f"/tasks/{project_id}"
     assert row["todos"][0]["title"] == "补齐来源链接"
@@ -4246,15 +4236,12 @@ def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
         title="多待办项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     for index in range(5):
         seed_legacy_work_todo(store,
             project_id=project_id,
             title=f"待办 {index + 1}",
             status="open",
-            priority="P1",
         )
 
     html = render_tasks_page(store)
@@ -4272,8 +4259,6 @@ def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -4282,7 +4267,6 @@ def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     seed_legacy_todo_link(store,
@@ -4338,8 +4322,6 @@ def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Alex",
         background="销售支持项目。",
         facts_json=json.dumps(
@@ -4359,14 +4341,11 @@ def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     seed_legacy_work_project(store,
         title="招聘专员圆桌",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="low",
         owner_name="Bea",
         background="候选人流程讨论。",
     )
@@ -4392,15 +4371,12 @@ def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
             title=f"候选人项目 {index + 1:02d}",
             category="recruiting",
             status="active",
-            priority="P1",
-            risk_level="medium",
             background="候选人流程。",
         )
         seed_legacy_work_todo(store,
             project_id=project_id,
             title=f"补齐候选人材料 {index + 1:02d}",
             status="open",
-            priority="P1",
         )
 
     html = render_tasks_page(store, query="候选人", page=2, page_size=20)
@@ -4429,8 +4405,6 @@ def test_tasks_page_respects_page_size(tmp_path: Path):
             title=f"项目 {index + 1:02d}",
             category="projects",
             status="active",
-            priority="P2",
-            risk_level="low",
         )
 
     html = render_tasks_page(store, page_size=50)
@@ -4448,15 +4422,11 @@ def test_tasks_page_filters_by_category(tmp_path: Path):
         title="招聘项目",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
     seed_legacy_work_project(store,
         title="销售项目",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
 
     html = render_tasks_page(store, category="recruiting")
@@ -4469,48 +4439,16 @@ def test_tasks_page_filters_by_category(tmp_path: Path):
     assert 'headerFilterValue: initial.category || ""' in html
 
 
-def test_tasks_page_sorts_by_priority_and_risk(tmp_path: Path):
+def test_tasks_page_removes_retired_priority_and_risk_columns_and_sorts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    seed_legacy_work_project(store,
-        title="低优先级高风险",
-        category="projects",
-        status="active",
-        priority="P2",
-        risk_level="high",
-    )
-    seed_legacy_work_project(store,
-        title="高优先级低风险",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="low",
-    )
-    seed_legacy_work_project(store,
-        title="中优先级中风险",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-
-    priority_html = render_tasks_page(store, sort="priority_desc")
-    risk_html = render_tasks_page(store, sort="risk_desc")
-
-    priority_initial = task_script_json(priority_html, "tasks-initial-state")
-    risk_initial = task_script_json(risk_html, "tasks-initial-state")
-    priority_rows = {row["title"]: row for row in task_script_json(priority_html, "tasks-data")}
-    risk_rows = {row["title"]: row for row in task_script_json(risk_html, "tasks-data")}
-
-    assert priority_initial["sort"] == "priority_desc"
-    assert risk_initial["sort"] == "risk_desc"
-    assert '"priority_desc": ["priorityRank", "asc"]' in priority_html
-    assert '"risk_desc": ["riskRank", "asc"]' in risk_html
-    assert priority_rows["高优先级低风险"]["priorityRank"] == 0
-    assert priority_rows["中优先级中风险"]["priorityRank"] == 1
-    assert priority_rows["低优先级高风险"]["priorityRank"] == 2
-    assert risk_rows["低优先级高风险"]["riskRank"] == 0
-    assert risk_rows["中优先级中风险"]["riskRank"] == 1
-    assert risk_rows["高优先级低风险"]["riskRank"] == 2
+    project_id = seed_legacy_work_project(store, title="Historical project", category="projects", status="active")
+    for retired_sort in ("priority_desc", "risk_desc"):
+        html = render_tasks_page(store, sort=retired_sort)
+        rows = task_script_json(html, "tasks-data")
+        assert [row["id"] for row in rows] == [project_id]
+        assert task_script_json(html, "tasks-initial-state")["sort"] == ""
+        assert not {"priority", "riskLevel", "priorityRank", "riskRank"}.intersection(rows[0])
+        assert 'title: "Priority"' not in html and 'title: "Risk"' not in html
 
 
 def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path):
@@ -4519,8 +4457,6 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
         title="Alpha",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Zoe",
         current_state="beta",
         next_step="call owner",
@@ -4529,8 +4465,6 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
         title="Bravo",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Ada",
         current_state="alpha",
         next_step="brief team",
@@ -4539,19 +4473,16 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
         project_id=project_a,
         title="Alpha todo",
         status="open",
-        priority="P1",
     )
     seed_legacy_work_todo(store,
         project_id=project_b,
         title="Bravo done",
         status="done",
-        priority="P1",
     )
     seed_legacy_work_todo(store,
         project_id=project_b,
         title="Bravo cancelled",
         status="cancelled",
-        priority="P1",
     )
 
     filtered_html = render_tasks_page(store, task_state="completed")
@@ -4578,8 +4509,6 @@ def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tm
         title="Owner fallback project",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     seed_legacy_work_todo(store,
         project_id=project_id,
@@ -4587,7 +4516,6 @@ def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tm
         owner_user_id="owner-1",
         owner_name="Avery",
         status="open",
-        priority="P1",
     )
 
     html = render_tasks_page(store)
@@ -4604,48 +4532,37 @@ def test_tasks_page_computes_table_statuses(tmp_path: Path):
         title="完成项目",
         category="projects",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
     overdue_id = seed_legacy_work_project(store,
         title="逾期项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     in_progress_id = seed_legacy_work_project(store,
         title="推进项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     seed_legacy_work_project(store,
         title="未开始项目",
         category="projects",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
     seed_legacy_work_todo(store,
         project_id=completed_id,
         title="已经完成",
         status="done",
-        priority="P2",
     )
     seed_legacy_work_todo(store,
         project_id=overdue_id,
         title="已经逾期",
         status="open",
-        priority="P1",
         deadline_at="2020-01-01 00:00:00",
     )
     seed_legacy_work_todo(store,
         project_id=in_progress_id,
         title="正在推进",
         status="open",
-        priority="P1",
         deadline_at="2099-01-01 00:00:00",
     )
 
@@ -4671,8 +4588,6 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Alex",
         tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
         related_people_json=json.dumps(
@@ -4703,9 +4618,7 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
         deadline_at="2099-06-10 18:00:00",
-        next_follow_up_at="2099-06-09 10:00:00",
         follow_up_question="来源链接补齐到哪一步了？",
     )
     seed_legacy_work_update(store,
@@ -4714,8 +4627,6 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         source_ref="7",
         summary="新增待办",
         changes_json='{"todo":"created"}',
-        merge_reason="same project",
-        confidence=0.91,
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -4772,15 +4683,12 @@ def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -4807,15 +4715,12 @@ def test_task_project_detail_renders_dingtalk_todo_link(tmp_path: Path):
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="给客户同步验收 ETA",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     seed_legacy_todo_link(store,
         work_todo_id=todo_id,
@@ -4847,8 +4752,6 @@ def test_tasks_route_renders_page(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -4866,16 +4769,12 @@ def test_tasks_route_applies_search_query(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="销售支持项目。",
     )
     seed_legacy_work_project(store,
         title="招聘专员圆桌",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -4895,8 +4794,6 @@ def test_tasks_route_applies_pagination_params(tmp_path: Path):
             title=f"候选人项目 {index + 1:02d}",
             category="recruiting",
             status="active",
-            priority="P1",
-            risk_level="medium",
             background="候选人流程。",
         )
     client = TestClient(create_audit_app(db_path))
@@ -4920,27 +4817,23 @@ def test_tasks_route_applies_category_and_sort_params(tmp_path: Path):
         title="招聘项目",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="high",
     )
     seed_legacy_work_project(store,
         title="销售项目",
         category="sales",
         status="active",
-        priority="P0",
-        risk_level="low",
     )
     client = TestClient(create_audit_app(db_path))
 
-    response = client.get("/tasks?category=recruiting&sort=risk_desc")
+    response = client.get("/tasks?category=recruiting&sort=owner_asc")
 
     assert response.status_code == 200
     assert "招聘项目" in response.text
     assert "销售项目" in response.text
     initial = task_script_json(response.text, "tasks-initial-state")
     assert initial["category"] == "recruiting"
-    assert initial["sort"] == "risk_desc"
-    assert '"risk_desc": ["riskRank", "asc"]' in response.text
+    assert initial["sort"] == "owner_asc"
+    assert '"owner_asc": ["owner", "asc"]' in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):
@@ -4950,15 +4843,12 @@ def test_task_project_detail_route_renders_project(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -4985,8 +4875,6 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
         title="技术部招聘",
         category="recruiting",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_user_id="owner-1",
         owner_name="Avery",
         current_state="候选人评估中",
@@ -5002,9 +4890,7 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
         description="确认候选人的技术面、售前方案能力和下一轮安排。",
         owner_user_id="owner-1",
         owner_name="Avery",
-        priority="P1",
         deadline_at="2026-07-25 18:00:00",
-        next_follow_up_at="2026-07-24 15:00:00",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -5052,15 +4938,12 @@ def test_task_management_project_api_returns_detail_and_404(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -7815,8 +7698,6 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
     project_id = seed_legacy_work_project(store,
         title="Hiring",
         category="people",
-        priority="P1",
-        risk_level="medium",
         owner_name="Avery",
     )
     follow_up_id = store.create_follow_up_draft(
@@ -7847,8 +7728,6 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
     project_id = seed_legacy_work_project(store,
         title="Hiring",
         category="recruiting",
-        priority="P1",
-        risk_level="high",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -7856,7 +7735,6 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
         owner_user_id="inactive-owner",
         owner_name="Former owner",
         status="open",
-        priority="P1",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -8708,8 +8586,6 @@ def test_worker_attention_excludes_healthy_follow_up_drafts(tmp_path: Path):
         title="Client delivery",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -11560,8 +11436,6 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     store.enqueue_work_summary_input("reply_attempt", "7", '{"summary":"新增任务"}')
     seed_legacy_work_update(store,
@@ -11626,8 +11500,6 @@ def test_render_workers_page_shows_service_and_queue_status(
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"新增任务"}')
     store.create_follow_up_draft(
@@ -11657,7 +11529,6 @@ def test_render_workers_page_shows_service_and_queue_status(
         title="确认客户验收 ETA",
         owner_user_id="owner-1",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     legacy_link_id = seed_legacy_todo_link(store,

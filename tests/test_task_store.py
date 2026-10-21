@@ -349,14 +349,11 @@ def test_todo_evidence_candidate_dedupes_and_marks_decision(tmp_path: Path):
         title="客户验收",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="确认客户验收完成",
         status="open",
-        priority="P1",
     )
 
     first = store.upsert_todo_evidence_candidate(
@@ -502,9 +499,6 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
         category="sales",
         tags_json='["售前","知识库"]',
         status="active",
-        priority="P1",
-        risk_level="medium",
-        needs_derek_attention=True,
         owner_user_id="owner-1",
         owner_name="Alex",
         goal="沉淀可复用售前材料",
@@ -512,8 +506,6 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
         facts_json='[{"description":"已确认材料路径","source":"reply_attempt","created":"2026-06-07","updated":"2026-06-07"}]',
         current_state="整理来源材料",
         next_step="确认边界",
-        next_follow_up_at="2026-06-10 09:00:00",
-        follow_up_mode="draft",
         source_conversations_json='[{"id":"cid-1","title":"售前项目群"}]',
     )
 
@@ -521,9 +513,6 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
     assert project is not None
     assert project.title == "售前知识库建设"
     assert project.category == "sales"
-    assert project.priority == "P1"
-    assert project.risk_level == "medium"
-    assert project.needs_derek_attention is True
     assert project.owner_user_id == "owner-1"
     assert project.owner_name == "Alex"
     assert project.goal == "沉淀可复用售前材料"
@@ -534,8 +523,6 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
     )
     assert project.current_state == "整理来源材料"
     assert project.next_step == "确认边界"
-    assert project.next_follow_up_at == "2026-06-10 09:00:00"
-    assert project.follow_up_mode == "draft"
     assert project.source_conversations_json == (
         '[{"id":"cid-1","title":"售前项目群"}]'
     )
@@ -545,14 +532,12 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
         current_state="等待 owner 回复",
         blocker="缺少来源链接",
         next_step="owner 补齐来源链接",
-        next_follow_up_at="2026-06-11 09:00:00",
     )
     updated_project = store.get_work_project(project_id)
     assert updated_project is not None
     assert updated_project.current_state == "等待 owner 回复"
     assert updated_project.blocker == "缺少来源链接"
     assert updated_project.next_step == "owner 补齐来源链接"
-    assert updated_project.next_follow_up_at == "2026-06-11 09:00:00"
 
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -560,9 +545,7 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
         description="确认售前知识库里每份材料的来源链接、使用场景和缺口 owner。",
         owner_user_id="owner-1",
         owner_name="Alex",
-        priority="P1",
         deadline_at="2026-06-10 18:00:00",
-        next_follow_up_at="2026-06-10 09:00:00",
         follow_up_question="现在来源链接补齐到哪一步了？",
     )
     todos = store.list_work_todos(project_id=project_id)
@@ -583,8 +566,6 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
         source_ref="1",
         summary="新增 P1 跟进项",
         changes_json='{"todo_created":true}',
-        merge_reason="同一售前项目",
-        confidence=0.86,
     )
     updates = store.list_work_updates(project_id)
     assert [update.id for update in updates] == [update_id]
@@ -616,8 +597,6 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
         title="宝马项目周末攻坚与客户Demo推进",
         category="sales",
         status="active",
-        priority="P0",
-        risk_level="high",
     )
     due_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -666,7 +645,6 @@ def test_create_follow_up_draft_dedupes_skipped_terminal_draft(tmp_path: Path):
         title="补齐售前材料来源链接",
         owner_user_id="owner-1",
         owner_name="Alex",
-        priority="P1",
     )
     skipped_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -702,8 +680,6 @@ def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path)
         title="海外数据合规与中美开发隔离闭环",
         category="strategy",
         status="active",
-        priority="P0",
-        risk_level="high",
         owner_user_id="owner-project",
         owner_name="Ming Hu",
     )
@@ -713,9 +689,7 @@ def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path)
         owner_user_id="owner-1",
         owner_name="Ming Hu",
         status="open",
-        priority="P0",
         deadline_at="2026-06-29 18:00:00",
-        next_follow_up_at="2026-06-29 09:00:00",
         follow_up_question="隔离方案今天能闭环吗？",
     )
     draft_id = store.create_follow_up_draft(
@@ -769,11 +743,9 @@ def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path)
     assert candidate.project_id == project_id
     assert candidate.project_title == "海外数据合规与中美开发隔离闭环"
     assert candidate.project_status == "active"
-    assert candidate.project_priority == "P0"
     assert candidate.todo_id == todo_id
     assert candidate.todo_title == "确认中美开发隔离方案执行状态"
     assert candidate.todo_status == "open"
-    assert candidate.todo_priority == "P0"
     assert candidate.owner_user_id == "owner-1"
     assert candidate.owner_name == "Ming Hu"
     assert candidate.target_conversation_id == "cid-data"
@@ -794,8 +766,6 @@ def test_list_recent_follow_up_candidates_prefers_conversation_then_owner(
         title="客户验收",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -803,7 +773,6 @@ def test_list_recent_follow_up_candidates_prefers_conversation_then_owner(
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     owner_match_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -851,8 +820,6 @@ def test_list_recent_follow_up_candidates_includes_scheduled_actionable_statuses
         title="客户验收",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -860,7 +827,6 @@ def test_list_recent_follow_up_candidates_includes_scheduled_actionable_statuses
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -918,8 +884,6 @@ def test_list_recent_follow_up_candidates_requires_conversation_or_owner(
         title="客户验收",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -927,7 +891,6 @@ def test_list_recent_follow_up_candidates_requires_conversation_or_owner(
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -961,8 +924,6 @@ def test_list_recent_follow_up_candidates_respects_non_positive_limit(
         title="客户验收",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -970,7 +931,6 @@ def test_list_recent_follow_up_candidates_respects_non_positive_limit(
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -1002,8 +962,6 @@ def test_historical_dingtalk_todo_link_get_and_active_lookup(tmp_path: Path):
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -1011,7 +969,6 @@ def test_historical_dingtalk_todo_link_get_and_active_lookup(tmp_path: Path):
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
 
@@ -1055,8 +1012,6 @@ def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -1092,8 +1047,6 @@ def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
@@ -1102,7 +1055,6 @@ def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     seed_legacy_todo_link(store,
@@ -1260,15 +1212,12 @@ def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     other_todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="同步其他事项",
         owner_user_id="owner-1",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     target_todo_id = seed_legacy_work_todo(store,
@@ -1276,7 +1225,6 @@ def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
         title="给客户同步验收 ETA",
         owner_user_id="owner-2",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     seed_legacy_todo_link(store,
@@ -1303,7 +1251,6 @@ def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
         title="确认第二个验收 ETA",
         owner_user_id="owner-3",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     seed_legacy_todo_link(store,
@@ -1334,15 +1281,12 @@ def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="给客户同步验收 ETA",
         owner_user_id="owner-1",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     other_todo_id = seed_legacy_work_todo(store,
@@ -1350,7 +1294,6 @@ def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
         title="同步其他事项",
         owner_user_id="owner-2",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
     link_ids = [
@@ -1383,26 +1326,21 @@ def test_list_follow_up_drafts_for_todos_groups_by_todo(
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     first_todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="第一项",
         status="open",
-        priority="P1",
     )
     second_todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="第二项",
         status="open",
-        priority="P1",
     )
     other_todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="第三项",
         status="open",
-        priority="P1",
     )
     first_draft_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -1447,40 +1385,31 @@ def test_list_work_todos_for_projects_groups_by_project(
         title="第一项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     second_project_id = seed_legacy_work_project(store,
         title="第二项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     other_project_id = seed_legacy_work_project(store,
         title="第三项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     first_todo_id = seed_legacy_work_todo(store,
         project_id=first_project_id,
         title="第一项",
         status="open",
-        priority="P1",
     )
     second_todo_id = seed_legacy_work_todo(store,
         project_id=second_project_id,
         title="第二项",
         status="done",
-        priority="P1",
     )
     seed_legacy_work_todo(store,
         project_id=other_project_id,
         title="第三项",
         status="open",
-        priority="P1",
     )
 
     grouped = store.list_work_todos_for_projects([first_project_id, second_project_id])
@@ -1498,29 +1427,23 @@ def test_list_work_project_ids_for_todo_owner_filters_active_projects(
         title="技术部招聘",
         category="recruiting",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     archived_project_id = seed_legacy_work_project(store,
         title="历史招聘",
         category="recruiting",
         status="archived",
-        priority="P2",
-        risk_level="low",
     )
     seed_legacy_work_todo(store,
         project_id=active_project_id,
         title="评估 Colin",
         owner_user_id="owner-1",
         owner_name="Avery",
-        priority="P1",
     )
     seed_legacy_work_todo(store,
         project_id=archived_project_id,
         title="归档候选人",
         owner_user_id="owner-1",
         owner_name="Avery",
-        priority="P2",
     )
 
     assert store.list_work_project_ids_for_todo_owner("owner-1") == {
@@ -1534,8 +1457,6 @@ def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: 
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     draft_id = store.create_follow_up_draft(
         project_id=project_id,

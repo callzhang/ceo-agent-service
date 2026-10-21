@@ -2,12 +2,16 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.10`／Email53 构造器与配对发布已选用最终结构：
+本 checkout 的 Store `2026-10-19.11`／Email53 构造器与配对发布已选用最终结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
 历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-C2 的 Store19.10 候选尚未部署；本切片的准确来源是已冻结的 A5a Store19.9／Email53。
+本候选尚未部署。D 九字段退休的配对发布明确接受 Store19.8／19.9／19.10 与 Email53；
+同一事务按准确来源依次使用既有 A5、C2 和字段转换原语，只在最终19.11运行构造器。
+逆迁保留当前新增事实，只有已批准九字段恢复中性默认值，不保存其旧值副本。
+字段范围、逐字段映射与证据边界见[九字段映射](business-model-legacy-fields-mapping.md)及
+[验证记录](business-model-legacy-fields-validation.md)。
 B2b 观察提交、副本及原生 CLI 的独立证据见[专有动作验收](database-redesign-specialized-actions-validation.md)。
 C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validation.md)；本候选局部验证与剩余发布门槛见[Prepared Action 归属验收](database-redesign-prepared-actions-validation.md)。
 [此前阶段验收](database-redesign-final-acceptance.md)只记录 Store14.1 的历史范围；
@@ -95,7 +99,7 @@ C2 的配对发布只接受准确 Store19.9／Email53，目标 Store19.10／Emai
 History、search、UI 和实际业务 handler 选择共同 owner。字段映射、拒绝边界、
 实际旧 DAO 对照及未完成发布门槛见 [C2 Run 归属验收](business-model-run-owner-validation.md)。
 发布 quiet 与 maintenance 使用该配对 release 的准确当前版本及前序版本集合
-（包含19.9）；State 未知版本仍拒绝。Run publication 仅在明确19.10且当前
+（包含19.9）；State 未知版本仍拒绝。Run publication 仅在明确19.10/19.11且当前
 Run 声明匹配时使用 `source_type IS NULL` 的 Consumer／Audit 投影；早期没有
 `source_type` 的声明保持原投影。已有等待、活跃 claim、租约和锁判断不改变。
 
@@ -309,11 +313,24 @@ TODO evidence、Work Project、Work Todo 及候选业务对象。Work Project �
 `memory_context_json` 退休，无替代缓存。WorkTodo 的正式 Task 关联直接存
 `business.import_task_id`；独立 LegacyLinks 表和旧 Action guard 退休。
 真实字段、公共 ID、父子 FK、普通子行 ROWID 和分配水位由当前 typed DAO 保持。
+Store19.11 按 Derek 2026-10-20 确认永久退休九项：WorkProject 的 priority、risk_level、
+needs_derek_attention、next_follow_up_at、follow_up_mode；WorkTodo 的 priority、
+next_follow_up_at；WorkUpdate 的 merge_reason、confidence。当前 payload key/slot、
+生成列、对应约束、两个旧运营索引、DTO/API/UI/历史检索属性一并退出。
+保留 follow_up_question、changes_json、负责人/截止日期/证据/来源/时钟及所有回执；
+原 51 字段留下 42 字段，975/3327/5468 个来源身份继续可读。该来源严格清单均为
+history_only，当前 source-backed 正式导入条件仍保留，清单版本升为4。
+逆迁从当前数据补回九项中性默认值并恢复原声明，不归档或恢复旧评估值；
+其它保留 SQL 值/类型、ID/ROWID、分配水位与 FK finding multiset 保持。
+`business.import_task_id` 仍是唯一已采用 Todo→Task 关联，不重建 LegacyLinks。
+完整51→42映射与默认值见[九字段映射](business-model-legacy-fields-mapping.md)。
+
 四个手工旧业务模型写入 CLI 已退休：`backfill-routine-process-todos`、
 `backfill-todo-deadlines`、`backfill-todo-owner-ids`、`repair-task-projects-apply`。
 `repair-task-projects-plan` 仍提供只读清单；旧 Project／Todo／Update 历史行和
-既有回执继续读取，当前 Task Agent、Task 写入、task-semantic-import 的 plan/apply
-不变。本次 D1a 没有 DDL 或历史数据迁移，不能据此称整个 D 已完成。
+既有回执继续读取。D1a/D2 仅退休旧入口；当前 Task Agent、Task 写入及
+task-semantic-import 的来源核对与正式采用条件保持。Store19.11 的 DDL 与字段迁移
+按上文执行；这些子单元不代表整个 D 已完成。
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 

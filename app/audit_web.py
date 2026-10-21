@@ -2,7 +2,7 @@ from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
 from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
-from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
 from app.task12_storage import task12_projection
 
 from app.store import REPLY_TASK_CURRENT_SQL
@@ -175,7 +175,6 @@ from app.setup_wizard import (
     run_setup_action,
 )
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
-from app.task_models import ProjectPriority, RiskLevel
 from app.task_progress import (
     task_progress_summary,
     task_state as resolved_task_state,
@@ -7221,10 +7220,6 @@ def _task_row_payload(project, todos, detail=None) -> dict:
         "status": state,
         "statusRank": _task_state_sort_rank().get(state, 99),
         "category": str(project.category),
-        "priority": str(project.priority),
-        "priorityRank": _task_priority_sort_rank().get(str(project.priority), 99),
-        "riskLevel": str(project.risk_level),
-        "riskRank": _task_risk_sort_rank().get(str(project.risk_level), 99),
         "owner": resolve_task_owner_display(project, todos),
         "currentState": _excerpt(project.current_state, 120),
         "nextStep": _excerpt(project.next_step, 140),
@@ -7238,24 +7233,6 @@ def _task_row_payload(project, todos, detail=None) -> dict:
         "todoCount": progress["total"],
         "todos": todo_payloads,
         "search": "\n".join(_task_project_search_values(project, todos)).casefold(),
-    }
-
-
-def _task_priority_sort_rank() -> dict[str, int]:
-    return {
-        ProjectPriority.P0.value: 0,
-        ProjectPriority.P1.value: 1,
-        ProjectPriority.P2.value: 2,
-        ProjectPriority.NONE.value: 3,
-    }
-
-
-def _task_risk_sort_rank() -> dict[str, int]:
-    return {
-        RiskLevel.HIGH.value: 0,
-        RiskLevel.MEDIUM.value: 1,
-        RiskLevel.LOW.value: 2,
-        RiskLevel.NONE.value: 3,
     }
 
 
@@ -7287,10 +7264,6 @@ def _task_sort_options() -> dict[str, tuple[str, str]]:
         "": ("", ""),
         "project_desc": ("title", "desc"),
         "project_asc": ("title", "asc"),
-        "priority_desc": ("priorityRank", "asc"),
-        "priority_asc": ("priorityRank", "desc"),
-        "risk_desc": ("riskRank", "asc"),
-        "risk_asc": ("riskRank", "desc"),
         "owner_desc": ("owner", "desc"),
         "owner_asc": ("owner", "asc"),
         "state_desc": ("currentState", "desc"),
@@ -7490,8 +7463,6 @@ def _task_tabulator_script() -> str:
       {{title: "Project", field: "title", minWidth: 180, widthGrow: 1.1, sorter: "string", variableHeight: true, formatter: projectCell}},
       {{title: "Status", field: "status", width: 126, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(states, "All status")}}, headerFilterValue: initial.taskState || "", formatter: (cell) => badge(cell.getValue())}},
       {{title: "Category", field: "category", width: 136, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(categories, "All categories")}}, headerFilterValue: initial.category || "", formatter: (cell) => pill(cell.getValue())}},
-      {{title: "Priority", field: "priorityRank", width: 96, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().priority)}},
-      {{title: "Risk", field: "riskRank", width: 88, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().riskLevel)}},
       {{title: "Owner", field: "owner", width: 124, sorter: "string", variableHeight: true, formatter: (cell) => escapeHtml(cell.getValue())}},
       {{title: "State", field: "currentState", minWidth: 140, widthGrow: .8, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
       {{title: "Next", field: "nextStep", minWidth: 150, widthGrow: .9, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
@@ -7712,8 +7683,6 @@ def _task_project_search_values(project, todos) -> list[str]:
         str(project.category),
         project.tags_json,
         str(project.status),
-        str(project.priority),
-        str(project.risk_level),
         project.owner_user_id,
         project.owner_name,
         project.related_people_json,
@@ -7732,10 +7701,8 @@ def _task_project_search_values(project, todos) -> list[str]:
                 todo.owner_user_id,
                 todo.owner_name,
                 str(todo.status),
-                str(todo.priority),
                 todo.description,
                 todo.deadline_at,
-                todo.next_follow_up_at,
                 todo.follow_up_question,
                 todo.blocker,
                 todo.completion_evidence_json,
@@ -7794,17 +7761,13 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         "<div class=\"reply-meta\">"
         f"<span class=\"pill\">{escape(project.status)}</span>"
         f"<span class=\"pill\">{escape(project.category)}</span>"
-        f"<span class=\"pill\">{escape(project.priority)}</span>"
-        f"<span class=\"pill\">risk {escape(project.risk_level)}</span>"
         "</div>"
         "</div>"
         "<a class=\"compact-button\" href=\"/tasks\">Back</a>"
         "</div>"
         "<div class=\"attempt-detail-grid\">"
         f"{_task_detail_cell('Owner', resolve_task_owner_display(project, todos) or '-')}"
-        f"{_task_detail_cell('Next follow-up', _format_local_time(project.next_follow_up_at) or '-')}"
         f"{_task_detail_cell('Updated', _format_local_time(project.updated_at))}"
-        f"{_task_detail_cell('Derek attention', 'yes' if project.needs_derek_attention else 'no')}"
         "</div>"
         "</section>"
         "<section class=\"card\"><h2>Project details</h2>"
@@ -7817,7 +7780,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Updates</h2>"
-        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px', 'Reason': '180px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
+        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
         "</section>"
         + (
             "<section class=\"card\"><h2>Unlinked follow-ups</h2>"
@@ -7903,7 +7866,6 @@ def _task_project_detail_rows(project) -> list[tuple[str, str, bool]]:
         ("Current state", project.current_state, False),
         ("Blocker", project.blocker, False),
         ("Next step", project.next_step, False),
-        ("Follow-up mode", str(project.follow_up_mode), False),
         ("Tags", tags, True),
         ("Related people", related_people, True),
         ("Source conversations", source_conversations, True),
@@ -8050,11 +8012,7 @@ def _task_todo_detail_item(
 ) -> str:
     owner = todo.owner_name or todo.owner_user_id or "-"
     status = str(todo.status)
-    priority = str(todo.priority)
     deadline = _format_local_time(todo.deadline_at) or todo.deadline_at or "-"
-    next_follow_up = (
-        _format_local_time(todo.next_follow_up_at) or todo.next_follow_up_at or "-"
-    )
     evidence = _task_json_compact(todo.completion_evidence_json, "{}") or "-"
     check_class = "todo-detail-check done" if _task_todo_done(todo) else "todo-detail-check"
     status_class = _task_status_class(status)
@@ -8076,9 +8034,7 @@ def _task_todo_detail_item(
         '<div class="todo-detail-meta">'
         f"<span>#{todo.id}</span>"
         f"<span>{escape(owner)}</span>"
-        f"<span>{escape(priority)}</span>"
         f"<span>DDL {escape(deadline)}</span>"
-        f"<span>Next {escape(next_follow_up)}</span>"
         "</div>"
         '<div class="todo-detail-fields">'
         f"{_task_todo_detail_field('Description', todo.description or '-')}"
@@ -8223,7 +8179,7 @@ def _task_follow_up_target(
     )
 
 
-def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
+def _task_update_rows(updates) -> list[tuple[str, str, str, str]]:
     rows = []
     for update in updates:
         source = f"{update.source_type}:{update.source_ref}".strip(":")
@@ -8233,8 +8189,6 @@ def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
                 source,
                 update.summary,
                 _task_json_compact(update.changes_json, "{}"),
-                update.merge_reason,
-                f"{update.confidence:.2f}",
             )
         )
     return rows

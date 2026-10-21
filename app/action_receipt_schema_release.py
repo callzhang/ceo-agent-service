@@ -11,7 +11,7 @@ from app.action_receipt_storage import (
     capture_action_receipt_schema,
     restore_action_receipt_schema,
 )
-from app.logical_run_schema_release import (
+from app.business_legacy_field_schema_release import (
     TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (

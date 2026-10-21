@@ -290,11 +290,12 @@ def business_payload_fields(kind):
     return tuple(f for f in BUSINESS_FIELDS[kind] if f != "id" and f not in BUSINESS_COMMON)
 
 
-def _definitions(*, include_candidates=False, include_business_actions=False):
-    kinds = BUSINESS_FIELDS
+def _definitions(*, include_candidates=False, include_business_actions=False, fields=None):
+    fields = BUSINESS_FIELDS if fields is None else fields
+    kinds = fields
     if include_candidates:
         from app.business_candidate_definitions import CANDIDATE_FIELDS
-        kinds = {**BUSINESS_FIELDS, **CANDIDATE_FIELDS}
+        kinds = {**fields, **CANDIDATE_FIELDS}
     columns = [
         "id integer primary key autoincrement check(id>0)",
         "record_type text not null check(record_type in (" + ",".join(
@@ -324,8 +325,9 @@ def _definitions(*, include_candidates=False, include_business_actions=False):
         "(case when record_type='work_todo' then public_id end) virtual",
     ))
     constraints = []
-    for kind in BUSINESS_FIELDS:
-        for field in business_payload_fields(kind):
+    for kind, source_fields in fields.items():
+        payload_fields = tuple(f for f in source_fields if f != "id" and f not in BUSINESS_COMMON)
+        for field in payload_fields:
             affinity = BUSINESS_TYPES[kind][field]
             required = field in BUSINESS_NOT_NULL[kind]
             inactive = "''" if required and affinity == "text" else "0" if required else "null"
@@ -333,7 +335,6 @@ def _definitions(*, include_candidates=False, include_business_actions=False):
             columns.append(f"{business_column(kind, field)} {affinity} generated always as "
                            f"(case when record_type='{kind}' then {value} else {inactive} end) virtual"
                            + (" not null" if required else ""))
-        payload_fields = business_payload_fields(kind)
         paths = ",".join(repr("$." + f) for f in payload_fields)
         valid = [f"({_encoded_value_check('payload_json', '$.' + f)})" for f in payload_fields]
         valid.append(

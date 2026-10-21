@@ -1165,9 +1165,6 @@ class WorkProject(BaseModel):
     category: ProjectCategory
     tags_json: str = "[]"
     status: ProjectStatus
-    priority: ProjectPriority
-    risk_level: RiskLevel
-    needs_derek_attention: bool = False
     owner_user_id: str = ""
     owner_name: str = ""
     owner_evidence_json: str = "{}"
@@ -1178,8 +1175,6 @@ class WorkProject(BaseModel):
     current_state: str = ""
     blocker: str = ""
     next_step: str = ""
-    next_follow_up_at: str = ""
-    follow_up_mode: FollowUpMode = FollowUpMode.NONE
     source_conversations_json: str = "[]"
     created_at: str
     updated_at: str
@@ -1195,9 +1190,7 @@ class WorkTodo(BaseModel):
     owner_name: str = ""
     owner_evidence_json: str = "{}"
     status: TodoStatus
-    priority: ProjectPriority
     deadline_at: str = ""
-    next_follow_up_at: str = ""
     follow_up_question: str = ""
     blocker: str = ""
     completion_evidence_json: str = "{}"
@@ -1234,8 +1227,6 @@ class WorkUpdate(BaseModel):
     source_ref: str
     summary: str
     changes_json: str = "{}"
-    merge_reason: str = ""
-    confidence: float = 0.0
     created_at: str
 
 

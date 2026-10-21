@@ -127,8 +127,6 @@ def _project(store: AutoReplyStore, title: str) -> int:
         title=title,
         category="dev",
         status="active",
-        priority="P1",
-        risk_level="low",
         facts_json=json.dumps(
             [
                 {
@@ -756,14 +754,12 @@ def test_console_task_detail_contains_persisted_project_facts_todos_and_updates(
         title="Prepare release",
         description="Keep the description available to React.",
         status="open",
-        priority="P1",
     )
     todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="Confirm release evidence",
         description="Evidence candidate should be visible in detail.",
         status="open",
-        priority="P1",
     )
     store.upsert_todo_evidence_candidate(
         project_id=project_id,
@@ -1055,7 +1051,6 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         title="Review history links",
         description="Check that history entries jump back to the task detail page.",
         owner_name="Avery",
-        priority="P1",
     )
     update_id = seed_legacy_work_update(store,
         project_id=project_id,
@@ -1063,8 +1058,6 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         source_ref="update-1",
         summary="Task update for history links",
         changes_json='{"todo_id":1}',
-        merge_reason="manual test",
-        confidence=0.9,
     )
     with sqlite3.connect(store.path) as db:
         update_sync_action(

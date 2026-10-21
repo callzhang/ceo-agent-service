@@ -57,8 +57,6 @@ class ConsoleTaskSummary(BaseModel):
     status: str
     project_status: str
     category: str
-    priority: str
-    risk_level: str
     owner_user_id: str
     owner_name: str
     owner: str = ""
@@ -94,9 +92,7 @@ class ConsoleTodo(BaseModel):
     owner_name: str = ""
     status: str
     done: bool = False
-    priority: str
     deadline_at: str = ""
-    next_follow_up_at: str = ""
     follow_up_question: str = ""
     blocker: str = ""
     completion_evidence: dict[str, Any] = Field(default_factory=dict)
@@ -117,8 +113,6 @@ class ConsoleUpdate(BaseModel):
     source_ref: str
     summary: str
     changes: dict[str, Any] = Field(default_factory=dict)
-    merge_reason: str = ""
-    confidence: float = 0.0
     created_at: str = ""
 
 
@@ -149,9 +143,6 @@ class ConsoleProject(BaseModel):
     title: str
     category: str
     status: str
-    priority: str
-    risk_level: str
-    needs_derek_attention: bool = False
     owner_user_id: str = ""
     owner_name: str = ""
     tags: list[str] = Field(default_factory=list)
@@ -161,8 +152,6 @@ class ConsoleProject(BaseModel):
     current_state: str = ""
     blocker: str = ""
     next_step: str = ""
-    next_follow_up_at: str = ""
-    follow_up_mode: str = ""
     source_conversations: list[Any] = Field(default_factory=list)
     facts: list[ConsoleFact] = Field(default_factory=list)
     created_at: str = ""
@@ -321,8 +310,6 @@ def task_summary(
         "status": state,
         "project_status": _enum_text(project.status),
         "category": _enum_text(project.category),
-        "priority": _enum_text(project.priority),
-        "risk_level": _enum_text(project.risk_level),
         "owner_user_id": normalize_display_value(project.owner_user_id),
         "owner_name": normalize_display_value(project.owner_name),
         "owner": resolve_task_owner_display(project, todos),
@@ -361,9 +348,7 @@ def _todo_payload(todo: Any, detail: Any) -> dict[str, Any]:
         "owner_name": normalize_display_value(todo.owner_name),
         "status": _enum_text(todo.status),
         "done": _todo_done(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links),
-        "priority": _enum_text(todo.priority),
         "deadline_at": normalize_display_value(todo.deadline_at),
-        "next_follow_up_at": normalize_display_value(todo.next_follow_up_at),
         "follow_up_question": normalize_display_value(todo.follow_up_question),
         "blocker": normalize_display_value(todo.blocker),
         "completion_evidence": json_safe(_object_json(todo.completion_evidence_json)),
@@ -417,9 +402,6 @@ def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
             "title": normalize_display_value(project.title),
             "category": _enum_text(project.category),
             "status": _enum_text(project.status),
-            "priority": _enum_text(project.priority),
-            "risk_level": _enum_text(project.risk_level),
-            "needs_derek_attention": bool(project.needs_derek_attention),
             "owner_user_id": normalize_display_value(project.owner_user_id),
             "owner_name": normalize_display_value(project.owner_name),
             "tags": [normalize_display_value(item) for item in _list_json(project.tags_json)],
@@ -429,8 +411,6 @@ def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
             "current_state": normalize_display_value(project.current_state),
             "blocker": normalize_display_value(project.blocker),
             "next_step": normalize_display_value(project.next_step),
-            "next_follow_up_at": normalize_display_value(project.next_follow_up_at),
-            "follow_up_mode": _enum_text(project.follow_up_mode),
             "source_conversations": json_safe(_list_json(project.source_conversations_json)),
             "facts": [_fact_payload(item) for item in _list_json(project.facts_json)],
             "created_at": normalize_display_value(project.created_at),
@@ -446,8 +426,6 @@ def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
                 "source_ref": normalize_display_value(update.source_ref),
                 "summary": normalize_display_value(update.summary),
                 "changes": json_safe(_object_json(update.changes_json)),
-                "merge_reason": normalize_display_value(update.merge_reason),
-                "confidence": update.confidence,
                 "created_at": normalize_display_value(update.created_at),
             }
             for update in detail.updates
@@ -532,8 +510,6 @@ def task_list_response(
                         "title": normalize_display_value(built.get("title", row["title"])),
                         "status": normalize_display_value(built.get("status", row["status"])),
                         "category": normalize_display_value(built.get("category", row["category"])),
-                        "priority": normalize_display_value(built.get("priority", row["priority"])),
-                        "risk_level": normalize_display_value(built.get("riskLevel", row["risk_level"])),
                         "owner": normalize_display_value(built.get("owner") or row["owner"]),
                         "owner_name": row["owner_name"],
                         "current_state": normalize_display_value(built.get("currentState", row["current_state"])),

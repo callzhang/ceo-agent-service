@@ -4,8 +4,8 @@ from __future__ import annotations
 from app.task20_definitions import task20_projection
 from app.logical_run_storage import logical_run_projection
 
-from app.business_definitions import BUSINESS_PROJECTIONS
-from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
 
 import hashlib
 import json

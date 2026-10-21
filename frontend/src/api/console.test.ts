@@ -404,8 +404,6 @@ describe("console API helpers", () => {
         title: "客户项目",
         status: "active",
         category: "projects",
-        priority: "high",
-        risk_level: "low",
         owner: "Avery",
         owner_name: "",
         owner_user_id: "",
@@ -422,6 +420,8 @@ describe("console API helpers", () => {
       const { listTasks } = await import("./console");
       const page = await listTasks();
       expect(page.items[0].owner).toBe("Avery");
+      expect(page.items[0]).not.toHaveProperty("priority");
+      expect(page.items[0]).not.toHaveProperty("risk");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -461,8 +461,6 @@ describe("console API helpers", () => {
           title: "客户项目",
           status: "active",
           category: "projects",
-          priority: "P1",
-          risk_level: "medium",
           owner: "",
           owner_name: "",
           owner_user_id: "",
@@ -499,8 +497,6 @@ describe("console API helpers", () => {
           title: "客户项目",
           status: "active",
           category: "projects",
-          priority: "P1",
-          risk_level: "medium",
           owner_name: "Avery",
           current_state: "执行中",
           next_step: "继续推进",

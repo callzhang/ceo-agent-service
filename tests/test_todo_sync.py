@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_work_project, seed_legacy_work_todo
@@ -91,8 +91,6 @@ def _project_and_todo(store: AutoReplyStore, **todo_values):
         category="projects",
         tags_json=json.dumps(["客户交付"], ensure_ascii=False),
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="客户交付项目需要持续确认验收安排。",
         related_people_json=json.dumps(
             [{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
@@ -105,7 +103,6 @@ def _project_and_todo(store: AutoReplyStore, **todo_values):
         "owner_user_id": "owner-1",
         "owner_name": "Alex",
         "status": "open",
-        "priority": "P1",
         "deadline_at": "2026-07-01 18:00:00",
     }
     defaults.update(todo_values)

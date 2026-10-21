@@ -41,7 +41,7 @@ def test_attention_order_and_filter_before_pagination(tmp_path):
 
 def test_semantic_routes_do_not_return_legacy_projects(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    legacy_id = seed_legacy_work_project(store, title="Legacy", category="dev", status="active", priority="P1", risk_level="low")
+    legacy_id = seed_legacy_work_project(store, title="Legacy", category="dev", status="active")
     task_id = store.create_business_task(title="Real task", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     with _client(tmp_path) as client:
         all_response = client.get("/api/console/tasks/all")

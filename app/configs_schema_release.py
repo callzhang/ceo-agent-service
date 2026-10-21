@@ -257,12 +257,12 @@ def configs_content_schema_is_current(
     physical_provenance: bool = False,
     compact_payload: bool = False,
     selection_references: bool = False,
-    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False, postfix_owner: bool = False, logical_owner=False,
+    result_references: bool = False, execution_owner: bool = False, sent_result_references: bool = False, shared_lifecycle: bool = False, specialized_claims: bool = False, postfix_owner: bool = False, logical_owner=False, expected_action_objects=None,
 ) -> bool:
     """Read-only config/action predicate, independent of the Runs source profile."""
     if action_variant not in _ACTION_VARIANTS:
         raise ValueError('unsupported action declaration variant')
-    expected_actions = _actions(
+    expected_actions = expected_action_objects if expected_action_objects is not None else _actions(
         action_variant, skill=True,
         include_followup_sync=include_followup_sync,
         include_business_sync=include_business_sync,
@@ -295,7 +295,7 @@ def configs_content_schema_is_current(
                 canonical_email=canonical_email,
                 inline_legacy_owner=inline_legacy_owner,
                 physical_provenance=physical_provenance, compact_payload=compact_payload,
-                selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
+                selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner, expected_objects=expected_action_objects)
             and all(_source_declaration(db, kind)['sql'] is None
                     for kind in (*SOURCE_TABLES, _OBSERVATIONS)))
 

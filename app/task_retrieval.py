@@ -757,8 +757,6 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                     "title": project.title,
                     "category": _enum_value(project.category),
                     "status": _enum_value(project.status),
-                    "priority": _enum_value(project.priority),
-                    "risk_level": _enum_value(project.risk_level),
                     "owner": resolve_task_owner_display(project, detail.todos),
                     "owner_user_id": project.owner_user_id,
                     "owner_name": project.owner_name,
@@ -768,7 +766,6 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                     "current_state": project.current_state,
                     "blocker": project.blocker,
                     "next_step": project.next_step,
-                    "next_follow_up_at": project.next_follow_up_at,
                     "source_conversations": _parse_json_list(
                         project.source_conversations_json
                     ),
@@ -780,12 +777,10 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                         "title": todo.title,
                         "description": todo.description,
                         "status": _enum_value(todo.status),
-                        "priority": _enum_value(todo.priority),
                         "owner": todo.owner_name or todo.owner_user_id,
                         "owner_user_id": todo.owner_user_id,
                         "owner_name": todo.owner_name,
                         "deadline_at": todo.deadline_at,
-                        "next_follow_up_at": todo.next_follow_up_at,
                         "follow_up_question": todo.follow_up_question,
                         "blocker": todo.blocker,
                         "completion_evidence": _parse_json_object(

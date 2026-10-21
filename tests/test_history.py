@@ -170,8 +170,6 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
     project_id = seed_legacy_work_project(store,
         title="AI 待办推进",
         category="product",
-        priority="P1",
-        risk_level="medium",
         owner_name="Avery",
         current_state="等待 Avery 反馈",
         next_step="补充 TODO 描述",
@@ -181,7 +179,6 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         title="向 Avery 解释待办更新",
         description="说明重要事项判断口径，并同步更新后的 TODO。",
         owner_name="Avery",
-        priority="P1",
     )
     update_id = seed_legacy_work_update(store,
         project_id=project_id,
@@ -189,8 +186,6 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         source_ref="42",
         summary="更新 TODO：补充 Avery 反馈事项描述",
         changes_json='{"action":"update_project"}',
-        merge_reason="同一任务项目",
-        confidence=0.9,
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,

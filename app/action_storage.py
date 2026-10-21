@@ -23,10 +23,11 @@ from app.execution_owner_definitions import (
 
 from app.action_skill_config_definitions import SKILL_RECEIPT_KINDS, skill_receipt_schema_parts
 from app.action_followup_sync_definitions import (
-    SYNC_ACTION_PROJECTIONS as SYNC_ACTION_PROJECTIONS,
     SYNC_DEFAULTS, SYNC_FIELDS, SYNC_TYPES_ORDER, sync_action_projection,
     sync_schema_parts,
 )
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS, CURRENT_SYNC_FIELDS
+
 from app.action_task_delivery_definitions import (
     TASK_DELIVERY_FIELDS, TASK_DELIVERY_KINDS, TASK_DELIVERY_AUTOINCREMENT,
     TASK_DELIVERY_PARENTS, TASK_DELIVERY_DEFAULTS, TASK_DELIVERY_DEFAULTS_FRESH,
@@ -47,6 +48,8 @@ from app.action_email_definitions import (
     _encoded_value, _encoded_value_check, email_schema_parts,
 )
 
+
+SYNC_ACTION_PROJECTIONS = CURRENT_SYNC_PROJECTIONS
 
 _SCHEMA_NAME_CASE = str.maketrans(ascii_uppercase, ascii_lowercase)
 
@@ -379,14 +382,14 @@ def _reply_payload_check(fields, *, kind=None, payloads=None):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, payloads=None, sync_fields=None):
     if sent_result_references and not (compact_payload and (include_delivery or include_reply)):
         raise ValueError("Sent result references require compact delivery Actions")
     if result_references and not compact_payload:
         raise ValueError("result references require compact Actions payloads")
     if selection_references and not compact_payload:
         raise ValueError("selection references require compact Actions payloads")
-    payloads = action_payloads(reply_variant or "actual_no_memory_fk", physical_provenance=physical_provenance, selection_references=selection_references, execution_owner=execution_owner, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner) if compact_payload else None
+    payloads = payloads if payloads is not None else action_payloads(reply_variant or "actual_no_memory_fk", physical_provenance=physical_provenance, selection_references=selection_references, execution_owner=execution_owner, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner) if compact_payload else None
     if include_skill_config_receipts and not include_email:
         raise ValueError("Skill receipts require current Email action scaffold")
     if include_followup_sync and not include_email:
@@ -447,7 +450,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         sync_generated, sync_checks, sync_fks, sync_indexes, sync_triggers = sync_schema_parts(
             references, reply_variant, business_public_ids=include_business_sync,
             business_action_signals=include_business_actions,
-            inline_legacy_owner=inline_legacy_owner, payloads=payloads)
+            inline_legacy_owner=inline_legacy_owner, payloads=payloads, fields=sync_fields)
     if include_task_delivery:
         td_generated, td_checks, td_indexes, td_triggers = task_delivery_schema_parts(
             references, reply_variant, payloads=payloads)
@@ -1005,7 +1008,7 @@ def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_
     return all(actual.get(name) == obj for name, obj in expected.items())
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False) -> bool:
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, expected_objects=None) -> bool:
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
     if execution_owner:
         kinds += (EXECUTION_ALIAS,)
@@ -1028,7 +1031,7 @@ def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=Fa
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected_objects = _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
+    expected_objects = expected_objects if expected_objects is not None else _current_objects(include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
     expected = {sqlite_schema_name(o["name"]): o for o in expected_objects}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
@@ -1251,8 +1254,9 @@ def _native_payload(values):
 
 
 def _action_layout(kind, *, reply_variant="actual_no_memory_fk", selection_references=False, execution_owner=False):
-    return action_payloads(reply_variant, physical_provenance=True,
-                           selection_references=selection_references, execution_owner=execution_owner).layouts[kind]
+    from app.business_legacy_fields import retained_action_payloads
+    return retained_action_payloads(action_payloads(reply_variant, physical_provenance=True,
+                           selection_references=selection_references, execution_owner=execution_owner)).layouts[kind]
 
 
 def _action_path(kind, field, *, reply_variant="actual_no_memory_fk"):
@@ -1544,7 +1548,7 @@ def delete_email_action(db: sqlite3.Connection, kind: str, source_rowid) -> sqli
 def _sync_fields(kind, values):
     if kind not in SYNC_TYPES_ORDER:
         raise ValueError(f"unsupported follow-up/Todo kind: {kind}")
-    if set(values) - set(SYNC_FIELDS[kind]):
+    if set(values) - set(CURRENT_SYNC_FIELDS[kind]):
         raise ValueError(f"unknown {kind} source fields")
 
 
@@ -1554,12 +1558,12 @@ def _sync_variant(db):
 
 def _sync_payload(db, kind, values):
     defaults = SYNC_DEFAULTS[_sync_variant(db)][kind]
-    missing = tuple(field for field in SYNC_FIELDS[kind] if field in defaults and field not in values)
+    missing = tuple(field for field in CURRENT_SYNC_FIELDS[kind] if field in defaults and field not in values)
     evaluated = (dict(zip(missing, db.execute("select " + ",".join(defaults[field] for field in missing)).fetchone(), strict=True))
                  if missing else {})
     return _action_payload(db, kind, {
         field: values[field] if field in values else evaluated.get(field)
-        for field in SYNC_FIELDS[kind]
+        for field in CURRENT_SYNC_FIELDS[kind]
         if field != "id" and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id")
     })
 
@@ -1613,7 +1617,7 @@ def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dic
         predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
         identity_args = [kind, public_id]
         if where_sql:
-            projection = sync_action_projection(kind, source_variant=_sync_variant(db))
+            projection = sync_action_projection(kind, source_variant=_sync_variant(db), fields=CURRENT_SYNC_FIELDS[kind])
             predicate += (" and cast(legacy_key as integer) in "
                           f"(select id from ({projection}) where id=? and ({where_sql}))")
             identity_args.extend((public_id, *parameters))
