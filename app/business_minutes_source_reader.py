@@ -80,7 +80,13 @@ def minutes_provider_locator(
     return locator
 
 
-def read_minutes_source_body(locator: object, *, source_ref: str, dws: Any) -> str:
+def read_minutes_source_body(
+    locator: object,
+    *,
+    source_ref: str,
+    dws: Any,
+    page_cache: dict[str, dict[str, Any]] | None = None,
+) -> str:
     """Exhaust the unwindowed list before accepting one exact UUID record."""
     uuid = _source_uuid(source_ref)
     if not isinstance(locator, dict) or not {"kind", "minutes_id", "components"} <= set(locator):
@@ -109,7 +115,11 @@ def read_minutes_source_body(locator: object, *, source_ref: str, dws: Any) -> s
     seen_tokens: set[str] = set()
     try:
         while True:
-            page = dws.list_minutes_page(scope="all", limit=50, cursor=cursor)
+            page = (
+                page_cache[cursor]
+                if page_cache is not None and cursor in page_cache
+                else dws.list_minutes_page(scope="all", limit=50, cursor=cursor)
+            )
             if not isinstance(page, dict) or not isinstance(page.get("items"), list):
                 raise MinutesSourceIncomplete("malformed AI Minutes list page")
             has_more = page.get("has_more")
@@ -125,10 +135,12 @@ def read_minutes_source_body(locator: object, *, source_ref: str, dws: Any) -> s
                     if meeting is not None:
                         raise MinutesSourceIncomplete("duplicate exact AI Minutes UUID")
                     meeting = item
+            if has_more and next_token in seen_tokens:
+                raise MinutesSourceIncomplete("repeated AI Minutes page token")
+            if page_cache is not None:
+                page_cache[cursor] = page
             if not has_more:
                 break
-            if next_token in seen_tokens:
-                raise MinutesSourceIncomplete("repeated AI Minutes page token")
             seen_tokens.add(next_token)
             cursor = next_token
         if meeting is None:

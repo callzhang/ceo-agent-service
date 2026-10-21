@@ -254,6 +254,9 @@ TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检�
 
 AI Minutes locator 显式选择 sentence_v1 或历史 paragraph_v1 excerpt 格式，保持原有
 前六／后四窗口；没有 excerpts 的 locator 不带该字段。格式／hash 不匹配不换解码器。
+同一个来源读取请求内，多条 AI Minutes Signal 复用已验证的列表分页；每条 Signal
+仍遍历完整列表以检查精确 UUID、重复项和分页状态，再分别读取行动项等组件并核对
+原始正文版本。分页只在该请求对象存活期间保留，不写入持久缓存。
 Worker、语义服务和 Web 在域写事务之外使用同一准确来源读取机制；Console 的已有
 业务来源可从链接事件事实取得，不建立原文缓存。
 
