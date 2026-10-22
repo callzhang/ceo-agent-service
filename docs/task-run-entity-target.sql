@@ -157,3 +157,29 @@ CREATE UNIQUE INDEX idx_workbench_attachments_task_request ON workbench_attachme
 CREATE INDEX idx_workbench_attachments_task_created_id ON workbench_attachments(workbench_task_id,created_at,id);
 
 CREATE UNIQUE INDEX idx_workbench_attachments_id_identity ON workbench_attachments(id);
+
+CREATE TRIGGER trg_workbench_active_turn_insert
+BEFORE INSERT ON workbench_turns
+WHEN (SELECT status FROM tasks WHERE id=NEW.task_id) IN ('queued','running')
+ AND EXISTS (SELECT 1 FROM workbench_turns active JOIN tasks active_task ON active_task.id=active.task_id
+             WHERE active.workbench_task_id=NEW.workbench_task_id
+               AND active_task.status IN ('queued','running'))
+BEGIN SELECT RAISE(ABORT,'active Workbench turn already exists'); END;
+
+CREATE TRIGGER trg_workbench_active_turn_update
+BEFORE UPDATE OF workbench_task_id ON workbench_turns
+WHEN (SELECT status FROM tasks WHERE id=NEW.task_id) IN ('queued','running')
+ AND EXISTS (SELECT 1 FROM workbench_turns active JOIN tasks active_task ON active_task.id=active.task_id
+             WHERE active.workbench_task_id=NEW.workbench_task_id AND active.task_id<>NEW.task_id
+               AND active_task.status IN ('queued','running'))
+BEGIN SELECT RAISE(ABORT,'active Workbench turn already exists'); END;
+
+CREATE TRIGGER trg_workbench_active_turn_status_update
+BEFORE UPDATE OF status ON tasks
+WHEN NEW.kind='workbench_turn' AND NEW.status IN ('queued','running')
+ AND EXISTS (SELECT 1 FROM workbench_turns turn
+             JOIN workbench_turns active ON active.workbench_task_id=turn.workbench_task_id
+             JOIN tasks active_task ON active_task.id=active.task_id
+             WHERE turn.task_id=NEW.id AND active.task_id<>NEW.id
+               AND active_task.status IN ('queued','running'))
+BEGIN SELECT RAISE(ABORT,'active Workbench turn already exists'); END;

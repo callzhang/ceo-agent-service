@@ -30,6 +30,14 @@ def test_field_map_is_total_unique_and_fails_unknown_or_missing_source_fields():
         validate_task_run_field_map(mapping[1:])
     with pytest.raises(ValueError, match='duplicate source field'):
         validate_task_run_field_map((*mapping, mapping[0]))
+    for changed in (
+        {**mapping[1], 'sql_type': 'BLOB'},
+        {**mapping[1], 'null_contract': 'NULL allowed'},
+        {**mapping[1], 'source_default': '0'},
+        {**mapping[1], 'storage_wrapper': 'legacy_key'},
+    ):
+        with pytest.raises(ValueError, match='source metadata mismatch'):
+            validate_task_run_field_map((mapping[0], changed, *mapping[2:]))
 
 
 def test_task_input_identity_and_multi_key_relation_are_real_constraints():
@@ -72,6 +80,72 @@ def test_workbench_client_request_identity_is_global_and_sequence_is_unique_per_
     db.execute("insert into workbench_turns(task_id,workbench_task_id,client_request_id,task_sequence,user_text,stop_requested,error_code,error_detail,resume_context,execution_run_id,runtime_quiesced_run_id,started_at,completed_at) values(11,1,'req',1,'x',0,'','','','','','','')")
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("insert into workbench_turns(task_id,workbench_task_id,client_request_id,task_sequence,user_text,stop_requested,error_code,error_detail,resume_context,execution_run_id,runtime_quiesced_run_id,started_at,completed_at) values(12,2,'req',1,'x',0,'','','','','','','')")
+
+
+def test_workbench_active_turn_partial_unique_contract_only_blocks_queued_or_running():
+    db = sqlite3.connect(':memory:')
+    db.execute('pragma foreign_keys=on')
+    for ddl in task_run_entity_objects().values():
+        db.execute(ddl)
+    db.execute("insert into workbench_tasks(id,title,runtime_kind) values(1,'a','x')")
+    db.execute("insert into tasks(id,kind,status,parameters_json,created_at,updated_at) values(11,'workbench_turn','queued',jsonb('{}'),'now','now'),(12,'workbench_turn','queued',jsonb('{}'),'now','now')")
+    turn_insert = "insert into workbench_turns(task_id,workbench_task_id,client_request_id,task_sequence,user_text,stop_requested,error_code,error_detail,resume_context,execution_run_id,runtime_quiesced_run_id,started_at,completed_at) values(?,1,?,?,'x',0,'','','','','','','')"
+    db.execute(turn_insert, (11, 'active-1', 1))
+    with pytest.raises(sqlite3.IntegrityError, match='active Workbench turn already exists'):
+        db.execute(turn_insert, (12, 'active-2', 2))
+    db.execute("update tasks set status='completed' where id=11")
+    db.execute(turn_insert, (12, 'active-2', 2))
+    db.execute("update tasks set status='running' where id=12")
+    with pytest.raises(sqlite3.IntegrityError, match='active Workbench turn already exists'):
+        db.execute("update tasks set status='queued' where id=11")
+
+
+def test_current_source_active_turn_index_has_the_same_predicate_and_parent_key():
+    from contextlib import closing
+    from app.task20_definitions import create_task20_schema, TASK20_LAYOUTS
+    from tests.test_task20_definitions import insert as source_insert, payload as source_payload
+
+    with closing(sqlite3.connect(':memory:')) as source:
+        source.execute('pragma foreign_keys=on')
+        create_task20_schema(source)
+        source_insert(source, 'workbench_tasks', physical_id=100, legacy_key='workbench-public',
+                      values=source_payload(source, 'workbench_tasks', title='Workbench', runtime_kind='codex'))
+        first = source_payload(source, 'workbench_turns', client_request_id='source-1', task_sequence=1,
+                               user_text='one', status='queued')
+        second = source_payload(source, 'workbench_turns', client_request_id='source-2', task_sequence=2,
+                                user_text='two', status='running')
+        source_insert(source, 'workbench_turns', physical_id=101, legacy_key='turn-1', parent_id=100, values=first)
+        with pytest.raises(sqlite3.IntegrityError):
+            source_insert(source, 'workbench_turns', physical_id=102, legacy_key='turn-2', parent_id=100, values=second)
+        source.execute("update tasks set payload_json=jsonb_set(payload_json,?,json(?)) where id=101",
+                       (TASK20_LAYOUTS['workbench_turns'].path('status'), '"completed"'))
+        source_insert(source, 'workbench_turns', physical_id=102, legacy_key='turn-2', parent_id=100, values=second)
+
+
+def test_source_and_target_preserve_sqlite_affinity_acceptance_for_json_parameters():
+    from contextlib import closing
+    from app.task20_definitions import task20_column
+    from app.task_lifecycle_current_schema import create_current_task20_schema
+    from app.task8_storage import register_task8_functions, task8_insert_parts
+    from tests.test_task20_definitions import payload
+
+    with closing(sqlite3.connect(':memory:')) as source:
+        register_task8_functions(source)
+        create_current_task20_schema(source)
+        source_values = payload(source, 'reply_tasks', force_new_decision='true')
+        insert = task8_insert_parts('reply_tasks', source_values)
+        source.execute(f"insert into tasks({insert.columns}) values({insert.values})", insert.parameters)
+        source_type = source.execute(
+            f"select typeof({task20_column('reply_tasks','force_new_decision')}) from tasks"
+        ).fetchone()[0]
+
+    target = sqlite3.connect(':memory:')
+    for ddl in task_run_entity_objects().values():
+        target.execute(ddl)
+    target.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) values('reply','pending',jsonb('{\"force_new_decision\":\"true\"}'),'now','now')")
+    target_type = target.execute("select json_type(parameters_json,'$.force_new_decision') from tasks").fetchone()[0]
+    assert source_type == 'text'
+    assert target_type == 'text'
 
 
 def test_task_without_source_input_keeps_null_links_and_source_status():

@@ -3,31 +3,33 @@
 Date: 2026-10-22
 Worktree: `/Users/derek/.codex/worktrees/task-run-entity-phase2/ceo-agent-service`
 Branch: `codex/task-run-entity-phase2-20261022`
-Base: `130b3fd42`
+Revision base: `292331f40717be4338c8151fe80659606f47e1e2`
+Review: `.superpowers/sdd/2026-10-22-task-run-entity-unification/task-1a-review.md`
 
-## Deliverable
+## Review findings addressed
 
-Implemented an unactivated, pure Task target contract in `app/task_run_entity_definitions.py`, with a read-only SQLite inspector, tests, and generated SQL/JSON documentation. `task_run_entity_objects()` returns a pinned native DDL dictionary; it does not consult the source factory. Source imports and loops are used only by explicit mapping/validation helpers. The Task-only mapping covers exactly 20 current logical Task20 projections (not pre-Task20 historical tables): 267 logical projection fields and 20 separate physical-ID mapping rows, 287 rows total. The in-memory schema executes all 62 declared objects and `validate_task_run_field_map()` checks every destination against actual target columns and fails duplicate, missing, unknown, or unmapped fields.
+- **Active Workbench turn uniqueness:** Added target triggers for insert, parent reassignment, and Task status updates. They implement the current source partial unique predicate exactly: a Workbench parent may have at most one child turn in `queued` or `running`; terminal statuses do not conflict. The paired source test builds the current Task20 schema and verifies the published partial index rejects a second active child and permits one after the first becomes `completed`. Target tests cover duplicate active turns, terminal allowance, and conflict when reactivating a turn.
+- **JSON request parameter scalar types:** No strict JSON type validator was added because it would tighten source behavior. Evidence: using `create_current_task20_schema()` with the source runtime helper `task8_insert_parts()` inserts `force_new_decision='true'` into an INTEGER-affinity source projection. The source generated value has `typeof(...)='text'`; it is not a STRICT table and has no `typeof()` check for this field. The target JSONB parameter with the same string scalar remains `json_type(...)='text'` and is accepted. This paired test preserves the SQLite affinity/codec behavior without coercion or new rejection policy.
+- **Field-map metadata parity:** `validate_task_run_field_map()` now checks each logical row's source affinity, nullable/required declaration, default, and storage wrapper against `TASK20_COLUMNS`. Physical identity rows have a separate fixed contract. Tests mutate each metadata field and verify rejection.
 
-Task physical IDs are retained as target IDs. Technical inverse metadata is keyed by `(source_kind, physical_id)` and stores original public-key value/type separately; it does not assume public IDs are unique across source kinds or equal to the physical ID. `workbench_turns.final_text` stays unpersisted because its current source declaration has `storage='none'`. No Run or Action tables, adopted-result fields, or native result columns are declared in this Task-only contract; Run/Action remains a separate assembly subunit. Native result-envelope columns that are absent from storage were not invented.
+## Deliverable and counts
 
-Request parameters are native SQLite JSONB and per-kind triggers reject unknown keys and missing no-default request keys. The request field whitelist is explicit. Reply TaskInput keeps source revision identity, and current reply uniqueness is derived through each Task's bound current input; another Task cannot bind the same channel/conversation/trigger identity even at a different input revision, while multiple revisions for one Task remain valid. Source `current_input_id`/`claimed_input_id` remain nullable and FK-backed. The schema does not impose a same-parent rule absent from current source enforcement. Workbench client request identity is globally unique; sequence is unique within its Workbench Task.
+The Task-only native target remains pure and unactivated. `task_run_entity_objects()` returns a pinned DDL dictionary and does not use the source factory. The field map and validation helpers use current Task20 source declarations as the migration oracle. It covers exactly 20 logical Task20 projections (not historical pre-Task20 tables): 267 logical source fields and 20 physical-ID mappings, 287 mapping rows total. All 65 target objects execute in in-memory SQLite 3.53.4 with `PRAGMA foreign_keys=ON`; map validation resolves all rows to actual target columns or explicit retirements.
 
-## Source/index and identity concerns retained for parent review
+Physical IDs remain distinct from public IDs. Inverse metadata is keyed by source kind and preserved physical ID, with original public-key value/type separate. No source row/body shadow copies were added. `workbench_turns.final_text` stays non-persisted because its source declaration is `storage='none'`. No Run/Action tables, native result-envelope columns, or runtime writers were added.
 
-This is a bounded Task unit, not a claim that all combined target parity is done. Remaining source contracts include active Workbench-turn uniqueness, some non-unique query indexes, and domain-parent FK/default parity. Source published unique keys transferred to target include WorkSummary `(source_type, source_ref)`, Meeting `meeting_id`, OKR review `(conversation_id, trigger_message_id)`, weekly analysis `(week_end, manager_user_id, source_digest)`, reply current-input identity, Workbench global `client_request_id`, and per-Task sequence. Parent should review these and the remaining declared/native indexes before assembly. Source Workbench `final_text` is intentionally retired from persisted schema.
+## RED/GREEN and tests
 
-Run source wrappers, result framing/encoding, adopted-result identity, Run source public keys, and Run/Action DDL are unresolved by this Task-only change and must be handled by their separately assigned contract unit. No old full row/body shadow copies are introduced. No source data was mutated.
+- Original Task1 RED before implementation: test collection failed because `app.task_run_entity_definitions` did not exist.
+- Task1A review RED against base `292331f40717be4338c8151fe80659606f47e1e2`: the metadata-tamper and active-Workbench-turn tests failed because the old validator accepted altered source metadata and the old target allowed a second queued turn under the same parent (2 failed, 9 deselected).
+- Task1A focused GREEN: `/Users/derek/miniforge3/bin/python -m pytest -q tests/test_task_run_entity_definitions.py` — 11 passed.
+- The three original source baseline fixture failures remain: baseline command over `test_task20_definitions.py`, `test_task_lifecycle_storage.py`, and `test_logical_run_owner.py` produced 363 passed, 3 failed in 30.24s. The failures all occur before assertions when fixtures insert retired `external_action_results.first_agent_run_id`; current Action storage reports `table actions has no column named first_agent_run_id`. This Task1A revision does not skip or alter those cases.
+- No full suite was run. No production DB, production checkout, backup, provider, native session, push, deploy or activation was touched. Parent-provided snapshot remains immutable; the pre-existing Run FK defect (`runs.id=190042`, missing `tasks.id=404225`) remains untouched.
 
-## RED/GREEN and verification
+## Open concerns
 
-- RED: before implementation, collection failed because `app.task_run_entity_definitions` could not be imported.
-- GREEN: `/Users/derek/miniforge3/bin/python -m pytest -q tests/test_task_run_entity_definitions.py` — 8 passed.
-- Baseline: `/Users/derek/miniforge3/bin/python -m pytest -q tests/test_task20_definitions.py tests/test_task_lifecycle_storage.py tests/test_logical_run_owner.py` — 363 passed, 3 failed in 30.24s. All 3 are the known parameterized `test_consumer_parent_contract_rejects_standalone_in_all_existing_refs` fixture failure. Each fixture inserts retired `external_action_results.first_agent_run_id`; current Action storage raises `sqlite3.OperationalError: table actions has no column named first_agent_run_id` before the test reaches the assertion. This pre-existing baseline is recorded, not hidden or fixed in Task1.
-- Schema creation: 62 declared objects executed in in-memory SQLite 3.53.4 with `PRAGMA foreign_keys=ON`; field-map validation accepted 287 rows. The DDL fixture is generated from the pinned target-object dictionary.
-- `python -m py_compile app/task_run_entity_definitions.py` passed.
-- No full suite was run. No production database, production checkout, backup, provider, native session, push, deploy, or activation was touched. The parent-provided immutable read-only source snapshot has integrity OK; parent separately identified one pre-existing Run FK defect (actual missing task id `404225` for Run `190042`), which remains untouched and is not masked by this Task-only DDL.
+Run/Action DDL, adopted-result ownership, Run identity/public keys and wrapper/result framing are separate assembly work. Source-to-target Task domain-parent FK/default parity and remaining source non-unique query-index parity still need a table-by-table review. `okr_review_items.request_id` is one known parent edge requiring explicit verification. This report does not claim complete Task/Run assembly or production migration readiness.
 
-## Commit
+## Commits
 
-`304598fc14d183c4c4a28b7ca00f5a60a1a77a0e` — Add pure Task entity schema contract. The claim row was removed after completion in a separate cleanup commit.
+Pending at report creation; the revision hash will be supplied in the handoff.
