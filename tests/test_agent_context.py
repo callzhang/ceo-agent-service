@@ -821,3 +821,14 @@ def test_scheduled_audit_context_shows_empty_receipt_boundary():
     assert "completed Consumer runs in this task and execution generation" in rendered
     assert "exact completed Consumer parent run" not in rendered
     assert "an empty list means none was captured" in rendered
+
+
+def test_exhausted_permission_turn_reads_the_file_once_before_proposing_a_return():
+    context = replace(_context(), permission_return_required=True)
+
+    rendered = context.render()
+
+    section = rendered.split("### Permission Retry Exhausted", 1)[1]
+    assert "Read the blocked file once now" in section
+    assert "ignore the rest of this section and review the approval normally" in section
+    assert "attempt another read" not in section
