@@ -12,9 +12,11 @@ from app.agent_turn_runner import (
     _fallback_requested_session_id,
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
+    _native_output_schema_for_route,
     _process_failure_detail,
     _persist_provider_event,
     _prompt_for_runtime_route,
+    _runtime_result_schema_id,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
@@ -74,6 +76,45 @@ def test_other_route_or_session_keeps_full_prompt(
 
     assert prompt == "full-task-context"
     assert facts is full_facts
+
+
+def test_native_output_schema_is_selected_for_codex_consumers_only():
+    general = _native_output_schema_for_route(
+        RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
+    )
+    oa = _native_output_schema_for_route(
+        RuntimeKind.CODEX_CLI, AgentRole.CONSUMER, purpose="oa",
+    )
+
+    assert general is not None and general.name == "consumer_general_agent_native_output.schema.json"
+    assert oa is not None and oa.name == "consumer_oa_agent_native_output.schema.json"
+    assert _native_output_schema_for_route(RuntimeKind.CODEX_CLI, AgentRole.AUDIT) is None
+    assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.CONSUMER) is None
+
+
+def test_runtime_result_recovery_binds_native_consumer_schema():
+    from app.native_agent_output import native_output_schema_path
+
+    execution_contract = "execution-contract-digest"
+    native_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
+    )
+    claude_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CLAUDE_CLI, AgentRole.CONSUMER,
+    )
+    audit_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+    )
+    oa_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER, purpose="oa",
+    )
+
+    assert len({native_id, claude_id, audit_id, oa_id}) == 3
+    assert audit_id == claude_id
+    assert native_id == _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
+    )
+    assert native_output_schema_path().is_file()
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
