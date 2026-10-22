@@ -258,6 +258,28 @@ def test_normalized_integer_action_id_can_be_recorded_after_readback(
     assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
 
 
+def test_empty_persisted_start_time_can_be_claimed_for_verified_reconciliation(
+    db_path: Path,
+) -> None:
+    store = EmailStore(db_path)
+    action_id = _seed_failed(store, "empty-start-time", uid=7)
+    with store._connect() as db:
+        db.execute(
+            "update actions set action_data=jsonb_set(action_data,'$.started_at',json(?)) where id=?",
+            ('""', int(action_id)),
+        )
+    session = ReadOnlyFakeSession(
+        messages={"Projects": {31: ("<empty-start-time@example.com>", set())}}
+    )
+
+    report = _run(store, session, apply=True)
+
+    assert report.applied == 1
+    assert report.record_failed == 0
+    assert _action_row(db_path, action_id)["status"] == "done"
+    assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
+
+
 def test_trash_verified_in_the_trash_folder_is_recorded_done(db_path: Path) -> None:
     store = EmailStore(db_path)
     action_id = _seed_failed(store, "binned", uid=8, action=EmailAction.TRASH)

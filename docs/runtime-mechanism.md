@@ -2143,7 +2143,8 @@ ImapReadbackUnsupported`），而这类失败是终态（`attempt_count=1`、`ne
 按 action id 排序，输出的 `next_after` 可接着 `--after` 续跑）、行间停 `--pause-seconds`（默认 0.5 秒）；
 单封超时或被限流只记为 `error`、丢弃并重连会话、指数退避后继续，连续 5 次错误才停下（`aborted=true`）；每封（含连接）有 `--message-timeout-seconds`（默认 60 秒）的墙钟上限，超时就从外部关掉该连接并记 `error`，不依赖套接字读超时——曾有一次读取卡住 30 分钟；每 25 封输出一行计数进度，Ctrl-C 会带着已有计数正常结束（`interrupted=true`）。
 空 `--after` 表示从最小 action ID 开始，适用于规范化后保存为整数的 Action ID；
-分页游标与内部领取 API 在边界统一转成文本 ID，不改变记录的原始 ID。输出只有计数（按
+分页游标与内部领取 API 在边界统一转成文本 ID，不改变记录的原始 ID。对账领取按同一
+事务内读取的 Action 当前 `started_at` 精确做 CAS，兼容仍保存空字符串的失败记录。输出只有计数（按
 move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、error），不含邮件内容。
 
 只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
