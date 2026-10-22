@@ -262,6 +262,8 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     assert "ocr_page_numbers" in audit_catalogue[
         "read_dingtalk_oa_comment_attachment"
     ].description
+    assert "authorize_dingtalk_oa_attachment_preview" in audit_tools
+    assert "authorize_dingtalk_oa_attachment_preview" in consumer_tools
     assert "instead of a file_id" in audit_catalogue[
         "read_dingtalk_oa_comment_image"
     ].description
@@ -289,7 +291,12 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
         assert "execute_reviewed_read" not in tools
         assert "send_approved_dingtalk_message" not in tools
         assert "unsubscribe_email" not in tools
-    assert all(tool.annotations.readOnlyHint for tool in audit_catalogue.values())
+    # Derek chose (2026-10-22) to let Audit open preview access for one OA attachment;
+    # it is the only Audit tool allowed to change DingTalk access.
+    assert {
+        name for name, tool in audit_catalogue.items()
+        if not tool.annotations.readOnlyHint
+    } == {"authorize_dingtalk_oa_attachment_preview"}
     assert consumer_catalogue["consumer_document_write"].annotations.readOnlyHint is False
     assert consumer_catalogue["consumer_artifact_write"].annotations.readOnlyHint is False
 

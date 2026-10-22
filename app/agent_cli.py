@@ -1934,6 +1934,38 @@ def build_role_server(
         annotations=read,
     )
 
+    def authorize_dingtalk_oa_attachment_preview(
+        process_instance_id: str, file_id: str
+    ) -> dict[str, object]:
+        """Open preview access to one exact OA attachment for the service account.
+
+        Use when the OA attachment readers cannot download a file (for example
+        an unavailable premium comment download). Pass the process instance and
+        file ID from read_dingtalk_oa or read_dingtalk_oa_records, then read the
+        body with read_dingtalk_drive_file(node_id=file_id, space_id=<returned
+        space_id>, file_name). It grants the same preview access as opening the
+        attachment in DingTalk and changes nothing else.
+        """
+        if not process_instance_id.strip() or not file_id.strip():
+            raise AgentReadOnlyViolationError("oa_attachment_preview_identity_required")
+        from app.dws_client import DwsClient
+        return {
+            "process_instance_id": process_instance_id,
+            "file_id": file_id,
+            "space_id": DwsClient().authorize_oa_attachment_preview(
+                process_instance_id, file_id
+            ),
+        }
+
+    bound.add_tool(
+        authorize_dingtalk_oa_attachment_preview,
+        name="authorize_dingtalk_oa_attachment_preview",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False,
+            idempotentHint=True, openWorldHint=True,
+        ),
+    )
+
     def read_dingtalk_oa_comment_image(
         process_instance_id: str,
         image_url: str,

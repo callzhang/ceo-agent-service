@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-22 — OA 附件预览授权工具
+
+- 评论附件的高级版下载在租户权益过期时返回 `benefit.status.invalid`，表单附件下载返回 `noPermission` 或 `success=false`，分身因此把可读的 PDF 报成没有权限（审批 202601071711000531430）。
+- Consumer/Audit 新增 `authorize_dingtalk_oa_attachment_preview(process_instance_id, file_id)`：只为指定审批的指定附件开通预览授权并返回 `space_id`，再由 `read_dingtalk_drive_file` 读取正文。这是两角色唯一改变钉钉访问的工具，由 Derek 于 2026-10-22 选定。
+- `dingtalk-oa-approval` Skill 与发布清单摘要、`docs/runtime-mechanism.md` 同步更新；增加回归测试。
+
 ## 2026-10-20 — 权限申请阶段停止语义修复
 
 - 保留 Consumer 对 `request_access` 明确给出的 `continue_after_execution=false`，不再由 wire adapter 强行改为 true。
