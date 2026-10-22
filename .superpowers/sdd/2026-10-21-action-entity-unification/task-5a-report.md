@@ -54,3 +54,17 @@ Ruff returned 7 warnings in these already-WIP files: unused locals/imports at `s
 Task5B must prove that populated-forward migration preserves exact `delivery_key` ↔ `external_action_key` identity where source records refer to one effect, while retaining genuinely distinct preparations and provider/Sent clocks, bodies, receipts, and public identities. It must not merge by body or assume every later preparation for an already-completed canonical key is the same prepared fact. The current implementation does not make old populated rows, inverse data, or cold-open behavior pass.
 
 No new business columns, identity heuristics, review/reconciliation gates, or retry policies were introduced. Existing `_prior_action_matches`, provider verification, claim/CAS, and unknown-result behavior are untouched. The focused end-to-end and shared-lifecycle tests pass; the preexisting broad `tests/test_action_entity_callers.py` file has an unrelated first-test SQL error (`no such column: delivery_key` on its historical `outbound_postfixes` query), and Ruff reports the seven existing warnings listed above. No full suite was run.
+
+## Fix round 1: accepted-before-local-completion recovery
+
+The review found that the first integration test reached Sent before checking reuse, so it did not cover the provider-accepted/local-completion interruption boundary. I extended the same actual selected-option Consumer/Audit/SystemExecutor chain with a test-only fault injection around `record_outbound_postfix_receipt`: the original store method commits the accepted provider result, then the wrapper raises before the handler can return, before the canonical reviewed provider receipt is written, and before Sent projection. The first executor result remains retryable `external_action_uncertain`, with the candidate execution and action observation both `uncertain`; the prepared receipt is persisted, while canonical and Sent receipts are absent. The test reopens the same SQLite store and resumes through native `SystemExecutor`/DingTalk handler reconciliation. It finishes `executed` with one provider call total, the original Action ID, the exact same prepared receipt ID, and the canonical/Sent receipts and observer attached to that owner. No runtime test hook or production code change was added for fault injection.
+
+Fix-round targeted command and output:
+
+```text
+TMPDIR=/tmp/ceo-action-entity-validation.8rUAvK/task-5a-codex python -m pytest -q tests/test_action_entity_callers.py::test_selected_reviewed_message_uses_prepared_action_through_sent tests/test_reviewed_candidate_store.py::test_old_revision_keeps_its_approved_binding tests/test_action_entity_callers.py::test_retry_keeps_original_external_identity
+...                                                                      [100%]
+3 passed in 36.93s
+```
+
+The named old-approved-revision and direct-action retry tests both pass. `python -m compileall -q tests/test_action_entity_callers.py` and `git diff --check` pass. `ruff check tests/test_action_entity_callers.py` reports one existing F841 at the unrelated `test_reviewed_email_prepared_share_owner` fixture (`prepared` assigned at line 154), outside the fix-round test edits; it was left untouched. The existing broad-file `delivery_key` SQL fixture error remains unchanged and is not treated as a production pass/fail result.

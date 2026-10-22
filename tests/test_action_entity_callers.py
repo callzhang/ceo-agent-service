@@ -188,7 +188,7 @@ def test_reviewed_email_prepared_share_owner(tmp_path):
         assert db.execute("select count(*) from actions where record_type in ('outbound_postfixes','candidate_action_attempts','email_actions')").fetchone()[0] == 0
 
 
-def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path):
+def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, monkeypatch):
     from app.agent_context import AgentTaskContext
     from app.agent_contracts import ConsumerAgentResult
     from app.consumer_agent import _prepare_outgoing_dingtalk_messages
@@ -210,7 +210,8 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path):
             assert result == {"success": True, "data": {"messageId": "provider-message-1"}}
             return {"state": "sent", "message_id": "provider-message-1"}
 
-    store = AutoReplyStore(tmp_path / "selected-prepared.sqlite3")
+    path = tmp_path / "selected-prepared.sqlite3"
+    store = AutoReplyStore(path)
     store.enqueue_reply_task(
         channel="dingtalk", conversation_id="target-cid", conversation_title="Group",
         single_chat=False, trigger_message_id="trigger-1", trigger_sender="Derek",
@@ -274,20 +275,73 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path):
 
     source_candidate = result
     provider = StrictProvider()
-    result = SystemExecutor(
+    record_prepared_receipt = store.record_outbound_postfix_receipt
+    interrupted = False
+
+    def accept_then_interrupt(*args, **kwargs):
+        nonlocal interrupted
+        receipt = record_prepared_receipt(*args, **kwargs)
+        if not interrupted:
+            interrupted = True
+            raise RuntimeError("interrupted after provider acceptance and prepared receipt")
+        return receipt
+
+    monkeypatch.setattr(store, "record_outbound_postfix_receipt", accept_then_interrupt)
+    interrupted_result = SystemExecutor(
         store, native_dingtalk_message_handlers(store, provider), owner="system",
     ).execute(task, candidate["id"], review["id"])
 
-    assert result.outcome == "executed"
+    assert interrupted_result.outcome == "failed"
+    assert interrupted_result.error.code == "external_action_uncertain"
+    assert interrupted_result.error.retryable is True
+    assert interrupted is True
     assert len(provider.calls) == 1
+    assert store.get_candidate_execution(candidate["id"])["status"] == "uncertain"
     delivery_key = agent_message_delivery_key(
         business_object_key=task.business_object_key,
         action_identity="notice:send_notice",
         execution_generation=task.execution_generation,
         proposal_revision=0,
     )
+    execution_id = store.get_candidate_execution(candidate["id"])["id"]
+    interrupted_attempt = store.list_candidate_action_attempts(execution_id)[0]
+    with store._connect() as db:
+        interrupted_owner = db.execute(
+            "select id,action_delivery_key,action_external_action_key,action_prepared_receipt_id,"
+            "action_delivery_receipt_id from actions where record_type='action' "
+            "and action_delivery_key=?",
+            (delivery_key,),
+        ).fetchone()
+        assert interrupted_owner is not None
+        interrupted_canonical = db.execute(
+            "select id from action_receipts where action_id=? and provider_result_json is not null "
+            "and operation='send_group_message'",
+            (interrupted_owner["id"],),
+        ).fetchone()
+        interrupted_sent = db.execute(
+            f"select id from ({SENT_REPLY_SQL}) where id=?",
+            (interrupted_owner["id"],),
+        ).fetchone()
+    assert interrupted_attempt["status"] == "uncertain"
+    assert interrupted_owner["action_prepared_receipt_id"] is not None
+    interrupted_owner_id = interrupted_owner["id"]
+    interrupted_prepared_receipt_id = interrupted_owner["action_prepared_receipt_id"]
+    assert interrupted_owner["action_external_action_key"] == interrupted_attempt["external_action_key"]
+    assert interrupted_owner["action_delivery_receipt_id"] is None
+    assert interrupted_canonical is None
+    assert interrupted_sent is None
+
+    # Resume through the same SystemExecutor caller on a reopened store. The
+    # persisted preparation receipt supplies provider readback; no send repeats.
+    store = AutoReplyStore(path)
+    result = SystemExecutor(
+        store, native_dingtalk_message_handlers(store, provider), owner="system-restarted",
+    ).execute(task, candidate["id"], review["id"])
+
+    assert result.outcome == "executed"
+    assert len(provider.calls) == 1
     external_action = store.list_candidate_action_attempts(
-        store.get_candidate_execution(candidate["id"])["id"]
+        execution_id
     )[0]
     with store._connect() as db:
         owners = db.execute(
@@ -325,6 +379,8 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path):
             (owner["id"],),
         ).fetchone()
     assert len(owners) == 1
+    assert owner["id"] == interrupted_owner_id
+    assert owner["action_prepared_receipt_id"] == interrupted_prepared_receipt_id
     assert owners[0]["id"] == owner["id"]
     assert owner["action_delivery_key"] == delivery_key
     assert owner["action_external_action_key"] == external_action["external_action_key"]
