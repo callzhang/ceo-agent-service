@@ -292,7 +292,7 @@ def reconcile_email_actions(
             if index and pause_seconds > 0:
                 sleep(pause_seconds)
             report.examined += 1
-            report.next_after = failed.action.action_id
+            report.next_after = str(failed.action.action_id)
             action_type = failed.action.action_type
             try:
                 provider, finding = _examine_with_deadline(
@@ -378,7 +378,7 @@ def _record_done(
 ) -> bool:
     action = failed.action
     claimed = store.claim_failed_direct_action_for_reconciliation(
-        action_id=action.action_id,
+        action_id=str(action.action_id),
         expected_attempt_count=action.attempt_number - 1,
         claimed_at=finished_at,
     )

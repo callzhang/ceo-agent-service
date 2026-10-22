@@ -11740,12 +11740,20 @@ class EmailStore:
                   and a.action_type in ({placeholders})
                   and c.status='processed'
                   and a.action_plan_id=c.current_action_plan_id
-                  and a.action_id>?
+                  and (?='' or a.action_id>?)
                   and (? is null or a.action_id=?)
                 order by a.action_id
                 limit ?
                 """,
-                (account_id, *types, after_action_id, action_id, action_id, int(limit)),
+                (
+                    account_id,
+                    *types,
+                    after_action_id,
+                    after_action_id,
+                    action_id,
+                    action_id,
+                    int(limit),
+                ),
             ).fetchall()
         return [
             FailedDirectAction(
