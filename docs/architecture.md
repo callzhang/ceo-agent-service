@@ -131,6 +131,8 @@ Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执
 
 Task4（2026-10-21，候选）将 direct-email History、Attention、队列快照、重要邮件清单及邮件分类可观测性读取切换到 Action 与 Action Receipt。发送详情以 Action 的物理 ID、正文、准确 Sent 回执和 `observed_at` 展示；provider 正文只从该 Action 的 provider receipt 读取，缺失的 operation/target 显示为未提供，不合成来源事实。多个 Run observer 仍对应一条发送效果。撤回只更新同一 Action 的撤回字段，不新增发送或改写原发送回执；feedback token 从同一 Action 取得，并继续按其原 conversation/trigger 身份关联消息和反馈。邮件退订仍走其专有流程。
 
+Task5A（2026-10-21，候选）在当前真实 prepared-message caller 与 reviewed SystemExecutor 路径中，以 `agent_message_delivery_key` 对应的 channel/delivery key，将已准备的 Action owner 绑定到已审批选项的 reviewed Action，再由同一 owner 承载 dispatch observation、canonical provider receipt、Sent receipt 和 observer。选项 key、task generation 与 proposal revision 保持在源 delivery identity 中；provider 仍只调用一次。此窄范围尚未完成 populated migration、current-data inverse 或 old-code cold-open/reforward 验收，未发布；不改变审批、provider 核验或现有 retry/reconciliation policy。
+
 A5a 的既有配对发布只接受准确 Store19.8／Email53，发布 Store19.9／Email53；
 C1 Task 声明和所有历史 Actions 声明输出冻结。current-data inverse 用当前父值重建
 旧子事实，包含正迁后的新准备、claim 和接受回执；只保存声明变体和原 marker 元数据。

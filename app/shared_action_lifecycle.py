@@ -321,6 +321,8 @@ def record_sent_action(db, *, operation=None, target_json=None, provider_json, r
                 changes[field] = value
         if action['operation'] is None and operation is not None:
             changes['operation'] = operation
+        if action['agent_run_id'] is None and agent_run_id is not None:
+            changes['agent_run_id'] = agent_run_id
         if action['business_object_key'] is None and business_object_key is not None:
             changes['business_object_key'] = business_object_key
         if action['action_identity'] is None and action_identity is not None:
@@ -332,8 +334,9 @@ def record_sent_action(db, *, operation=None, target_json=None, provider_json, r
 
     prior = db.execute(
         'select id,operation,target,provider_result_json,result_digest,agent_run_id,observed_at from action_receipts '
-        'where action_id=? and provider_result_json is not null order by id limit 1',
-        (action['id'],),
+        'where action_id=? and provider_result_json is not null and operation is ? and target is ? '
+        'order by id limit 1',
+        (action['id'], operation, target_json),
     ).fetchone()
     if prior is None and provider_json is not None:
         receipt_id = append_action_receipt(db, action['id'], values={
@@ -627,7 +630,8 @@ def _reviewed_action_receipt(db, action_id, execution_id, action_index, status, 
 
 
 def begin_reviewed_action(db, *, execution_id, action_index, external_action_key,
-                          action, candidate, created_at, updated_at):
+                          action, candidate, preparation_owner=None,
+                          created_at, updated_at):
     """Claim one reviewed effect and append its per-execution observation."""
     from app.action_entity_storage import (
         add_action_observer, claim_action, create_action, get_action,
@@ -637,6 +641,34 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
     if not db.in_transaction:
         raise ValueError('reviewed Action claim requires caller-owned transaction')
     existing = _reviewed_action_by_key(db, external_action_key)
+    prepared_id = None
+    if preparation_owner is not None:
+        if (set(preparation_owner) != {'channel', 'delivery_key'}
+                or not preparation_owner['channel'] or not preparation_owner['delivery_key']):
+            raise ValueError('invalid prepared Action owner reference')
+        prepared_id = _prepared_message_action_id(
+            db, preparation_owner['channel'], preparation_owner['delivery_key'],
+        )
+        if prepared_id is None:
+            raise ValueError('prepared Action owner is missing')
+        # A later approved revision may prepare a new delivery key for an
+        # already completed canonical effect. Keep that unused preparation
+        # separate; the established external identity remains the owner.
+        if existing is not None and int(existing['id']) != prepared_id:
+            prepared_id = None
+        if existing is None:
+            existing = get_action(db, prepared_id)
+            expected_identity = {
+                'operation': action['operation'],
+                'external_action_key': external_action_key,
+                'business_object_key': candidate['business_object_key'],
+                'action_identity': action['action_identity'],
+            }
+            if existing is None or any(
+                existing[field] not in (None, value)
+                for field, value in expected_identity.items()
+            ):
+                raise ValueError('prepared Action conflicts with reviewed identity')
     target_json = json.dumps(action.get('target', {}), ensure_ascii=False,
                              sort_keys=True, separators=(',', ':'), allow_nan=False)
     if existing is None:
@@ -646,11 +678,21 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
             'business_object_key': candidate['business_object_key'],
             'action_identity': action['action_identity'],
         })
-    elif (existing['business_object_key'] != candidate['business_object_key']
-          or existing['action_identity'] != action['action_identity']
-          or existing['operation'] != action['operation']):
+    elif preparation_owner is None and (
+        existing['business_object_key'] != candidate['business_object_key']
+        or existing['action_identity'] != action['action_identity']
+        or existing['operation'] != action['operation']
+    ):
         raise ValueError('external action key belongs to another action')
-
+    elif preparation_owner is not None and any(
+        existing[field] not in (None, value)
+        for field, value in {
+            'business_object_key': candidate['business_object_key'],
+            'action_identity': action['action_identity'],
+            'operation': action['operation'],
+        }.items()
+    ):
+        raise ValueError('prepared Action conflicts with reviewed identity')
     current = _reviewed_attempt(db, existing['id'], execution_id, action_index)
     if current is not None:
         if current['external_action_key'] != external_action_key:
@@ -676,15 +718,23 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
         verification = json.loads(provider['provider_result_json']).get('verification', {})
         status = 'uncertain' if verification.get('state') in ('ambiguous', 'failed') else 'verified'
         _reviewed_action_receipt(db, existing['id'], execution_id, action_index, status,
-            result_json=None, provider_receipt_id=provider['id'],
+            result_json=None, provider_receipt_id=provider['provider_receipt_id'],
             agent_run_id=candidate['consumer_run_id'], target_json=target_json, created_at=created_at,
             updated_at=updated_at)
         return _reviewed_attempt(db, existing['id'], execution_id, action_index)
     if prior is not None and prior['status'] != 'confirmed_no_effect':
         raise ValueError('action_key_requires_reconciliation')
     parent = get_action(db, existing['id'])
+    changes = {'status': 'dispatched'}
+    if preparation_owner is not None:
+        changes.update({
+            'operation': action['operation'],
+            'external_action_key': external_action_key,
+            'business_object_key': candidate['business_object_key'],
+            'action_identity': action['action_identity'],
+        })
     if claim_action(db, existing['id'], expected={'status': parent['status']},
-                    changes={'status': 'dispatched'}) is None:
+                    changes=changes) is None:
         raise ValueError('action claim changed')
     _reviewed_action_receipt(db, existing['id'], execution_id, action_index,
         'dispatched', result_json='{}', provider_receipt_id=None,

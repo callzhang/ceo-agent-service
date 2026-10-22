@@ -419,7 +419,10 @@ class ReviewedCandidateStoreMixin:
                 }, where_sql="invalidated_at=''")
             return dict(db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where id=?", (execution_id,)).fetchone())
 
-    def begin_candidate_action(self, execution_id: int, owner: str, action_index: int, external_action_key: str) -> dict[str, Any]:
+    def begin_candidate_action(
+        self, execution_id: int, owner: str, action_index: int,
+        external_action_key: str, *, preparation_owner: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if action_index < 0 or not external_action_key.strip():
             raise ValueError("invalid action identity")
         with self._immediate_write_transaction() as db:
@@ -436,7 +439,8 @@ class ReviewedCandidateStoreMixin:
             return shared_action_lifecycle.begin_reviewed_action(
                 db, execution_id=execution_id, action_index=action_index,
                 external_action_key=external_action_key, action=actions[action_index],
-                candidate=candidate, created_at=created_at,
+                candidate=candidate, preparation_owner=preparation_owner,
+                created_at=created_at,
                 updated_at=_db_timestamp(db),
             )
 

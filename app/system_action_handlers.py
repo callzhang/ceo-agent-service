@@ -19,6 +19,17 @@ class DingTalkMessageHandler:
         self.sender = sender or ServiceMessageSender(store=store, dingtalk=dws)
 
     def _prepared(self, action: ProposedAction, candidate: dict[str, object]):
+        task, delivery_key = self.prepared_owner_reference(action, candidate)
+        if task is None or delivery_key is None:
+            return task, None
+        prepared = self.store.get_outbound_postfix("dingtalk", delivery_key)
+        body = action.payload.get("content", action.payload.get("text", action.payload.get("reply_text")))
+        if prepared is None or not isinstance(body, str) or body != prepared.final_body:
+            return task, None
+        return task, prepared
+
+    def prepared_owner_reference(self, action: ProposedAction, candidate: dict[str, object]):
+        """Return the exact source delivery identity for this reviewed message."""
         task = self.store.get_reply_task_for_execution(
             candidate["task_id"], candidate["execution_generation"]
         )
@@ -33,11 +44,7 @@ class DingTalkMessageHandler:
             execution_generation=task.execution_generation,
             proposal_revision=candidate["proposal_revision"],
         )
-        prepared = self.store.get_outbound_postfix("dingtalk", delivery_key)
-        body = action.payload.get("content", action.payload.get("text", action.payload.get("reply_text")))
-        if prepared is None or not isinstance(body, str) or body != prepared.final_body:
-            return task, None
-        return task, prepared
+        return task, delivery_key
 
     def _verified(self, provider_result: object) -> ActionOutcome:
         if not isinstance(provider_result, dict):

@@ -188,6 +188,223 @@ def test_reviewed_email_prepared_share_owner(tmp_path):
         assert db.execute("select count(*) from actions where record_type in ('outbound_postfixes','candidate_action_attempts','email_actions')").fetchone()[0] == 0
 
 
+def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path):
+    from app.agent_context import AgentTaskContext
+    from app.agent_contracts import ConsumerAgentResult
+    from app.consumer_agent import _prepare_outgoing_dingtalk_messages
+    from app.action_storage import SENT_REPLY_SQL
+    from app.service_message_sender import agent_message_delivery_key
+    from app.store import AgentRole
+    from app.system_action_handlers import native_dingtalk_message_handlers
+    from app.system_executor import SystemExecutor
+
+    class StrictProvider:
+        def __init__(self):
+            self.calls = []
+
+        def send_message(self, conversation_id, body, **target):
+            self.calls.append((conversation_id, body, target))
+            return {"success": True, "data": {"messageId": "provider-message-1"}}
+
+        def verify_message_send_result(self, result):
+            assert result == {"success": True, "data": {"messageId": "provider-message-1"}}
+            return {"state": "sent", "message_id": "provider-message-1"}
+
+    store = AutoReplyStore(tmp_path / "selected-prepared.sqlite3")
+    store.enqueue_reply_task(
+        channel="dingtalk", conversation_id="target-cid", conversation_title="Group",
+        single_chat=False, trigger_message_id="trigger-1", trigger_sender="Derek",
+        trigger_create_time="2026-10-20T10:00:00Z", trigger_text="Please send the notice",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    context = AgentTaskContext(
+        task_id=task.id, channel=task.channel, conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title, single_chat=task.single_chat,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, trigger_create_time=task.trigger_create_time,
+        messages=(), materials=(), prior_receipts=(),
+    )
+    result = ConsumerAgentResult.model_validate({
+        "outcome": "needs_human", "summary": "Choose the reviewed notice",
+        "proposal": None,
+        "decision_options": [
+            {"key": "send_notice", "label": "Send the notice", "applies_to": "task_class",
+             "instruction": "Send the approved notice", "consequence": "The group receives the notice",
+             "plan": {"objective": "Send the notice", "actions": [{
+                 "description": "Send notice", "action_identity": "notice",
+                 "capability": "dingtalk-chat", "operation": "send_group_message",
+                 "target": {"conversation_id": "target-cid"},
+                 "payload": {"content": "Approved notice"},
+             }], "sourced_facts": [], "authored_judgment": "The selected notice is ready"}},
+            {"key": "stop", "label": "Stop", "instruction": "Do not send",
+             "consequence": "No notice is sent", "terminal_outcome": "skipped",
+             "reason": "The notice is no longer needed", "applies_to": "task_class"},
+        ],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "medium", "confidence": 0.8, "rule_coverage": 0.4,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Only Derek can choose this instance's notice",
+        "decision_basis": {
+            "verified_facts": [{"assertion": "The group requested a notice", "references": ["message:trigger-1"]}],
+            "rule_evidence": [{"assertion": "No rule selects an option", "references": ["message:trigger-1"]}],
+            "quality_explanation": "The choice is specific to this notice",
+            "no_external_action_evidence": [{"assertion": "No notice has been sent", "references": ["message:trigger-1"]}],
+            "conclusion": "Ask Derek to select the current notice",
+        },
+    })
+    result = _prepare_outgoing_dingtalk_messages(
+        result, store=store, task=task, context=context, proposal_revision=0,
+    )
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(consumer.id, result.model_dump(mode="json"), owner="consumer")
+    candidate = store.persist_review_candidate(task, consumer, result)
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="review", owner="audit",
+    ).run
+    approval = {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]}
+    store.complete_agent_run(audit.id, approval, owner="audit")
+    review = store.record_candidate_review(candidate["id"], audit.id, approval)
+    store.select_candidate_option(candidate["id"], review["id"], "send_notice")
+
+    source_candidate = result
+    provider = StrictProvider()
+    result = SystemExecutor(
+        store, native_dingtalk_message_handlers(store, provider), owner="system",
+    ).execute(task, candidate["id"], review["id"])
+
+    assert result.outcome == "executed"
+    assert len(provider.calls) == 1
+    delivery_key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity="notice:send_notice",
+        execution_generation=task.execution_generation,
+        proposal_revision=0,
+    )
+    external_action = store.list_candidate_action_attempts(
+        store.get_candidate_execution(candidate["id"])["id"]
+    )[0]
+    with store._connect() as db:
+        owners = db.execute(
+            "select id,action_delivery_key,action_external_action_key,action_prepared_receipt_id,"
+            "action_delivery_receipt_id from actions where record_type='action' "
+            "and (action_delivery_key is not null or action_external_action_key is not null) order by id",
+        ).fetchall()
+        owner = db.execute(
+            "select * from actions where record_type='action' and action_delivery_key=?",
+            (delivery_key,),
+        ).fetchone()
+        assert owner is not None
+        prepared_receipt = db.execute(
+            "select * from action_receipts where id=? and action_id=?",
+            (owner["action_prepared_receipt_id"], owner["id"]),
+        ).fetchone()
+        observation = db.execute(
+            "select * from action_receipts where action_id=? and execution_id=? and action_index=0",
+            (owner["id"], store.get_candidate_execution(candidate["id"])["id"]),
+        ).fetchone()
+        canonical_receipt = db.execute(
+            "select * from action_receipts where id=? and action_id=?",
+            (observation["provider_receipt_id"], owner["id"]),
+        ).fetchone()
+        sent_fact = db.execute(
+            "select * from action_receipts where id=? and action_id=?",
+            (owner["action_delivery_receipt_id"], owner["id"]),
+        ).fetchone()
+        observer = db.execute(
+            "select * from action_observers where action_id=? and agent_run_id=? and task_id=?",
+            (owner["id"], audit.id, task.id),
+        ).fetchone()
+        sent_projection = db.execute(
+            f"select reply_text,agent_run_id,id from ({SENT_REPLY_SQL}) where id=?",
+            (owner["id"],),
+        ).fetchone()
+    assert len(owners) == 1
+    assert owners[0]["id"] == owner["id"]
+    assert owner["action_delivery_key"] == delivery_key
+    assert owner["action_external_action_key"] == external_action["external_action_key"]
+    assert owner["action_prepared_receipt_id"] == prepared_receipt["id"]
+    assert owner["action_delivery_receipt_id"] == sent_fact["id"]
+    assert prepared_receipt["operation"] == "send_message"
+    assert prepared_receipt["target"] == delivery_key
+    assert prepared_receipt["observed_at"] is not None
+    assert observation["status"] == "verified"
+    assert observation["provider_receipt_id"] == canonical_receipt["id"]
+    assert canonical_receipt["operation"] == "send_group_message"
+    assert canonical_receipt["target"] == '{"conversation_id":"target-cid"}'
+    assert canonical_receipt["provider_result_json"] is not None
+    assert sent_fact["provider_receipt_id"] == canonical_receipt["id"]
+    assert sent_fact["observed_at"] is not None
+    assert observer is not None
+    assert sent_projection["id"] == owner["id"]
+    assert sent_projection["agent_run_id"] == audit.id
+    assert sent_projection["reply_text"] == provider.calls[0][1]
+    assert owner["action_prepared_at"] is not None
+
+    # The next revision has a distinct delivery preparation but the same
+    # canonical external key. Exercise the persisted owner recovery branch
+    # directly; SystemExecutor's existing exact-content check runs earlier.
+    later_result = _prepare_outgoing_dingtalk_messages(
+        source_candidate,
+        store=store, task=task, context=context, proposal_revision=1,
+    )
+    later_consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=1, turn_attempt=1, parent_agent_run_id=audit.id,
+        operation_id="", owner="consumer-later",
+    ).run
+    store.complete_agent_run(
+        later_consumer.id, later_result.model_dump(mode="json"), owner="consumer-later",
+    )
+    later_candidate = store.persist_review_candidate(task, later_consumer, later_result)
+    later_audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=1, turn_attempt=1, parent_agent_run_id=later_consumer.id,
+        operation_id="review-later", owner="audit-later",
+    ).run
+    later_approval = {"outcome": "approve", "candidate_digest": later_candidate["candidate_digest"]}
+    store.complete_agent_run(later_audit.id, later_approval, owner="audit-later")
+    later_review = store.record_candidate_review(later_candidate["id"], later_audit.id, later_approval)
+    store.select_candidate_option(later_candidate["id"], later_review["id"], "send_notice")
+    later_execution = store.claim_candidate_execution(
+        later_candidate["id"], later_review["id"], "system-later", 1800,
+    )
+    assert later_execution is not None
+    later_delivery_key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity="notice:send_notice",
+        execution_generation=task.execution_generation,
+        proposal_revision=1,
+    )
+    recovered_attempt = store.begin_candidate_action(
+        later_execution["id"], "system-later", 0, external_action["external_action_key"],
+        preparation_owner={"channel": "dingtalk", "delivery_key": later_delivery_key},
+    )
+    assert recovered_attempt["status"] == "verified"
+    assert len(provider.calls) == 1
+    with store._connect() as db:
+        recovered_observation = db.execute(
+            "select action_id,status,provider_receipt_id from action_receipts "
+            "where execution_id=? and action_index=0",
+            (later_execution["id"],),
+        ).fetchone()
+        later_preparation = db.execute(
+            "select id from actions where record_type='action' and action_delivery_key=?",
+            (later_delivery_key,),
+        ).fetchone()
+    assert later_preparation is not None
+    assert later_preparation["id"] != owner["id"]
+    assert recovered_observation["action_id"] == owner["id"]
+    assert recovered_observation["status"] == "verified"
+    assert recovered_observation["provider_receipt_id"] == canonical_receipt["id"]
+
+
+
 def test_retry_keeps_original_external_identity(tmp_path):
     from app.email_classifier_contracts import EmailClassificationStatus
     from app.email_store import EmailStore
