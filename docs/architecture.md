@@ -1524,7 +1524,7 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 这些是彼此独立的预算，不合并相加；等待时间、Agent 内部模型轮数和只读轮询不是自动重试次数。
 
 OA 权限预算耗尽后停止文件重读，由 Consumer 再运行一次提出普通 OA `return` 候选；
-该轮不得再次申请、重试或读取被阻塞文件。候选仍经 Audit、System Execution 和节点读回，
+该轮不得再次申请权限或安排重试，但退回前必须对被阻塞文件实读一次：能读则按正常审批处理，仍读不了才提退回。候选仍经 Audit、System Execution 和节点读回，
 服务不会合成或直接执行退回。明确的权限申请失败也走同一流程；无法形成有效候选时才进入
 人工处理，不能把外部权限阻塞记为 `failed`。非 OA purpose 耗尽后仍可投影为
 `permission_blocked` / `blocked`，在 `needs_human` 队列外等待；History 的一次人工访问检查
