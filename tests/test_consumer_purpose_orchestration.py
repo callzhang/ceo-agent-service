@@ -113,6 +113,46 @@ def test_permission_request_and_retry_do_not_invoke_audit(tmp_path):
     assert len(handler.calls) == 1
 
 
+def test_verified_legacy_permission_request_is_not_sent_again(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    context = replace(context, skill_names=('dingtalk-oa-approval',))
+    now = datetime.now(timezone.utc) + timedelta(minutes=5)
+    request = output('request_access',
+                     target={'process_instance_id': 'p', 'file_id': 'file-a'},
+                     payload={'content': 'Please grant read access'})
+    consumer = ScriptedConsumer(store, request)
+    run = consumer.run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    candidate = store.persist_review_candidate(task, store.get_agent_run(run.run_id), request)
+    budget = PurposeRetryBudget(
+        store, task.business_object_key or f'reply-task:{task.id}', 'oa'
+    )
+    budget.begin_access_request(file_id='file-a', action_key='legacy-request-key',
+                                candidate_id=candidate['id'], now=now - timedelta(minutes=1))
+    budget.finish_access_request(file_id='file-a', action_key='legacy-request-key',
+                                 status='verified', result={'provider_receipt_id': 'old'},
+                                 now=now - timedelta(minutes=1))
+    # A newer Consumer candidate for the same file must not bypass the old
+    # reservation and send a second comment after this version is deployed.
+    consumer.steps.append(request)
+    newer_run = consumer.run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    newer = store.persist_review_candidate(
+        task, store.get_agent_run(newer_run.run_id), request
+    )
+    assert newer['id'] != candidate['id']
+    audit = ScriptedAudit(store, 'approve')
+    handler = VerifiedHandler()
+    runtime = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {
+            ('dingtalk-oa', 'comment'): handler,
+        }), now=lambda: now)
+
+    result = runtime.process(task, context, refresh_context=lambda: context)
+
+    assert result.error.code == RETRY_REQUESTED
+    assert audit.calls == []
+    assert handler.calls == []
+
+
 def test_permission_retry_budget_exhaustion_waits_without_becoming_failure(tmp_path):
     store, task, context = task_and_context(tmp_path)
     context = replace(context, skill_names=('dingtalk-oa-approval',))

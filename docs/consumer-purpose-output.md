@@ -40,8 +40,8 @@ purpose 由服务从任务的 OA 链接、已选 Skill 或明确 OA 动作上下
 
 未知 action、非字符串 ID、缺失的必填参数和额外参数均不能作为合法新输出。
 服务从同一动作定义生成 schema 并校验输出，再规范化为现有内部候选。OA 的
-approve、reject、return、comment 和普通 plan 继续由 Audit 审阅；文件权限申请和
-权限等待 retry 是 Consumer purpose 动作，不提交给 Audit。
+approve、reject、return、comment 和普通 plan 都由 Audit 审阅；文件权限申请和权限等待 retry
+是 Consumer purpose 动作，不提交给 Audit。
 
 ### OA 的 `return` 是真实退回
 
