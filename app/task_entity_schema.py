@@ -9,7 +9,7 @@ from app import task20_definitions, task_run_entity_definitions
 from app.task_lifecycle_current_schema import task_lifecycle_objects
 from app.task_lifecycle_definitions import (
     LIFECYCLE_FIELDS, SOURCE_FIELDS, scalar as lifecycle_scalar,
-    task_lifecycle_physical_field_map,
+    task_lifecycle_physical_field_map, task_physical_identity_field_map,
 )
 from app.task_entity_migration import (
     _typed_key, owner_indexes, translate_feedback_workbench_refs,
@@ -121,6 +121,17 @@ def _validate_metadata(db: sqlite3.Connection, metadata: dict) -> None:
                 raise ValueError("Task physical lifecycle target changed")
         elif row["target_table"] is not None or row["retirement_reason"] is None:
             raise ValueError("auxiliary Task lifecycle scalar must remain unowned")
+    identity_rows = task_physical_identity_field_map()
+    if len(identity_rows) != len(task20_definitions.TASK20_COLUMNS) or {
+            (row["source_kind"], row["source_physical_field"]) for row in identity_rows
+    } != {(kind, "legacy_key") for kind in task20_definitions.TASK20_COLUMNS}:
+        raise ValueError("Task physical identity field coverage is incomplete")
+    for row in identity_rows:
+        hidden_rowid = row["identity_semantics"] == "hidden_task12_rowid"
+        if hidden_rowid != (row["logical_identity_field"] is None):
+            raise ValueError("Task physical identity semantics changed")
+        if (row["inverse_metadata"] == "raw_key_exception") != hidden_rowid:
+            raise ValueError("Task physical identity metadata policy changed")
 
 
 def _stage(db: sqlite3.Connection) -> dict[str, str]:
@@ -359,14 +370,19 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
             public_field = "id" if "id" in row else (
                 "task_id" if kind == "email_agent_classification_tasks" else None
             )
-            if public_field is None:
-                continue
-            public = row[public_field]
             raw = row["_raw_key"]
             raw_type = row["_raw_key_type"]
+            if public_field is None:
+                # These Task12 families expose natural logical keys, while the
+                # physical legacy_key retains their hidden source ROWID.
+                # That identity cannot be reconstructed from a business key.
+                raw_key_exceptions.append({"source_kind": kind,
+                    "physical_id": row["_physical_id"], "value": raw, "type": raw_type})
+                continue
+            public = row[public_field]
             expected_raw = (str(public) if raw_type == "text" and public is not None
-                            else public if raw_type == "integer" else None)
-            if raw_type not in {"null", "text", "integer"} or raw != expected_raw:
+                            else public if raw_type in {"integer", "blob"} else None)
+            if raw_type not in {"null", "text", "integer", "blob"} or raw != expected_raw:
                 raw_key_exceptions.append({"source_kind": kind,
                     "physical_id": row["_physical_id"], "value": raw, "type": raw_type})
     for kind, rows in all_rows.items():
@@ -556,21 +572,15 @@ def _native_value(db: sqlite3.Connection, item: dict, target_id: int):
     if table == "tasks":
         if field.startswith("parameters_json.$."):
             key = field.partition("$.")[2]
-            row = db.execute("select json_extract(parameters_json,?) from main.tasks where id=?",
-                             ("$." + key, target_id)).fetchone()
+            row = db.execute("select json(parameters_json) from main.tasks where id=?",
+                             (target_id,)).fetchone()
             if row is None or row[0] is None:
                 return None
-            value = row[0]
-            if isinstance(value, str):
-                try:
-                    decoded = json.loads(value)
-                except json.JSONDecodeError:
-                    return value
-                from app.task_entity_storage import _decode_scalar
-                if isinstance(decoded, dict) and decoded.get("t") in {"blob", "real", "inf", "-inf"}:
-                    return _decode_scalar(decoded)
-                return value
-            return value
+            encoded = json.loads(row[0])
+            if not isinstance(encoded, dict) or key not in encoded:
+                return None
+            from app.task_entity_storage import _decode_scalar
+            return _decode_scalar(encoded[key])
         row = db.execute("select " + _quote(field)
                          + " from main.tasks where id=?", (target_id,)).fetchone()
         return None if row is None else row[0]

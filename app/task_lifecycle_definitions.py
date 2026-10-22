@@ -27,6 +27,27 @@ def task_lifecycle_physical_field_map():
           "retirement_reason": "auxiliary source row has no native Task lifecycle owner; source scalar is NULL"})
         for kind in source.TASK20_COLUMNS for field in LIFECYCLE_FIELDS
     )
+
+
+def task_physical_identity_field_map():
+    """Describe every physical legacy-key slot separately from logical fields."""
+    rows = []
+    for kind in source.TASK20_COLUMNS:
+        logical_identity = (
+            "id" if "id" in source.TASK20_FIELDS[kind]
+            else "task_id" if "task_id" in source.TASK20_FIELDS[kind]
+            else None
+        )
+        hidden_rowid = logical_identity is None
+        rows.append({
+            "source_kind": kind,
+            "source_physical_field": "legacy_key",
+            "owner_scope": "source_task_container",
+            "identity_semantics": "hidden_task12_rowid" if hidden_rowid else "logical_public_identity",
+            "logical_identity_field": logical_identity,
+            "inverse_metadata": "raw_key_exception" if hidden_rowid else "derive_unless_typed_exception",
+        })
+    return tuple(rows)
 _BASE = ("status", "error", "created_at", "updated_at")
 SOURCE_FIELDS = {
     "reply_tasks": {f: f for f in (*_BASE, "available_at", "attempts", "locked_at")},

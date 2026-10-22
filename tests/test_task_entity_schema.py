@@ -1,4 +1,5 @@
 from contextlib import closing
+import json
 import sqlite3
 
 from app import task20_current_schema, task20_definitions
@@ -13,7 +14,7 @@ from tests.test_task20_definitions import payload
 from app.task_lifecycle_storage import source_insert
 from app.task_lifecycle_definitions import (
     LIFECYCLE_FIELDS, SOURCE_FIELDS, scalar as lifecycle_scalar,
-    task_lifecycle_physical_field_map,
+    task_lifecycle_physical_field_map, task_physical_identity_field_map,
 )
 from app.storage_payload import TASK_RECORD_TYPES
 
@@ -251,6 +252,13 @@ def test_current_fact_inverse_restores_all_twenty_families_and_sql_types():
                    if row["source_kind"] in SOURCE_FIELDS)
         assert all(row["owner_scope"] == "auxiliary_domain" and row["target_table"] is None
                    for row in lifecycle_map if row["source_kind"] not in SOURCE_FIELDS)
+        identity_map = task_physical_identity_field_map()
+        assert len(identity_map) == len(task20_definitions.TASK20_COLUMNS)
+        assert {row["source_kind"] for row in identity_map
+                if row["identity_semantics"] == "hidden_task12_rowid"} == {
+                    "business_object_tasks", "email_historical_candidates",
+                    "feedback_processing_batches", "feedback_processing_items",
+                }
         restored = restore_task_entities(db, source_metadata, forward)
         assert restored["rows"] == 21
         assert _logical_snapshot(db) == expected
@@ -307,6 +315,89 @@ def test_current_fact_inverse_reads_mutated_native_owners_and_reforwards_them():
             "new current result",
         )
         assert second_forward["identity_edges"] == forward["identity_edges"]
+
+
+def test_current_inverse_keeps_marker_shaped_text_parameter_as_text():
+    with closing(_source()) as db:
+        marker_text = '{"t":"blob","v":"ff"}'
+        meeting_id_path = task20_definitions.TASK20_LAYOUTS["meeting_alignment_jobs"].path("meeting_id")
+        db.execute("update tasks set payload_json=jsonb_set(payload_json,?,jsonb(?)) where id=221",
+                   (meeting_id_path, json.dumps(marker_text)))
+        db.commit()
+        projection = task20_definitions.task20_projection("meeting_alignment_jobs")
+        assert db.execute("select meeting_id,typeof(meeting_id) from (" + projection + ")").fetchone() == (
+            marker_text, "text",
+        )
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        db.execute("update tasks set parameters_json=jsonb_set(parameters_json,'$.meeting_id',jsonb(?)) "
+                   "where id=221", (json.dumps(marker_text),))
+        assert db.execute("select json_type(parameters_json,'$.meeting_id'),"
+                          "json_extract(parameters_json,'$.meeting_id') from tasks where id=221").fetchone() == (
+            "text", marker_text,
+        )
+        restore_task_entities(db, source_metadata, forward)
+        restored = db.execute("select meeting_id,typeof(meeting_id) from ("
+                              + task20_definitions.task20_projection("meeting_alignment_jobs")
+                              + ")").fetchone()
+        assert restored == (marker_text, "text")
+
+
+def test_current_inverse_decodes_codec_scalars_from_the_whole_native_parameter_object():
+    from app import task20_definitions as definitions
+
+    cases = (
+        ({"t": "blob", "v": "ff"}, b"\xff", "blob"),
+        ({"t": "real", "m": 3, "e": 1}, "6.0", "text"),
+        ({"t": "inf"}, "Inf", "text"),
+        ({"t": "-inf"}, "-Inf", "text"),
+    )
+    for native_codec_value, expected_value, expected_type in cases:
+        with closing(_source()) as db:
+            db.execute("pragma foreign_keys=off")
+            db.execute("begin immediate")
+            source_metadata = capture_task_entities(db)
+            forward = migrate_task_entities(db, source_metadata)
+            db.execute("update tasks set parameters_json=jsonb_set(parameters_json,'$.meeting_id',jsonb(?)) "
+                       "where id=221", (json.dumps(native_codec_value),))
+            restore_task_entities(db, source_metadata, forward)
+            assert db.execute("select meeting_id,typeof(meeting_id) from ("
+                              + definitions.task20_projection("meeting_alignment_jobs")
+                              + ")").fetchone() == (expected_value, expected_type)
+
+
+def test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner():
+    with closing(_source()) as db:
+        physical_id = db.execute(
+            "select id from tasks where record_type='business_object_tasks'"
+        ).fetchone()[0]
+        db.execute("update tasks set legacy_key='7' where id=?", (physical_id,))
+        db.commit()
+        before = db.execute("select legacy_key,typeof(legacy_key) from tasks where id=?",
+                            (physical_id,)).fetchone()
+        assert before == ("7", "text")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        assert any(row["source_kind"] == "business_object_tasks"
+                   and row["physical_id"] == physical_id
+                   and row["value"] == "7" and row["type"] == "text"
+                   for row in forward["raw_key_exceptions"])
+        restore_task_entities(db, source_metadata, forward)
+        assert db.execute("select legacy_key,typeof(legacy_key) from tasks where id=?",
+                          (physical_id,)).fetchone() == before
+        for name, sql in task_run_entity_objects().items():
+            if name != "tasks" and sql.lstrip().lower().startswith("create table"):
+                if db.execute("select 1 from sqlite_schema where type='table' and name=?",
+                              (name,)).fetchone():
+                    db.execute('drop table "' + name.replace('"', '""') + '"')
+        second = capture_task_entities(db)
+        refoward = migrate_task_entities(db, second)
+        assert any(row["source_kind"] == "business_object_tasks"
+                   and row["physical_id"] == physical_id
+                   and row["value"] == "7" and row["type"] == "text"
+                   for row in refoward["raw_key_exceptions"])
 
 
 def test_mid_inverse_failure_rolls_back_when_caller_rolls_back():
