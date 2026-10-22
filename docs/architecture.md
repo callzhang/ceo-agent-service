@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.12`／Email53 构造器与配对发布已选用最终结构：
+当前生产基线 Store `2026-10-19.12`／Email53 的构造器与配对发布已选用该阶段结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -19,6 +19,9 @@ C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validati
 [此前阶段验收](database-redesign-final-acceptance.md)只记录 Store14.1 的历史范围；
 当前 C1／C2、A5 及 D 的范围见[业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，
 不能据此前阶段结案推断本轮全部完成或容量已通过。
+
+Action Entity 集成候选在隔离 worktree 已切换目标 callers，并完成配对迁移、当前事实逆迁、旧 Store 冷读/写与 re-forward。共同 Action 使用 `actions` 的 `_kind=70`；`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。目标表总数为 14（生产来源 11）；其中新增 receipt、observer、identity-map 三张表。Task 7 以生产只读备份和严格内存 provider 替身验证了集成候选及一次 native Consumer/Audit approve。候选未推送、未部署；生产仍是 Store `2026-10-19.12`／Email53，不能把候选行为描述为当前生产行为。完整事实、实际退休类型及未覆盖边界见 [Task 7 集成报告](../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md) 和 [验证记录](action-entity-unification-validation.md)。
+字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
 Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
 `payload_json` 只保存当前 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 的业务值数组。
@@ -121,12 +124,18 @@ created_at 及整个原始 JSONB payload 不改写。三个 nullable TEXT 物理
 只有 prepared 父类型可持有它们。SQL NULL 表示不存在的子事实，文本 `null`／`{}`
 保留为已存在的 provider 字符串；claim 与 receipt 的时钟独立于准备时钟。
 
-Store 的 prepare／claim／record receipt 统一进入 `shared_action_lifecycle.transition`
-的 prepared 来源，get／receipt 公共返回值仍按原源字段投影。首次正文、首次 claim、
-首次回执、原输入校验与 missing-parent 错误保持；claim 仍在 provider 之前单独提交，
-接受回执仍在验证之前单独提交。未知 processQueryKey 仍重核同一回执，不重发；
-claim-only 仍走原 reconcile，echo 仍使用父正文与准备时钟。服务消息不制造 Task、
-AgentRun、全局 verified receipt 或新状态。Audit／授权／取消／重试规则不变。
+Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟，且 `prepared_receipt_id` 精确指向其接受回执，避免与同一 owner 的 Sent/canonical provider body 混淆。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。canonical provider 结果通过 reference-only metadata receipt 直接指向当前 immutable body；普通 provider receipt 不会仅因 ID 较新而改变该绑定。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
+
+Task4（2026-10-21，候选）将 direct-email History、Attention、队列快照、重要邮件清单及邮件分类可观测性读取切换到 Action 与 Action Receipt。发送详情以 Action 的物理 ID、正文、准确 Sent 回执和 `observed_at` 展示；provider 正文只从该 Action 的 provider receipt 读取，缺失的 operation/target 显示为未提供，不合成来源事实。多个 Run observer 仍对应一条发送效果。撤回只更新同一 Action 的撤回字段，不新增发送或改写原发送回执；feedback token 从同一 Action 取得，并继续按其原 conversation/trigger 身份关联消息和反馈。邮件退订仍走其专有流程。
+
+Task6B 的 Dashboard Email 队列从 `DIRECT_EMAIL_ACTION_SQL` 和当前分类投影读取 pending、processing 及按 worker 原 retry 谓词可重试的 failed Action；队列 ID 使用 common Action 物理 ID，标题、状态和空详情链接维持原 API 契约。Email Attention 的 common Action ID 以字符串输出，符合 `AttentionRow.id` 的严格响应类型；失败筛选和工作者状态投影保持现有语义。
+
+Task5A（2026-10-21）在当前真实 prepared-message caller 与 reviewed SystemExecutor 路径中，以 `agent_message_delivery_key` 对应的 channel/delivery key，将已准备的 Action owner 绑定到已审批选项的 reviewed Action，再由同一 owner 承载 dispatch observation、canonical provider receipt、Sent receipt 和 observer。选项 key、task generation 与 proposal revision 保持在源 delivery identity 中；provider 仍只调用一次。
+
+Task5B（2026-10-21，本地前向迁移已验证）把只读 Store19.12／Email53 源中的七个 covered families 转为共同 Action、Action Receipt、Action Observer 与 typed identity map；确定的 canonical、approved-step、delivery-key 和原 owner 引用才合并，孤立来源保留为独立 Action。退休 covered source kinds 与其 family-only DDL。两个仍在范围外的 direct-retry control rows 只把既有 `email_actions` 父引用经 typed map 改到 `actions.id`，其他 control 字段和时钟保持原值。完整 populated copy 通过 target manifest、原有单条 FK finding 多重集与 `quick_check`；对源中 72,478 条未覆盖 Action 行逐物理字段比较，唯一变化是这两个 retry row 的 parent composite-key 单元。该证明仅覆盖独立拥有的本地副本，不是 current-data inverse、old-code cold-open/reforward、发布或生产行为验收；Task5C 与独立最终审查仍是发布门槛。没有改变审批、provider 核验或 retry/reconciliation policy。
+Task5C1（2026-10-21，本地候选）修复了 prior reconciliation 的 source mismatch：已有 canonical body 不同于本次 attempt 结果时，canonical metadata/body 保持不变，差异结果保留在该 exact attempt。ambiguous-to-sent correction 由 reference-only canonical metadata receipt 直接改指向新 immutable body；它保留 source 的 first operation、target、run 与 clock，current digest 从 exact body 投影。其他 candidate observation 和被动 Sent 仍引用原 body；只有本次 corrected observation 前移。已无独立引用的被替换 verification wrapper 才会被定点清理。
+
+Task5C2（2026-10-22，本地候选）实现从 current Action facts 逆迁回 Store19.12／Email53 源声明：按 typed source identities 恢复旧公开 ID、父引用、候选原始列、独立本地结果正文与 ordered History/retry 引用；用准确源声明重建表，并保留 57 列 attempt 的原始 out-of-scope 字段和 sequence 水位。已在隔离的实际数据副本上逆迁新写入 facts，由 pinned 旧 Store/EmailStore 冷读并写入 prepared postfix，再由当前版本迁回，验证原始 source facts 及新增正文、回执、时钟和引用仍可读。该本地证据不代表 native/capacity/UI 门槛、独立最终审查或发布/生产验收；没有改变审批、provider、授权或 retry policy。
 
 A5a 的既有配对发布只接受准确 Store19.8／Email53，发布 Store19.9／Email53；
 C1 Task 声明和所有历史 Actions 声明输出冻结。current-data inverse 用当前父值重建
@@ -1332,8 +1341,10 @@ updater 在共享 Git 锁内重新校验指纹，必要时按用户确认的分�
 `launchctl bootout` 成功后还会等待 `launchctl print` 明确确认服务 label 已卸载，避免异步移除期间过早 `bootstrap`。
 静默检查将会议和回复任务处于 `processing` 视为在途工作，仅当它们有有效的对应 dispatcher 租约，
 或分别存在运行中的 meeting alignment / Agent 运行记录时阻止部署；没有这些 owner 证据的孤儿行
-由服务启动时现有的恢复逻辑重新排队。仍锁定的会议投递继续阻止部署。静默轮询每次只读计数后
-关闭数据库连接，避免长等待累积 SQLite 句柄。
+由服务启动时现有的恢复逻辑重新排队。Email processing 动作通过明确支持的 publication 源投影计数，
+覆盖旧 Email 表和当前 common Action 的状态字段；没有 Email migration ledger 的 Store-only 数据库
+不贡献 Email 动作计数。仍锁定的会议投递继续阻止部署。静默轮询每次只读计数后关闭数据库连接，
+避免长等待累积 SQLite 句柄。
 紧急部署可显式使用 `python -m app.deploy --skip-quiet-wait` 跳过在途工作等待；部署仍通过
 updater 正常停止服务后才备份和切换检出，重启时由既有任务恢复逻辑接管中断工作。若切换在新版本
 安装前失败，updater 会重新启动旧版本并检查健康；设置重启也会在 launchd 任务已卸载时重新 bootstrap。
@@ -2887,7 +2898,7 @@ Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝�
 及 attempt 的 execution 关系分别保留。读取使用明确类型投影；写入使用有限字段定义；没有旧物理表、
 兼容 view 或双写。`actions` 自己声明任务、运行及动作类型引用约束，不重复安装通用 child trigger。
 独立 `external_action_results` 在这段仍保留，后续迁入独立 receipt 类型；无候选回执不会被制造归属。
-完整十表目标还包括其余 actions、business、emails、provenance、configs、provider_state、schedules 和 state。
+这是第五期A当时的完整十表目标记录；后续候选目标表数见本文顶部的当前 Action Entity 集成状态。
 
 这个发布单元只接受准确的前版 Store `2026-10-12.1`。迁移前核对六表声明、字段及引用；迁移和 schema
 版本更新在同一事务内完成。配对逆迁从当前 `actions` 重建源表并恢复原版本记录，保留发布后的新增、更新、
@@ -2907,7 +2918,7 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 本发布单元只接受准确 Store15 声明，包括实际历史 ALTER 与实际 fresh constructor 的列顺序差异。
 配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
-完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
+在第五期B记录时，其余 Actions 家族和第六至八期仍未完成；后续 Action Entity 候选的范围及未发布状态见本文顶部 Task 7 状态。是否上线以正式部署回执为准。
 
 ### Store17 postfix 整合（已发布）
 
@@ -3791,7 +3802,7 @@ evidence and limits are in `docs/task-result-repair-prompt-validation.md`.
 
 Hourly Quality 的 Memory 队列读取继续严格校验 Actions 完整声明；当前期望为最终 compact payload、canonical Email、Business／Email history 及 physical provenance 的现有声明。它不再使用已退休的中间 Actions 声明，未知对象仍拒绝，不增加运行时兼容分支。
 
-History 按明确 source_tables 构建查询时，仅在包含 email_actions 或未限制来源时检查 Email publication；非邮件分页与失败列表不读取被排除的 Email／State manifest。邮件分支仍执行原有准确 schema 检查，分页、total、状态和回执投影不变。
+History 按明确 source_tables 构建查询时，仅在包含 actions 或未限制来源时检查 Email publication；非邮件分页与失败列表不读取被排除的 Email／State manifest。direct-email History 的 source ID 来自 common Action，输出 source table 为 actions；`email_action` 仍是用户可选的语义类型，状态、分页和详情路由保持原行为。邮件分支仍执行原有准确 schema 检查。
 
 ## Consumer purpose 动作输出和权限重试
 

@@ -24,7 +24,7 @@ FINAL_ACTION_OPTIONS = dict(include_reply=True, include_email=True,
     include_business_sync=True, include_task_delivery=True, include_errors=True,
     include_feedback=True, include_business_actions=True, include_email_history=True,
     inline_legacy_owner=True, canonical_email=True, physical_provenance=True, compact_payload=True,
-    selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True)
+    selection_references=True, result_references=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True, postfix_owner=True, logical_owner=True, action_entity=True)
 
 
 def create_current_database_schema(db):
@@ -35,7 +35,7 @@ def create_current_database_schema(db):
     create_current_task20_schema(db)
     create_current_run11_schema(db)
     create_provenance_schema(db)
-    _create_emails(db, metadata_owner=True)
+    _create_emails(db, metadata_owner=True, action_owner=True)
     create_current_action_schema(db)
     business = current_business_declaration()
     db.execute(business["sql"])

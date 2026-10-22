@@ -155,7 +155,7 @@ def register_console_routes(
             conversation_id = str(getattr(log, "conversation_id", "") or "")
             task_id = conversation_id.removeprefix("scheduled-task:")
             return f"/scheduled-tasks?id={task_id}" if task_id.isdigit() else "/scheduled-tasks"
-        if source_table == "email_actions":
+        if str(getattr(log, "history_type", "") or "") == history_types.EMAIL_ACTION:
             classification_id = str(getattr(log, "conversation_id", "") or "")
             if classification_id.isdigit():
                 return f"/email?tab=all&selected={classification_id}"
@@ -196,7 +196,7 @@ def register_console_routes(
             kind = "task"
         elif source_table == "scheduled_task_runs":
             kind = "scheduled_run"
-        elif source_table == "email_actions":
+        elif history_type == history_types.EMAIL_ACTION:
             kind = "email_action"
         else:
             kind = "reply"
@@ -218,12 +218,17 @@ def register_console_routes(
         elif source_table == "work_todo_dingtalk_links":
             input_text = summary
             output_text = detail
-        elif source_table in {"scheduled_task_runs", "email_actions"}:
+        elif source_table == "scheduled_task_runs":
             # No question and answer here: one result line (the command's
-            # summary or error, the email action and its error).
+            # summary or error).
             input_text = ""
             output_text = ""
-            if source_table == "email_actions" and detail:
+        elif history_type == history_types.EMAIL_ACTION:
+            # Direct email effects use Action identity and receipt projections;
+            # this label is presentation metadata, not a source DTO selector.
+            input_text = ""
+            output_text = ""
+            if detail:
                 summary = f"{summary}：{detail}"
         else:
             input_text = summary

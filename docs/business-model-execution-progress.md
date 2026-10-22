@@ -1,6 +1,12 @@
 # Business model simplification: current completion and closeout
 
-## Current authoritative status — 2026-10-21
+## Action Entity integration candidate — 2026-10-22
+
+Task 1–7 for the first external-Action unit are implemented in an isolated candidate and integrated with the observed latest `origin/main`. The production service and database remain on the separately verified Store19.12 / Email53 predecessor; this section records a release candidate and does not replace the production status above. The candidate's fresh production-derived SQLite copy passed forward/current-fact inverse/archived production Store cold read and write/re-forward; final integrated code also passed one native Consumer/Audit approval using a strict in-memory provider substitute. Six targeted backup/inverse tests passed.
+
+The scope retires seven populated covered source families (30,700 rows in the tested source) into common Action, Action Receipt, Action Observer, and typed identity-map facts. Two additional declared legacy discriminator types had zero rows. The target has 14 tables versus 11 in the source, including three new receipt/observer/map tables; the measured source-derived VACUUMed file pair decreased by 2,662,400 bytes, with table pages increasing and index pages decreasing. This does not claim full Actions retirement, unsubscribe conversion, a production migration, or a performance gain. Exact facts and boundaries: [Task 7 report](../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md) and [validation record](action-entity-unification-validation.md). Parent whole-branch review and any later publication/readback remain pending.
+
+## Verified production status at 2026-10-21 release
 
 The approved A/B/C/D implementation and Store19.11 / Email53 production migration completed on 2026-10-20. The release was `a79d8e279`, with actual production schema, process, effective GPT-6 Luna/high configuration, health, queues, Attention and History read back. This describes that verified release, not an assertion about an unqueried later process. [Final release evidence](database-gpt6-release-validation.md) supersedes the earlier publication-pending checkpoints below.
 

@@ -295,7 +295,7 @@ def test_actions_schema_retires_candidate_tables_and_preserves_public_ids(tmp_pa
     records = {
         "review_candidates": candidate, "candidate_reviews": review,
         "candidate_selections": selected, "candidate_supplements": supplement,
-        "candidate_execution_alias": execution, "candidate_action_attempts": attempt,
+        "candidate_execution_alias": execution,
     }
     with store._connect() as db:
         names = {row[0] for row in db.execute(
@@ -307,10 +307,35 @@ def test_actions_schema_retires_candidate_tables_and_preserves_public_ids(tmp_pa
         assert None not in physical.values()
         assert len(set(physical.values())) == len(records)
         assert any(physical[kind] != row["id"] for kind, row in records.items())
+        owner = db.execute(
+            "select id,record_type,action_external_action_key,action_action_identity,"
+            "action_status from actions where record_type='action' "
+            "and action_external_action_key='actions-receipt'"
+        ).fetchone()
+        assert owner is not None
+        assert owner["action_status"] == "verified"
+        assert db.execute(
+            "select count(*) from actions where record_type='candidate_action_attempts' "
+            "and external_action_key='actions-receipt'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from actions where record_type='external_action_results' "
+            "and external_action_key='actions-receipt'"
+        ).fetchone()[0] == 0
         assert not db.execute("pragma foreign_key_check").fetchall()
     reopened = AutoReplyStore(store.path)
     assert reopened.get_candidate_execution(candidate["id"])["status"] == "done"
-    assert reopened.list_candidate_action_attempts(execution["id"])[0]["id"] == attempt["id"]
+    attempts = reopened.list_candidate_action_attempts(execution["id"])
+    assert len(attempts) == 1
+    assert attempts[0]["id"] == attempt["id"]
+    assert attempts[0]["action_owner_id"] != attempts[0]["id"]
+    assert attempts[0]["status"] == "verified"
+    with reopened._connect() as db:
+        assert [tuple(row) for row in db.execute(
+            "select id,status from action_receipts where action_id=? and execution_id=? "
+            "and action_index=0 order by id",
+            (attempts[0]["action_owner_id"], execution["id"]),
+        )] == [(attempts[0]["id"], "verified")]
     assert reopened.list_verified_candidate_actions(task.id)[0]["provider_result_json"] == '{"receipt":"provider substitute"}'
     assert reopened.list_human_decision_evidence(task.id)[-1]["instruction"] == "new business fact"
 
@@ -377,7 +402,7 @@ def test_selection_stores_only_reference_and_reads_exact_bound_option(tmp_path):
     assert reopened.list_human_decision_evidence(task.id)[0]["selected_branch"] == body["decision_options"][0]
 
 
-def test_new_candidate_does_not_change_prior_selection_or_receipt_branch(tmp_path):
+def test_old_revision_keeps_its_approved_binding(tmp_path):
     store = AutoReplyStore(tmp_path / "immutable-selection.sqlite3")
     task, candidate, review, body = _reviewed(store)
     selected = store.select_candidate_option(candidate["id"], review["id"], "execute")
@@ -397,6 +422,8 @@ def test_new_candidate_does_not_change_prior_selection_or_receipt_branch(tmp_pat
     with pytest.raises(ValueError, match="stale candidate"):
         store.select_candidate_option(candidate["id"], review["id"], "stop")
     assert selected["candidate_id"] == candidate["id"]
+    assert selected["review_id"] == review["id"]
+    assert store.get_review_candidate(candidate["id"])["id"] == candidate["id"]
     source = store.get_verified_action_source("old-effect")
     assert source["candidate_id"] == candidate["id"]
     assert json.loads(source["branch_json"])["plan"]["actions"][0]["target"] == {"user_id": "x"}
@@ -529,9 +556,12 @@ def test_unknown_dispatch_requires_reconciliation_after_restart(tmp_path: Path):
     store = AutoReplyStore(path)
     _, candidate, review, _ = _reviewed(store, options=False)
     claim = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
-    store.begin_candidate_action(claim["id"], "worker", 0, "action-key")
+    first = store.begin_candidate_action(claim["id"], "worker", 0, "action-key")
     reopened = AutoReplyStore(path)
-    assert reopened.begin_candidate_action(claim["id"], "worker", 0, "action-key")["status"] == "uncertain"
+    retried = reopened.begin_candidate_action(claim["id"], "worker", 0, "action-key")
+    assert retried["status"] == "uncertain"
+    assert retried["id"] == first["id"]
+    assert retried["external_action_key"] == first["external_action_key"] == "action-key"
     assert reopened.list_candidate_action_attempts(claim["id"])[0]["status"] == "uncertain"
 
 

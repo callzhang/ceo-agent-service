@@ -606,6 +606,53 @@ def test_quiet_wait_returns_once_work_drains():
     )
 
 
+def test_quiet_counts_processing_current_direct_email_action(tmp_path):
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from app.email_store import EmailStore
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+    from tests.test_email_store import _classification
+
+    path = tmp_path / "current-email-action-quiet.sqlite3"
+    AutoReplyStore(path)
+    email = EmailStore(path)
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        classification_id=91,
+        message_id="quiet-current-direct-action",
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+    )
+    email.persist_scan_result(classification, model_text="synthetic")
+    action_id = email.direct_action_ids_for_plan(
+        classification.action_plan.action_plan_id
+    )[0]
+
+    claimed = email.claim_direct_action(
+        action_id=action_id, claimed_at="2026-10-22T12:00:00+00:00"
+    )
+
+    assert claimed is not None
+    from app.email_publication_sources import publication_email_action_source
+
+    with sqlite3.connect(path) as db:
+        source = publication_email_action_source(db)
+        assert db.execute(
+            f"select count(*) from ({source}) where status='processing'"
+        ).fetchone() == (1,)
+    assert in_flight_work(path) == 1
+
+
+def test_quiet_store_only_database_has_no_email_action_contribution(tmp_path):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "store-only-quiet.sqlite3"
+    AutoReplyStore(path)
+
+    assert in_flight_work(path) == 0
+
+
 @pytest.mark.parametrize("status,locked_at,expected", [
     ("processing", "2026-01-01 00:00:00", 1),
     ("ready_to_send", "2026-01-01 00:00:00", 1),

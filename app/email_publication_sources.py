@@ -9,8 +9,12 @@ from app.action_email_schema_release import (
 )
 from app.action_storage import email_action_projection
 from app.business_legacy_field_schema_release import (
-    TARGET_STORE_VERSION, TARGET_EMAIL_VERSION, PREVIOUS_STORE_VERSIONS, PREVIOUS_EMAIL_PAIRS,
+    PREVIOUS_STORE_VERSIONS, PREVIOUS_EMAIL_PAIRS,
 )
+from app.current_schema_manifest import STORE_VERSION as TARGET_STORE_VERSION, EMAIL_VERSION as TARGET_EMAIL_VERSION
+from app.action_entity_schema_release import SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_STORE_VERSION
+
+PREVIOUS_STORE_VERSIONS = (*PREVIOUS_STORE_VERSIONS, ACTION_ENTITY_SOURCE_STORE_VERSION)
 
 
 def _markers(db: sqlite3.Connection) -> tuple[str | None, int | None]:
@@ -37,7 +41,19 @@ def publication_email_action_source(db: sqlite3.Connection) -> str:
     pair = _markers(db)
     if pair == (SOURCE_STORE_VERSION, SOURCE_EMAIL_VERSION):
         return "select status from email_actions"
-    if pair in ((TARGET_STORE_VERSION, TARGET_EMAIL_VERSION), ('2026-10-19.10', 53), ('2026-10-19.9', 53), ('2026-10-19.8', 53), ('2026-10-19.7', 53), ('2026-10-19.6', 53)):
+    if pair == (TARGET_STORE_VERSION, TARGET_EMAIL_VERSION):
+        return ("select action_status as status from actions where record_type='action' "
+                "and action_action_plan_id is not null and action_operation in "
+                "('archive','flag_important','mark_read','move','trash','label')")
+    if pair == (ACTION_ENTITY_SOURCE_STORE_VERSION, TARGET_EMAIL_VERSION):
+        from app.current_action_schema_release import source_objects
+        from app.current_schema_manifest import schema_objects
+        from app.action_storage import REPLY_VARIANTS
+        if not any(schema_objects(db) == source_objects(variant) for variant in REPLY_VARIANTS):
+            raise ValueError("unsupported predecessor Email action declaration")
+        from app.shared_action_definitions import email_projection
+        return email_projection('email_actions')
+    if pair in (('2026-10-19.10', 53), ('2026-10-19.9', 53), ('2026-10-19.8', 53), ('2026-10-19.7', 53), ('2026-10-19.6', 53)):
         from app.shared_action_definitions import email_projection
         return email_projection('email_actions')
     if pair in PREVIOUS_EMAIL_PAIRS:
