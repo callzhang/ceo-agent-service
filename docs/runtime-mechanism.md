@@ -4830,9 +4830,12 @@ exception/timeout/cancel path closes the descriptor and permits claims again;
 process exit also releases flock automatically. No pause bit, new task status or
 retry-policy change is introduced. Independent direct email reply/classifier, Workbench and weekly-OKR claims,
 processing provider operations and meeting Memory leases count as in-flight even
-before a native Agent starts. Existing quiet timeout, backup and recovery rules
-remain in force. Initial installation uses the prior normal quiet path because
-already running old code has not loaded the new claim hooks.
+before a native Agent starts. Processing Email actions are read through the
+explicit publication source, including the current common Action status field;
+a Store-only database without the Email migration ledger contributes zero Email
+actions. Existing quiet timeout, backup and recovery rules remain in force.
+Initial installation uses the prior normal quiet path because already running
+old code has not loaded the new claim hooks.
 
 Deployment's runtime count excludes an unleased historical runtime when its
 parent AgentRun generation has been explicitly superseded by the current Task
