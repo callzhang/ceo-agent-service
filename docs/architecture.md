@@ -797,6 +797,10 @@ headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；�
 `execution_kind + execution_id`。之后 Scheduled Agent Consumer 从这条不可变输入进入标准
 Consumer → Audit → feedback revision 生命周期：
 
+若 Scheduler 因首选 Runtime 暂时不可达而无法分派已到期触发，它保留触发计划，不创建终态
+`skipped` 运行；路由恢复后以原计划时间派发一次。多次错过时仍合并为最新的错过时间点。静态
+配置错误仍按原规则写入 `skipped` 和 Attention；已有执行未终态时也保留补跑计划，待前次收口后派发。
+
 ```text
 scheduled_tasks
   -> scheduled_task_runs (trigger fact)

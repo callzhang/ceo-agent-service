@@ -497,6 +497,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-cron-route-recovery-20261022 | `app/agent_cron/scheduler.py`; `tests/test_agent_cron_scheduler.py`; `docs/architecture.md`; `docs/runtime-mechanism.md`; `docs/scheduled-okr-agent-acceptance.md`; `evals/scheduled_task_generic/okr-same-run-resume-evidence.json`; own claim row | Run 392433 was permanently skipped before Consumer because all route snapshots were temporarily expired/unhealthy just after deploy. On host restart, the scheduler currently advances past a missed trigger in that state, contradicting the requested sleep-resume catch-up. Keep the planned trigger while every route is transiently unavailable; dispatch the same latest missed trigger once a route recovers. Preserve skip behavior for static misconfiguration and previous-execution overlap; do not replay 392433 or alter any report acceptance criteria. | active 2026-10-22 |
+
 
 | codex-console-chart-profile-20261014 | app/store.py (`_operation_logs_base_query` reply Attempt status CASE newer-success predicates and `list_reply_attempt_operation_statuses` only); app/audit_web.py (`_history_chart_payload` failed Attempt lookup batching only); new focused chart regression test; own claim row | Repair 1m History chart's repeated failed-email status scans and failed Attempt task N+1 using existing native facts; preserve exact status, recovered counts, buckets and WeChat delivery semantics. Read-only production snapshot for proof; no schema, cache, audit-policy, provider, push or deploy. Root owns docs, integration and release. | implementation verified 2026-10-14; 92 integrated regressions, 169 endpoint checks, 36 recovery checks; independent read-only review accepted; formal release/readback pending |
 
