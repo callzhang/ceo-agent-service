@@ -679,5 +679,21 @@
     "mutations_or_replays_performed": false,
     "business_report_acceptance_changed": false,
     "triage_status": "The source counters and error classes are now identified; these system-health issues are unresolved and are not evidence of natural scheduled report acceptance."
+  },
+  "sleep_resume_host_readback": {
+    "observed_at": "2026-10-22T19:46:02Z",
+    "source": "read-only pmset -g log",
+    "host_timezone": "America/Los_Angeles",
+    "production_service_pid": 60193,
+    "production_service_started_at": "2026-10-22T10:49:48-07:00",
+    "last_observed_sleep_activity_before_service_start": {
+      "first_maintenance_sleep_at": "2026-10-21T21:27:30-07:00",
+      "last_full_wake_at": "2026-10-21T21:46:37-07:00",
+      "task14_task13_task6_trigger_crossed": false
+    },
+    "sleep_or_wake_transition_after_service_start_observed": false,
+    "scheduler_catch_up_branch_verified": false,
+    "host_sleep_or_wake_induced_for_check": false,
+    "conclusion": "The observed sleep activity predates the deployed service process and crossed none of the monitored trigger times; it is not evidence that deployed catch-up works."
   }
 }
