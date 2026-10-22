@@ -60,3 +60,29 @@ Runtime/storage: `app/action_entity_definitions.py`, `app/action_entity_transfer
 Frozen/current contract and behavior docs: `docs/action-entity-target.sql`, `docs/action-entity-current-target.sql`, `docs/action-entity-field-map.json`, `docs/architecture.md`, and `docs/runtime-mechanism.md`.
 
 Focused regressions: `tests/test_action_entity_contract.py`, `tests/test_action_entity_schema_release.py`, `tests/test_action_entity_storage.py`, `tests/test_model_result_references.py`, and `tests/test_shared_action_lifecycle.py`.
+
+## Independent review round 1/5 follow-up
+
+The original first-run RED output for the prior-mismatch regression remains unavailable. I did not reconstruct or rerun the original first-run scenario. A separate retrospective comparison now supplies an explicit base-code fail-before result, and is labeled as a new comparison rather than recovered original RED evidence.
+
+For the retrospective comparison, I created an isolated archive of `app/`, `tests/`, and `pyproject.toml` from base `3cd9aef4c4c3aa7da5aed1795284f0f82f78cba8` at `/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-action-task5c1-base-red-qwq5kuzt`. I overlaid the current `tests/test_model_result_references.py` so the exact same real Store/candidate/execution regression runs against the base implementation; the overlaid test module SHA-256 was `32f302ed011f9b8c5571369f1a832640c6601ce64551007565456dbbd998b1ae`. The retained temporary test log is `prior-mismatch-base-red.log` in that archive (SHA-256 `dc80840fd5bbfb8f1c8bc58540e7d13136577cc2338419887091cb7dcc72c28a`).
+
+Base command and result:
+
+```text
+(cd /var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-action-task5c1-base-red-qwq5kuzt && pytest -q tests/test_model_result_references.py::test_prior_reconciliation_keeps_different_existing_canonical_local_to_real_attempt)
+exit 1; 1 failed
+```
+
+The failure reached the intended canonical-ownership assertion: base code made the existing canonical result equal the prior readback result, while the test expected the independently recorded current Sent result to remain canonical. Provider body values are intentionally omitted here. The same node passes on current code.
+
+The rollback test fault injection now monkeypatches `shared_action_lifecycle.record_reviewed_action_outcome`, the actual current observation writer. Before raising, it queries `EXTERNAL_ACTION_RESULT_SQL` and asserts the corrected canonical body is already visible, then marks that the fault point was reached. This places the injected failure after new-body creation and canonical pointer update, but before observation completion. The original exact `_snapshot(connection) == before` assertion remains, proving the transaction rollback restored state. The removed `reviewed_candidate_store.update_action` target is no longer referenced.
+
+Current bounded run after the test fix:
+
+```text
+pytest -q tests/test_model_result_references.py::test_prior_reconciliation_keeps_different_existing_canonical_local_to_real_attempt tests/test_model_result_references.py::test_receipt_correction_rolls_back_reference_materialization tests/test_model_result_references.py::test_receipt_correction_preserves_other_attempts_original_meaning tests/test_dingtalk_delivery_repair.py::test_executor_completes_corrected_uncertain_receipt_from_readback
+4 passed
+```
+
+The dedicated rollback node also passed in the earlier targeted current run, where it was grouped with the affected correction and executor cases: `5 passed`. `ruff check tests/test_model_result_references.py` and `git diff --check` passed after the test edit. No runtime code changed during this review follow-up. The prior report’s broader two-file diagnostic remains limited to its aggregate and observed failure layers; the per-run node listing is still not retained and was not regenerated.

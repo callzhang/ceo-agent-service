@@ -246,7 +246,7 @@ def test_unreferenced_correction_wrapper_is_not_retained_as_history(tmp_path):
 
 
 def test_receipt_correction_rolls_back_reference_materialization(tmp_path, monkeypatch):
-    from app import reviewed_candidate_store
+    from app import shared_action_lifecycle
     from app.store import AutoReplyStore
     from tests.test_reviewed_candidate_store import _reviewed
     store = AutoReplyStore(tmp_path/'atomic.sqlite3')
@@ -258,16 +258,27 @@ def test_receipt_correction_rolls_back_reference_materialization(tmp_path, monke
         'receipt', 'send', {'user_id': 'x'}, old)
     with store._connect() as connection:
         before = _snapshot(connection)
-    update = reviewed_candidate_store.update_action
-    def fail_after_receipt(db, kind, public_id, values, **kwargs):
-        if kind == 'candidate_action_attempts' and values.get('status') == 'verified':
-            raise RuntimeError('attempt assignment failed')
-        return update(db, kind, public_id, values, **kwargs)
-    monkeypatch.setattr(reviewed_candidate_store, 'update_action', fail_after_receipt)
+    reached_after_receipt_write = False
+    def fail_before_observation_completion(db, **kwargs):
+        nonlocal reached_after_receipt_write
+        current = actions.EXTERNAL_ACTION_RESULT_SQL
+        row = db.execute(
+            f"select provider_result_json from ({current}) where external_action_key=?",
+            ('receipt',),
+        ).fetchone()
+        assert row is not None
+        assert row['provider_result_json'] == (
+            '{"provider_result":{"message":"same"},"verification":{"state":"sent"}}'
+        )
+        reached_after_receipt_write = True
+        raise RuntimeError('attempt assignment failed')
+    monkeypatch.setattr(shared_action_lifecycle, 'record_reviewed_action_outcome',
+                        fail_before_observation_completion)
     with pytest.raises(RuntimeError, match='assignment'):
         store.record_candidate_external_action(execution['id'], 'worker', 0,
             'receipt', 'send', {'user_id': 'x'},
             {'provider_result': {'message': 'same'}, 'verification': {'state': 'sent'}})
+    assert reached_after_receipt_write
     with store._connect() as connection:
         assert _snapshot(connection) == before
 
