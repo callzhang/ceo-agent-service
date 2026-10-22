@@ -814,9 +814,32 @@
       "cause": "production moved from the previous readback commit to the then-current origin/main commit; no host sleep or full-wake transition was observed",
       "new_scheduled_report_run_created": false
     },
+    "host_idle_sleep_assertion_readback": {
+      "observed_at": "2026-10-22T20:10:40Z",
+      "local_time": "2026-10-22T13:10:40-07:00",
+      "prevent_user_idle_system_sleep": true,
+      "assertions": [
+        {
+          "pid": 4320,
+          "application": "Claude",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-20T13:41:35-07:00"
+        },
+        {
+          "pid": 32669,
+          "application": "ChatGPT",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-22T01:52:38-07:00"
+        }
+      ],
+      "powerd_assertion": "Prevent sleep while display is on",
+      "conclusion": "At this observation, automatic idle sleep appears inhibited while these assertions are active. This does not establish whether lid-close or an explicit sleep request is inhibited. No application, process, or power setting was changed."
+    },
     "host_sleep_resume_catch_up_verified": false,
     "mutations_or_replays_performed": false,
     "natural_report_acceptance_changed": false,
-    "conclusion": "At this readback task14 is configuration v52 / managed Skill revision224, with the prompt that explicitly requires checking group messages first; its next normal trigger is 2026-10-23T13:00:00Z. The preceding natural run 392889 used v49, before both the prompt and Skill fixes. Task13 and task6 gained only version numbers at the latest readback; their effective execution snapshots are unchanged. Re-read the active config before the next run in case it changes again. The new deployment produced no catch-up run and does not count as a sleep-resume test."
+    "conclusion": "At this readback task14 is configuration v52 / managed Skill revision224, with the prompt that explicitly requires checking group messages first; its next normal trigger is 2026-10-23T13:00:00Z. The preceding natural run 392889 used v49, before both the prompt and Skill fixes. Task13 and task6 gained only version numbers at the latest readback; their effective execution snapshots are unchanged. Re-read the active config before the next run in case it changes again. The current macOS assertions indicate automatic idle sleep appears inhibited at the observation time, so the natural sleep-resume catch-up branch remains unverified; no app or power state was changed."
   }
 }
