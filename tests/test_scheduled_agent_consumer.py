@@ -1348,6 +1348,7 @@ def test_new_ordinary_report_uses_configured_skill_and_generic_tools(tmp_path, m
     )._tool_manager
     context = tool_manager.get_tool("read_scheduled_context").fn()
     assert context["scheduled_task_id"] == run.scheduled_task_id
+    assert context["task_artifacts"] == []
     result = tool_manager.get_tool("consumer_run_skill_script").fn(
         "managed-check", "scripts/render.py", []
     )
@@ -1361,3 +1362,33 @@ def test_new_ordinary_report_uses_configured_skill_and_generic_tools(tmp_path, m
     )
     assert receipt["node_id"] == "ordinary-node"
     assert submitted[0]["artifact_name"] == "ordinary.md"
+
+
+def test_scheduled_context_lists_current_task_artifacts_without_their_contents(
+    tmp_path, monkeypatch
+):
+    from app import task_artifacts
+
+    store, run, options = fixture(tmp_path)
+    persisted = dispatch(store, run, options)
+    task_id = int(persisted.execution_id)
+    task = store.get_reply_task(task_id)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "artifacts")
+    root = task_artifacts.task_artifact_directory(
+        task_id, task.execution_generation, create=True
+    )
+    body = '{"sourceOutcome":{"kind":"collected"},"private":"do not expose"}'
+    (root / "okr-member-a.json").write_text(body)
+    (root / "plan.json").write_text('{"step":"analyze"}')
+
+    context = build_role_server(
+        "consumer", task_id=task_id, db_path=store.path,
+        execution_generation=task.execution_generation,
+    )._tool_manager.get_tool("read_scheduled_context").fn()
+
+    assert context["task_artifacts"] == [
+        {"name": "okr-member-a.json", "sha256": hashlib.sha256(body.encode()).hexdigest()},
+        {"name": "plan.json", "sha256": hashlib.sha256(b'{"step":"analyze"}').hexdigest()},
+    ]
+    assert "do not expose" not in json.dumps(context)
