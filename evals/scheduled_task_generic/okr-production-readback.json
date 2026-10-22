@@ -984,6 +984,28 @@
         "next_run_at": "2026-10-25T10:00:00Z"
       }
     },
+    "task14_skill_file_readback": {
+      "config_snapshot_id": 14414,
+      "task_config_version": 52,
+      "managed_skill_revision_id": 224,
+      "repository_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "installed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "hashes_match": true
+    },
+    "previous_natural_task14_run_terminal_readback": {
+      "scheduled_run_id": 392889,
+      "reply_task_id": 416905,
+      "reply_task_status": "done",
+      "consumer_runs": [
+        {"run_id": 392892, "revision": 0, "status": "completed"},
+        {"run_id": 392902, "revision": 1, "status": "completed"}
+      ],
+      "audit_runs": [
+        {"run_id": 392897, "revision": 0, "status": "completed"},
+        {"run_id": 392910, "revision": 1, "status": "completed"}
+      ],
+      "no_in_flight_attempts_for_this_run": true
+    },
     "source": "read-only production checkout HEAD, launchd process list, localhost healthz, schedules table, and immutable scheduled-task config snapshots",
     "mutations_or_replays_performed": false,
     "new_report_runs_since_prior_readback": false,
