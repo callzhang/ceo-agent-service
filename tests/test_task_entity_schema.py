@@ -3,7 +3,9 @@ import json
 import sqlite3
 
 from app import task20_current_schema, task20_definitions
-from app.task_lifecycle_current_schema import create_current_task20_schema, task_lifecycle_objects
+from app.task_lifecycle_current_schema import (
+    create_current_task20_schema, task20_schema_is_current, task_lifecycle_objects,
+)
 from app.task8_storage import register_task8_functions
 from app.task_entity_schema import (
     _objects, capture_task_entities, migrate_task_entities, resolve_dispatcher_claim_source_id,
@@ -17,6 +19,7 @@ from app.task_lifecycle_definitions import (
     task_lifecycle_physical_field_map, task_physical_identity_field_map,
 )
 from app.storage_payload import TASK_RECORD_TYPES
+from app.task12_storage import task12_projection, update_task12
 
 
 def _source():
@@ -238,6 +241,18 @@ def _physical_fact_snapshot(db):
     return db.execute("select " + ",".join(selected) + " from tasks order by id").fetchall()
 
 
+def _owned_table_names():
+    return {name for name, sql in task_run_entity_objects().items()
+            if sql.lstrip().lower().startswith("create table")}
+
+
+def _schema_catalog(db):
+    return db.execute(
+        "select type,name,tbl_name,sql from main.sqlite_schema "
+        "where type in ('table','index','trigger','view') order by type,name"
+    ).fetchall()
+
+
 def test_current_fact_inverse_restores_all_twenty_families_and_sql_types():
     with closing(_source()) as db:
         expected = _logical_snapshot(db)
@@ -261,6 +276,11 @@ def test_current_fact_inverse_restores_all_twenty_families_and_sql_types():
                 }
         restored = restore_task_entities(db, source_metadata, forward)
         assert restored["rows"] == 21
+        assert restored["sparse_identity_metadata"] == {
+            key: forward[key] for key in (
+                "identity_edges", "raw_key_exceptions", "reference_exceptions",
+            )
+        }
         assert _logical_snapshot(db) == expected
         assert _physical_fact_snapshot(db) == physical_expected
         item = db.execute(task20_definitions.task20_projection("feedback_processing_items")).fetchone()
@@ -275,6 +295,49 @@ def test_current_fact_inverse_restores_all_twenty_families_and_sql_types():
         assert _objects(db, "tasks") == source_metadata["source_tasks"]
         actual_sequence = db.execute("select rowid,seq from sqlite_sequence where name='tasks'").fetchone()
         assert actual_sequence == source_metadata["task_sequence"]
+        assert task20_schema_is_current(db)
+        for name in _owned_table_names() - {"tasks"}:
+            assert db.execute("select 1 from main.sqlite_schema where type='table' and name=?",
+                              (name,)).fetchone() is None
+        assert db.execute("select rowid,business_object_key from ("
+                          + task12_projection("business_object_tasks", include_rowid=True)
+                          + ")").fetchone() == (224, "business-224")
+
+
+def test_inverse_retires_owned_target_catalog_and_preserves_unrelated_schema_and_sequences():
+    with closing(_source()) as db:
+        db.executescript(
+            "create table unrelated_data(id integer primary key autoincrement, value text);"
+            "create table unrelated_audit(value text);"
+            "create index idx_unrelated_data_value on unrelated_data(value);"
+            "create trigger trg_unrelated_data_audit after update of value on unrelated_data "
+            "begin insert into unrelated_audit values(new.value); end;"
+            "insert into unrelated_data(value) values('keep');"
+            "insert into unrelated_data(value) values('delete');"
+            "delete from unrelated_data where value='delete';"
+        )
+        before_catalog = _schema_catalog(db)
+        before_sequences = db.execute(
+            "select rowid,name,seq from main.sqlite_sequence order by rowid"
+        ).fetchall()
+        before_unrelated_data = db.execute("select * from unrelated_data").fetchall()
+        before_unrelated_audit = db.execute("select * from unrelated_audit").fetchall()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        restored = restore_task_entities(db, source_metadata, forward)
+
+        assert task20_schema_is_current(db)
+        assert _schema_catalog(db) == before_catalog
+        assert db.execute("select rowid,name,seq from main.sqlite_sequence order by rowid").fetchall() == before_sequences
+        assert db.execute("select * from unrelated_data").fetchall() == before_unrelated_data
+        assert db.execute("select * from unrelated_audit").fetchall() == before_unrelated_audit
+        assert db.execute("select sql from main.sqlite_schema where name='trg_unrelated_data_audit'").fetchone()[0]
+        assert all(db.execute("select 1 from main.sqlite_schema where type='table' and name=?",
+                              (name,)).fetchone() is None
+                   for name in _owned_table_names() - {"tasks"})
+        assert restored["sparse_identity_metadata"]["identity_edges"] == forward["identity_edges"]
 
 
 def test_current_fact_inverse_reads_mutated_native_owners_and_reforwards_them():
@@ -298,10 +361,15 @@ def test_current_fact_inverse_reads_mutated_native_owners_and_reforwards_them():
         assert db.execute(task20_definitions.task20_projection("business_object_tasks")).fetchone()[0] == "new-business-key"
         assert db.execute(task20_definitions.task20_projection("meeting_alignment_jobs")).fetchone()[12] == "new current result"
 
-        for name, sql in task_run_entity_objects().items():
-            if name != "tasks" and sql.lstrip().lower().startswith("create table"):
-                if db.execute("select 1 from sqlite_schema where type='table' and name=?", (name,)).fetchone():
-                    db.execute('drop table "' + name.replace('"', '""') + '"')
+        assert task20_schema_is_current(db)
+        existing = db.execute(
+            "select business_object_key from (" + task12_projection(
+                "business_object_tasks", include_rowid=True) + ") where rowid=224"
+        ).fetchone()
+        assert existing == ("new-business-key",)
+        assert update_task12(db, "business_object_tasks", 224,
+                             {"business_object_key": "business-after-inverse"}) == 1
+        assert db.execute(task20_definitions.task20_projection("business_object_tasks")).fetchone()[0] == "business-after-inverse"
         source_metadata = capture_task_entities(db)
         second_forward = migrate_task_entities(db, source_metadata)
         assert db.execute("select status,lease_owner,lease_expires_at from tasks where id=201").fetchone() == (
@@ -309,7 +377,7 @@ def test_current_fact_inverse_reads_mutated_native_owners_and_reforwards_them():
         )
         assert db.execute("select trigger_text from task_inputs where id=205").fetchone() == ("new current input",)
         assert db.execute("select business_key from task_business_keys where id=224").fetchone() == (
-            "new-business-key",
+            "business-after-inverse",
         )
         assert db.execute("select decision_json from task_results where task_id=221").fetchone() == (
             "new current result",
@@ -387,11 +455,7 @@ def test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner(
         restore_task_entities(db, source_metadata, forward)
         assert db.execute("select legacy_key,typeof(legacy_key) from tasks where id=?",
                           (physical_id,)).fetchone() == before
-        for name, sql in task_run_entity_objects().items():
-            if name != "tasks" and sql.lstrip().lower().startswith("create table"):
-                if db.execute("select 1 from sqlite_schema where type='table' and name=?",
-                              (name,)).fetchone():
-                    db.execute('drop table "' + name.replace('"', '""') + '"')
+        assert task20_schema_is_current(db)
         second = capture_task_entities(db)
         refoward = migrate_task_entities(db, second)
         assert any(row["source_kind"] == "business_object_tasks"
@@ -409,8 +473,17 @@ def test_mid_inverse_failure_rolls_back_when_caller_rolls_back():
         db.commit()
         db.execute("begin immediate")
         before_objects = task_run_entity_objects()
+        before_catalog = _schema_catalog(db)
+        before_sequences = db.execute(
+            "select rowid,name,seq from main.sqlite_sequence order by rowid"
+        ).fetchall()
         before_tasks = db.execute("select * from tasks order by id").fetchall()
-        before_inputs = db.execute("select * from task_inputs order by id").fetchall()
+        before_owned_rows = {
+            name: db.execute('select * from "' + name.replace('"', '""') + '" order by rowid').fetchall()
+            for name in _owned_table_names() if db.execute(
+                "select 1 from main.sqlite_schema where type='table' and name=?", (name,)
+            ).fetchone()
+        }
         bad = dict(forward)
         bad["raw_key_exceptions"] = [dict(row) for row in forward["raw_key_exceptions"]]
         marker = next(row for row in bad["raw_key_exceptions"]
@@ -423,7 +496,10 @@ def test_mid_inverse_failure_rolls_back_when_caller_rolls_back():
         else:
             raise AssertionError("invalid current-fact inverse marker was accepted")
         assert db.execute("select * from tasks order by id").fetchall() == before_tasks
-        assert db.execute("select * from task_inputs order by id").fetchall() == before_inputs
+        assert _schema_catalog(db) == before_catalog
+        assert db.execute("select rowid,name,seq from main.sqlite_sequence order by rowid").fetchall() == before_sequences
+        for name, rows in before_owned_rows.items():
+            assert db.execute('select * from "' + name.replace('"', '""') + '" order by rowid').fetchall() == rows
         for name, sql in before_objects.items():
             if not sql.lstrip().lower().startswith("create table"):
                 continue

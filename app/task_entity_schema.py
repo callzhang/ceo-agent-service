@@ -749,8 +749,13 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             parent_id = None if row is None else int(row[0])
         source_rows.append((kind, physical_id, target_id, public_key, values, parent_id))
 
+    # Retire exactly the native owner relations created by this converter.
+    # Their attached indexes and triggers are removed by SQLite with each
+    # owner table; unrelated catalog objects remain caller-owned.
+    for name in reversed([name for name, _ in table_sql]):
+        db.execute("drop table main." + _quote(name))
+
     # Restore the source table under its exact captured declaration.
-    db.execute("drop table main.tasks")
     for typ, name, sql in forward_metadata["source_objects"]:
         if typ == "table":
             db.execute(sql)
@@ -790,4 +795,12 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     sequence = source_metadata["task_sequence"]
     if sequence is not None:
         db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?, 'tasks', ?)", sequence)
-    return {"rows": len(source_rows), "source_objects": forward_metadata["source_objects"]}
+    return {
+        "rows": len(source_rows),
+        "source_objects": forward_metadata["source_objects"],
+        "sparse_identity_metadata": {
+            "identity_edges": forward_metadata["identity_edges"],
+            "raw_key_exceptions": forward_metadata["raw_key_exceptions"],
+            "reference_exceptions": forward_metadata["reference_exceptions"],
+        },
+    }
