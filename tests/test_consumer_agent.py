@@ -28,6 +28,7 @@ from app.agent_wire_contracts import (
     parse_consumer_agent_wire_result,
 )
 from app.native_agent_output import native_output_schema_path
+from app.prompt_composition import CONSUMER_OUTBOUND_INSTRUCTION, render_prompt_sections
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -40,6 +41,7 @@ from app.consumer_agent import (
     ConsumerAgentRunner,
     audit_developer_instructions,
     consumer_developer_sections,
+    consumer_developer_sections_by_runtime,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
     _consumer_source_context_fingerprint,
@@ -1168,6 +1170,25 @@ def test_consumer_prompt_schema_is_the_parser_schema():
     )
 
 
+def test_only_consumer_routes_with_native_output_schema_omit_wire_schema_text():
+    sections_by_runtime = consumer_developer_sections_by_runtime(
+        runtime_context="", work_profile="",
+    )
+    for runtime in ("codex_cli", "claude_cli"):
+        developer = render_prompt_sections(
+            sections_by_runtime[runtime], placement="developer",
+        )
+        assert "## Pydantic Wire Contract" not in developer
+        assert CONSUMER_OUTBOUND_INSTRUCTION in developer
+        assert "return the typed wire contract" in developer
+
+    friday = render_prompt_sections(
+        sections_by_runtime["friday_runtime"], placement="developer",
+    )
+    assert "## Pydantic Wire Contract" in friday
+    assert CONSUMER_OUTBOUND_INSTRUCTION in friday
+
+
 def test_claude_native_schema_projection_preserves_final_outcome_validation():
     native_schema = claude_consumer_output_schema()
     assert "oneOf" not in native_schema
@@ -1786,7 +1807,7 @@ def test_consumer_reuses_matching_native_wire_despite_prompt_hash_change(store, 
     assert executor.commands[0][-2:] == ["session-old", "-"]
 
 
-def test_consumer_default_path_reads_native_wire_before_resume(
+def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
     store, task, context, monkeypatch, tmp_path
 ):
     session = tmp_path / "old-session.jsonl"
@@ -1824,10 +1845,8 @@ def test_consumer_default_path_reads_native_wire_before_resume(
         if option.startswith("developer_instructions=")
     )
     submitted_developer = json.loads(developer_option.partition("=")[2])
-    assert (
-        "## Pydantic Wire Contract\n"
-        + consumer_agent._schema_json(consumer_agent.consumer_wire_model("general"))
-    ) in submitted_developer
+    assert "## Pydantic Wire Contract" not in submitted_developer
+    assert CONSUMER_OUTBOUND_INSTRUCTION in submitted_developer
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
@@ -2207,6 +2226,16 @@ def test_consumer_claude_runtime_receives_parent_execution_mode(
     command = executor.commands[0]
     assert "--json-schema" in command
     assert json.loads(command[command.index("--json-schema") + 1])["type"] == "object"
+    [saved_run] = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation,
+    )
+    snapshot = next(
+        event for event in _prompt_observations(store, saved_run.id)
+        if event.get("type") == "runtime.prompt"
+    )
+    assert "## Pydantic Wire Contract" not in snapshot["developer_instructions"]
+    assert CONSUMER_OUTBOUND_INSTRUCTION in snapshot["developer_instructions"]
+    assert all(section["source"] != "Pydantic 业务模型" for section in snapshot["sections"])
 
 
 @pytest.mark.parametrize("failure_count", [1, 2])
