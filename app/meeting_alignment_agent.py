@@ -227,7 +227,7 @@ class MeetingAlignmentCodexRunner:
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
-                    skill_names=() if compact_prompt is not None else None,
+                    skill_names=("dingtalk-chat",) if compact_prompt is not None else None,
                     project_doc_max_bytes=0,
                 ),
                 parser=_encode_meeting_alignment_result,

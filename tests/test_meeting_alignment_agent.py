@@ -171,7 +171,7 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
     call = routed.calls[0]
     assert call["prompt"] == "FULL FROZEN PROTOCOL"
     assert call["route_prompt_overrides"] == {RuntimeKind.CODEX_CLI: "MEETING RULE"}
-    assert call["command_factory"].skill_names == ()
+    assert call["command_factory"].skill_names == ("dingtalk-chat",)
     assert call["command_factory"].project_doc_max_bytes == 0
     assert (
         "DWS 只用于群与身份的只读取证。不要直接发消息、邮件或执行审批等影响他人的操作；"
