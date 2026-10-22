@@ -938,7 +938,9 @@ def scan_pending_oa_approvals(
         pending_business_object_keys.add(key)
 
     reconciled_reply_task_ids = reconcile_failed_oa_reply_tasks(store, dws)
-    reconciled_unbound_attempt_ids = reconcile_unbound_failed_oa_attempts(store, dws)
+    reconciled_unbound_attempt_ids = reconcile_unbound_failed_oa_attempts(
+        store, dws, current_user_id=current_user_id
+    )
 
     # A partial scan or unreadable source cannot prove that a process is done.
     for key in previous_pending_keys:
@@ -1145,9 +1147,12 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
 
 
 def reconcile_unbound_failed_oa_attempts(
-    store: AutoReplyStore, dws: Any, *, limit: int = 20
+    store: AutoReplyStore, dws: Any, *, current_user_id: str = "", limit: int = 20
 ) -> list[int]:
-    """Skip only failed OA Attempts whose exact process and task are terminal.
+    """Skip only failed OA Attempts whose exact process and task are settled.
+
+    Settled means the process is terminal, or the principal's own return
+    canceled this exact task and left nothing pending for the principal.
 
     This covers legacy Attempts that predate a locally owning Reply Task or
     Consumer run. Each Attempt is closed only after the same read-only source
@@ -1173,6 +1178,10 @@ def reconcile_unbound_failed_oa_attempts(
         if detail is None:
             continue
         process_state = _oa_terminal_process_state(detail)
+        if process_state is None and _oa_principal_explicitly_returned_process(
+            detail, task_id=oa_task_id, current_user_id=current_user_id
+        ):
+            process_state = ("RUNNING", "OA_RETURNED")
         if process_state is None:
             continue
         exact_task = next(
