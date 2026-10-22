@@ -504,3 +504,15 @@ Skill 文件字节一致，但 `consumer-scripts.json` 仍固定旧脚本树摘�
 脚本入口列表、脚本内容、评分、审核、来源覆盖和投递条件都未改变。修复提交与部署后，
 只有在新的 task6 运行实际通过 Consumer/Audit、报告完整读回、通知持久回执及
 provider 查询后，才会将 OKR 新版自然/手动结果记为通过；392030 的失败历史保留不改。
+
+### 392187：重试重复读取导致分析始终未开始
+
+task6 run **392187** 使用 task 配置 v20、managed Skill revision 222，派发到 reply task **416838**。Consumer attempt 392206、392275、392325 均在一次尝试内重新读取完整 18 人名册来源（15 人有 Q4 数据，3 人 `goals_missing`），重新运行 `prepare` 后只读到第一位成员的材料或评分 schema，随后以可重试的 `analysis_incomplete` 结束。attempt 392246 单独因 Codex provider 用量限制失败。三次 `analysis_incomplete` 轨迹都没有写出成员分析文件；该定时运行最终没有报告写入、通知提案或通知回执。
+
+这是实际执行行为缺陷，不是评测问题或 OKR 来源故障。完整轨迹显示，Skill 把“新定时执行必须取新快照”误写成“每次 Consumer 重试都必须重读全部来源”。串行读取 18 人耗时约 10–12 分钟，重试便反复耗尽执行时间，评分分析没有起步。无正文证据见 `evals/scheduled_task_generic/okr-same-run-resume-evidence.json`。
+
+修订后的 Skill 以 `scheduled_run_id` 区分新执行与重试：新定时运行仍须重新读取名册和所有成员；同一运行的 Consumer 重试、恢复和 Audit 修订复用该运行内已验证的来源回执，只补读缺失或失败项，并保留所有有效分析。评分、证据覆盖、Audit、文档完整读回和真实投递标准均未改变。更新了回归断言，定向测试 `tests/test_scheduled_okr_agent_eval.py`、`tests/test_weekly_okr_report.py` 和 `tests/test_consumer_skill_script_boundary.py` 为 **130 passed**；发布器与同一验收断言复测 **68 passed**。Ruff、`git diff --check` 与 26 项发布文件摘要 preflight 均通过。
+
+此 Skill 修复尚未部署，也未创建新的运行。下一步提交并按正式流程部署；确认新配置快照绑定新 managed Skill revision 后，再创建一条 task6 手动验收运行。旧运行 392187 保持失败历史，不重放且不补发；新版运行仍需完整 Consumer/Audit、报告文档读回、持久通知回执和 provider 查询才能记作实际发布通过。
+
+发布前置哈希已按只读读回刷新：生产代码仍为 `25eea1dc`，healthz 正常；运行配置为 361，task6 正在使用的旧 Skill revision 为 222，安装 Skill 摘要为 `f2781a35…`。修复将 Skill metadata 版本提升至 19。候选发布清单与哈希前置现可对齐当前安装文件；部署后仍要核实新增 revision 和新 task 配置快照。

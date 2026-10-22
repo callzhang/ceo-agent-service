@@ -17,8 +17,10 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
         .read_text()
         .split()
     )
-    assert "Every execution must establish a fresh source snapshot" in skill
-    assert "Never infer that a member source is unchanged from a prior run" in skill
+    assert "Every new scheduled execution (a new `scheduled_run_id`) must establish a fresh" in skill
+    assert "A Consumer retry, resumed turn or Audit correction for the same `scheduled_run_id`" in skill
+    assert "reuse its verified roster and member source receipts instead of rereading all members" in skill
+    assert "Never infer that a member source is unchanged from an earlier scheduled execution" in skill
     assert "A request to fix a shared report, appendix set, notification summary" in skill
     assert "preserve those bytes through the correction" in skill
     assert "use each affected member's exact `subject_label`" in skill
@@ -28,8 +30,8 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "choose only an allowed `dingtang-okr-review` evidence band" in skill
     assert "never invent intermediate values such as 30, 50 or 70" in skill
     assert "state each coverage boundary once" in skill
-    assert "read each current member once" in skill
-    assert "Never repeat a successful member read again within the same Consumer turn" in skill
+    assert "On a retry of the same scheduled execution, read only missing/failed member receipts" in skill
+    assert "Never repeat a successful member read within the same scheduled execution" in skill
     assert "resume at the first missing, changed or Audit-identified analysis" in skill
     assert "Zero reported progress is not evidence that no outcome occurred" in skill
     assert "It is not a shortcut for unfinished analysis" in skill

@@ -1,0 +1,69 @@
+{
+  "observed_at": "2026-10-22",
+  "scheduled_task_id": 6,
+  "scheduled_run_id": 392187,
+  "task_config_version": 20,
+  "managed_skill_revision_id": 222,
+  "reply_task_id": 416838,
+  "consumer_attempts": [
+    {
+      "run_id": 392206,
+      "attempt": 0,
+      "result": "analysis_incomplete",
+      "trajectory_facts": [
+        "Read all 18 current roster member sources",
+        "Prepared the analysis plan",
+        "Read the first member source and schema",
+        "Stopped before writing any member analysis"
+      ]
+    },
+    {
+      "run_id": 392246,
+      "attempt": 1,
+      "result": "codex_provider_capacity_exhausted",
+      "trajectory_facts": [
+        "Provider reported its usage limit"
+      ]
+    },
+    {
+      "run_id": 392275,
+      "attempt": 2,
+      "result": "analysis_incomplete",
+      "trajectory_facts": [
+        "Again read all 18 current roster member sources",
+        "Prepared the analysis plan",
+        "Read the first member source",
+        "Stopped before writing any member analysis"
+      ]
+    },
+    {
+      "run_id": 392325,
+      "attempt": 3,
+      "result": "analysis_incomplete",
+      "trajectory_facts": [
+        "Again read all 18 current roster member sources",
+        "Prepared the analysis plan",
+        "Listed current artifacts and read the first member schema",
+        "Stopped before writing any member analysis"
+      ]
+    }
+  ],
+  "source_snapshot": {
+    "roster_members": 18,
+    "collected": 15,
+    "goals_missing": 3,
+    "shared_source_failure": false
+  },
+  "external_outcome": {
+    "report_document_written": false,
+    "notification_proposed": false,
+    "notification_receipt": false
+  },
+  "root_cause": "The managed Skill required every resumed Consumer attempt to refresh the full roster and every member source. Serial collection consumed about 10-12 minutes per attempt, leaving retries without enough execution time to analyze the data.",
+  "repair": "A new scheduled_run_id requires a fresh roster and member snapshot. A retry, resumed turn, or Audit correction for the same scheduled_run_id reuses successful receipts and only collects missing or failed receipts. Scoring, evidence, Audit, document readback, and delivery requirements remain unchanged. Managed Skill version is 19; publication preconditions are refreshed from production commit 25eea1dc99e75ef7a18a7331f67b2e6274abe374, active runtime skill config 361, installed Skill hash f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701 and managed revision 222.",
+  "verification": {
+    "tests": "After final Skill v19 and release-manifest updates: tests/test_scheduled_okr_agent_eval.py + tests/test_weekly_okr_report.py + tests/test_consumer_skill_script_boundary.py: 130 passed; tests/test_consumer_system_release.py + tests/test_scheduled_okr_agent_eval.py: 68 passed. Ruff, git diff --check and 26-file release preflight passed.",
+    "production_deployed": false,
+    "new_run_created": false
+  }
+}

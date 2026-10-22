@@ -3,7 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
-  version: 18
+  version: 19
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -23,29 +23,33 @@ minutes, messages, logs, todos and calendars. Unreadable evidence remains a gap.
 
 ## Collect and prepare
 
-Every execution must establish a fresh source snapshot before using prior
-artifacts, even when the task already has a `plan.json`, member source files,
-analysis files or a previously published report. Read the current roster and
-call `read_okr_member` once for every current roster member in this execution;
-the resulting receipts replace the saved source snapshot before `prepare`.
-Never infer that a member source is unchanged from a prior run or from the
-presence of a reusable analysis. A reusable analysis is eligible only after the
-current run's source receipt confirms the same user ID, period, outcome and
-source digest. If a turn resumes after these reads already completed in that
-same run, reuse those current-run receipts and do not repeat them.
+Every new scheduled execution (a new `scheduled_run_id`) must establish a fresh
+source snapshot before using artifacts from an earlier scheduled execution,
+even when an earlier run has a `plan.json`, member source files, analysis files
+or a published report. A Consumer retry, resumed turn or Audit correction for
+the same `scheduled_run_id` continues that execution: reuse its verified roster
+and member source receipts instead of rereading all members. If the first
+attempt did not finish collection, read only the missing or failed members.
+Never infer that a member source is unchanged from an earlier scheduled
+execution or from the presence of a reusable analysis. A reusable analysis is
+eligible only after the current scheduled execution's source receipt confirms
+the same user ID, period, outcome and source digest.
 
 ### Resume after an audit return or an interrupted Consumer turn
 
 Before calling a source reader, read the latest Audit feedback and list the
-current run's artifacts. On each resumed Consumer turn, refresh the roster and
-read each current member once: `read_okr_member` is the only freshness check,
-and there is no separate digest-only source endpoint. Save these receipts,
-then run `prepare`. Reuse each complete prior analysis when its user ID,
-period, outcome and source digest still match the refreshed input; reanalyze
-only members whose source digest changed or whose analysis is incomplete.
-Never repeat a successful member read again within the same Consumer turn.
-After refresh and `prepare`, continue analysis immediately; do not spend the
-turn recollecting data already refreshed in that turn.
+current run's artifacts. If this is a retry or resumed turn for the same
+`scheduled_run_id`, use its complete roster and member receipts; do not refresh
+them. If collection was interrupted, read the roster only when it is missing,
+then read only members without a successful receipt. `read_okr_member` is the
+source freshness check for a new scheduled execution; there is no separate
+digest-only source endpoint. Save any missing receipts, then run `prepare`.
+Reuse each complete prior analysis when its user ID, period, outcome and source
+digest still match the current scheduled execution; reanalyze only members
+whose source digest changed or whose analysis is incomplete. Never repeat a
+successful member read within the same scheduled execution. After `prepare`,
+continue analysis immediately; do not spend the retry recollecting data
+already refreshed for this scheduled execution.
 
 Run `prepare` against the current run's saved member files before analyzing.
 Preserve every complete analysis whose `analysis_reusable` is true, and resume
@@ -85,15 +89,20 @@ through the correction and verify their digests before finishing.
 1. Call `read_scheduled_context` for this run's trigger and artifact directory.
    Resolve the report date in Asia/Shanghai, using the scheduled trigger's date
    for scheduled reports and the explicitly requested date for backfills.
-2. Call `read_okr_roster` with `group_name=CEO-2 管理群`. Derive the quarter
-   label (YYYY Q1..Q4) from the report date unless explicitly requested. The
-   result supplies `okr-roster.json`; read it with `read_task_artifact`. Use the current group
+2. For a new `scheduled_run_id`, call `read_okr_roster` with
+   `group_name=CEO-2 管理群`. Derive the quarter label (YYYY Q1..Q4) from the
+   report date unless explicitly requested. The result supplies
+   `okr-roster.json`; read it with `read_task_artifact`. Use the current group
    roster and contact titles, including same-name members with distinct userId.
-3. Call `read_okr_member` once per returned member with that member's exact
+   On a retry of the same scheduled execution, reuse its verified roster.
+3. For a new `scheduled_run_id`, call `read_okr_member` once per returned member
+   with that member's exact
    `user_id`, `name`, `title`, `open_dingtalk_id` and the resolved `period_label`.
    Each result saves `okr-member-<userId-sha256>.json` with a verified source outcome. Retry a transient source failure with another member read; each read is one bounded attempt. Complete
    every member read before preparing analysis. Separate calls give source IO
-   a bounded operation and expose real completed collection progress.
+   a bounded operation and expose real completed collection progress. On a
+   retry of the same scheduled execution, read only missing/failed member
+   receipts; preserve successful receipts already saved for that execution.
    Before preparing or publishing, inspect each `source_failed` receipt. A
    `scope: member` label or a diagnostic containing “member-bound” is not proof
    that the failure is isolated to that person. Treat it as member-specific
