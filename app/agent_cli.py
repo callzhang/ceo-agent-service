@@ -2484,6 +2484,40 @@ def build_role_server(
         from app.cli import build_parser, settings_from_args
         from app.weekly_okr_report import weekly_okr_member
 
+        filename = (
+            "okr-member-" + hashlib.sha256(user_id.encode()).hexdigest() + ".json"
+        )
+        root = _task_file_root(
+            db_path, task_id, artifact_generation, create=False
+        )
+        artifact_path = _task_file_path(root, filename)
+        if artifact_path.is_file():
+            cached = json.loads(artifact_path.read_text(encoding="utf-8"))
+            manager = cached.get("manager") or {}
+            outcome = cached.get("sourceOutcome") or {}
+            cached_period = (
+                (cached.get("liveOkr") or {}).get("periodLabel")
+                or (cached.get("availabilityReceipt") or {}).get("periodLabel")
+            )
+            if (
+                manager.get("userId") == user_id
+                and manager.get("name") == name
+                and manager.get("title", "") == title
+                and manager.get("openDingtalkId", "") == open_dingtalk_id
+                and cached_period == period_label
+                and outcome.get("user_id") == user_id
+                and outcome.get("kind") in {"collected", "goals_missing"}
+            ):
+                raw = artifact_path.read_bytes()
+                return {
+                    "artifact_name": filename,
+                    "path": str(artifact_path),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "bytes": len(raw),
+                    "user_id": user_id,
+                    "source_outcome": outcome,
+                }
+
         payload = weekly_okr_member(
             settings_from_args(
                 build_parser().parse_args(
@@ -2505,9 +2539,6 @@ def build_role_server(
             period_label=period_label,
             title=title,
             open_dingtalk_id=open_dingtalk_id,
-        )
-        filename = (
-            "okr-member-" + hashlib.sha256(user_id.encode()).hexdigest() + ".json"
         )
         return {
             **_source_artifact(filename, payload),
