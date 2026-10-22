@@ -174,7 +174,7 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
     assert call["command_factory"].skill_names == ()
     assert call["command_factory"].project_doc_max_bytes == 0
     assert (
-        "DWS 仅用于群证据的只读查询。不要直接发消息、邮件或执行审批等影响他人的操作；"
+        "DWS 只用于群与身份的只读取证。不要直接发消息、邮件或执行审批等影响他人的操作；"
         "只返回决策，由服务完成投递。"
         in call["command_factory"].developer_instructions
     )
