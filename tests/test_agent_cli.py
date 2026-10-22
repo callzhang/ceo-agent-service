@@ -80,6 +80,155 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
     assert "execute_email_unsubscribe" not in descriptions
 
 
+@pytest.mark.parametrize("outcome_kind", ["collected", "goals_missing"])
+def test_okr_member_reuses_only_matching_success_receipt_in_task_generation(
+    outcome_kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    generation = "scheduled-run-1"
+    calls = []
+    task_id = 416922
+    db_path = tmp_path / "service.sqlite3"
+
+    monkeypatch.setattr(agent_cli, "_current_task_generation", lambda *_: generation)
+    monkeypatch.setattr(agent_cli, "migrate_legacy_task_artifacts", lambda *_: None)
+
+    def artifact_directory(bound_task_id, bound_generation, *, create):
+        path = tmp_path / "artifacts" / str(bound_task_id) / bound_generation
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    monkeypatch.setattr(
+        agent_cli,
+        "task_artifact_directory",
+        artifact_directory,
+    )
+    monkeypatch.setattr("app.cli.settings_from_args", lambda _args: object())
+
+    payload = {
+        "manager": {
+            "name": "Alex",
+            "title": "Director",
+            "userId": "user-1",
+            "openDingtalkId": "open-1",
+        },
+        "liveOkr": {"periodLabel": "2026-Q4"}
+        if outcome_kind == "collected"
+        else None,
+        "availabilityReceipt": {"periodLabel": "2026-Q4"}
+        if outcome_kind == "goals_missing"
+        else None,
+        "sourceOutcome": {"kind": outcome_kind, "user_id": "user-1"},
+    }
+
+    def fetch_member(*_args, **_kwargs):
+        calls.append(generation)
+        return payload
+
+    monkeypatch.setattr("app.weekly_okr_report.weekly_okr_member", fetch_member)
+
+    def read(bound_generation, *, period_label="2026-Q4"):
+        nonlocal generation
+        generation = bound_generation
+        server = agent_cli.build_role_server(
+            "consumer",
+            task_id=task_id,
+            db_path=db_path,
+            execution_generation=bound_generation,
+        )
+        return server._tool_manager.get_tool("read_okr_member").fn(
+            user_id="user-1",
+            name="Alex",
+            title="Director",
+            open_dingtalk_id="open-1",
+            period_label=period_label,
+        )
+
+    first = read("scheduled-run-1")
+    repeated = read("scheduled-run-1")
+    assert len(calls) == 1
+    assert repeated["sha256"] == first["sha256"]
+    assert repeated["source_outcome"] == payload["sourceOutcome"]
+
+    refreshed = read("scheduled-run-2")
+    assert len(calls) == 2
+    assert refreshed["sha256"] == first["sha256"]
+
+    changed_period = read("scheduled-run-2", period_label="2027-Q1")
+    assert len(calls) == 3
+    assert changed_period["source_outcome"] == payload["sourceOutcome"]
+
+
+def test_okr_member_retries_source_failed_receipt_in_same_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    generation = "scheduled-run-1"
+    task_id = 416922
+    db_path = tmp_path / "service.sqlite3"
+    calls = []
+    payloads = [
+        {
+            "manager": {
+                "name": "Alex",
+                "title": "Director",
+                "userId": "user-1",
+                "openDingtalkId": "open-1",
+            },
+            "sourceOutcome": {"kind": "source_failed", "user_id": "user-1"},
+        },
+        {
+            "manager": {
+                "name": "Alex",
+                "title": "Director",
+                "userId": "user-1",
+                "openDingtalkId": "open-1",
+            },
+            "liveOkr": {"periodLabel": "2026-Q4"},
+            "sourceOutcome": {"kind": "collected", "user_id": "user-1"},
+        },
+    ]
+
+    monkeypatch.setattr(agent_cli, "_current_task_generation", lambda *_: generation)
+    monkeypatch.setattr(agent_cli, "migrate_legacy_task_artifacts", lambda *_: None)
+
+    def artifact_directory(bound_task_id, bound_generation, *, create):
+        path = tmp_path / "artifacts" / str(bound_task_id) / bound_generation
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    monkeypatch.setattr(
+        agent_cli,
+        "task_artifact_directory",
+        artifact_directory,
+    )
+    monkeypatch.setattr("app.cli.settings_from_args", lambda _args: object())
+
+    def fetch_member(*_args, **_kwargs):
+        calls.append(True)
+        return payloads.pop(0)
+
+    monkeypatch.setattr("app.weekly_okr_report.weekly_okr_member", fetch_member)
+    server = agent_cli.build_role_server(
+        "consumer",
+        task_id=task_id,
+        db_path=db_path,
+        execution_generation=generation,
+    )
+    read = server._tool_manager.get_tool("read_okr_member").fn
+    args = {
+        "user_id": "user-1",
+        "name": "Alex",
+        "title": "Director",
+        "open_dingtalk_id": "open-1",
+        "period_label": "2026-Q4",
+    }
+
+    assert read(**args)["source_outcome"]["kind"] == "source_failed"
+    assert read(**args)["source_outcome"]["kind"] == "collected"
+    assert len(calls) == 2
+
+
 def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):
     import app.config as config
     import app.email_worker as email_worker
