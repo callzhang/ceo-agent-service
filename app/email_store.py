@@ -11895,9 +11895,15 @@ class EmailStore:
             ).fetchone()
             if busy is not None:
                 return None
+            from app.action_entity_storage import get_action
+
+            current_action = get_action(db, int(action_id))
+            if current_action is None:
+                return None
             updated = shared_action_lifecycle.claim_direct_email_action(
                 db, action_id=action_id, expected_status="failed",
-                expected_started_at=None, attempt_count=expected_attempt_count,
+                expected_started_at=current_action["started_at"],
+                attempt_count=expected_attempt_count,
                 claimed_at=claimed_at)
             if updated is None:
                 raise EmailActionAttemptConflict(f"direct action claim changed for {action_id}")
