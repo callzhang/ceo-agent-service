@@ -28,6 +28,12 @@ detail 包含未终态 work item，native delivery readback 有73/384项不可�
 - 纠正此前自动化指令中的错误描述：手动 run391245 与自然 run392889 的 action identity 和 external key 不同，因此不存在同一 identity 的正文冲突。两条消息各自有成功回执；没有因此触发额外发送。
 - run392889 保持原终态和外部结果，不重放、不补发。即使文档与通知发布成功，本次仍因来源覆盖失败而不计入新版自然验收通过。日报 Skill 合约修复已在 task14 v51 / managed revision224 生效；task13 当前 v44 / Skill202，task6 当前 v22 / Skill223，后两项 Skill 与 schedule 未改变。必须等待 task14 下一次正常触发 **2026-10-23 13:00 UTC**、task13 **2026-10-24 19:00 UTC** 和 task6 **2026-10-25 10:00 UTC**，按完整 trajectory、文档、审核和真实回执核验；此前不提前创建或补发报告。
 
+### 部署后服务健康核查（2026-10-22 19:31 UTC）
+
+这组 read-only 健康指标与三份报告的自然业务验收分开记录。healthz 仍返回 HTTP 200，但 System Health 为 degraded；质量门实际列出8条未解决项：2个 `ai_minutes` work-summary 输入以 `runtime_result_validation_failed` 失败，1个邮件分类任务以 DNS 名称解析错误失败，4条 workbench feedback 尚未记录 resolution，`ai_minutes_sync` 扫描器因听记列表翻页超过600页失败。最近4小时还存在1条 work-summary Task Agent 错误。另有 73/384 个最近 Audit run 没有可读 native delivery 结果；这是证据覆盖缺口，当前扫描没有据此生成 sent-receipt 违规。
+
+Email provider actions 当前显示10个失败项（8个可重试、2个不可重试）；worker 状态曾记录 `EmailActionAttemptConflict`。两个邮箱扫描在19:31 UTC均有成功时间戳。没有重放这些动作，也没有查看或记录邮件正文。database-backup 的“database or disk is full”错误时间为10月9日；本次只读机器核查有102 GiB可用空间、SQLite主库约501 MB，因此未把旧错误当作当前磁盘满问题。以上失败和未解决状态尚未修复，不能据此声称 Console System Health 已恢复正常。
+
 代码、Skill、原生合成验收、历史外部结果与新版自然业务结果分别记录。合成通过不替代真实运行；
 文档读回、Audit 决策和通知回执也分别核实。
 
