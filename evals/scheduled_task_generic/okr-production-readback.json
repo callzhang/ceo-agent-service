@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-22T17:43:48Z",
+  "observed_at": "2026-10-22T17:50:41Z",
   "scope": "Historical real publication readback; not new Agent natural-run acceptance",
   "natural_command_completion_facts": [
     {
@@ -549,9 +549,63 @@
       "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
     },
     "precondition_refresh": "Updated from current production readbacks only; no scoring rule, Skill body, or business threshold changed.",
-    "retry_pending": true,
+    "retry_pending": false,
     "precondition_refresh_result": "Updated ceo-weekly-okr-report installed/managed hash and revision from production revision223 readback; updated ceo-daily-report approved candidate hash to the exact reviewed Skill SHA.",
     "precondition_lock_test": "tests/test_scheduled_okr_agent_eval.py::test_release_manifest_pins_verified_current_installation passed after refresh.",
-    "retry_preflight": "_load_file_plan against the production checkout, current local managed Skill targets, and production audit_rules passed for all 26 assets using the candidate manifest."
+    "retry_preflight": "_load_file_plan against the production checkout, current local managed Skill targets, and production audit_rules passed for all 26 assets using the candidate manifest.",
+    "resolved_by_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598"
+  },
+  "latest_successful_skill_publication": {
+    "observed_at": "2026-10-22T17:50:41Z",
+    "production_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+    "deploy_output": "deployed 526f3df5 -> 6f26fcbc",
+    "deployment_pid": 60193,
+    "healthz_http_status": 200,
+    "healthz_ok": true,
+    "console_system_health": {
+      "state": "degraded",
+      "violations": 8,
+      "detail": "work item has no terminal handling Native delivery results readable: 311; unavailable: 73.",
+      "native_delivery_checked": 311,
+      "native_delivery_unavailable": 73
+    },
+    "queue_counts": {
+      "active": 0,
+      "queued": 199
+    },
+    "attention_total": 22,
+    "attention_groups": 20,
+    "history_total": 37257,
+    "scheduled_task_count": 14,
+    "runtime_skill_config": {
+      "id": 363,
+      "parent_id": 362,
+      "status": "active"
+    },
+    "task14": {
+      "version": 51,
+      "enabled": true,
+      "cron_expression": "0 0 6 * * *",
+      "timezone_name": "America/Los_Angeles",
+      "next_run_at": "2026-10-23T13:00:00Z",
+      "managed_skill_id": 21,
+      "managed_revision_id": 224,
+      "managed_revision_number": 9,
+      "managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "installed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62"
+    },
+    "task13": {
+      "version": 44,
+      "managed_revision_id": 202,
+      "next_run_at": "2026-10-24T19:00:00Z"
+    },
+    "task6": {
+      "version": 22,
+      "managed_revision_id": 223,
+      "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
+      "next_run_at": "2026-10-25T10:00:00Z"
+    },
+    "natural_report_runs_created_or_replayed": false,
+    "next_step": "Observe task14 next normal run; require a complete group-chat inventory/read and Audit approval before counting the report as accepted."
   }
 }
