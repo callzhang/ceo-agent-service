@@ -837,6 +837,36 @@
       "powerd_assertion": "Prevent sleep while display is on",
       "conclusion": "At this observation, automatic idle sleep appears inhibited while these assertions are active. This does not establish whether lid-close or an explicit sleep request is inhibited. No application, process, or power setting was changed."
     },
+    "host_idle_sleep_policy_recheck": {
+      "observed_at": "2026-10-22T20:21:06Z",
+      "local_time": "2026-10-22T13:21:06-07:00",
+      "configured_sleep_minutes": {
+        "ac_power": 1,
+        "battery_power": 30
+      },
+      "configured_display_sleep_minutes": {
+        "ac_power": 20,
+        "battery_power": 10
+      },
+      "prevent_user_idle_system_sleep": true,
+      "live_idle_sleep_assertions": [
+        {
+          "pid": 4320,
+          "application": "Claude",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-20T13:41:35-07:00"
+        },
+        {
+          "pid": 32669,
+          "application": "ChatGPT",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-22T01:52:38-07:00"
+        }
+      ],
+      "conclusion": "The configured idle-sleep timers are enabled, including one minute on AC power, but macOS still reports PreventUserIdleSystemSleep and live NoIdleSleepAssertion holders. This supports the conclusion that application assertions are preventing normal idle sleep at this observation. It does not establish lid-close or explicit-sleep behavior. No settings or processes were changed."
+    },
     "host_sleep_resume_catch_up_verified": false,
     "mutations_or_replays_performed": false,
     "natural_report_acceptance_changed": false,
