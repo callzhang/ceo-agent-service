@@ -136,6 +136,7 @@ ORCHESTRATION_ATTEMPT_STATUS = {
     "dry_run": ("dry_run", "done"),
     "failed_retryable": ("failed", "pending"),
     "failed_terminal": ("failed", "failed"),
+    "permission_blocked": ("blocked", "needs_human"),
 }
 RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
@@ -2618,6 +2619,8 @@ class DingTalkAutoReplyWorker:
         send_error = error_code
         if result.status == "needs_human":
             send_error = send_error or "needs_human"
+        elif result.status == "permission_blocked":
+            send_error = send_error or "consumer_purpose_retry_exhausted"
         elif result.status in {"failed_retryable", "failed_terminal"}:
             send_error = send_error or "agent_failed"
 

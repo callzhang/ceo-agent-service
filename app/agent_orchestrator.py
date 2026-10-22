@@ -28,13 +28,15 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 from app.consumer_purpose import purpose_for_context
 from app.consumer_purpose_retry import (
-    PurposeRetryBudget, RetryBudgetExhausted, RETRY_REQUESTED, RETRY_EXHAUSTED,
+    MAX_PURPOSE_RETRIES, PurposeRetryBudget, RetryBudgetExhausted,
+    RETRY_REQUESTED, RETRY_EXHAUSTED,
     utc_time, verified_access_request,
 )
 
 MAX_TURNS_PER_PROCESS = 32
 MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
+# A role is allowed one initial turn and three retries in the same proposal.
 MAX_CONSECUTIVE_FAILED_TURNS = MAX_AUTOMATIC_ATTEMPTS
 EXTERNAL_DEPENDENCY_WAIT_ERRORS = frozenset(
     {"agent_context_refresh_failed", RETRY_REQUESTED}
@@ -391,7 +393,8 @@ class AgentOrchestrator:
                     task, role=role, proposal_revision=state.proposal_revision
                 )
             if isinstance(state, _NextConsumer):
-                budget = self._purpose_budget(task, purpose_for_context(context, task))
+                purpose = purpose_for_context(context, task)
+                budget = self._purpose_budget(task, purpose)
                 saved = budget.state()
                 if saved and not saved.get("closed"):
                     current_time = self.now()
@@ -407,8 +410,10 @@ class AgentOrchestrator:
                         )
                         budget.reserve(f"{task.id}:{task.execution_generation}:{state.proposal_revision}:{next_turn}", current_time)
                     except RetryBudgetExhausted as exc:
-                        return OrchestrationResult("failed_terminal", 0, AgentRole.CONSUMER,
-                            str(exc), AgentError(code=RETRY_EXHAUSTED), self._feedback_cycles(task))
+                        if self._manual_permission_access_check(task, purpose, saved):
+                            pass
+                        else:
+                            return self._permission_wait_exhausted(task, str(exc))
             attempts[key] = attempts.get(key, 0) + 1
             try:
                 fresh = refresh_context()
@@ -844,6 +849,62 @@ class AgentOrchestrator:
         return PurposeRetryBudget(self.store,
             task.business_object_key or f"reply-task:{task.id}", purpose)
 
+    def _manual_permission_access_check(self, task, purpose, saved) -> bool:
+        """Allow one explicit post-grant read without extending the retry budget."""
+        attempt_id = int(getattr(task, "manual_rerun_attempt_id", 0) or 0)
+        if not attempt_id:
+            return False
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if (
+            attempt is None
+            or str(getattr(attempt, "send_status", "")).lower() != "blocked"
+            or getattr(attempt, "send_error", "") != RETRY_EXHAUSTED
+        ):
+            return False
+        prior_run = self.store.get_agent_run(attempt.agent_run_id, load_events=False) if attempt.agent_run_id else None
+        if (
+            prior_run is None
+            or prior_run.role is not AgentRole.CONSUMER
+            or prior_run.execution_generation == task.execution_generation
+        ):
+            return False
+        if (
+            saved.get("count", 0) < MAX_PURPOSE_RETRIES
+            and self.now() < utc_time(saved.get("deadline", "9999-12-31T23:59:59+00:00"))
+        ):
+            return False
+        current_runs = self.store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation, load_events=False
+        )
+        if current_runs:
+            return False
+        return self._purpose_budget(task, purpose).claim_manual_access_check(
+            attempt_id=attempt_id,
+            generation=task.execution_generation,
+            now=self.now(),
+        )
+
+    def _permission_wait_exhausted(self, task, detail, *, run_id: int | None = None):
+        if not run_id:
+            runs = self.store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation, load_events=False
+            )
+            consumers = [run for run in runs if run.role is AgentRole.CONSUMER and run.status == "completed"]
+            if consumers:
+                run_id = max(consumers, key=lambda run: run.id).id
+        if not run_id:
+            return OrchestrationResult(
+                "failed_terminal", 0, AgentRole.CONSUMER,
+                "permission retry exhausted without a completed Consumer run",
+                AgentError(code="permission_retry_state_invalid", retryable=False),
+                self._feedback_cycles(task),
+            )
+        return OrchestrationResult(
+            "permission_blocked", run_id, AgentRole.CONSUMER,
+            detail, AgentError(code=RETRY_EXHAUSTED, retryable=False),
+            self._feedback_cycles(task),
+        )
+
     def _purpose_terminal(self, state, status, error, execution=None):
         return OrchestrationResult(status, state.consumer_run.id, AgentRole.CONSUMER,
             execution.summary if execution else state.consumer_result.summary,
@@ -861,9 +922,7 @@ class AgentOrchestrator:
                 wake = budget.schedule(request["action_key"], utc_time(request["created_at"]),
                     f"consumer:{consumer.id}", self.now())
             except RetryBudgetExhausted as exc:
-                return OrchestrationResult("failed_terminal", consumer.id, AgentRole.CONSUMER,
-                    str(exc), AgentError(code=RETRY_EXHAUSTED), cycles,
-                    consumer_result=result, candidate_id=candidate_id)
+                return self._permission_wait_exhausted(task, str(exc), run_id=consumer.id)
             delay = (wake - self.now()).total_seconds()
             if delay > 0:
                 return self._deferred_result(_Deferred(None, RETRY_REQUESTED, cycles,
@@ -886,9 +945,7 @@ class AgentOrchestrator:
             wake = self._purpose_budget(task, purpose).schedule(
                 receipt, requested_at, f"consumer:{consumer.id}", self.now())
         except RetryBudgetExhausted as exc:
-            return OrchestrationResult("failed_terminal", consumer.id, AgentRole.CONSUMER,
-                str(exc), AgentError(code=RETRY_EXHAUSTED), cycles,
-                consumer_result=result, candidate_id=candidate_id)
+            return self._permission_wait_exhausted(task, str(exc), run_id=consumer.id)
         except ValueError as exc:
             return OrchestrationResult("failed_terminal", consumer.id, AgentRole.CONSUMER,
                 str(exc), AgentError(code="consumer_retry_receipt_invalid", source_code=str(exc)),
@@ -916,8 +973,9 @@ class AgentOrchestrator:
             wake = self._purpose_budget(task, purpose).schedule(
                 receipt, requested_at, str(state.review_id), self.now())
         except RetryBudgetExhausted as exc:
-            return replace(self._candidate_terminal(state, "failed_terminal",
-                AgentError(code=RETRY_EXHAUSTED, source_code=str(exc))), summary=str(exc))
+            return self._permission_wait_exhausted(
+                task, str(exc), run_id=state.consumer_run.id
+            )
         except ValueError as exc:
             return self._candidate_terminal(state, "failed_terminal", AgentError(code="consumer_retry_receipt_invalid", source_code=str(exc)))
         delay = (wake - self.now()).total_seconds()

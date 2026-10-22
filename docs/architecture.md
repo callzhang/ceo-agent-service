@@ -1523,6 +1523,12 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 非重试错误直接终止，任何外部效果不确定时先对账原对象，不因次数预算自动重放。
 这些是彼此独立的预算，不合并相加；等待时间、Agent 内部模型轮数和只读轮询不是自动重试次数。
 
+权限预算耗尽返回 `permission_blocked`，Attempt 投影为 `blocked`，ReplyTask 停在
+`needs_human` 队列外；它表示等待权限处理，不是 OA 业务失败或业务决定。History 只对
+`consumer_purpose_retry_exhausted` 提供“权限开通后重新读取”入口。此入口保留原权限预算，
+只允许一次人工触发的 Consumer 访问检查；仍不可读则再次受阻，不申请权限、不自动重试，
+也不执行 OA 动作。读取成功后仍须形成新候选、经 Audit 审核并按原执行回执规则处理。
+
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
 OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。若 OpenAPI 操作记录只有秒级时间，读回同一实例的 DWS 结构化审批流水，并按操作类型、操作人及同一秒唯一关联其毫秒 `operationTime`；有多条匹配或来源不完整时仍保留 uncertain，不能放宽派发时间边界。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。若目标任务创建时间被钉钉截断到秒级，只有当时间桶从退回事件之后开始且完整早于下一操作，或该桶与唯一退回流水落在同一秒、OpenAPI 与 DWS 流水在该秒内均无其他操作且该桶与派发/接受区间相交时，才可将其作为目标节点读回；仍须匹配精确目标 activity 与实例。精确到毫秒的目标创建时间继续按精确事件区间判断，桶与操作边界相交时保持 uncertain。证据不完整时保留 uncertain，恢复不重发退回。

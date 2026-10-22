@@ -170,6 +170,31 @@ class PurposeRetryBudget:
 
         return self._update(mutate)
 
+    def claim_manual_access_check(self, *, attempt_id: int, generation: int, now: datetime) -> bool:
+        """Reserve the single human-triggered access check after exhaustion."""
+        def mutate(state):
+            if not isinstance(state, dict):
+                return state, False
+            if state.get("manual_access_check"):
+                return state, False
+            exhausted = (
+                state.get("count", 0) >= MAX_PURPOSE_RETRIES
+                or now >= utc_time(state["deadline"])
+            )
+            verified_request = any(
+                item.get("status") == "verified"
+                for item in state.get("access_requests", [])
+            )
+            if not exhausted or not verified_request:
+                return state, False
+            state["manual_access_check"] = {
+                "attempt_id": attempt_id,
+                "generation": generation,
+                "reserved_at": now.astimezone(timezone.utc).isoformat(),
+            }
+            return state, True
+        return self._update(mutate)
+
 
     def close(self):
         if self.state() is None:

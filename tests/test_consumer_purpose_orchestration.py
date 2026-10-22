@@ -7,11 +7,18 @@ from test_agent_orchestrator import (
 )
 
 from app.agent_orchestrator import AgentOrchestrator
+from app.agent_orchestrator import MAX_CONSECUTIVE_FAILED_TURNS
 from app.agent_wire_contracts import consumer_wire_model
-from app.consumer_purpose_retry import RETRY_REQUESTED, RETRY_EXHAUSTED, PurposeRetryBudget
+from app.consumer_purpose_retry import (
+    MAX_PURPOSE_RETRIES,
+    RETRY_REQUESTED,
+    RETRY_EXHAUSTED,
+    PurposeRetryBudget,
+)
 from app.system_executor import SystemExecutor
 from app.agent_result import ResultParseError
 from app.agent_result import AgentError
+from app.store import AgentRole
 from app.consumer_agent import _prepare_reviewable_candidate
 
 
@@ -106,27 +113,91 @@ def test_permission_request_and_retry_do_not_invoke_audit(tmp_path):
     assert len(handler.calls) == 1
 
 
-def test_expired_budget_blocks_source_refresh_and_consumer_call(tmp_path):
+def test_permission_retry_budget_exhaustion_waits_without_becoming_failure(tmp_path):
     store, task, context = task_and_context(tmp_path)
-    clock = datetime.now(timezone.utc)
-    budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'general')
-    budget.schedule('verified-request', clock - timedelta(days=2), 'review', clock - timedelta(days=2))
-    consumer, audit = ScriptedConsumer(store), ScriptedAudit(store)
+    context = replace(context, skill_names=('dingtalk-oa-approval',))
+    clock = [datetime.now(timezone.utc) + timedelta(minutes=5)]
+    target = {'process_instance_id': 'p', 'file_id': 'file-a'}
+    request = output('request_access', target=target,
+                     payload={'content': 'Please grant read access'})
+
+    def still_waiting(fresh):
+        receipt = fresh.prior_receipts[0].receipt_id
+        result = output('retry', refs=[receipt])
+        return result.model_copy(update={'stage_index': fresh.stage_index,
+                                         'predecessor_review_id': fresh.predecessor_review_id})
+
+    consumer = ScriptedConsumer(store, request, still_waiting, still_waiting, still_waiting)
+    audit = ScriptedAudit(store)
     runtime = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
-                                now=lambda: clock + timedelta(days=1))
-    def must_not_read():
-        raise AssertionError('expired retry must not refresh sources')
-    result = runtime.process(task, context, refresh_context=must_not_read)
-    assert result.status == 'failed_terminal'
+        system_executor=SystemExecutor(store, {('dingtalk-oa', 'comment'): VerifiedHandler()}),
+        now=lambda: clock[0])
+    result = runtime.process(task, context, refresh_context=lambda: context)
+    assert result.error.code == RETRY_REQUESTED
+
+    for _ in range(2):
+        clock[0] += timedelta(seconds=result.retry_after_seconds + 1)
+        result = runtime.process(task, context, refresh_context=lambda: context)
+        assert result.error.code == RETRY_REQUESTED
+
+    clock[0] += timedelta(seconds=result.retry_after_seconds + 1)
+    result = runtime.process(task, context, refresh_context=lambda: context)
+
+    budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'oa')
+    assert result.status == 'permission_blocked'
     assert result.error.code == RETRY_EXHAUSTED
-    assert not consumer.calls and not audit.calls
+    assert result.final_run_id == consumer.calls[-1][0]
+    assert budget.state()['count'] == 3
+    assert len(consumer.calls) == 4  # Initial request plus exactly three permission rereads.
+    assert audit.calls == []
+
+
+def test_manual_rerun_after_permission_exhaustion_allows_one_unbudgeted_access_check(
+    tmp_path, monkeypatch
+):
+    store, task, context = task_and_context(tmp_path)
+    runtime = AgentOrchestrator(store=store, consumer=ScriptedConsumer(store),
+                                audit=ScriptedAudit(store))
+    purpose = "oa"
+    now = datetime.now(timezone.utc)
+    budget = PurposeRetryBudget(store, task.business_object_key or f"reply-task:{task.id}", purpose)
+    budget.begin_access_request(file_id="file-a", action_key="access-request", candidate_id=1, now=now)
+    budget.finish_access_request(
+        file_id="file-a", action_key="access-request", status="verified",
+        result={"receipt": "verified"}, now=now,
+    )
+    budget.schedule("verified-receipt", now, "review", now)
+    state = budget.state()
+    for index in range(MAX_PURPOSE_RETRIES):
+        retry_at = now + timedelta(hours=12 * (index + 1), seconds=1)
+        budget.reserve(f"old-generation:{index}", retry_at)
+
+    monkeypatch.setattr(store, "get_reply_attempt", lambda _attempt_id: type(
+        "Attempt", (), {"send_status": "blocked", "send_error": RETRY_EXHAUSTED,
+                        "agent_run_id": 91}
+    )())
+    monkeypatch.setattr(store, "get_agent_run", lambda *_args, **_kwargs: type(
+        "Run", (), {"role": AgentRole.CONSUMER,
+                    "execution_generation": 0}
+    )())
+    monkeypatch.setattr(store, "list_agent_runs_for_task_generation", lambda *_args, **_kwargs: [])
+    resumed_task = task.model_copy(update={
+        "execution_generation": "1",
+        "manual_rerun_attempt_id": 77,
+    })
+
+    assert runtime._manual_permission_access_check(resumed_task, purpose, budget.state()) is True
+    assert runtime._manual_permission_access_check(resumed_task, purpose, budget.state()) is False
+    assert budget.state()["count"] == state["count"] + MAX_PURPOSE_RETRIES
+    assert budget.state()["manual_access_check"]["attempt_id"] == 77
+    assert MAX_CONSECUTIVE_FAILED_TURNS == 4  # Initial call plus exactly three retries per role.
 
 
 def test_worker_pass_limit_does_not_reserve_a_third_unstarted_retry(tmp_path):
     store, task, context = task_and_context(tmp_path)
     now = datetime.now(timezone.utc)
     budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'general')
-    budget.schedule('verified-request', now - timedelta(hours=1), 'review', now - timedelta(hours=1))
+    budget.schedule('verified-request', now - timedelta(hours=13), 'review', now - timedelta(hours=13))
     consumer = ScriptedConsumer(store, *(AgentError(code='temporary_read_error', retryable=True) for _ in range(2)))
     runtime = AgentOrchestrator(store=store, consumer=consumer, audit=ScriptedAudit(store), now=lambda: now)
     result = runtime.process(task, context, refresh_context=lambda: context)

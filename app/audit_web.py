@@ -12024,7 +12024,13 @@ def _attempt_rerun_block_reason(
     if attempt.resolved_at and attempt.send_status.strip().lower() in {"needs_human", "skipped"}:
         if not (allow_skipped_oa_review and attempt.send_status.strip().lower() == "skipped"):
             return attempt.resolution or "这条旧问题已退役，无需重新处理。"
-    if attempt.send_status.strip().lower() != "failed":
+    status = attempt.send_status.strip().lower()
+    if status == "blocked":
+        return (
+            "" if attempt.send_error == "consumer_purpose_retry_exhausted"
+            else "此受阻事项不支持通过重试重新处理。"
+        )
+    if status != "failed":
         return ""
     terminal_run = next(
         (
@@ -12562,6 +12568,7 @@ def _history_attention_html(
         "needs_manager": "需要你处理",
         "automatic_recovery": "系统失败，正在自动恢复",
         "failed": "处理失败，尚未完成",
+        "permission_wait": "等待文件权限",
     }.get(attention.kind, "处理状态待确认")
     retry_html = ""
     if attention.retry_at:
@@ -12577,6 +12584,7 @@ def _history_attention_html(
             "needs_manager": "请选择一种处理方式。",
             "automatic_recovery": "系统会按计划自动重试，你当前无需操作。",
             "failed": "这是执行或技术失败，不需要你判断业务规则；可查看技术详情，必要时重新处理。",
+            "permission_wait": "权限开通后再点“权限开通后重新读取”；这不会重复申请权限或直接执行审批动作。",
         }.get(attention.kind, "请查看当前状态和技术详情。")
         next_step_html = (
             '<div class="history-attention-next"><strong>你需要做什么：</strong>'
@@ -12969,14 +12977,29 @@ def _attempt_row_actions(
     )
     confirmation = (rerun.confirmation if rerun.explanation else
         "确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。")
+    permission_wait_rerun = (
+        attempt.send_status.strip().lower() == "blocked"
+        and attempt.send_error == "consumer_purpose_retry_exhausted"
+    )
+    if permission_wait_rerun:
+        confirmation = (
+            "确认文件权限已开通？系统将重新读取并审核当前审批；若仍无权访问，"
+            "会继续等待，不会重复申请权限或直接执行审批动作。"
+        )
     return (
         "<div class=\"attempt-row-actions\">"
         + (
             f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
             f"onsubmit=\"return confirm('{escape(confirmation)}')\">"
-            f"<button class=\"rerun\" type=\"submit\">{escape(rerun.label)}</button>"
+            f"<button class=\"rerun\" type=\"submit\">{escape('权限开通后重新读取' if permission_wait_rerun else rerun.label)}</button>"
             "</form>"
-            if attempt.send_status.strip().lower() == "failed" and not rerun_block_reason
+            if (
+                attempt.send_status.strip().lower() == "failed"
+                or (
+                    attempt.send_status.strip().lower() == "blocked"
+                    and attempt.send_error == "consumer_purpose_retry_exhausted"
+                )
+            ) and not rerun_block_reason
             else ""
         )
         + (
@@ -13904,7 +13927,13 @@ def _attempt_recovery_display_state(
     attempt: ReplyAttempt,
     task_cache: dict[tuple[str, str, str], ReplyTask | None],
 ) -> str:
-    if attempt.send_status.strip().lower() != "failed":
+    status = attempt.send_status.strip().lower()
+    if status == "blocked":
+        return (
+            "" if attempt.send_error == "consumer_purpose_retry_exhausted"
+            else "此受阻事项不支持通过重试重新处理。"
+        )
+    if status != "failed":
         return ""
     task = _reply_task_for_attempt(store, attempt, task_cache)
     if task is None:

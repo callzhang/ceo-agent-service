@@ -7128,6 +7128,38 @@ def test_oa_attempt_detail_keeps_original_status_despite_later_action(
     assert "💬 Blocked" in html
 
 
+def test_permission_retry_exhaustion_is_waiting_not_failed_and_can_be_reread(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan:proc-permission",
+        conversation_title="OA审批",
+        trigger_message_id="scan:proc-permission:task-1",
+        trigger_sender="OA扫描",
+        trigger_text="待处理审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        oa_process_instance_id="proc-permission",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="consumer_purpose_retry_exhausted",
+        audit_summary="权限申请后的 3 次自动重读已用完；审批仍待处理。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "等待文件权限" in html
+    assert "审批仍待处理" in html
+    assert "权限开通后重新读取" in html
+    assert "这是执行或技术失败" not in html
+
+
 def test_attempt_history_and_detail_render_calendar_response_metadata(
     tmp_path: Path,
 ):
