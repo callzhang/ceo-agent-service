@@ -531,17 +531,18 @@ def record_outbound_action_receipt(db, *, channel, delivery_key, provider_result
     """Append and return the first provider receipt for one prepared Action."""
     if not db.in_transaction:
         raise ValueError('prepared Action receipt requires caller-owned transaction')
-    from app.action_entity_storage import append_action_receipt
+    from app.action_entity_storage import append_action_receipt, get_action, record_action_result
 
     action_id = _prepared_message_action_id(db, channel, delivery_key)
     if action_id is None:
         raise sqlite3.IntegrityError('missing prepared Action')
     if not operation:
         raise ValueError('actual provider operation is required')
-    existing = db.execute(
-        'select id,provider_result_json,operation,target from action_receipts where action_id=? and provider_result_json is not null order by id limit 1',
-        (action_id,),
-    ).fetchone()
+    action = get_action(db, action_id)
+    existing = (db.execute(
+        'select id,provider_result_json,operation,target from action_receipts where action_id=? and id=?',
+        (action_id, action['prepared_receipt_id']),
+    ).fetchone() if action['prepared_receipt_id'] is not None else None)
     if existing is not None:
         if (existing['provider_result_json'] != provider_result_json
                 or existing['operation'] != operation
@@ -554,6 +555,10 @@ def record_outbound_action_receipt(db, *, channel, delivery_key, provider_result
         'provider_result_json': provider_result_json, 'observed_at': clock,
         'created_at': clock, 'updated_at': clock,
     })
+    if record_action_result(db, action_id,
+            expected={'prepared_receipt_id': None},
+            changes={'prepared_receipt_id': receipt_id}) is None:
+        raise ValueError('prepared Action receipt reference changed during write')
     return storage.ActionWriteResult(receipt_id, 1)
 
 

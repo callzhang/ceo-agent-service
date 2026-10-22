@@ -51,7 +51,7 @@ ACTION_COLUMNS = {
     "started_at": "TEXT", "created_at": "TEXT", "updated_at": "TEXT",
     "prepared_body": "TEXT", "prepared_at": "TEXT", "delivery_channel": "TEXT",
     "delivery_key": "TEXT", "feedback_token": "TEXT", "postfix_version": "TEXT",
-    "delivery_receipt_id": "INTEGER",
+    "delivery_receipt_id": "INTEGER", "prepared_receipt_id": "INTEGER",
     "conversation_id": "TEXT", "trigger_message_id": "TEXT", "recall_key": "TEXT",
     "recall_status": "TEXT", "recall_error": "TEXT", "recalled_at": "TEXT",
     "agent_run_id": "INTEGER", "business_object_key": "TEXT", "action_identity": "TEXT",

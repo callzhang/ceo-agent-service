@@ -25,6 +25,70 @@ def _email(store, *, action=EmailAction.ARCHIVE, classification_id=11):
     return store.direct_action_ids_for_plan(value.action_plan.action_plan_id)[0]
 
 
+def test_prepared_receipt_is_pinned_separately_from_sent_and_canonical_bodies(tmp_path):
+    from app.action_entity_storage import append_action_receipt, create_action, record_action_result
+    from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL, SENT_REPLY_SQL
+
+    path = tmp_path / 'receipt-roles.sqlite3'
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute('begin immediate')
+        action = create_action(db, values={
+            'operation': 'send_reply_to_trigger', 'status': 'done',
+            'delivery_channel': 'dingtalk', 'delivery_key': 'delivery-key',
+            'prepared_body': 'same prepared message', 'external_action_key': 'external-key',
+            'business_object_key': 'business-key', 'action_identity': 'identity-key',
+            'conversation_id': 'conversation-key', 'trigger_message_id': 'trigger-key',
+            'agent_run_id': 501,
+        })
+        action_id = action['id']
+        prepared_json = '{"source":"prepared"}'
+        prepared = lifecycle.record_outbound_action_receipt(
+            db, channel='dingtalk', delivery_key='delivery-key',
+            provider_result_json=prepared_json, operation='send_reply_to_trigger')
+        sent_json = '{"source":"sent"}'
+        sent_body = append_action_receipt(db, action_id, values={
+            'operation': 'send_reply_to_trigger', 'target': 'delivery-key',
+            'provider_result_json': sent_json, 'provider_result_id': 'sent-provider-id',
+            'observed_at': 'sent-body-clock', 'created_at': 'sent-body-created',
+        })
+        sent_fact = append_action_receipt(db, action_id, values={
+            'operation': 'send_reply_to_trigger', 'target': 'delivery-key',
+            'provider_receipt_id': sent_body, 'agent_run_id': 501,
+            'result_digest': 'sent-digest', 'created_at': 'sent-created-clock',
+            'observed_at': 'sent-fact-clock',
+        })
+        record_action_result(db, action_id,
+            expected={'delivery_receipt_id': None}, changes={'delivery_receipt_id': sent_fact})
+        append_action_receipt(db, action_id, values={
+            'operation': 'send_reply_to_trigger', 'target': 'delivery-key',
+            'provider_result_json': '{"source":"canonical"}',
+            'provider_result_id': 'canonical-provider-id', 'result_digest': 'digest',
+            'agent_run_id': 501, 'observed_at': 'canonical-clock',
+            'supersedes_provider_receipt_id': sent_body,
+        })
+        prepared_read = db.execute(
+            f'select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL})').fetchone()[0]
+        sent_read = db.execute(f'select send_result_json from ({SENT_REPLY_SQL})').fetchone()[0]
+        canonical_read = db.execute(
+            f'select provider_result_json from ({EXTERNAL_ACTION_RESULT_SQL})').fetchone()[0]
+        assert prepared_read == prepared_json
+        assert sent_read == sent_json
+        assert canonical_read == '{"source":"canonical"}'
+        assert db.execute('select action_prepared_receipt_id from actions where id=?',
+                          (action_id,)).fetchone()[0] == prepared.lastrowid
+        other = create_action(db, values={'operation': 'send_reply', 'status': 'done'})
+        foreign_receipt = append_action_receipt(db, other['id'], values={
+            'provider_result_json': '{"source":"other-owner"}',
+        })
+        with pytest.raises(sqlite3.IntegrityError, match='prepared receipt reference'):
+            record_action_result(db, action_id,
+                expected={'prepared_receipt_id': prepared.lastrowid},
+                changes={'prepared_receipt_id': foreign_receipt})
+        db.rollback()
+
+
 def test_reviewed_and_email_callers_write_common_action_without_origin_dispatch(tmp_path, monkeypatch):
     path = tmp_path / 'shared.sqlite3'
     store = AutoReplyStore(path)

@@ -396,7 +396,7 @@ def _reply_payload_check(fields, *, kind=None, payloads=None):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, action_entity=False, payloads=None, sync_fields=None, canonical_attempt_fields=False):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, action_entity=False, payloads=None, sync_fields=None, canonical_attempt_fields=False, retired_types=()):
     if sent_result_references and not (compact_payload and (include_delivery or include_reply)):
         raise ValueError("Sent result references require compact delivery Actions")
     if result_references and not compact_payload:
@@ -429,7 +429,9 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     include_delivery = include_delivery or include_reply
     include_postfix = include_postfix or include_delivery
     include_receipts = include_receipts or include_postfix
+    retired_types = frozenset(retired_types)
     kinds = ALL_ACTION_TYPES_WITH_REPLY if include_reply else ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
+    kinds = tuple(kind for kind in kinds if kind not in retired_types)
     if execution_owner:
         if not compact_payload:
             raise ValueError('execution owner requires compact Actions payloads')
@@ -439,7 +441,10 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         if not (compact_payload and include_postfix):
             raise ValueError("prepared owner requires compact Postfix Actions")
         kinds = tuple(kind for kind in kinds if kind not in CHILDREN)
-        prepared_columns, prepared_checks = prepared_schema_parts()
+        if action_entity:
+            prepared_columns, prepared_checks = (), ()
+        else:
+            prepared_columns, prepared_checks = prepared_schema_parts()
     old_kinds = kinds
     if action_entity:
         if not compact_payload:
@@ -447,9 +452,10 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         kinds = ("action", *kinds)
     payload_kinds = tuple(kind for kind in kinds if kind != "action")
     if include_email:
-        kinds += EMAIL_TYPES_ORDER
+        kinds += tuple(kind for kind in EMAIL_TYPES_ORDER if kind not in retired_types)
         email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(
-            lambda field: _encoded_value_check("payload_json", "$." + field), payloads=payloads, shared_lifecycle=shared_lifecycle)
+            lambda field: _encoded_value_check("payload_json", "$." + field), payloads=payloads,
+            shared_lifecycle=shared_lifecycle, retired_types=retired_types)
     if include_followup_sync:
         kinds += SYNC_TYPES_ORDER
     if include_task_delivery:
@@ -524,19 +530,21 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if execution_owner:
         execution_generated, execution_checks, execution_indexes, execution_triggers = execution_schema_parts(record_types=payloads.record_types)
         generated.extend(execution_generated)
-    if sent_result_references:
+    if sent_result_references and not action_entity:
         from app.sent_result_definitions import sent_result_schema_parts
         sent_generated, sent_checks, sent_indexes, sent_triggers = sent_result_schema_parts(payloads)
         generated.extend(sent_generated)
     if shared_lifecycle:
         from app.shared_action_definitions import shared_discriminators
-        generated.extend(shared_discriminators(specialized_claims=specialized_claims))
-    postfix_scope = "'outbound_postfixes'" if postfix_owner else _POSTFIX_TYPES_SQL
-    if include_postfix:
+        generated.extend(shared_discriminators(
+            specialized_claims=specialized_claims, retired_types=retired_types,
+        ))
+    postfix_scope = "'outbound_postfixes'" if postfix_owner and not action_entity else _POSTFIX_TYPES_SQL
+    if include_postfix and not action_entity:
         for index, column in enumerate(POSTFIX_IDENTITY_FIELDS):
-            sent_channel = ("when record_type='sent_replies' then " + (payloads.value("sent_replies", "channel") if payloads else "json_extract(payload_json,'$.channel')") + " ") if include_delivery and column == "channel" else ""
+            sent_channel = ("when record_type='sent_replies' then " + (payloads.value("sent_replies", "channel") if payloads else "json_extract(payload_json,'$.channel')") + " ") if include_delivery and not action_entity and column == "channel" else ""
             generated.append(f"{column} text generated always as (case {sent_channel}when record_type in ({postfix_scope}) then json_extract(legacy_key,'$[{index}]') end) virtual")
-        if not postfix_owner:
+        if not postfix_owner and not action_entity:
             generated.append("postfix_type text generated always as (case when record_type in ('outbound_postfix_receipts','native_reply_dispatches') then 'outbound_postfixes' end) virtual")
     reply_columns = []
     if include_reply:
@@ -560,12 +568,12 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     key_check = "legacy_key=cast(cast(legacy_key as integer) as text)"
     if include_receipts:
         key_check = f"case when record_type='external_action_results' then trim(legacy_key)<>'' else {key_check} end"
-    if include_postfix:
+    if include_postfix and not action_entity:
         composite_check = ("case when json_valid(legacy_key) then json_type(legacy_key)='array' "
                            "and json_array_length(legacy_key)=2 and json_type(legacy_key,'$[0]') is 'text' "
                            "and json_type(legacy_key,'$[1]') is 'text' else 0 end")
         key_check = f"case when record_type in ({postfix_scope}) then ({composite_check}) else ({key_check}) end"
-    if include_delivery:
+    if include_delivery and not action_entity:
         observer_key = ("case when json_valid(legacy_key) then json_type(legacy_key)='array' "
                         "and json_array_length(legacy_key)=2 and json_type(legacy_key,'$[0]')='integer' "
                         "and json_type(legacy_key,'$[1]')='integer' else 0 end")
@@ -596,7 +604,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         + ("," + ",".join(fb_generated) if include_feedback else "")
         + ("," + ",".join(ba_generated) if include_business_actions else "")
         + ("," + ",".join(history_generated) if include_email_history else "")
-        + ("," + ",".join(prepared_columns) if postfix_owner else "")
+        + ("," + ",".join(prepared_columns) if postfix_owner and prepared_columns else "")
         + (",action_data blob" if action_entity else "")
         + (",payload_json blob not null," if payloads else ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),")
         + ",".join(generated)
@@ -607,16 +615,17 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     )
     if include_receipts:
         table += ",check(record_type<>'agent_effect_intents' or action_index>=0)"
-        for field in ('business_object_key', 'action_identity', 'operation', 'result_digest'):
-            table += f",check(record_type<>'external_action_results' or trim({field})<>'')"
-    if include_postfix:
+        if "external_action_results" not in retired_types:
+            for field in ('business_object_key', 'action_identity', 'operation', 'result_digest'):
+                table += f",check(record_type<>'external_action_results' or trim({field})<>'')"
+    if include_postfix and not action_entity:
         table += ",check(record_type not in ('outbound_postfixes','outbound_postfix_receipts') or (channel in ('dingtalk','wechat') and trim(delivery_key)<>''))"
         table += ",check(record_type<>'outbound_postfixes' or trim(final_body)<>'')"
         if postfix_owner:
             table += "," + ",".join(prepared_checks)
         else:
             table += ",foreign key(postfix_type,channel,delivery_key) references actions(record_type,channel,delivery_key)"
-    if include_delivery:
+    if include_delivery and not action_entity:
         table += ",check(record_type<>'sent_reply_observers' or (sent_reply_id is not null and agent_run_id is not null and reply_task_id is not null and json_extract(legacy_key,'$[1]')=agent_run_id))"
     if include_reply:
         table += ",check(record_type not in ('reply_attempts','memory_write_events') or (" + " and ".join(f"{field} is null" for field in references) + "))"
@@ -655,7 +664,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         table += "," + ",".join(execution_checks)
         if include_reply and reply_variant == 'fresh_memory_fk':
             table += ",check(record_type<>'candidate_execution_alias' or memory_attempt_ref is null)"
-    if sent_result_references:
+    if sent_result_references and not action_entity:
         table += "," + ",".join(sent_checks)
     if action_entity:
         table += ",check(record_type<>'action' or (legacy_key is null and typeof(action_data)='blob' and json_valid(action_data,8) and json_type(action_data)='object'))"
@@ -683,6 +692,9 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         "create unique index idx_actions_attempt_sequence on actions(execution_id,action_index) where record_type='candidate_action_attempts'",
         "create index idx_actions_external_key on actions(external_action_key) where record_type='candidate_action_attempts'",
     )
+    if "candidate_action_attempts" in retired_types:
+        indexes = tuple(sql for sql in indexes if "idx_actions_attempt_sequence" not in sql
+                        and "idx_actions_external_key" not in sql)
     if execution_owner:
         indexes = tuple(sql for sql in indexes if 'idx_actions_execution_candidate ' not in sql) + execution_indexes
     if include_receipts:
@@ -695,9 +707,12 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             "create unique index idx_actions_execution_receipt_operation on actions(agent_run_id,operation_id) where record_type='agent_execution_receipts'",
             "create index idx_actions_execution_receipt_run on actions(agent_run_id,cast(legacy_key as integer)) where record_type='agent_execution_receipts'",
         )
-    if include_postfix:
+        if "external_action_results" in retired_types:
+            indexes = tuple(sql for sql in indexes if "idx_actions_text_public_key" not in sql
+                            and "idx_actions_global_business" not in sql)
+    if include_postfix and not action_entity:
         indexes += ("create unique index idx_actions_postfix_identity on actions(record_type,channel,delivery_key)",)
-    if include_delivery:
+    if include_delivery and not action_entity:
         indexes += (
             "create unique index idx_actions_observer_identity on actions(sent_reply_id,agent_run_id) where record_type='sent_reply_observers'",
             "create unique index idx_actions_sent_external_key on actions(external_action_key) where record_type='sent_replies' and external_action_key<>''",
@@ -735,7 +750,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         indexes += tuple(ba_indexes)
     if include_email_history:
         indexes += history_indexes
-    if sent_result_references:
+    if sent_result_references and not action_entity:
         indexes += sent_indexes
     if action_entity:
         from app.action_entity_definitions import ACTION_INDEX_DDL
@@ -758,17 +773,21 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         triggers = tuple(sql.replace('or selection_id=old.id', 'or execution_review_id=old.id or execution_selection_id=old.id') for sql in triggers)
         triggers += execution_triggers
     if include_receipts:
-        sequences = ACTION_SEQUENCE_NAMES | ({"sent_replies": DELIVERY_SEQUENCE_NAME} if include_delivery else {})
+        sequences = ACTION_SEQUENCE_NAMES | ({"sent_replies": DELIVERY_SEQUENCE_NAME} if include_delivery and not action_entity else {})
         for kind, name in sequences.items():
+            if kind in retired_types:
+                continue
             triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
                          f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
                          f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
-    if include_delivery:
+    if include_delivery and not action_entity:
         triggers += ("create trigger trg_actions_sent_public_reference_update before update of legacy_key on actions when old.record_type='sent_replies' and new.legacy_key<>old.legacy_key and exists(select 1 from actions where sent_reply_id=old.id and record_type='sent_reply_observers') begin select raise(abort,'FOREIGN KEY constraint failed'); end",)
         for event, suffix in (("insert", "insert"), ("update of sent_reply_id,legacy_key", "update")):
             triggers += (f"create trigger trg_actions_observer_sent_key_{suffix} before {event} on actions when new.record_type='sent_reply_observers' and not exists(select 1 from actions p where p.id=new.sent_reply_id and p.record_type='sent_replies' and cast(p.legacy_key as integer)=json_extract(new.legacy_key,'$[0]')) begin select raise(abort,'observer sent reply identity mismatch'); end",)
     if include_reply:
         for kind, name in REPLY_SEQUENCE_NAMES.items():
+            if kind in retired_types:
+                continue
             triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
                          f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
                          f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
@@ -794,6 +813,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if include_email:
         triggers += tuple(email_triggers)
         for kind in EMAIL_AUTOINCREMENT_TYPES:
+            if kind in retired_types:
+                continue
             name = f"actions:{kind}"
             triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
                          f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
@@ -820,7 +841,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         triggers += fb_triggers
     if include_business_actions:
         triggers += tuple(ba_triggers)
-    if sent_result_references:
+    if sent_result_references and not action_entity:
         triggers += sent_triggers
     if action_entity:
         from app.action_entity_definitions import ACTION_ENTITY_PARENT_TRIGGER_DDL
@@ -1055,9 +1076,9 @@ from actions where record_type='action' and action_delivery_channel is not null
 OUTBOUND_POSTFIX_RECEIPT_SQL = """select a.action_delivery_channel as channel,
        a.action_delivery_key as delivery_key,r.provider_result_json,
        r.observed_at as created_at
-from action_receipts r join actions a on a.id=r.action_id
+from actions a join action_receipts r on r.id=a.action_prepared_receipt_id
 where a.record_type='action' and a.action_delivery_channel is not null
-  and a.action_delivery_key is not null
+  and a.action_delivery_key is not null and r.action_id=a.id
   and r.provider_result_json is not null"""
 NATIVE_REPLY_DISPATCH_SQL = """select a.action_delivery_channel as channel,
        a.action_delivery_key as delivery_key,r.dispatched_at as created_at

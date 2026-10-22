@@ -9,11 +9,11 @@ ACTION_FIELDS = (
     "account_id", "external_action_key", "next_attempt_at", "started_at", "created_at",
     "updated_at", "prepared_body", "prepared_at", "delivery_channel", "delivery_key",
     "feedback_token", "postfix_version", "delivery_receipt_id", "conversation_id", "trigger_message_id", "recall_key",
-    "recall_status", "recall_error", "recalled_at", "agent_run_id", "business_object_key",
+    "prepared_receipt_id", "recall_status", "recall_error", "recalled_at", "agent_run_id", "business_object_key",
     "action_identity",
 )
 ACTION_LAYOUT = PayloadLayout(ACTION_FIELDS)
-ACTION_INTEGER_FIELDS = frozenset({"classification_id", "agent_run_id", "delivery_receipt_id"})
+ACTION_INTEGER_FIELDS = frozenset({"classification_id", "agent_run_id", "delivery_receipt_id", "prepared_receipt_id"})
 ACTION_ALLOWED_FIELDS = frozenset(ACTION_FIELDS)
 
 RECEIPT_FIELDS = (
@@ -106,6 +106,27 @@ ACTION_ENTITY_PARENT_TRIGGER_DDL = (
     "and new.action_delivery_receipt_id is not null and not exists("
     "select 1 from action_receipts r where r.id=new.action_delivery_receipt_id and r.action_id=new.id) "
     "begin select raise(abort,'Sent receipt reference must resolve within Action'); end",
+    "create trigger trg_action_prepared_receipt_owner_insert before insert on actions "
+    "when new.record_type='action' and new.action_prepared_receipt_id is not null and not exists("
+    "select 1 from action_receipts r where r.id=new.action_prepared_receipt_id and r.action_id=new.id "
+    "and r.provider_result_json is not null) begin "
+    "select raise(abort,'prepared receipt reference must resolve within Action'); end",
+    "create trigger trg_action_prepared_receipt_owner_update before update of action_data on actions "
+    "when old._kind=70 and new._kind=70 "
+    "and json_extract(old.action_data,'$.prepared_receipt_id') is not json_extract(new.action_data,'$.prepared_receipt_id') "
+    "and json_extract(new.action_data,'$.prepared_receipt_id') is not null and not exists("
+    "select 1 from action_receipts r where r.id=json_extract(new.action_data,'$.prepared_receipt_id') and r.action_id=new.id "
+    "and r.provider_result_json is not null) begin "
+    "select raise(abort,'prepared receipt reference must resolve within Action'); end",
+)
+
+# Conversion provenance is deliberately identity-only. Business bodies and
+# provider payloads live on the current Action and receipt rows themselves.
+ACTION_IDENTITY_MAP_DDL = (
+    "create table action_entity_identity_map (source_type text not null, source_identity text not null, "
+    "action_id integer not null references actions(id), receipt_id integer references action_receipts(id), "
+    "primary key(source_type,source_identity))",
+    "create index idx_action_identity_map_owner on action_entity_identity_map(action_id)",
 )
 
 

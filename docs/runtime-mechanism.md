@@ -2861,6 +2861,12 @@ does not create a dispatch or bypass authorization. Existing failed generations
 without this new boundary still require the formal evidence-based recovery
 path; their historical dispatch state is not fabricated.
 
+In the unified Action declaration, the prepared provider result is read
+through that Action's `prepared_receipt_id`. The pointer selects the exact
+accepted prepared-delivery receipt, so another provider body attached to the
+same Action for Sent history or canonical correction cannot shadow it by row
+order.
+
 ### Runtime result failure evidence
 
 Reply-attempt queue status computes counts, the latest timestamp and failure

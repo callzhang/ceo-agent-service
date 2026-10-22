@@ -18,6 +18,7 @@ def db():
     create_current_database_schema(connection)
     connection.execute("drop table action_observers")
     connection.execute("drop table action_receipts")
+    connection.execute("drop table action_entity_identity_map")
     connection.execute("drop table actions")
     create_current_action_schema(connection)
     connection.execute("pragma foreign_keys=on")

@@ -56,14 +56,14 @@ def direct_step_layout():
                                if field not in DIRECT_DERIVED_FIELDS))
 
 
-def shared_discriminators(*, specialized_claims=False):
-    variants = (
+def shared_discriminators(*, specialized_claims=False, retired_types=()):
+    variants = tuple(item for item in (
         ('review_candidates', 'plan_versions', 'reviewed'),
         ('email_action_plans', 'plan_versions', 'email'),
         ('email_actions', 'effect_steps', 'email'),
         ('candidate_action_attempts', 'action_attempts', 'reviewed'),
         ('email_action_attempts', 'action_attempts', 'email'),
-    )
+    ) if item[0] not in retired_types)
     if specialized_claims:
         variants += (
             ('email_reply_dispatch_claims', 'effect_steps', 'email_reply'),

@@ -3082,6 +3082,16 @@
         "rule": "Sent fact receipt reference on the Action; keeps the original Sent observation clock and exact provider-body reference separate from canonical correction metadata."
       },
       {
+        "name": "prepared_receipt_id",
+        "sources": [
+          "outbound_postfixes.delivery_key"
+        ],
+        "nullable": true,
+        "sqlite_type": "INTEGER",
+        "rule": "Technical owner reference to the exact normalized provider receipt reached through the source prepared-delivery (channel,delivery_key) reference; never infer from receipt insertion order or body equality.",
+        "inverse_rule": "Reconstruct the old outbound_postfix_receipts FK through the mapped prepared-delivery source identity; preserve its original provider body and observation clock in the referenced Action Receipt."
+      },
+      {
         "name": "conversation_id",
         "sources": [
           "sent_replies.conversation_id"
@@ -3316,13 +3326,31 @@
       "partial_release": "Only the seven enumerated effect source families are converted in this first release. Other existing Actions kinds and specialized unsubscribe writers remain in the same physical table and are explicitly not retired.",
       "migration_inverse": "Use explicit source-kind + original typed identity mapping only during conversion/inverse; never persist a legacy alias on Action rows."
     },
+    "inverse_metadata": {
+      "table": "action_entity_identity_map",
+      "ddl": "source_type TEXT NOT NULL, source_identity TEXT NOT NULL, action_id INTEGER NOT NULL REFERENCES actions(id), receipt_id INTEGER NULL, PRIMARY KEY(source_type, source_identity)",
+      "source_identity": "Canonical typed encoding of the original physical/public identity, retaining source family and SQLite storage class; composite identities use a typed two-element encoding.",
+      "purpose": "During explicit forward/inverse only, resolve every covered old identity and receipt identity to the current Action/receipt. Distinct source namespaces can share equal numeric or text values; direct Email public IDs are reconstructed from immutable plan ID plus operation, while email_historical_operations.action_ids_json stores physical Action IDs in current data.",
+      "runtime_access": "No runtime caller reads or writes this table; Action queries use only current Action, receipt, and observer relations.",
+      "content_boundary": "Identity and owner references only. No business payload, provider body, old schema SQL, or old database snapshot is stored here.",
+      "capacity": "Expected row count is bounded by the seven covered source families and their receipt identities; storage cost is not yet measured on the authentic source copy."
+    },
     "action_kind_value": 70,
     "common_payload": "action_data SQLite JSONB object; every Action uses this same payload and typed generated virtual columns; only the discriminator selects Action versus unchanged existing record kinds.",
     "payload_layout": "one common JSONB object for common Action business facts; generated virtual columns provide SQL query/index access and avoid adding ~35 payload columns to each untouched row.",
     "status_columns": {
       "action_status": "One common nullable Action.status covers declared email lifecycle and reviewed candidate observation states; ordered raw observations remain in Action Receipt facts.",
       "receipt_status": "Action Receipt.status retains each exact email attempt or candidate execution observation state, including NULL where source lacks status."
-    }
+    },
+    "technical_references": [
+      {
+        "name": "prepared_receipt_id",
+        "source_evidence": "The old Store.prepare_outbound_postfix receipt writer references provider receipts by the prepared outbound key; Task 3 current writer and get_outbound_postfix_receipt require that same owner-local fact.",
+        "purpose": "Disambiguate the actual prepared-delivery provider receipt from canonical Action and Sent receipts after source entities converge on one Action.",
+        "constraints": "Nullable owner-local FK to action_receipts.id; the pointed receipt must be owned by this Action and contain a provider result. Runtime reads use this explicit Action pointer, never identity-map old namespaces.",
+        "capacity": "One nullable integer generated Action field and two owner triggers; no provider body or business data is duplicated."
+      }
+    ]
   },
   "indexes": [
     {

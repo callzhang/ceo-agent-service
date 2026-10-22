@@ -123,9 +123,8 @@ _EMAIL_HISTORICAL_COLUMNS = {
 EMAIL_ACTION_PROJECTIONS = {kind: email_action_projection(kind) for kind in EMAIL_ACTION_PROJECTIONS}
 
 EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
-EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
-# Frozen source-shaped projection for historical source-contract assertions;
-# all current direct-action readers use DIRECT_EMAIL_ATTEMPT_SQL below.
+# Direct effects have one current common Action owner; the historical
+# source-shaped projection remains available from the release module only.
 EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
 EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
 EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
@@ -199,6 +198,7 @@ where a.record_type='action' and a.action_operation in
  ('archive','flag_important','mark_read','move','trash','label')
   and r.attempt_number is not null
 """
+EMAIL_DIRECT_ACTION_SQL = DIRECT_EMAIL_ACTION_SQL
 EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL = email_action_projection(
     "email_unsubscribe_claims", include_rowid=True
 )
