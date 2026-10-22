@@ -6,12 +6,15 @@ from types import SimpleNamespace
 
 from scripts.validate_native_action_entity_lifecycle import (
     _acceptance_instruction,
+    _approved_audit_run_id,
     _audit_run_id,
     _assert_old_cold_write_fact,
     _assert_old_native_sent_read,
     _case_fixture,
     _print_event,
     _assert_native_current_facts_equal,
+    _assert_provider_receipt_matches,
+    _assert_settlement_recovery,
     _stable_inverse_facts,
 )
 
@@ -132,3 +135,34 @@ def test_sent_action_links_to_the_single_audit_run():
     assert _audit_run_id(runs) == 19
     with pytest.raises(AssertionError, match="expected one audit run"):
         _audit_run_id(runs[:1])
+
+
+def test_revision_sent_action_links_to_the_audit_run_that_approved_its_candidate():
+    reviews = [{"decision": "return", "audit_run_id": 19},
+               {"decision": "approve", "audit_run_id": 23}]
+
+    assert _approved_audit_run_id(reviews) == 23
+    with pytest.raises(AssertionError, match="expected one approved candidate review"):
+        _approved_audit_run_id(reviews + [{"decision": "approve", "audit_run_id": 29}])
+
+
+def test_provider_receipt_matches_the_persisted_provider_response_and_verification():
+    provider_result = {"success": True, "result": {"openMessageId": "native-copy-provider-receipt"}}
+    verification = {"state": "sent", "message_id": "native-copy-provider-receipt"}
+    receipt = {"provider_result": provider_result, "verification": verification}
+
+    _assert_provider_receipt_matches(receipt, provider_result, verification)
+    with pytest.raises(AssertionError, match="provider result or verification"):
+        _assert_provider_receipt_matches(receipt, provider_result, {"state": "uncertain"})
+
+
+def test_settlement_recovery_requires_one_native_approval_and_reuses_one_receipt():
+    report = {"status": "done", "completed": True, "interrupted": True,
+        "native_runs": [{"role": "consumer"}, {"role": "audit"}],
+        "provider_substitute_sends": 1, "provider_substitute_verifications": 1,
+        "provider_receipt_rows_for_task": 1, "sent_rows_for_task": 1}
+
+    _assert_settlement_recovery(report)
+    report["provider_substitute_sends"] = 2
+    with pytest.raises(AssertionError, match="reuse the acknowledged effect"):
+        _assert_settlement_recovery(report)

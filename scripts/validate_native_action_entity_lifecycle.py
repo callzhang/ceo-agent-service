@@ -170,6 +170,35 @@ def _audit_run_id(runs: list) -> int:
     return audit_runs[0].id
 
 
+def _approved_audit_run_id(reviews: list[dict]) -> int:
+    approved = [review for review in reviews if review.get("decision") == "approve"]
+    if len(approved) != 1:
+        raise AssertionError(f"expected one approved candidate review, found {len(approved)}")
+    return approved[0]["audit_run_id"]
+
+
+def _assert_provider_receipt_matches(receipt: dict, provider_result: dict,
+                                     verification: dict) -> None:
+    expected = {"provider_result": provider_result, "verification": verification}
+    if receipt != expected:
+        raise AssertionError("persisted provider receipt differs from the provider result or verification")
+
+
+def _assert_settlement_recovery(report: dict) -> None:
+    expected = {"status": "done", "completed": True, "interrupted": True,
+                "native_run_count": 2, "provider_substitute_sends": 1,
+                "provider_substitute_verifications": 1,
+                "provider_receipt_rows_for_task": 1, "sent_rows_for_task": 1}
+    observed = {"status": report["status"], "completed": report["completed"],
+                "interrupted": report["interrupted"], "native_run_count": len(report["native_runs"]),
+                "provider_substitute_sends": report["provider_substitute_sends"],
+                "provider_substitute_verifications": report["provider_substitute_verifications"],
+                "provider_receipt_rows_for_task": report["provider_receipt_rows_for_task"],
+                "sent_rows_for_task": report["sent_rows_for_task"]}
+    if observed != expected:
+        raise AssertionError(f"settlement recovery did not reuse the acknowledged effect: {observed}")
+
+
 def _case_fixture(key: str) -> dict:
     return {"verification_tag": "TASK6A2_" + uuid4().hex[:12],
             "records": [{"units": 23}, {"units": 27}, {"units": 50}],
@@ -409,12 +438,13 @@ def run(current_copy: Path, root: Path, old_root: Path, case: str = "approve") -
             (key, task.trigger_message_id)).fetchall()
         reviews = []
         for row in db.execute(
-            f"select r.id,r.decision,c.id candidate_id,c.proposal_revision,c.candidate_json "
+            f"select r.id,r.audit_run_id,r.decision,c.id candidate_id,c.proposal_revision,c.candidate_json "
             f"from ({CANDIDATE_REVIEW_SQL}) r join ({REVIEW_CANDIDATE_SQL}) c on c.id=r.candidate_id "
             "where c.task_id=? order by r.id", (task.id,)):
             candidate = json.loads(row["candidate_json"])
             proposal = candidate.get("proposal") or {}
-            reviews.append({"review_id": row["id"], "decision": row["decision"],
+            reviews.append({"review_id": row["id"], "audit_run_id": row["audit_run_id"],
+                "decision": row["decision"],
                 "candidate_id": row["candidate_id"], "revision": row["proposal_revision"],
                 "outcome": candidate.get("outcome"),
                 "action_count": len(proposal.get("actions", [])),
@@ -448,15 +478,18 @@ def run(current_copy: Path, root: Path, old_root: Path, case: str = "approve") -
     assert effect_count == len(sent_rows) == 1, report
     assert verification_count >= 1, report
     assert sent_rows[0]["reply_text"] == body, report
-    audit_run_id = _audit_run_id(runs)
+    audit_run_id = _approved_audit_run_id(reviews) if case == "revision" else _audit_run_id(runs)
     assert sent_rows[0]["agent_run_id"] == audit_run_id, report
     assert sent_rows[0]["external_action_key"] == receipt_rows[0]["external_action_key"], report
     provider_result = json.loads(receipt_rows[0]["provider_result_json"])
-    assert provider_result == provider.verifications[0]["result"], report
+    _assert_provider_receipt_matches(provider_result, provider.verifications[0],
+                                     provider.verification_results[0])
     assert "TASK6A2_" in body and "100" in body and "3" in body, body
     if case == "revision":
         assert reviews[0]["decision"] in {"return", "reject"} and reviews[-1]["decision"] == "approve", report
         assert max(r["revision"] for r in run_rows) >= 1, report
+    if case == "settlement_recovery":
+        _assert_settlement_recovery(report)
     report["roundtrip"] = _roundtrip(
         db_path, case_dir, old_root, uuid4().hex[:12], key, task.trigger_message_id, body,
         audit_run_id)
