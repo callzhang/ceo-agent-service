@@ -6921,6 +6921,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return int(row["next_turn_attempt"])
 
+    def latest_completed_consumer_run_id_for_business_object(
+        self, business_object_key: str
+    ) -> int | None:
+        """The newest completed Consumer run on any task of one business object."""
+        if not business_object_key:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select agent_runs.id
+                from ({AGENT_RUN_SQL}) as agent_runs
+                join ({REPLY_TASK_SQL}) as reply_tasks
+                  on reply_tasks.id=agent_runs.reply_task_id
+                where reply_tasks.business_object_key=?
+                  and agent_runs.role='consumer' and agent_runs.status='completed'
+                order by agent_runs.id desc limit 1
+                """,
+                (business_object_key,),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
     def list_agent_runs_for_task_generation(
         self,
         reply_task_id: int,

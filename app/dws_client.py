@@ -2647,6 +2647,23 @@ class DwsClient:
             raise ValueError("oa_process_attachment_file_too_large")
         return contents
 
+    def authorize_oa_attachment_preview(
+        self, process_instance_id: str, file_id: str
+    ) -> str:
+        """Open preview access to one OA attachment and return its Drive space."""
+        if not process_instance_id.strip() or not file_id.strip():
+            raise ValueError("OA attachment identity is invalid")
+        response = self.run_json([
+            self.dws_bin, "oa", "approval", "attachment", "authorize-preview",
+            "--instance-id", process_instance_id, "--file-ids", file_id,
+            "--with-comment-attachment", "--format", "json",
+        ])
+        data = response.get("data") if isinstance(response, dict) else None
+        space_id = data.get("spaceId") if isinstance(data, dict) else None
+        if space_id in (None, ""):
+            raise DwsError("DingTalk OA preview authorization did not include spaceId")
+        return str(space_id)
+
     def download_oa_process_comment_attachment(
         self,
         process_instance_id: str,

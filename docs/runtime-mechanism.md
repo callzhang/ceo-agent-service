@@ -810,6 +810,16 @@ and shares the same extraction, OCR-page handoff, temporary lifetime and respons
 size checks. Generic Drive access denial does not prove that this OA-scoped read
 is unavailable. This path does not call `authorize-preview` or modify access.
 
+When the premium comment download is unavailable (for example the tenant's OA
+Premium benefit has expired) or the form download is refused, both roles may call
+`authorize_dingtalk_oa_attachment_preview(process_instance_id, file_id)`. It runs
+`dws oa approval attachment authorize-preview --with-comment-attachment` for that
+one instance and file with the service account (the same preview access opening the
+attachment in DingTalk grants), and returns the Drive `space_id`; the role then reads
+the body with `read_dingtalk_drive_file(node_id=file_id, space_id, file_name)`. It is
+the only role tool that changes DingTalk access: it is idempotent, takes no other
+arguments and grants nothing beyond preview of that file. (Derek, 2026-10-22.)
+
 `retry-source-verified-email-action --account ... --action-id ...` examines one
 current failed move/trash action through the existing read-only IMAP wrapper.
 Preview opens SQLite read-only without schema initialization. Only an exact
@@ -2000,7 +2010,7 @@ OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。任务终态清理该任务全部代次目录；未到终态时保留工件供恢复及 Audit 读取。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点；`read_dingtalk_oa_process_attachment` 按审批实例和表单文件 ID 走 DWS 只读下载地址，不要求通用钉盘节点权限，也不执行授权写入；`read_dingtalk_oa_comment_attachment` 只按当前审批记录提供的流程实例、评论附件 ID 和文件名走官方 Premium 只读下载；`read_dingtalk_oa_comment_image` 读取审批记录 `images[]` 中没有 file ID 的钉钉图片 URL。该 URL 读取只接受 HTTPS `static.dingtalk.com/media/`，拒绝重定向，并限制下载时长和响应大小。所有材料工具均抽取可读文本；扫描 PDF 的无文本页和受支持的图片材料返回有界的精确源 base64、MIME 类型、PDF 页码与 SHA-256，由 Consumer/Audit 通过服务清单中的原生 `ai_services.ocr_document` MCP 读取。普通 Consumer/非 OA Audit 的 direct-only MCP 命名空间同时包含 `mcp__agent_cli` 和 `mcp__ai_services`。OA Consumer/Audit 把这两个已授权工具放进同一个 CodeMode 调用；OA Audit 的其他已配置 MCP 保持 direct-only，内建命名空间被排除，在 JS 内存中将附件读取结果直接交给 `ai_services.ocr_document`；不把 base64 打印给模型或要求它在下一轮重写。OA 专属会话合同变化只使 OA Consumer 一次性换到兼容的新 session；OA Audit 在 CodeMode 内排除 functions、image_gen、multi_agent_v1、web；其他 Audit 保持 functions 排除，所有任务的既有 session 复用路径不变。服务角色清单仍仅暴露 `ai_services.ocr_document`，其他 AI Services 工具不可见。工具审批配置只对经批准的 AI Services 工具逐工具应用，不改全局审批策略，也不放宽其他 MCP 工具；工具可用性以本轮真实调用为准。保留 OCR 页码、置信度与警告；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。任务终态清理该任务全部代次目录；未到终态时保留工件供恢复及 Audit 读取。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点；`read_dingtalk_oa_process_attachment` 按审批实例和表单文件 ID 走 DWS 只读下载地址，不要求通用钉盘节点权限，也不执行授权写入；`authorize_dingtalk_oa_attachment_preview` 是两角色唯一改变钉钉访问的工具，只为指定审批实例的指定附件开通预览授权并返回 spaceId，供 `read_dingtalk_drive_file` 读取（评论附件的高级版下载不可用时使用）；`read_dingtalk_oa_comment_attachment` 只按当前审批记录提供的流程实例、评论附件 ID 和文件名走官方 Premium 只读下载；`read_dingtalk_oa_comment_image` 读取审批记录 `images[]` 中没有 file ID 的钉钉图片 URL。该 URL 读取只接受 HTTPS `static.dingtalk.com/media/`，拒绝重定向，并限制下载时长和响应大小。所有材料工具均抽取可读文本；扫描 PDF 的无文本页和受支持的图片材料返回有界的精确源 base64、MIME 类型、PDF 页码与 SHA-256，由 Consumer/Audit 通过服务清单中的原生 `ai_services.ocr_document` MCP 读取。普通 Consumer/非 OA Audit 的 direct-only MCP 命名空间同时包含 `mcp__agent_cli` 和 `mcp__ai_services`。OA Consumer/Audit 把这两个已授权工具放进同一个 CodeMode 调用；OA Audit 的其他已配置 MCP 保持 direct-only，内建命名空间被排除，在 JS 内存中将附件读取结果直接交给 `ai_services.ocr_document`；不把 base64 打印给模型或要求它在下一轮重写。OA 专属会话合同变化只使 OA Consumer 一次性换到兼容的新 session；OA Audit 在 CodeMode 内排除 functions、image_gen、multi_agent_v1、web；其他 Audit 保持 functions 排除，所有任务的既有 session 复用路径不变。服务角色清单仍仅暴露 `ai_services.ocr_document`，其他 AI Services 工具不可见。工具审批配置只对经批准的 AI Services 工具逐工具应用，不改全局审批策略，也不放宽其他 MCP 工具；工具可用性以本轮真实调用为准。保留 OCR 页码、置信度与警告；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 `read_dingtalk_oa_process_attachment` 下载后的临时文件路径由材料层显式返回，不依赖 PDF/图片/表格抽取器是否自行附带 `path`。因此表格正文已成功抽取时，两角色都能缓存该准确来源；实例 ID、文件 ID、原字节摘要、大小上限、OCR 分页和 provider 失败语义保持原样。
 
@@ -3915,6 +3925,8 @@ Attempt detail 的 System Execution 只对当前审核候选，或已有执行�
 
 Meeting 的 Codex CLI 每轮显式设置 `project_doc_max_bytes=0`，省去 CLI 自动加载的工作区 `AGENTS.md`；服务装配的会议来源、工作人格、冻结托管 Skill、结果 Schema 与受众校验不变。非 Codex 路线不使用这个 CLI 配置。
 
+Meeting Codex Developer 指令限定 DWS 只读核验群与身份，不允许 Agent 直接发消息、邮件或执行审批等影响他人的操作；Agent 只返回决策，由既有服务流程投递。该指令是模型行为约束，不是 DWS 或 shell 的强制权限隔离；命令、凭据及投递实现均未改变。
+
 会议 Skill 范围（2026-10-18；2026-10-21 修正）：服务仍保存并组装本轮全部冻结材料。仅 Codex CLI 路线在存在冻结托管会议 Skill 时，使用该完整托管规则构造实际提交输入，并在原生 Skill 目录保留 `dingtalk-chat` 入口供按需调用 DWS 群读取；其他重复 Skill 仍隐藏。服务已完成听记、日历等操作读取后，不再将对应操作 Skill 全文交给会议判断轮。Claude/Friday 及缺少托管会议 Skill 的旧任务保持原输入。原生输出纠错沿本路线的实际输入继续，切换路线时改用目标路线的输入；会议结果、受众和投递契约不变。匿名固定对照及早期校验漏判见 `docs/meeting-managed-skill-scope-validation.md`；修正校验后的三轮结果见 `evals/trajectory_optimization/meeting_skill_scope_native.v3.json`。
 
 
@@ -4718,7 +4730,7 @@ OA `request_access` 是普通 Consumer purpose 动作，不进入 Audit。target
 
 预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时硬截止；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的回执引用在匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，随后与已验证动作存储的原始 key 精确比较。Consumer request_access 执行并核验后先等待，再进入后续 Consumer；Consumer retry 按同一 purpose 的预算延后重读。最多启动 3 次后续 Consumer 重读，每次固定间隔 12 小时；旧版本已排队的等待首次加载时同步更新为 12 小时间隔，不清零原次数、reservation 或 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
 
-每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 3 次。所有被请求文件共享一个业务对象和 purpose 预算。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 3 次或 72 小时后不再刷新来源或启动新 Consumer，记录预算耗尽并停止自动重读。预算耗尽返回 `permission_blocked`，Attempt 为 `blocked`，ReplyTask 为 `needs_human` 队列外等待；这表示等待权限处理，不是 OA 业务失败、拒绝或规则决策。History 仅对 `consumer_purpose_retry_exhausted` 提供人工重读入口，保留原预算且最多启动一次不计入自动预算的 Consumer 访问检查。检查仍被拒绝时继续受阻，不重复申请、不自动重读或执行 OA 动作；读取成功后仍须走常规 Consumer→Audit→System Execution 闭环。未读取到新事实不等于业务不合格；预算耗尽本身不会自动执行 return、reject 或发送消息。若需形成 OA return，必须由 Consumer 生成普通审批结果候选并经 Audit、执行器和节点读回。
+每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 3 次。所有被请求文件共享一个业务对象和 purpose 预算。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 3 次或 72 小时后不再刷新来源或启动新的文件重读。OA purpose 在预算耗尽或权限申请明确失败时，让 Consumer 再运行一轮提出普通 `return` 候选；即使恢复记录里没有可关联的已完成 Consumer run，也启动受限的 Consumer 退回轮次，再走 Audit。该业务对象只认领一次 OA 退回轮次；后续重复触发挂靠该轮对应的已完成 Consumer run，进入 `permission_blocked` / `blocked`，防止重复退回。若没有可关联的 Consumer run，保留非失败状态并转人工处理。退回轮次不得读取、重试或再次申请被阻塞文件。该候选经 Audit、执行器和节点读回，服务不合成或直接执行退回；候选无效或未产生时才转人工处理，外部权限问题不标记为 `failed`。非 OA purpose 仍可返回 `permission_blocked`，Attempt 为 `blocked`，ReplyTask 为 `needs_human` 队列外等待。History 的一次人工重读入口保留原预算，只用于确认权限已开通；仍不可读时不继续重试，也不执行 OA 动作。
 
 Purpose 等待在业务动作成功完成或经审核 no_action 后关闭活动调度；原次数和期限保留，显式重新等待同一回执也不清零。恢复旧候选时省略不存在的 purpose_output 元数据，保持原候选字节及摘要。字段、动作表、JSON 示例和计数边界见 [Consumer purpose 输出与权限重试](consumer-purpose-output.md)；发布证据见 [验证记录](consumer-purpose-actions-validation.md)。
 
